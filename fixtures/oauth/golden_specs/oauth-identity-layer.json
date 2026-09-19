@@ -1,0 +1,34 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "ArchitectureDelta",
+      "props": {
+        "title": "OAuth identity layer: Identity -> Session",
+        "category": "security",
+        "status": "in_progress",
+        "confidence": 0.92,
+        "scope": "subsystem",
+        "evidenceCount": 3,
+        "nodes": [
+          { "id": "n-identity", "label": "Identity", "kind": "module", "path": "src/auth/identity.ts" },
+          { "id": "n-session", "label": "Session", "kind": "type", "path": "src/auth/service.ts" },
+          { "id": "n-password", "label": "PasswordProvider", "kind": "module", "path": "src/auth/service.ts" },
+          { "id": "n-google", "label": "GoogleOAuthProvider", "kind": "module", "path": "src/auth/google.ts" },
+          { "id": "n-callback", "label": "CallbackRoute", "kind": "route", "path": "src/server/index.ts" }
+        ],
+        "edges": [
+          { "from": "n-identity", "to": "n-session", "label": "creates" },
+          { "from": "n-password", "to": "n-identity", "label": "provides" },
+          { "from": "n-google", "to": "n-identity", "label": "provides" },
+          { "from": "n-callback", "to": "n-google", "label": "invokes" }
+        ],
+        "actions": [
+          { "action": "inspect_call_sites", "params": { "symbol": "createSession" } },
+          { "action": "show_exact_diff", "params": { "files": ["src/auth/service.ts"] } }
+        ]
+      },
+      "children": []
+    }
+  }
+}

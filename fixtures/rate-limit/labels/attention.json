@@ -1,0 +1,87 @@
+{
+  "rate-limit-architecture": {
+    "shouldSurface": true,
+    "importance": 0.72,
+    "relevance": 0.81,
+    "interruption": 0.08,
+    "mentalModelChange": 0.7,
+    "semanticCategory": "architecture_change",
+    "scope": "subsystem",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.89,
+    "probabilities": {
+      "architecture_change": 0.72,
+      "dependency_change": 0.22,
+      "implementation_change": 0.06
+    }
+  },
+  "rate-limit-impl": {
+    "shouldSurface": true,
+    "importance": 0.35,
+    "relevance": 0.55,
+    "interruption": 0.05,
+    "mentalModelChange": 0.2,
+    "semanticCategory": "implementation_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "implementation_change": 0.9,
+      "architecture_change": 0.06,
+      "dependency_change": 0.04
+    }
+  },
+  "rate-limit-dependency": {
+    "shouldSurface": true,
+    "importance": 0.72,
+    "relevance": 0.81,
+    "interruption": 0.08,
+    "mentalModelChange": 0.45,
+    "semanticCategory": "dependency_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "dependency_change": 0.86,
+      "implementation_change": 0.1,
+      "architecture_change": 0.04
+    }
+  },
+  "rate-limit-fail-open-decision": {
+    "shouldSurface": true,
+    "importance": 0.93,
+    "relevance": 0.97,
+    "interruption": 0.82,
+    "mentalModelChange": 0.5,
+    "semanticCategory": "decision_candidate",
+    "scope": "subsystem",
+    "humanDecision": "recommended",
+    "needsSystem2": true,
+    "confidence": 0.96,
+    "probabilities": {
+      "decision_candidate": 0.89,
+      "architecture_change": 0.08,
+      "security_change": 0.03
+    }
+  },
+  "rate-limit-validation": {
+    "shouldSurface": true,
+    "importance": 0.52,
+    "relevance": 0.74,
+    "interruption": 0.02,
+    "mentalModelChange": 0.1,
+    "semanticCategory": "test_result",
+    "scope": "repository",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.98,
+    "probabilities": {
+      "test_result": 0.95,
+      "implementation_change": 0.04,
+      "architecture_change": 0.01
+    }
+  }
+}

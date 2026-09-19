@@ -1,0 +1,30 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "DependencyDelta",
+      "props": {
+        "title": "google-auth-library",
+        "added": [
+          { "name": "google-auth-library", "version": "^9.15.0", "reason": "verify Google ID tokens in the callback flow" }
+        ],
+        "removed": [],
+        "actions": [
+          { "action": "show_exact_diff", "params": { "files": ["package.json"] } }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "google-auth-library dependency",
+        "category": "dependency",
+        "status": "validated",
+        "confidence": 0.94,
+        "evidenceLinks": ["package.json"]
+      },
+      "children": []
+    }
+  }
+}

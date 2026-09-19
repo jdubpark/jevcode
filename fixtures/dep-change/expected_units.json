@@ -1,0 +1,30 @@
+[
+  {
+    "id": "dep-zod-add",
+    "title": "Replace axios with fetch plus zod validation",
+    "category": "dependency",
+    "files": ["package.json"],
+    "symbolNames": []
+  },
+  {
+    "id": "dep-zod-impl",
+    "title": "fetchJson rewritten on fetch + zod",
+    "category": "implementation",
+    "files": ["src/helpers/http.ts", "src/app.ts"],
+    "symbolNames": ["fetchJson", "z", "postSchema"]
+  },
+  {
+    "id": "dep-zod-lockfile",
+    "title": "pnpm lockfile update",
+    "category": "implementation",
+    "files": ["pnpm-lock.yaml"],
+    "symbolNames": []
+  },
+  {
+    "id": "dep-format-noise",
+    "title": "Formatting-only change in utils/format.ts",
+    "category": "implementation",
+    "files": ["src/utils/format.ts"],
+    "symbolNames": []
+  }
+]

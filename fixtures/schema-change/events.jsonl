@@ -1,0 +1,25 @@
+{"type":"agent_started","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:00.000Z","prompt":"Stop storing password hashes on users and add profile fields full_name and last_login_at."}
+{"type":"agent_message","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:01.500Z","role":"assistant","text":"I will update the users table type, add a migration, and extend the query layer."}
+{"type":"tool_started","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:02.500Z","tool":"read_file","input":"src/db/schema.ts"}
+{"type":"tool_completed","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:03.000Z","tool":"read_file","output":"read 6 lines from src/db/schema.ts"}
+{"type":"file_read","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:03.100Z","path":"src/db/schema.ts"}
+{"type":"file_read","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:04.000Z","path":"src/db/queries.ts"}
+{"type":"agent_message","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:05.000Z","role":"assistant","text":"Plan: add full_name and last_login_at columns, drop password_hash, in a new migrations/ directory."}
+{"type":"file_changed","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:07.000Z","path":"src/db/schema.ts","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:07.300Z","file":"src/db/schema.ts","added":2,"removed":2,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":false}
+{"type":"symbol_delta","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:07.600Z","path":"src/db/schema.ts","added":[],"removed":[],"modified":[{"name":"UserTable","kind":"interface","signature":"export interface UserTable {","startLine":1,"endLine":7}]}
+{"type":"file_changed","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:08.000Z","path":"migrations/001_alter_users.sql","kind":"added"}
+{"type":"git_hunk","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:08.300Z","file":"migrations/001_alter_users.sql","added":4,"removed":0,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":false}
+{"type":"file_changed","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:09.000Z","path":"src/db/queries.ts","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:09.300Z","file":"src/db/queries.ts","added":9,"removed":0,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":false}
+{"type":"symbol_delta","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:09.600Z","path":"src/db/queries.ts","added":[{"name":"getUserProfile","kind":"function","signature":"export function getUserProfile(","startLine":7,"endLine":11}],"removed":[],"modified":[]}
+{"type":"command_started","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:11.000Z","command":"pnpm typecheck"}
+{"type":"command_completed","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:12.500Z","command":"pnpm typecheck","exitCode":0,"stdout":"","stderr":""}
+{"type":"command_executed","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:12.600Z","command":"pnpm typecheck","exitCode":0,"isDestructive":false}
+{"type":"command_started","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:13.000Z","command":"pnpm test"}
+{"type":"test_started","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:13.500Z","command":"pnpm test"}
+{"type":"test_completed","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:17.000Z","command":"pnpm test","exitCode":0}
+{"type":"test_result","repoId":"repo-schema-demo","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:17.200Z","runner":"vitest","command":"pnpm test","passed":42,"failed":0,"skipped":0,"failures":[]}
+{"type":"command_completed","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:17.500Z","command":"pnpm test","exitCode":0,"stdout":"Test Files  2 passed (2)\nTests  42 passed (42)\n","stderr":""}
+{"type":"agent_message","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:19.000Z","role":"assistant","text":"Schema change complete with migration and passing tests."}
+{"type":"agent_completed","sessionId":"sess-schema-0001","ts":"2026-09-18T09:00:20.000Z"}

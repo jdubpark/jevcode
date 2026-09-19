@@ -1,0 +1,32 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "DependencyDelta",
+      "props": {
+        "title": "Dependency swap: axios -> fetch + zod",
+        "added": [
+          { "name": "zod", "version": "^3.24.1", "reason": "response validation in fetchJson" }
+        ],
+        "removed": [
+          { "name": "axios", "version": "^1.7.0", "reason": "replaced by native fetch" }
+        ],
+        "actions": [
+          { "action": "show_exact_diff", "params": { "files": ["package.json"] } }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "zod added, axios removed",
+        "category": "dependency",
+        "status": "validated",
+        "confidence": 0.94,
+        "evidenceLinks": ["package.json"]
+      },
+      "children": []
+    }
+  }
+}

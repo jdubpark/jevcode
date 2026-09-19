@@ -1,0 +1,24 @@
+{
+  "schema-users-migration": {
+    "attention": "highlight",
+    "subject": "schema",
+    "representation": "table",
+    "density": "detailed",
+    "confidence": 0.93,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  },
+  "schema-queries-impl": {
+    "attention": "surface",
+    "subject": "code",
+    "representation": "summary",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  }
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "rate-limit-architecture",
+    "title": "Redis-backed rate limiting pipeline",
+    "category": "architecture",
+    "files": [
+      "src/redis/client.ts",
+      "src/middleware/rate-limiter.ts"
+    ],
+    "symbolNames": [
+      "getRedis",
+      "resetRedisForTests",
+      "RateLimitOptions",
+      "rateLimiter",
+      "rateLimitMiddleware",
+      "createApp"
+    ]
+  },
+  {
+    "id": "rate-limit-impl",
+    "title": "Server app wiring",
+    "category": "implementation",
+    "files": [
+      "src/server/app.ts",
+      "src/server/index.ts"
+    ],
+    "symbolNames": ["createApp"]
+  },
+  {
+    "id": "rate-limit-dependency",
+    "title": "ioredis dependency",
+    "category": "dependency",
+    "files": ["package.json"],
+    "symbolNames": []
+  },
+  {
+    "id": "rate-limit-fail-open-decision",
+    "title": "Redis unavailability policy",
+    "category": "configuration",
+    "files": ["src/middleware/rate-limiter.ts"],
+    "symbolNames": ["rateLimiter"]
+  },
+  {
+    "id": "rate-limit-validation",
+    "title": "Rate-limit validation matrix",
+    "category": "tests",
+    "files": ["tests/rate-limit.test.ts", "tests/redis-unavailable.test.ts"],
+    "symbolNames": []
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "api-users-404-behavior": {
+    "shouldSurface": true,
+    "importance": 0.9,
+    "relevance": 0.94,
+    "interruption": 0.64,
+    "mentalModelChange": 0.8,
+    "semanticCategory": "behavior_change",
+    "scope": "module",
+    "humanDecision": "recommended",
+    "needsSystem2": true,
+    "confidence": 0.91,
+    "probabilities": {
+      "behavior_change": 0.85,
+      "api_change": 0.12,
+      "implementation_change": 0.03
+    }
+  },
+  "api-users-404-stale-test": {
+    "shouldSurface": true,
+    "importance": 0.6,
+    "relevance": 0.92,
+    "interruption": 0.35,
+    "mentalModelChange": 0.15,
+    "semanticCategory": "failure",
+    "scope": "module",
+    "humanDecision": "recommended",
+    "needsSystem2": false,
+    "confidence": 0.97,
+    "probabilities": {
+      "failure": 0.9,
+      "test_result": 0.08,
+      "implementation_change": 0.02
+    }
+  }
+}

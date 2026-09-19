@@ -1,0 +1,8 @@
+❯ pnpm test
+Running tests...
+✓ 5 passed
+exit code: 0
+The util module now exports add() and multiply(), both covered by tests.
+$ rm -rf node_modules
+⏸ Approval needed: allow this command to proceed?
+exit code: 1

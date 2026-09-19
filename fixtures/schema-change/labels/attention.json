@@ -1,0 +1,36 @@
+{
+  "schema-users-migration": {
+    "shouldSurface": true,
+    "importance": 0.96,
+    "relevance": 0.91,
+    "interruption": 0.18,
+    "mentalModelChange": 0.75,
+    "semanticCategory": "schema_change",
+    "scope": "subsystem",
+    "humanDecision": "none",
+    "needsSystem2": true,
+    "confidence": 0.93,
+    "probabilities": {
+      "schema_change": 0.9,
+      "api_change": 0.05,
+      "implementation_change": 0.05
+    }
+  },
+  "schema-queries-impl": {
+    "shouldSurface": true,
+    "importance": 0.25,
+    "relevance": 0.5,
+    "interruption": 0.05,
+    "mentalModelChange": 0.15,
+    "semanticCategory": "implementation_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "implementation_change": 0.9,
+      "schema_change": 0.06,
+      "api_change": 0.04
+    }
+  }
+}

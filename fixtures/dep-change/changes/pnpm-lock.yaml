@@ -1,0 +1,13 @@
+lockfileVersion: "9.0"
+
+dependencies:
+  lodash:
+    specifier: ^4.17.21
+    version: 4.17.21
+  zod:
+    specifier: ^3.24.1
+    version: 3.24.1
+
+packages:
+  zod@3.24.1:
+    resolution: {integrity: sha512-demo-hash}
