@@ -1,0 +1,16 @@
+[
+  {
+    "id": "api-users-404-behavior",
+    "title": "GET /users/:id missing user: 404 -> 200 null",
+    "category": "api",
+    "files": ["src/routes/users.ts", "tests/users.test.ts"],
+    "symbolNames": ["handleGetUser"]
+  },
+  {
+    "id": "api-users-404-stale-test",
+    "title": "Stale 404 expectation in users test",
+    "category": "tests",
+    "files": ["tests/users.test.ts"],
+    "symbolNames": []
+  }
+]

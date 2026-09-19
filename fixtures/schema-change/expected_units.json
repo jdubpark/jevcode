@@ -1,0 +1,19 @@
+[
+  {
+    "id": "schema-users-migration",
+    "title": "users table: drop password_hash, add profile fields",
+    "category": "schema",
+    "files": [
+      "src/db/schema.ts",
+      "migrations/001_alter_users.sql"
+    ],
+    "symbolNames": ["UserTable"]
+  },
+  {
+    "id": "schema-queries-impl",
+    "title": "Profile query layer",
+    "category": "implementation",
+    "files": ["src/db/queries.ts"],
+    "symbolNames": ["getUserProfile"]
+  }
+]

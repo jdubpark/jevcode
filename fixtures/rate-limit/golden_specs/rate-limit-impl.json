@@ -1,0 +1,17 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "Server app wiring",
+        "category": "implementation",
+        "status": "validated",
+        "confidence": 0.94,
+        "scope": "module",
+        "evidenceLinks": ["src/server/app.ts", "src/server/index.ts"]
+      },
+      "children": []
+    }
+  }
+}

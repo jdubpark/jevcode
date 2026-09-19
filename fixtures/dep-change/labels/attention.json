@@ -1,0 +1,70 @@
+{
+  "dep-zod-add": {
+    "shouldSurface": true,
+    "importance": 0.72,
+    "relevance": 0.81,
+    "interruption": 0.08,
+    "mentalModelChange": 0.45,
+    "semanticCategory": "dependency_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "dependency_change": 0.86,
+      "implementation_change": 0.1,
+      "architecture_change": 0.04
+    }
+  },
+  "dep-zod-impl": {
+    "shouldSurface": true,
+    "importance": 0.35,
+    "relevance": 0.55,
+    "interruption": 0.05,
+    "mentalModelChange": 0.2,
+    "semanticCategory": "implementation_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "implementation_change": 0.9,
+      "dependency_change": 0.06,
+      "architecture_change": 0.04
+    }
+  },
+  "dep-zod-lockfile": {
+    "shouldSurface": false,
+    "importance": 0.02,
+    "relevance": 0.01,
+    "interruption": 0,
+    "mentalModelChange": 0,
+    "semanticCategory": "implementation_change",
+    "scope": "local",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.98,
+    "probabilities": {
+      "implementation_change": 0.92,
+      "dependency_change": 0.05,
+      "behavior_change": 0.03
+    }
+  },
+  "dep-format-noise": {
+    "shouldSurface": false,
+    "importance": 0.02,
+    "relevance": 0.01,
+    "interruption": 0,
+    "mentalModelChange": 0,
+    "semanticCategory": "implementation_change",
+    "scope": "local",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.98,
+    "probabilities": {
+      "implementation_change": 0.92,
+      "dependency_change": 0.05,
+      "behavior_change": 0.03
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "SchemaDelta",
+      "props": {
+        "title": "identities table",
+        "migration": "migrations/001_create_identities.sql",
+        "changes": [
+          { "entity": "identities", "entityType": "table", "change": "added" },
+          { "entity": "identities_provider_subject_idx", "entityType": "index", "change": "added" }
+        ],
+        "actions": [
+          { "action": "show_exact_diff", "params": { "files": ["migrations/001_create_identities.sql"] } }
+        ]
+      },
+      "children": ["diff"]
+    },
+    "diff": {
+      "type": "CodeDiff",
+      "props": {
+        "file": "migrations/001_create_identities.sql",
+        "diff": "CREATE TABLE identities (\n  id TEXT PRIMARY KEY,\n  provider TEXT NOT NULL,\n  subject TEXT NOT NULL,\n  user_id INTEGER REFERENCES users(id),\n  verified_at TIMESTAMPTZ\n);\n\nCREATE UNIQUE INDEX identities_provider_subject_idx\n  ON identities (provider, subject);\n"
+      },
+      "children": []
+    }
+  }
+}

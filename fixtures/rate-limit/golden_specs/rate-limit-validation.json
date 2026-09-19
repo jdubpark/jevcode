@@ -1,0 +1,35 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "TestMatrix",
+      "props": {
+        "title": "Validation: rate limiting",
+        "summary": "143 tests passed, 0 failed",
+        "rows": [
+          { "name": "unit tests", "status": "passed", "passed": 128, "failed": 0, "skipped": 0 },
+          { "name": "integration tests", "status": "passed", "passed": 15, "failed": 0, "skipped": 0 },
+          { "name": "typecheck", "status": "passed", "passed": 1, "failed": 0, "skipped": 0 },
+          { "name": "lint", "status": "skipped", "passed": 0, "failed": 0, "skipped": 1 }
+        ],
+        "actions": [
+          { "action": "accept_changes", "params": { "changeUnitId": "rate-limit-architecture" } },
+          { "action": "request_changes", "params": { "changeUnitId": "rate-limit-architecture" } },
+          { "action": "continue_task", "params": {} }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "Add rate limiting to the public API",
+        "category": "architecture",
+        "status": "validated",
+        "confidence": 0.89,
+        "evidenceLinks": ["tests/rate-limit.test.ts", "tests/redis-unavailable.test.ts"]
+      },
+      "children": []
+    }
+  }
+}
