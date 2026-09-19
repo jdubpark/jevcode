@@ -1,0 +1,30 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "SchemaDelta",
+      "props": {
+        "title": "users table: profile fields added, password hash removed",
+        "migration": "migrations/001_alter_users.sql",
+        "changes": [
+          { "entity": "full_name", "entityType": "column", "change": "added" },
+          { "entity": "last_login_at", "entityType": "column", "change": "added" },
+          { "entity": "password_hash", "entityType": "column", "change": "removed" }
+        ],
+        "compatibilityNote": "Callers must stop reading password_hash; getUserProfile returns full_name but not last_login_at.",
+        "actions": [
+          { "action": "show_exact_diff", "params": { "files": ["migrations/001_alter_users.sql"] } }
+        ]
+      },
+      "children": ["diff"]
+    },
+    "diff": {
+      "type": "CodeDiff",
+      "props": {
+        "file": "migrations/001_alter_users.sql",
+        "diff": "-- add profile fields and stop storing passwords\nALTER TABLE users ADD COLUMN full_name TEXT NOT NULL DEFAULT '';\nALTER TABLE users ADD COLUMN last_login_at TIMESTAMPTZ;\nALTER TABLE users DROP COLUMN password_hash;\n"
+      },
+      "children": []
+    }
+  }
+}

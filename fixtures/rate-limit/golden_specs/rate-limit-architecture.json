@@ -1,0 +1,33 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "ArchitectureDelta",
+      "props": {
+        "title": "Request pipeline: Client -> RateLimiter -> API, backed by Redis",
+        "category": "architecture",
+        "status": "in_progress",
+        "confidence": 0.89,
+        "scope": "subsystem",
+        "evidenceCount": 4,
+        "nodes": [
+          { "id": "n-client", "label": "Client", "kind": "external" },
+          { "id": "n-api", "label": "API (createApp)", "kind": "module" },
+          { "id": "n-limiter", "label": "RateLimiter", "kind": "middleware", "path": "src/middleware/rate-limiter.ts" },
+          { "id": "n-redis", "label": "Redis", "kind": "service" },
+          { "id": "n-config", "label": "RateLimitOptions", "kind": "config", "path": "src/middleware/rate-limiter.ts" }
+        ],
+        "edges": [
+          { "from": "n-client", "to": "n-limiter", "label": "request" },
+          { "from": "n-limiter", "to": "n-api", "label": "next()" },
+          { "from": "n-limiter", "to": "n-redis", "label": "INCR / PEXPIRE" },
+          { "from": "n-config", "to": "n-limiter", "label": "window, max, failOpen" }
+        ],
+        "actions": [
+          { "action": "inspect_call_sites", "params": { "symbol": "rateLimiter" } }
+        ]
+      },
+      "children": []
+    }
+  }
+}

@@ -1,0 +1,70 @@
+[
+  {
+    "id": "oauth-identity-layer",
+    "title": "Google OAuth identity layer",
+    "category": "security",
+    "files": [
+      "src/auth/identity.ts",
+      "src/auth/google.ts",
+      "src/auth/service.ts",
+      "src/server/index.ts"
+    ],
+    "symbolNames": [
+      "Identity",
+      "findOrCreateIdentity",
+      "linkIdentityToUser",
+      "GoogleProfile",
+      "GoogleOAuthProvider",
+      "handleCallback",
+      "verifyIdToken",
+      "createSession",
+      "googleCallbackHandler"
+    ]
+  },
+  {
+    "id": "oauth-migration",
+    "title": "identities table migration",
+    "category": "schema",
+    "files": ["migrations/001_create_identities.sql"],
+    "symbolNames": []
+  },
+  {
+    "id": "oauth-dependency",
+    "title": "google-auth-library dependency",
+    "category": "dependency",
+    "files": ["package.json"],
+    "symbolNames": []
+  },
+  {
+    "id": "oauth-lockfile-noise",
+    "title": "pnpm lockfile update",
+    "category": "implementation",
+    "files": ["pnpm-lock.yaml"],
+    "symbolNames": []
+  },
+  {
+    "id": "oauth-account-linking-decision",
+    "title": "Account-linking policy for Google sign-in",
+    "category": "security",
+    "files": [
+      "src/auth/service.ts",
+      "src/auth/google.ts",
+      "migrations/001_create_identities.sql"
+    ],
+    "symbolNames": ["createSession", "GoogleOAuthProvider"]
+  },
+  {
+    "id": "oauth-linking-test-failure",
+    "title": "OAuth account-linking test failure",
+    "category": "tests",
+    "files": ["tests/auth/oauth.test.ts"],
+    "symbolNames": []
+  },
+  {
+    "id": "oauth-format-noise",
+    "title": "Formatting-only change to db/users.ts",
+    "category": "implementation",
+    "files": ["src/db/users.ts"],
+    "symbolNames": []
+  }
+]

@@ -1,0 +1,57 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "Decision",
+      "props": {
+        "decisionId": "dec-oauth-0001",
+        "title": "Account-linking policy for Google sign-in",
+        "severity": "required",
+        "context": "Existing users signing in through Google need a linking policy before the callback flow is finished.",
+        "options": [
+          {
+            "id": "match_email",
+            "label": "Match by email",
+            "description": "Link a Google identity to an existing account when the verified Google email matches.",
+            "tradeoffs": [
+              { "dimension": "friction", "consequence": "Lower friction: users are linked automatically." },
+              { "dimension": "security", "consequence": "Trusts Google email verification; weaker against account takeover." }
+            ]
+          },
+          {
+            "id": "explicit_link",
+            "label": "Require explicit linking",
+            "description": "Ask the user to sign in with email/password first, then link the Google identity explicitly.",
+            "tradeoffs": [
+              { "dimension": "security", "consequence": "Password proves ownership of the existing account." },
+              { "dimension": "friction", "consequence": "Extra sign-in step required for linking." }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "action": "answer_decision",
+            "params": {
+              "decisionId": "dec-oauth-0001",
+              "decision": { "account_linking_policy": "explicit_link" },
+              "evidence": ["oauth_callback_change", "user_identity_schema_change"]
+            }
+          },
+          { "action": "delegate_decision", "params": { "decisionId": "dec-oauth-0001" } }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "OAuth identity layer",
+        "category": "security",
+        "status": "in_progress",
+        "confidence": 0.92,
+        "evidenceLinks": ["src/auth/service.ts", "migrations/001_create_identities.sql"]
+      },
+      "children": []
+    }
+  }
+}

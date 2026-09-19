@@ -1,0 +1,57 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "Decision",
+      "props": {
+        "decisionId": "dec-ratelimit-0001",
+        "title": "Redis unavailability policy",
+        "severity": "recommended",
+        "context": "Rate limiting depends on Redis. What should happen when Redis is unavailable?",
+        "options": [
+          {
+            "id": "fail_open",
+            "label": "Fail open",
+            "description": "Allow requests through when Redis is unavailable.",
+            "tradeoffs": [
+              { "dimension": "availability", "consequence": "API stays up during Redis outages." },
+              { "dimension": "abuse protection", "consequence": "Rate limits stop being enforced while Redis is down." }
+            ]
+          },
+          {
+            "id": "fail_closed",
+            "label": "Fail closed",
+            "description": "Reject requests with 503 when Redis is unavailable.",
+            "tradeoffs": [
+              { "dimension": "abuse protection", "consequence": "Rate limits are always enforced." },
+              { "dimension": "availability", "consequence": "A Redis outage takes down the public API." }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "action": "answer_decision",
+            "params": {
+              "decisionId": "dec-ratelimit-0001",
+              "decision": { "redis_failure_policy": "fail_open" },
+              "evidence": ["se-ratelimit-0002"]
+            }
+          },
+          { "action": "delegate_decision", "params": { "decisionId": "dec-ratelimit-0001" } }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "Redis-backed rate limiter",
+        "category": "architecture",
+        "status": "in_progress",
+        "confidence": 0.89,
+        "evidenceLinks": ["src/middleware/rate-limiter.ts", "src/redis/client.ts"]
+      },
+      "children": []
+    }
+  }
+}

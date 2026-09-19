@@ -1,0 +1,5 @@
+{
+  "api_change": ["summary", "diff"],
+  "architecture_change": ["summary"],
+  "security_change": ["summary"]
+}

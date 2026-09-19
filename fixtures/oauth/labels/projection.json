@@ -1,0 +1,57 @@
+{
+  "oauth-identity-layer": {
+    "attention": "highlight",
+    "subject": "security",
+    "representation": "diagram",
+    "density": "detailed",
+    "confidence": 0.92,
+    "showEvidence": true,
+    "showCode": false,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  },
+  "oauth-migration": {
+    "attention": "highlight",
+    "subject": "schema",
+    "representation": "table",
+    "density": "detailed",
+    "confidence": 0.93,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  },
+  "oauth-dependency": {
+    "attention": "surface",
+    "subject": "dependency",
+    "representation": "graph",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["ChangeOverview"],
+    "renderMode": "autonomous"
+  },
+  "oauth-account-linking-decision": {
+    "attention": "interrupt",
+    "subject": "decision",
+    "representation": "decision",
+    "density": "normal",
+    "confidence": 0.97,
+    "showEvidence": true,
+    "showCode": false,
+    "secondaryViews": ["ChangeOverview"],
+    "renderMode": "autonomous"
+  },
+  "oauth-linking-test-failure": {
+    "attention": "highlight",
+    "subject": "tests",
+    "representation": "failure",
+    "density": "detailed",
+    "confidence": 0.99,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["TestMatrix", "CodeDiff"],
+    "renderMode": "autonomous"
+  }
+}

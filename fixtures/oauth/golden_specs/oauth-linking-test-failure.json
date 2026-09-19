@@ -1,0 +1,40 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "FailureAnalysis",
+      "props": {
+        "title": "pnpm test failed: oauth account linking",
+        "command": "pnpm test",
+        "runner": "vitest",
+        "exitCode": 1,
+        "failures": [
+          {
+            "file": "tests/auth/oauth.test.ts",
+            "testName": "oauth account linking > links a Google identity to an existing account by email",
+            "message": "expected 7 to be null"
+          }
+        ],
+        "linkedChangeUnits": ["oauth-identity-layer"],
+        "note": "Agent reported all checks pass while one test failed.",
+        "actions": [
+          {
+            "action": "request_changes",
+            "params": { "instruction": "Fix the failing oauth account-linking test before finishing." }
+          }
+        ]
+      },
+      "children": ["test-matrix"]
+    },
+    "test-matrix": {
+      "type": "TestMatrix",
+      "props": {
+        "rows": [
+          { "name": "unit tests", "status": "passed", "passed": 14, "failed": 0, "skipped": 0 },
+          { "name": "integration tests", "status": "failed", "passed": 0, "failed": 1, "skipped": 0 }
+        ]
+      },
+      "children": []
+    }
+  }
+}

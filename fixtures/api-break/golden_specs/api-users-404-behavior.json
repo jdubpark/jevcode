@@ -1,0 +1,29 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "BehaviorDelta",
+      "props": {
+        "title": "GET /users/:id on missing user: 404 -> 200 with null body",
+        "subject": "missing_user_response",
+        "before": "HTTP 404 { error: \"user <id> not found\" }",
+        "after": "HTTP 200 { user: null }",
+        "symbols": ["handleGetUser"],
+        "files": ["src/routes/users.ts", "tests/users.test.ts"],
+        "actions": [
+          { "action": "restore_previous_api_semantics", "params": { "symbol": "handleGetUser" } },
+          { "action": "accept_changes", "params": { "changeUnitId": "api-users-404-behavior" } }
+        ]
+      },
+      "children": ["diff"]
+    },
+    "diff": {
+      "type": "CodeDiff",
+      "props": {
+        "file": "src/routes/users.ts",
+        "diff": " export function handleGetUser(id: number): { status: number; body: unknown } {\n   const user = users.find((u) => u.id === id);\n-  if (!user) {\n-    throw new NotFoundError(`user ${id} not found`);\n-  }\n-  return { status: 200, body: { user } };\n+  return user\n+    ? { status: 200, body: { user } }\n+    : { status: 200, body: { user: null } };\n }\n"
+      },
+      "children": []
+    }
+  }
+}

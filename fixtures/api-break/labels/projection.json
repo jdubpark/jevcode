@@ -1,0 +1,24 @@
+{
+  "api-users-404-behavior": {
+    "attention": "highlight",
+    "subject": "api",
+    "representation": "before_after",
+    "density": "detailed",
+    "confidence": 0.91,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff", "FailureAnalysis"],
+    "renderMode": "autonomous"
+  },
+  "api-users-404-stale-test": {
+    "attention": "surface",
+    "subject": "tests",
+    "representation": "failure",
+    "density": "normal",
+    "confidence": 0.97,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  }
+}

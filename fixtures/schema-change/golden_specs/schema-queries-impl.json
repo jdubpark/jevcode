@@ -1,0 +1,17 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "Profile query layer",
+        "category": "implementation",
+        "status": "validated",
+        "confidence": 0.94,
+        "scope": "local",
+        "evidenceLinks": ["src/db/queries.ts"]
+      },
+      "children": []
+    }
+  }
+}
