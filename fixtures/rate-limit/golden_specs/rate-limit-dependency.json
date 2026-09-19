@@ -1,0 +1,30 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "DependencyDelta",
+      "props": {
+        "title": "ioredis",
+        "added": [
+          { "name": "ioredis", "version": "^5.4.1", "reason": "distributed rate limiting", "usage": "src/redis/client.ts" }
+        ],
+        "removed": [],
+        "actions": [
+          { "action": "show_exact_diff", "params": { "files": ["package.json"] } }
+        ]
+      },
+      "children": ["overview"]
+    },
+    "overview": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "ioredis dependency",
+        "category": "dependency",
+        "status": "validated",
+        "confidence": 0.94,
+        "evidenceLinks": ["package.json"]
+      },
+      "children": []
+    }
+  }
+}

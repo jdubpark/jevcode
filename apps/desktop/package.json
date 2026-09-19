@@ -1,0 +1,47 @@
+{
+  "name": "jevcode-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && vite build && vite build -c vite.preload.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "vitest run",
+    "start": "electron .",
+    "rebuild": "node scripts/native-abi.mjs electron",
+    "replay": "node scripts/replay.mjs",
+    "rebuild:node": "node scripts/native-abi.mjs node"
+  },
+  "dependencies": {
+    "@jevcode/agent-codex": "workspace:^",
+    "@jevcode/agent-core": "workspace:^",
+    "@jevcode/contracts": "workspace:*",
+    "@jevcode/evidence-engine": "workspace:^",
+    "@jevcode/jev-router": "workspace:^",
+    "@jevcode/semantic-core": "workspace:^",
+    "@jevcode/storage": "workspace:^",
+    "@jevcode/telemetry": "workspace:^",
+    "@jevcode/ui-catalog": "workspace:^",
+    "@jevcode/ui-compiler": "workspace:^",
+    "@json-render/core": "0.21.0",
+    "@json-render/react": "0.21.0",
+    "@xterm/xterm": "^5.5.0",
+    "chokidar": "^4.0.3",
+    "node-pty": "^1.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.11",
+    "vitest": "^3.0.5"
+  }
+}

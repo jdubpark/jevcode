@@ -1,0 +1,57 @@
+{
+  "rate-limit-architecture": {
+    "attention": "surface",
+    "subject": "architecture",
+    "representation": "diagram",
+    "density": "compact",
+    "confidence": 0.89,
+    "showEvidence": true,
+    "showCode": false,
+    "secondaryViews": [],
+    "renderMode": "conservative"
+  },
+  "rate-limit-impl": {
+    "attention": "surface",
+    "subject": "code",
+    "representation": "summary",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  },
+  "rate-limit-dependency": {
+    "attention": "surface",
+    "subject": "dependency",
+    "representation": "graph",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["ChangeOverview"],
+    "renderMode": "autonomous"
+  },
+  "rate-limit-fail-open-decision": {
+    "attention": "interrupt",
+    "subject": "decision",
+    "representation": "decision",
+    "density": "normal",
+    "confidence": 0.96,
+    "showEvidence": true,
+    "showCode": false,
+    "secondaryViews": ["ArchitectureDelta"],
+    "renderMode": "autonomous"
+  },
+  "rate-limit-validation": {
+    "attention": "surface",
+    "subject": "tests",
+    "representation": "table",
+    "density": "normal",
+    "confidence": 0.98,
+    "showEvidence": true,
+    "showCode": false,
+    "secondaryViews": ["ChangeOverview", "ExecutionTimeline"],
+    "renderMode": "autonomous"
+  }
+}

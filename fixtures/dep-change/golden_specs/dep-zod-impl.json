@@ -1,0 +1,17 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "ChangeOverview",
+      "props": {
+        "title": "fetchJson rewritten on fetch + zod",
+        "category": "implementation",
+        "status": "validated",
+        "confidence": 0.94,
+        "scope": "module",
+        "evidenceLinks": ["src/helpers/http.ts", "src/app.ts"]
+      },
+      "children": []
+    }
+  }
+}

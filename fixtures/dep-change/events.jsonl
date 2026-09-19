@@ -1,0 +1,33 @@
+{"type":"agent_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:00.000Z","prompt":"Replace axios with native fetch plus zod validation, and tidy formatting."}
+{"type":"agent_message","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:01.300Z","role":"assistant","text":"I will swap axios for fetch, add zod, and run the formatter over the utils."}
+{"type":"tool_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:02.500Z","tool":"read_file","input":"src/helpers/http.ts"}
+{"type":"tool_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:03.000Z","tool":"read_file","output":"read 6 lines from src/helpers/http.ts"}
+{"type":"file_read","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:03.100Z","path":"src/helpers/http.ts"}
+{"type":"file_read","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:03.900Z","path":"src/app.ts"}
+{"type":"agent_message","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:04.500Z","role":"assistant","text":"Plan: remove axios, add zod, update fetchJson callers, format src/utils/format.ts."}
+{"type":"command_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:06.000Z","command":"pnpm remove axios && pnpm add zod"}
+{"type":"command_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:10.500Z","command":"pnpm remove axios && pnpm add zod","exitCode":0,"stdout":"Packages: -1 +1\n","stderr":""}
+{"type":"command_executed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:10.600Z","command":"pnpm remove axios && pnpm add zod","exitCode":0,"isDestructive":false}
+{"type":"dependency_change","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:10.700Z","manifest":"package.json","added":[{"name":"zod","version":"^3.24.1"}],"removed":[{"name":"axios","version":"^1.7.0"}]}
+{"type":"file_changed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:11.000Z","path":"package.json","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:11.300Z","file":"package.json","added":1,"removed":1,"isFormattingOnly":false,"isConfigOnly":true,"isLockfile":false}
+{"type":"file_changed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:12.000Z","path":"src/helpers/http.ts","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:12.300Z","file":"src/helpers/http.ts","added":9,"removed":3,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":false}
+{"type":"symbol_delta","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:12.600Z","path":"src/helpers/http.ts","added":[],"removed":[],"modified":[{"name":"fetchJson","kind":"function","signature":"export async function fetchJson<T>(url: string, schema: z.ZodType<T>): Promise<T> {","startLine":3,"endLine":10}]}
+{"type":"file_changed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:13.000Z","path":"src/app.ts","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:13.300Z","file":"src/app.ts","added":5,"removed":1,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":false}
+{"type":"symbol_delta","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:13.600Z","path":"src/app.ts","added":[{"name":"z","kind":"import","signature":"import { z } from \"zod\";","startLine":1,"endLine":1},{"name":"postSchema","kind":"variable","signature":"const postSchema = z.object({ id: z.number(), title: z.string() });","startLine":11,"endLine":11}],"removed":[],"modified":[]}
+{"type":"file_changed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:14.000Z","path":"src/utils/format.ts","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:14.300Z","file":"src/utils/format.ts","added":6,"removed":6,"isFormattingOnly":true,"isConfigOnly":false,"isLockfile":false}
+{"type":"file_changed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:15.000Z","path":"pnpm-lock.yaml","kind":"modified"}
+{"type":"git_hunk","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:15.300Z","file":"pnpm-lock.yaml","added":6,"removed":6,"isFormattingOnly":false,"isConfigOnly":false,"isLockfile":true}
+{"type":"command_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:16.000Z","command":"pnpm test"}
+{"type":"test_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:16.500Z","command":"pnpm test"}
+{"type":"test_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:19.500Z","command":"pnpm test","exitCode":0}
+{"type":"test_result","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:19.700Z","runner":"vitest","command":"pnpm test","passed":18,"failed":0,"skipped":0,"failures":[]}
+{"type":"command_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:20.000Z","command":"pnpm test","exitCode":0,"stdout":"Test Files  1 passed (1)\nTests  18 passed (18)\n","stderr":""}
+{"type":"command_started","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:21.000Z","command":"pnpm typecheck"}
+{"type":"command_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:22.500Z","command":"pnpm typecheck","exitCode":0,"stdout":"","stderr":""}
+{"type":"command_executed","repoId":"repo-depchange-demo","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:22.600Z","command":"pnpm typecheck","exitCode":0,"isDestructive":false}
+{"type":"agent_message","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:23.500Z","role":"assistant","text":"Dependencies swapped; formatting noise in utils and lockfile updates included."}
+{"type":"agent_completed","sessionId":"sess-depchange-0001","ts":"2026-09-18T09:00:24.000Z"}

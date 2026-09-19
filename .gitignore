@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.jevcode/
+coverage/
+*.db
+*.log
+.DS_Store
+.env*

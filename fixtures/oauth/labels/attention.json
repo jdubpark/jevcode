@@ -1,0 +1,123 @@
+{
+  "oauth-identity-layer": {
+    "shouldSurface": true,
+    "importance": 0.88,
+    "relevance": 0.9,
+    "interruption": 0.05,
+    "mentalModelChange": 0.7,
+    "semanticCategory": "security_change",
+    "scope": "subsystem",
+    "humanDecision": "none",
+    "needsSystem2": true,
+    "confidence": 0.92,
+    "probabilities": {
+      "security_change": 0.82,
+      "architecture_change": 0.12,
+      "schema_change": 0.04,
+      "implementation_change": 0.02
+    }
+  },
+  "oauth-migration": {
+    "shouldSurface": true,
+    "importance": 0.96,
+    "relevance": 0.91,
+    "interruption": 0.18,
+    "mentalModelChange": 0.75,
+    "semanticCategory": "schema_change",
+    "scope": "subsystem",
+    "humanDecision": "none",
+    "needsSystem2": true,
+    "confidence": 0.93,
+    "probabilities": {
+      "schema_change": 0.9,
+      "api_change": 0.05,
+      "implementation_change": 0.05
+    }
+  },
+  "oauth-dependency": {
+    "shouldSurface": true,
+    "importance": 0.72,
+    "relevance": 0.81,
+    "interruption": 0.08,
+    "mentalModelChange": 0.45,
+    "semanticCategory": "dependency_change",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.94,
+    "probabilities": {
+      "dependency_change": 0.86,
+      "implementation_change": 0.1,
+      "architecture_change": 0.04
+    }
+  },
+  "oauth-lockfile-noise": {
+    "shouldSurface": false,
+    "importance": 0.02,
+    "relevance": 0.01,
+    "interruption": 0,
+    "mentalModelChange": 0,
+    "semanticCategory": "implementation_change",
+    "scope": "local",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.98,
+    "probabilities": {
+      "implementation_change": 0.92,
+      "dependency_change": 0.05,
+      "behavior_change": 0.03
+    }
+  },
+  "oauth-account-linking-decision": {
+    "shouldSurface": true,
+    "importance": 0.94,
+    "relevance": 0.96,
+    "interruption": 0.9,
+    "mentalModelChange": 0.55,
+    "semanticCategory": "decision_candidate",
+    "scope": "subsystem",
+    "humanDecision": "required",
+    "needsSystem2": true,
+    "confidence": 0.97,
+    "probabilities": {
+      "decision_candidate": 0.91,
+      "security_change": 0.06,
+      "architecture_change": 0.02,
+      "implementation_change": 0.01
+    }
+  },
+  "oauth-linking-test-failure": {
+    "shouldSurface": true,
+    "importance": 0.66,
+    "relevance": 0.95,
+    "interruption": 0.25,
+    "mentalModelChange": 0.2,
+    "semanticCategory": "failure",
+    "scope": "module",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.99,
+    "probabilities": {
+      "failure": 0.93,
+      "test_result": 0.05,
+      "implementation_change": 0.02
+    }
+  },
+  "oauth-format-noise": {
+    "shouldSurface": false,
+    "importance": 0.02,
+    "relevance": 0.01,
+    "interruption": 0,
+    "mentalModelChange": 0,
+    "semanticCategory": "implementation_change",
+    "scope": "local",
+    "humanDecision": "none",
+    "needsSystem2": false,
+    "confidence": 0.98,
+    "probabilities": {
+      "implementation_change": 0.92,
+      "dependency_change": 0.05,
+      "behavior_change": 0.03
+    }
+  }
+}

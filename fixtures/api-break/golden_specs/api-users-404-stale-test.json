@@ -1,0 +1,36 @@
+{
+  "root": "root",
+  "elements": {
+    "root": {
+      "type": "FailureAnalysis",
+      "props": {
+        "title": "pnpm test failed: stale 404 expectation",
+        "command": "pnpm test",
+        "runner": "vitest",
+        "exitCode": 1,
+        "failures": [
+          {
+            "file": "tests/users.test.ts",
+            "testName": "GET /users/:id > returns 404 when the user is missing",
+            "message": "expected handleGetUser(999) to throw \"user 999 not found\" but it did not throw"
+          }
+        ],
+        "linkedChangeUnits": ["api-users-404-behavior"],
+        "note": "Test asserts the previous 404 contract; the behavior change made it stale.",
+        "actions": [
+          { "action": "accept_changes", "params": { "updateTest": "tests/users.test.ts" } },
+          { "action": "restore_previous_api_semantics", "params": { "symbol": "handleGetUser" } }
+        ]
+      },
+      "children": ["diff"]
+    },
+    "diff": {
+      "type": "CodeDiff",
+      "props": {
+        "file": "tests/users.test.ts",
+        "diff": "   it(\"returns 404 when the user is missing\", () => {\n-    expect(() => handleGetUser(999)).toThrowError(\"user 999 not found\");\n+    const result = handleGetUser(999);\n+    expect(result.status).toBe(200);\n+    expect(result.body).toEqual({ user: null });\n   });\n"
+      },
+      "children": []
+    }
+  }
+}

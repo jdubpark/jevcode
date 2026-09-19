@@ -1,0 +1,24 @@
+{
+  "dep-zod-add": {
+    "attention": "surface",
+    "subject": "dependency",
+    "representation": "graph",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["ChangeOverview"],
+    "renderMode": "autonomous"
+  },
+  "dep-zod-impl": {
+    "attention": "surface",
+    "subject": "code",
+    "representation": "summary",
+    "density": "normal",
+    "confidence": 0.94,
+    "showEvidence": true,
+    "showCode": true,
+    "secondaryViews": ["CodeDiff"],
+    "renderMode": "autonomous"
+  }
+}
