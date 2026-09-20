@@ -2,7 +2,7 @@
 
 Status: v1 — ready for implementation
 Audience: implementation agents, reviewers
-Source: `jevcode_PRD.md`; resolves all of PRD §60 "Open Questions for the Specification Phase".
+Source: `jevcode_PRD.md`. This document resolves all of PRD §60 "Open Questions for the Specification Phase".
 
 ---
 
@@ -12,9 +12,27 @@ The MVP proves one claim (PRD §41):
 
 > A developer can supervise a non-trivial coding-agent task more effectively through semantic generative UI than through the agent's raw CLI stream.
 
-In scope: one coding agent (Codex), one repo at a time, TypeScript/JavaScript-first analysis, 11-component catalog, Jev attention + projection passes with deterministic guardrails, Decision interrupt/resume loop, semantic review at completion, terminal + raw diff escape hatches, local-only telemetry.
+In scope:
+- one coding agent (Codex), one repo at a time
+- TypeScript/JavaScript-first analysis
+- 11-component catalog
+- Jev attention + projection passes with deterministic guardrails
+- Decision interrupt/resume loop
+- semantic review at completion
+- terminal + raw diff escape hatches
+- local-only telemetry
 
-Out of scope: Claude adapter (interface only), multi-agent, LSP, coverage/profiling/security scanners, CI/PR integration, personalization learning, policy engine, sandboxed execution, semantic Git history UI, replay UI polish.
+Out of scope:
+- Claude adapter (interface only)
+- multi-agent
+- LSP
+- coverage/profiling/security scanners
+- CI/PR integration
+- personalization learning
+- policy engine
+- sandboxed execution
+- semantic Git history UI
+- replay UI polish
 
 ## 2. Architecture
 
@@ -72,7 +90,7 @@ jevcode/
 
 ### 2.3 Contract-first rule
 
-No package may depend on another package's internals; all cross-package communication goes through `contracts` types. IPC payloads, pipeline messages, fixture formats, and `json-render` prop schemas all live in `contracts` as zod schemas with derived TypeScript types. A breaking contract change is a PR-wide change.
+No package may depend on another package's internals. All cross-package communication goes through `contracts` types. IPC payloads, pipeline messages, fixture formats, and `json-render` prop schemas all live in `contracts` as zod schemas with derived TypeScript types. A breaking contract change is a PR-wide change.
 
 ## 3. Decision Register (answers PRD §60)
 
@@ -84,35 +102,35 @@ No package may depend on another package's internals; all cross-package communic
 | What protocol? | Spawn `codex exec` (configurable subcommand) in a PTY, capture stdout/stderr, parse **structured JSONL events** when `--json`/`--output-format json` is available (verify in spike T2-1). Fallback: normalize from the human-readable transcript + evidence engine. |
 | Which events are directly available? | Determined by T2-1 spike. Expected: turn start/end, message deltas, tool calls (read/write/exec), approval requests, agent finish. Mapping table is an artifact of the spike. |
 | Which must be inferred? | Anything not in the structured stream: exact file edits (from git diff), test outcomes (from output parsing), dependency intent (from manifests + import edges). |
-| How are approvals mapped? | **Verified by spike:** headless `codex exec` runs with approval_policy=Never — no interactive approval prompts exist; declined commands surface as `command_execution` `status:"declined"` → mapped to `ApprovalRequested` events. The Decision flow covers cases the agent itself asks about plus declined-command surfacing. |
-| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait; it ends the current turn and the process exits 1 with no resume channel; mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn; queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
-| Structured decision response format | A fixed markdown/YAML block appended as a user message (PRD §8 format): `decision:`, `evidence:`, `instruction:`. Deterministic serialization from `StructuredDecision` contract. Two deny semantics (OpenCode v2 pattern): `instruction` present = correction-with-feedback (model-visible); absent = plain decline (serializer emits an explicit decline line). |
+| How are approvals mapped? | **Verified by spike:** headless `codex exec` runs with approval_policy=Never — no interactive approval prompts exist. Declined commands surface as `command_execution` `status:"declined"` and map to `ApprovalRequested` events. The Decision flow covers cases the agent itself asks about plus declined-command surfacing. |
+| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait. It ends the current turn and the process exits 1 with no resume channel. Mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn. Queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
+| Structured decision response format | A fixed markdown/YAML block appended as a user message (PRD §8 format): `decision:`, `evidence:`, `instruction:`. Deterministic serialization from `StructuredDecision` contract. Two deny semantics (OpenCode v2 pattern): `instruction` present = correction-with-feedback (model-visible). Absent = plain decline (serializer emits an explicit decline line). |
 
 ### 3.1a Durable instruction admission (OpenCode v2 pattern)
 
 Agent instructions and decision answers are **admitted through a durable inbox**, not fire-and-forget stdin writes. Design borrowed from OpenCode v2's inbox/admission model (`session.inbox`):
 
-- `AgentInstruction` carries `id` (admission id) and `mode`: `"steer"` = deliver immediately (for codex: end the turn and relaunch `codex exec resume <thread_id> "<text>"`); `"queue"` = hold and deliver one instruction per `resume()` or one auto-relay per `agent_completed` (cap 1 per completion to prevent loops).
-- Admission is idempotent by instruction id — re-offering the same id is a no-op (safe reload).
-- `sendInstruction` returns `"delivered" | "queued" | "declined"`; the desktop `InstructionRouter` persists every instruction to the `instruction_inbox` storage projection first, then offers it to the adapter; the inbox row is marked delivered/cancelled from the confirmed outcome. Pending instructions survive app restarts (`reloadPending` on boot and on session activation).
+- `AgentInstruction` carries `id` (admission id) and `mode`: `"steer"` = deliver immediately (for codex: end the turn and relaunch `codex exec resume <thread_id> "<text>"`). `"queue"` = hold and deliver one instruction per `resume()` or one auto-relay per `agent_completed` (cap 1 per completion to prevent loops).
+- Admission is idempotent by instruction id: re-offering the same id is a no-op (safe reload).
+- `sendInstruction` returns `"delivered" | "queued" | "declined"`. The desktop `InstructionRouter` persists every instruction to the `instruction_inbox` storage projection first, then offers it to the adapter. The inbox row is marked delivered/cancelled from the confirmed outcome. Pending instructions survive app restarts (`reloadPending` on boot and on session activation).
 - The renderer gets `agent:instructionState` (pending list) and can cancel via `agent:cancelInstruction`.
 - Per-session admission mutex (`SerialQueue`): sendInstruction/sendDecision/interrupt/resume/stop never interleave.
 
 ### 3.1b Execution claim, boot recovery, resume budget (OpenCode v2 pattern)
 
 - `sessions.execution_claim_ts` is set at session start and released on terminal agent exit (write-ahead claim, OpenCode's `time_suspended`).
-- Boot sweep: any session still `running` (and stale `paused`/`waiting_decision` with claim older than 24h) is marked `failed` — the codex thread id stays on the session row for later resumption.
-- Resume budget: `resume_attempts` increments per resume; ≥3 → session failed with "resume budget exhausted" (prevents crash-loops; OpenCode's resume counter).
+- Boot sweep: any session still `running` (and stale `paused`/`waiting_decision` with claim older than 24h) is marked `failed`. The codex thread id stays on the session row for later resumption.
+- Resume budget: `resume_attempts` increments per resume. At ≥3 the session fails with "resume budget exhausted" (prevents crash-loops, as in OpenCode's resume counter).
 - PTY stall watchdog: `JEVCODE_AGENT_STALL_MS` (default 0 = off) emits an `agent_waiting` event when the agent produces no output while running.
 
 ### 3.1c Model & reasoning configuration (auto-selection policy)
 
 In-app agent settings (persisted via storage preferences): `agent.model` (`"auto"` or a concrete model id from the catalog), `agent.reasoningEffort` (`"auto" | "low" | "medium" | "high" | "xhigh"`), `agent.usageBudgetFraction` (0..1, or unknown). Env overrides: `JEVCODE_CODEX_MODEL`, `JEVCODE_CODEX_REASONING_EFFORT`, `JEVCODE_USAGE_BUDGET`.
 
-Precedence at session start: explicit session input → env override → auto policy. The auto policy (TypeSafe composite-scoring pattern — Jev scores dimensions, deterministic code combines):
+Precedence at session start: explicit session input → env override → auto policy. The auto policy (TypeSafe composite-scoring pattern: Jev scores dimensions, deterministic code combines):
 
-- Jev Scores (one batched request, 3 Score questions): `prompt_complexity`, `topic_risk` (docs/tests < feature < bugfix/refactor < perf/concurrency < auth/security/migrations/infra), `work_complexity` (single file < small feature < large feature < architecture/repository-wide).
-- Deterministic `combinePolicy`: `complexity = 0.4·work + 0.35·topic + 0.25·prompt`; budget `< 0.2` → economy; `0.2–0.6` → premium iff complexity ≥ 0.7 else standard; `≥ 0.6` → premium iff complexity ≥ 0.5 else standard; unknown budget treated as 0.4 (conservative). Large expected context (≥32k tokens estimate from `⌊prompt/4⌋ + fileCount×300`) forces premium for prompt-caching benefit.
+- Jev Scores (one batched request, 3 Score questions): `prompt_complexity` and `topic_risk` (docs/tests < feature < bugfix/refactor < perf/concurrency < auth/security/migrations/infra). `work_complexity` (single file < small feature < large feature < architecture/repository-wide).
+- Deterministic `combinePolicy`: `complexity = 0.4·work + 0.35·topic + 0.25·prompt`. Budget `< 0.2` → economy. `0.2–0.6` → premium iff complexity ≥ 0.7, else standard. `≥ 0.6` → premium iff complexity ≥ 0.5, else standard. Unknown budget treated as 0.4 (conservative). Large expected context (≥32k tokens estimate from `⌊prompt/4⌋ + fileCount×300`) forces premium for prompt-caching benefit.
 - Effort from tier + complexity: economy→low (medium ≥0.6), standard→medium (high ≥0.6), premium→high (xhigh ≥0.75 or top topic-risk level).
 - Degrade fallback (no key/offline): keyword + prompt-length + file-count heuristics, confidence 0.6, flagged `[heuristic]`.
 - Result persisted as `model_selected` telemetry (modelId, tier, effort, confidence, rationale, context estimate) and shown in the session log line. Catalog: `DEFAULT_MODEL_CATALOG` = economy `gpt-5.6-mini`, standard `gpt-5.6-sol`, premium `gpt-5.6-luna` (overridable).
@@ -122,7 +140,7 @@ Precedence at session start: explicit session input → env override → auto po
 | Question | Decision |
 |---|---|
 | Tree-sitter only or LSP from v0? | **Tree-sitter only.** Grammars: `typescript`, `tsx`, `javascript` (+ `json` for manifests) in v0. Parser registry makes adding Python/Go later a config change. |
-| Symbol identity across edits? | `SymbolId = relativePath + "#" + name + "(" + kind + ")@" + sha1(signatureText)`. Same name+kind with changed hash ⇒ "modified"; present in base parse but absent in new ⇒ "removed"; inverse ⇒ "added". |
+| Symbol identity across edits? | `SymbolId = relativePath + "#" + name + "(" + kind + ")@" + sha1(signatureText)`. Same name+kind with changed hash ⇒ "modified". Present in base parse but absent in new ⇒ "removed". Inverse ⇒ "added". |
 | How are semantic changes grouped? | Deterministic clustering (see §6). Jev labels/ranks clusters but never creates or splits them. |
 | Re-index frequency? | Incremental on file-write events (300ms debounce per file). Full re-index of repo on open (background, ≤60s for 10k files) and on session start against base commit. |
 
@@ -130,11 +148,11 @@ Precedence at session start: explicit session input → env override → auto po
 
 | Question | Decision |
 |---|---|
-| Runtime | **TypeSafe API** (System One models — Jev) via the official JS SDK (`typesafe` npm package) or HTTP API. All Jev passes decompose into `Choice` / `Noul` / `Score` primitives asked over the same state in one batched request per pass. The model's calibrated probabilities ARE the `probabilities`/`confidence` in `JevResult`. `JevClient` isolates the provider; the degrade router is the no-key/offline path. |
+| Runtime | **TypeSafe API** (System One models — Jev) via the official JS SDK (`typesafe` npm package) or HTTP API. All Jev passes decompose into `Choice` / `Noul` / `Score` primitives asked over the same state in one batched request per pass. The model's calibrated probabilities ARE the `probabilities`/`confidence` in `JevResult`. `JevClient` isolates the provider. The degrade router is the no-key/offline path. |
 | Exact question schemas | Defined in §8. Two passes only: Attention (Pass A), Projection (Pass B). No ad-hoc questions in v0. |
 | Single or parallel calls? | One batched call per Pass A flush (≤8 candidate units). Pass B: one call per surfaced unit, ≤4 in flight. |
-| Deterministic overrides | Guardrail rules in §8.3 are evaluated **before and after** Jev; they clamp or replace Jev outputs. They cannot be overridden by the model. |
-| Confidence thresholds | `≥0.90` autonomous render; `≥0.70` conservative render (more evidence, lower density); `≥0.50` generic semantic summary + System-2 request; `<0.50` suppress/defer. Per-category overrides allowed. |
+| Deterministic overrides | Guardrail rules in §8.3 are evaluated before and after Jev. They clamp or replace Jev outputs. They cannot be overridden by the model. |
+| Confidence thresholds | `≥0.90` autonomous render. `≥0.70` conservative render (more evidence, lower density). `≥0.50` generic semantic summary + System-2 request. `<0.50` suppress/defer. Per-category overrides allowed. |
 | Retry behavior | One retry on schema/validation failure, then deterministic defaults. No retries on policy outputs. |
 | Offline/degraded | Degrade router (deterministic heuristic maps evidence types → category/importance/representation) with `confidence=0.6` flagged as "heuristic" in the UI and in `jev_decisions`. This is also the fixture/demo path. |
 
@@ -144,7 +162,7 @@ Precedence at session start: explicit session input → env override → auto po
 |---|---|
 | Exact initial catalog | 11 components (§9). P0: `ChangeOverview`, `Decision`, `CodeDiff`, `Terminal`, `TestMatrix`, `FailureAnalysis`. P1: `BehaviorDelta`, `ArchitectureDelta`, `SchemaDelta`, `DependencyDelta`, `ExecutionTimeline`. |
 | Diagram library | **React Flow** (`@xyflow/react`) for `ArchitectureDelta` and `DependencyDelta` node/edge graphs. Custom table layout for `SchemaDelta`. No general diagram generation. |
-| Diff library | **diff2html** (`diff2html`/`diff2html-ui`) for `CodeDiff`; xterm.js for `Terminal`. |
+| Diff library | **diff2html** (`diff2html`/`diff2html-ui`) for `CodeDiff`. xterm.js for `Terminal`. |
 | Layout stability | Enforced by `SurfaceManager` (§9.6): minimum surface lifetime 8s, interaction lock, patch-streaming updates, pinning, expansion-state preservation, no auto-hide of user-opened raw views. |
 | Nested views | Single generative workspace + drilldown as inline expansion (progressive disclosure per PRD §6.6). No nested modal stacks in v0. |
 
@@ -152,7 +170,7 @@ Precedence at session start: explicit session input → env override → auto po
 
 | Question | Decision |
 |---|---|
-| Event-sourced graph? | **Yes.** All pipeline facts and mutations append to a `events` table; semantic graph and UI state are projections rebuilt on boot. Enables replay (§PRD 38) and audit without extra machinery. |
+| Event-sourced graph? | **Yes.** All pipeline facts and mutations append to a `events` table. Semantic graph and UI state are projections rebuilt on boot. Enables replay (§PRD 38) and audit without extra machinery. |
 | UI snapshots | Every emitted `json-render` spec is persisted with its `UIIntent` and Jev decisions (`ui_snapshots`), keyed by session and semantic event. |
 | Task replay | Replay = re-feed stored events through the pipeline with Jev in playback mode (fixtures/replay runner). v0 ships replay as internal tooling, not polished UI. |
 
@@ -161,8 +179,8 @@ Precedence at session start: explicit session input → env override → auto po
 | Question | Decision |
 |---|---|
 | File edit → semantic surface | SLOs in §13: evidence ≤2s p50, semantic flush ≤5s, Phase A skeleton ≤100ms, full surface ≤1s after Jev. |
-| Indexing overhead | Analysis worker only; renderer never blocks; target ≤10% sustained CPU during indexing. |
-| Burst batching | 500ms window, cap 25 facts/batch; same-file facts merge (latest wins); agent events never merged, ring-buffered (100k) into terminal scrollback. |
+| Indexing overhead | Analysis worker only. Renderer never blocks. Target ≤10% sustained CPU during indexing. |
+| Burst batching | 500ms window, cap 25 facts/batch. Same-file facts merge (latest wins). Agent events never merged, ring-buffered (100k) into terminal scrollback. |
 
 ### 3.7 Security
 
@@ -170,9 +188,9 @@ Precedence at session start: explicit session input → env override → auto po
 |---|---|
 | Agent process permissions | Runs as the user's own account, cwd pinned to the opened repo root. No sandboxing in v0 (explicit non-goal). |
 | Shell approval model | Agent-initiated destructive commands (see §8.3.1) trigger a required Decision before execution is confirmed to the agent, only when the agent asks for approval. Jevcode does not intercept arbitrary PTY commands in v0. |
-| Renderer sandboxing | `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; preload exposes only `window.jevcode` with the allowlisted API. |
+| Renderer sandboxing | `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. Preload exposes only `window.jevcode` with the allowlisted API. |
 | Secrets handling | Redaction pipeline before any repo content reaches Jev/System-2 context (pattern set + .env exclusion). Terminal output is never sent to model context unless explicitly invoked by an action. |
-| Model-context redaction | Same pipeline; redacted spans replaced with `[REDACTED:<kind>]`, counts logged to telemetry. |
+| Model-context redaction | Same pipeline. Redacted spans replaced with `[REDACTED:<kind>]`, counts logged to telemetry. |
 
 ## 4. Shared Contracts (`packages/contracts`)
 
@@ -310,7 +328,7 @@ interface UIIntent {
         jev:debug, telemetry:ack
 ```
 
-Every payload zod-validated in both directions; unknown channels rejected.
+Every payload is zod-validated in both directions. Unknown channels are rejected.
 
 ## 5. Event Pipeline (PRD §33, concretized)
 
@@ -343,10 +361,10 @@ Test parsing ─┤
 
 Ordering and idempotency guarantees:
 
-- Every fact carries a `sessionId` and a monotonically increasing sequence; projections tolerate duplicates (idempotent upsert by `factId`).
-- Facts referencing a `path` are applied in sequence order; concurrent edits to one file collapse to the latest within a batch.
-- Semantic projection is a pure function of (base parse, ordered facts) — replayable.
-- Jev calls are async and unordered-safe: results apply by `changeUnitId` + `decisionVersion`; stale results (older version) are discarded.
+- Every fact carries a `sessionId` and a monotonically increasing sequence. Projections tolerate duplicates (idempotent upsert by `factId`).
+- Facts referencing a `path` are applied in sequence order. Concurrent edits to one file collapse to the latest within a batch.
+- Semantic projection is a pure function of (base parse, ordered facts), so it is replayable.
+- Jev calls are async and unordered-safe: results apply by `changeUnitId` + `decisionVersion`. Stale results (older version) are discarded.
 
 ## 6. Semantic Engine (`packages/semantic-core`)
 
@@ -356,24 +374,24 @@ Input: ordered `EvidenceFact`s for a session. Output: `ChangeUnit` upserts.
 
 1. **Idle split.** Facts with >120s gap between consecutive facts begin a new temporal bucket.
 2. **Connectivity graph.** Within a bucket, build a graph over files:
-   - edge (a,b) if a and b appear in the same `git_hunk` batch (diff snapshot) — weight 1;
-   - edge (a,b) if a symbol in a is imported/exported by b — weight 0.8;
+   - edge (a,b) if a and b appear in the same `git_hunk` batch (diff snapshot) — weight 1.
+   - edge (a,b) if a symbol in a is imported/exported by b — weight 0.8.
    - edge (a,b) if a and b changed within the same 500ms batch window — weight 0.5.
 3. **Components.** Connected components = candidate ChangeUnits (min size: 1 file or 1 non-trivial fact).
-4. **Attachment.** A new fact attaches to the most-connected existing unit (≥1 edge); otherwise starts a new candidate.
-5. **Merge/supersede.** If a later bucket's component is >50% connected to an existing unit, merge. `revert_detected` facts set units to `reverted`; git-reset detection sets `superseded`.
-6. **Deterministic summary.** Title = "Changed N files: <top-3 files>" (placeholder). Jev Pass A replaces title/category/intent; on Jev failure the placeholder stands.
+4. **Attachment.** A new fact attaches to the most-connected existing unit (≥1 edge). Otherwise it starts a new candidate.
+5. **Merge/supersede.** If a later bucket's component is >50% connected to an existing unit, merge. `revert_detected` facts set units to `reverted`. Git-reset detection sets `superseded`.
+6. **Deterministic summary.** Title = "Changed N files: <top-3 files>" (placeholder). Jev Pass A replaces title/category/intent. On Jev failure the placeholder stands.
 
-Rationale: clustering is pure structure; Jev supplies semantics. Property tests: clustering is invariant to fact reordering within a bucket and to bucket-level shuffling.
+Rationale: clustering is pure structure. Jev supplies semantics. Property tests: clustering is invariant to fact reordering within a bucket and to bucket-level shuffling.
 
 ### 6.2 Semantic graph
 
-Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `Validation`, `Failure`, `Command`, `AgentEvent`. Edge types per PRD §10. Stored as projection tables (`graph_nodes`, `graph_edges`) rebuilt from events on boot. The graph is the query substrate for `BlastRadius` and drilldown; v0 ships no interactive graph UI beyond `ArchitectureDelta`.
+Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `Validation`, `Failure`, `Command`, `AgentEvent`. Edge types per PRD §10. Stored as projection tables (`graph_nodes`, `graph_edges`) rebuilt from events on boot. The graph is the query substrate for `BlastRadius` and drilldown. V0 ships no interactive graph UI beyond `ArchitectureDelta`.
 
 ### 6.3 Validation / Failure extraction
 
 - `test_result` facts → `Validation` rows keyed by `runner+command+ts`, plus `Failure` rows per failing test.
-- Failing tests attach to ChangeUnits via: (a) failing test file in unit's file set; (b) test name mentioning a unit symbol.
+- Failing tests attach to ChangeUnits via: (a) failing test file in the unit's file set, and (b) test name mentioning a unit symbol.
 - Build/lint output parsed with the same pattern (`build_result` facts) for typecheck/lint rows in `TestMatrix`.
 
 ## 7. Evidence Engine (`packages/evidence-engine`)
@@ -381,14 +399,14 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
 | Collector | Input | Output facts | Notes |
 |---|---|---|---|
 | GitCollector | `git status/diff` against session base commit | `git_hunk` (per file, classified formatting-only/config/lockfile) | Classifier: whitespace-only hunk detection + path heuristics (`*.lock`, `package-lock.json`, `.prettierrc`, etc.) |
-| FileWatcher | chokidar on repo root | `file_changed` | 300ms debounce; ignores `.git`; drop policy merges same-file |
-| SymbolCollector (worker) | tree-sitter parse of changed files | `symbol_delta` | vs. base parse snapshot; signature hash identity |
+| FileWatcher | chokidar on repo root | `file_changed` | 300ms debounce, ignores `.git`, drop policy merges same-file |
+| SymbolCollector (worker) | tree-sitter parse of changed files | `symbol_delta` | vs. base parse snapshot, signature hash identity |
 | DependencyCollector | `package.json` (+ `pnpm-lock.yaml`/`yarn.lock`/`package-lock.json` for resolution) | `dependency_change` | lockfile-only changes → still emit, guardrail suppresses UI |
-| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0; runner registry for extension |
+| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0, runner registry for extension |
 | CommandCollector | PTY log | `command_executed` | destructive classifier (§8.3.1) |
 | RevertDetector | git status/reset observation | `revert_detected` | |
 
-All collectors emit into the event store; none talk to the renderer directly.
+All collectors emit into the event store. None talk to the renderer directly.
 
 ## 8. Jev Harness (`packages/jev-router`)
 
@@ -402,11 +420,11 @@ interface JevClient {
 }
 ```
 
-Implementations: `TypeSafeClient` (official JS SDK; batched `Choice`/`Noul`/`Score` questions; per-answer probabilities → `probabilities`; distribution concentration → `confidence`; key via `TYPESAFE_API_KEY` env), `DegradeClient` (heuristic, always `confidence=0.6`, flagged). Selection: env config; auto-degrade on failure/offline/missing key.
+Implementations: `TypeSafeClient` (official JS SDK. Batched `Choice`/`Noul`/`Score` questions. Per-answer probabilities → `probabilities`. Distribution concentration → `confidence`. Key via `TYPESAFE_API_KEY` env), `DegradeClient` (heuristic, always `confidence=0.6`, flagged). Selection: env config. Auto-degrade on failure, offline, or a missing key.
 
 ### 8.2 Question decomposition (exact, TypeSafe primitives)
 
-All questions use TypeSafe primitives per the TypeSafe skill guidance: `Choice` (one of a defined set), `Noul` (probability of a condition holding), `Score` (degree on described levels). All Pass A questions for a batch are sent as **one request over the same state**; TypeSafe evaluates them in parallel.
+All questions use TypeSafe primitives per the TypeSafe skill guidance: `Choice` (one of a defined set), `Noul` (probability of a condition holding), `Score` (degree on described levels). All Pass A questions for a batch are sent as one request over the same state. TypeSafe evaluates them in parallel.
 
 Pass A, per candidate unit (state = unit summary + evidence hints):
 
@@ -422,27 +440,27 @@ Pass A, per candidate unit (state = unit summary + evidence hints):
 
 Pass B, per surfaced unit: `representation` (Choice over the 9 representations), `attention` (Choice), `density` (Choice), `show_evidence` (Noul), `show_code` (Noul), `secondary_views` (one Noul per catalog component, ≤3 true).
 
-Input state per unit (identical across passes): title placeholder, category hints from evidence types, file set (≤40 paths), symbol names (≤60), dependency deltas, diff stats (added/removed lines, isFormattingOnly), affected test outcomes, related decision presence, task prompt (truncated 4k chars).
+Input state per unit (identical across passes): title placeholder, category hints from evidence types, and the file set (≤40 paths). Plus symbol names (≤60), dependency deltas, and diff stats (added/removed lines, isFormattingOnly). Plus affected test outcomes, related decision presence, and the task prompt (truncated 4k chars).
 
-Prompt policy: system prompt states the Jevcode catalog, the triad (importance/relevance/interruption) definitions from PRD §17, the mental-model-delta definition (PRD §2.6), and examples from PRD §34 verbatim as few-shot context in the state.
+Prompt policy: the system prompt states the Jevcode catalog, the triad (importance/relevance/interruption) definitions from PRD §17, and the mental-model-delta definition (PRD §2.6). Examples from PRD §34 go verbatim as few-shot context in the state.
 
-Mapping to `JevResult`: `Score` level position maps linearly to 0..1 (levels evenly spaced); `Choice` answer distribution → `probabilities`; concentration of the chosen answer → `confidence`; `Noul` probability → boolean (≥0.5) plus its probability as `confidence`.
+Mapping to `JevResult`: `Score` level position maps linearly to 0..1 (levels evenly spaced). `Choice` answer distribution → `probabilities`. Concentration of the chosen answer → `confidence`. `Noul` probability → boolean (≥0.5) plus its probability as `confidence`.
 
-### 8.3 Deterministic guardrails (evaluated pre- and post-Jev; cannot be overridden)
+### 8.3 Deterministic guardrails (evaluated before and after Jev. They cannot be overridden)
 
-1. **Destructive**: `command_executed.isDestructive` (pattern list: `rm -rf`, `git push --force`, `git reset --hard`, `DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `db:reset`, migration down) → `shouldSurface=true`, `humanDecision="required"`, `interruption≥0.9`.
+1. **Destructive**: `command_executed.isDestructive` (pattern list: `rm -rf`, `git push --force`, `git reset --hard`, `DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `db:reset`, migration down). This forces `shouldSurface=true`, `humanDecision="required"`, and `interruption≥0.9`.
 2. **Security**: files matching auth/permission path patterns (`auth/`, `session/`, `token`, `oauth`, `.env`, `permissions`, `access control`) → `shouldSurface=true`, `semanticCategory="security_change"`.
 3. **Schema**: migration/schema files (`migrations/`, `prisma/`, `schema.sql`, `*.prisma`) → surface floor.
 4. **API**: changed files exporting symbols that are imported outside their module (public export heuristic) → surface floor, `api_change` candidate.
-5. **Suppress**: formatting-only diffs; lockfile-only changes; test_result with `failed=0` when user setting `auto_collapse_passing_tests` is on.
-5a. **Noise triad cap** (extension, live-calibrated): for suppressed formatting/lockfile units, cap importance ≤0.05, relevance ≤0.05, interruption ≤0.02, mental_model_change ≤0.05 (Jev batched calls otherwise over-rate noise units that carry `formatting_only`/`lockfile_only` flags).
+5. **Suppress**: formatting-only diffs, lockfile-only changes, and test_result with `failed=0` when user setting `auto_collapse_passing_tests` is on.
+5a. **Noise triad cap** (extension, live-calibrated): for suppressed formatting/lockfile units, cap importance ≤0.05, relevance ≤0.05, interruption ≤0.02, and mental_model_change ≤0.05. Jev batched calls otherwise over-rate noise units that carry `formatting_only`/`lockfile_only` flags.
 6. **Interrupt floor**: any decision with `humanDecision="required"` gets `interruption = max(interruption, 0.8)`.
-6a. **Decision presence floor** (extension, live-calibrated): units with pending `decisionIds` get importance ≥0.85, relevance ≥0.85, interruption ≥0.6 — a pending human decision is important regardless of model scoring.
+6a. **Decision presence floor** (extension, live-calibrated): units with pending `decisionIds` get importance ≥0.85, relevance ≥0.85, interruption ≥0.6. A pending human decision is important regardless of model scoring.
 7. **Relevant-now floor**: units with status `failed` are always relevant (never background).
 
 ### 8.4 Confidence policy (pure function)
 
-`renderPolicy(jev: JevResult<UIIntent>): RenderMode` per PRD §16 thresholds, plus: `attention === "interrupt"` always renders; `renderMode="conservative"` sets `density−1` level and forces `showEvidence=true`.
+`renderPolicy(jev: JevResult<UIIntent>): RenderMode` per PRD §16 thresholds, plus: `attention === "interrupt"` always renders. `renderMode="conservative"` sets `density−1` level and forces `showEvidence=true`.
 
 ### 8.5 Jev decision logging
 
@@ -452,11 +470,11 @@ Every call result is stored (`jev_decisions`: inputs hash, outputs, confidence, 
 
 ### 9.1 Compiler
 
-`compileUI(intent: UIIntent, payload: CompilePayload): JsonRenderSpec` — a **pure function** (unit-testable, no network, no React import). Maps `intent.representation` to a root component; binds payload data into props; emits secondary views as sibling surfaces. Uses json-render flat spec format: `{ root, elements: { id: { type, props, children } } }`.
+`compileUI(intent: UIIntent, payload: CompilePayload): JsonRenderSpec` — a pure function (unit-testable, no network, no React import). Maps `intent.representation` to a root component. Binds payload data into props. Emits secondary views as sibling surfaces. Uses json-render flat spec format: `{ root, elements: { id: { type, props, children } } }`.
 
-`CompilePayload` = ChangeUnit | Decision | Validation matrix | Failure set | timeline slice — one per surface.
+`CompilePayload` = ChangeUnit | Decision | Validation matrix | Failure set | timeline slice. One payload per surface.
 
-Streaming: full specs for Phase B; Phase C (System-2 text) streams in via `createSpecStreamCompiler` patches into the existing surface.
+Streaming: full specs for Phase B. Phase C (System-2 text) streams in via `createSpecStreamCompiler` patches into the existing surface.
 
 ### 9.2 Catalog definition (json-render)
 
@@ -498,7 +516,7 @@ Every component receives only plain serializable data (ids, strings, numbers, ar
 
 ### 9.4 Action allowlist and dispatch
 
-Renderer emits `action:invoke` with zod-validated params. Main's `ActionDispatcher` maps action name → handler; handler performs the side effect (agent instruction, decision answer, terminal open, pin state). Unknown actions and schema-invalid params are rejected and logged. No action string from the model ever reaches an unlisted handler.
+Renderer emits `action:invoke` with zod-validated params. Main's `ActionDispatcher` maps action name → handler. The handler performs the side effect (agent instruction, decision answer, terminal open, pin state). Unknown actions and schema-invalid params are rejected and logged. No action string from the model ever reaches an unlisted handler.
 
 ### 9.5 Progressive disclosure
 
@@ -507,7 +525,13 @@ Drilldown chain is enforced by compiler output, not by user navigation: `ChangeO
 ### 9.6 SurfaceManager (stability engine)
 
 - Surfaces have ids = `changeunit:<id>` | `decision:<id>` | `validation:<ts>` | `timeline` | `terminal` | `completion` (the completion summary surface emitted when the agent finishes).
-- Rules: min lifetime 8s; no replacement while pointer is inside the workspace or within 2s of last interaction; pinned surfaces exempt from replacement; low-importance updates apply as patches (spec patch stream) not full swaps; expansion state and scroll position keyed by surface id; user-opened raw views are never auto-hidden.
+- Rules:
+  - Minimum lifetime 8s.
+  - No replacement while the pointer is inside the workspace or within 2s of the last interaction.
+  - Pinned surfaces are exempt from replacement.
+  - Low-importance updates apply as patches (spec patch stream), not full swaps.
+  - Expansion state and scroll position are keyed by surface id.
+  - User-opened raw views are never auto-hidden.
 - Replaces PRD §22's ten rules as executable logic with unit tests.
 
 ## 10. Agent Adapter (`packages/agent-core`, `packages/agent-codex`)
@@ -533,26 +557,26 @@ interface StartSessionInput {
 }
 ```
 
-Codex adapter responsibilities: PTY lifecycle, JSONL parse (or transcript normalization fallback), event mapping (spike artifact), approval flow, interrupt/resume, exit handling, auth error surfacing (missing login → surface actionable FailureAnalysis instead of silent hang).
+Codex adapter responsibilities: PTY lifecycle, JSONL parse (or transcript normalization fallback), event mapping (spike artifact), approval flow, interrupt/resume, and exit handling. Plus auth error surfacing (missing login → surface actionable FailureAnalysis instead of silent hang).
 
 ## 11. Storage (`packages/storage`)
 
-SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main; worker never writes.
+SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes.
 
-Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`), projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`.
+Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`). Projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`.
 
 `semantic_event` is an event-store type: semantic events are appended to `events` and projected into `semantic_events`, so they survive rebuilds without re-derivation (replayed by `rebuildOnBoot`).
 
-Rebuild-on-boot: projections derived from `events`; boot replays incrementally from last checkpoint seq. Snapshot checkpointing is a stretch; v0 replays full session history (bounded: sessions archive after 30 days or 1M events).
+Rebuild-on-boot: projections are derived from `events`. Boot replays incrementally from the last checkpoint seq. Snapshot checkpointing is a stretch. V0 replays full session history (bounded: sessions archive after 30 days or 1M events).
 
 ## 12. Security Model (v0 implementation)
 
-1. Renderer sandbox per §3.7; preload exposes only `window.jevcode` (open repo, session control, action dispatch, terminal I/O, telemetry).
+1. Renderer sandbox per §3.7. Preload exposes only `window.jevcode` (open repo, session control, action dispatch, terminal I/O, telemetry).
 2. All `ipcMain.handle` entries zod-validate payloads and verify `senderFrame` origin.
-3. Repo boundary: FileWatcher and GitService accept only paths inside the opened repo; path-traversal attempts rejected.
-4. Model context redaction: `Redactor` (pattern set: AWS keys, JWT, private keys, `password=`, `token=`, `.env` values) runs on any repo content and agent transcript before Jev/System-2 calls; redaction events counted in telemetry.
+3. Repo boundary: FileWatcher and GitService accept only paths inside the opened repo. Path-traversal attempts are rejected.
+4. Model context redaction: `Redactor` (pattern set: AWS keys, JWT, private keys, `password=`, `token=`, `.env` values) runs on any repo content and agent transcript before Jev/System-2 calls. Redaction events are counted in telemetry.
 5. Command logging: every PTY command line stored in `commands` (already a PRD §31 requirement) with `isDestructive` flag.
-6. `json-render` specs validated against the catalog zod before render; catalog is closed (no dynamic component registration from model output).
+6. `json-render` specs validated against the catalog zod before render. The catalog is closed (no dynamic component registration from model output).
 
 ## 13. Performance SLOs
 
@@ -571,11 +595,16 @@ Rebuild-on-boot: projections derived from `events`; boot replays incrementally f
 
 ## 14. Telemetry & Calibration (`packages/telemetry`)
 
-Local-only append table `telemetry_events`: `surface_shown {specHash, confidence, renderMode}`, `view_switched {from,to}`, `evidence_expanded`, `diff_opened`, `terminal_opened`, `decision_answered/overridden/delegated`, `surface_dismissed`, `surface_pinned`, `agent_event_count`, `fact_count`. Exported via debug panel as JSON. Feeds PRD §45/§47 calibration; no network upload in v0.
+Local-only append table `telemetry_events`: `surface_shown {specHash, confidence, renderMode}`, `view_switched {from,to}`, `evidence_expanded`, `diff_opened`, `terminal_opened`, `decision_answered/overridden/delegated`, `surface_dismissed`, `surface_pinned`, `agent_event_count`, `fact_count`. Exported via debug panel as JSON. Feeds PRD §45/§47 calibration. No network upload in v0.
 
 ## 15. Fixtures & Replay (`fixtures/`, `evals/`)
 
-Five scenarios, each a folder with: `events.jsonl` (ordered agent events + evidence facts), `expected_units.json` (the ChangeUnits the pipeline should produce), `labels/attention.json` and `labels/projection.json` (labeled Pass A/B outputs for evals, keyed by unit slug), `golden_specs/*.json` (compiler outputs for snapshot tests), `repo/` (minimal seed repository, TypeScript):
+Five scenarios. Each scenario folder contains:
+- `events.jsonl` (ordered agent events + evidence facts)
+- `expected_units.json` (the ChangeUnits the pipeline should produce)
+- `labels/attention.json` and `labels/projection.json` (labeled Pass A/B outputs for evals, keyed by unit slug)
+- `golden_specs/*.json` (compiler outputs for snapshot tests)
+- `repo/` (minimal seed repository, TypeScript)
 
 1. `oauth` — Google OAuth + identity layer (architecture, schema, decision, one failing test).
 2. `rate-limit` — Redis dependency + fail-open decision + validation matrix (the §58 demo).
@@ -593,9 +622,9 @@ Replay runner: feeds `events.jsonl` through the real pipeline with Jev in `Playb
 | Property | clustering order-invariance, event idempotency, compiler never emits unknown component/action | fast-check |
 | Integration | fixture replay through pipeline (no model), SQLite projection rebuild, IPC round-trips | vitest + electron main harness |
 | E2E | scripted demo scenario: open repo → rate-limit task (mocked agent) → decision → answer → completion | Playwright (Electron) |
-| Evals | Jev Pass A/B against labeled fixtures; targets: `should_surface` precision ≥0.9/recall ≥0.85; representation set-accuracy ≥0.75; score MAE ≤0.15 | evals runner |
+| Evals | Jev Pass A/B against labeled fixtures. Targets: `should_surface` precision ≥0.9/recall ≥0.85, representation set-accuracy ≥0.75, and score MAE ≤0.15 | evals runner |
 
-No test file is created merely to mirror a source file; suites follow the packages' existing conventions once established.
+No test file is created merely to mirror a source file. Suites follow the packages' existing conventions once established.
 
 ## 17. Acceptance Criteria Mapping (PRD §59)
 
@@ -621,12 +650,12 @@ No test file is created merely to mirror a source file; suites follow the packag
 
 ## 18. Deferred (explicit non-goals, revisited post-MVP)
 
-LSP; call/type graphs; embeddings; coverage/profiling; security scanners; CI/GitHub PR integration; Claude adapter implementation; multi-agent; personalization; policy engine; sandboxing/containers; semantic Git history productization; replay UI; team features; Windows/Linux packaging (build config only in v0, target macOS dev first).
+LSP, call/type graphs, embeddings, coverage/profiling, security scanners, CI/GitHub PR integration, Claude adapter implementation, multi-agent, personalization, policy engine, sandboxing/containers, and semantic Git history productization. Plus replay UI, team features, and Windows/Linux packaging (build config only in v0, target macOS dev first).
 
 ## 19. Build status (stabilization pass, 2026-09-19)
 
 All 17 acceptance criteria evidenced (see `docs/acceptance.md`). Security checklist green
-(see `docs/security.md`). Performance vs SLOs recorded in `docs/perf.md`; demo runbook in
+(see `docs/security.md`). Performance vs SLOs recorded in `docs/perf.md`. The demo runbook is in
 `docs/demo.md`. Deviations from this document made during stabilization:
 
 - §8.3.2 security guardrail keeps the surface floor but no longer forces the
@@ -635,8 +664,8 @@ All 17 acceptance criteria evidenced (see `docs/acceptance.md`). Security checkl
 - §8.3.7 failed-unit relevance floor is applied post-model as a floor, not a
   forced value in the pre-clamp.
 - §8.3.5 passing-tests suppression additionally requires the unit to have no
-  diff line changes at all (`diffStats.added === 0 && diffStats.removed === 0`);
-  a unit that both edits code and runs green tests still surfaces.
+  diff line changes at all (`diffStats.added === 0 && diffStats.removed === 0`).
+  A unit that both edits code and runs green tests still surfaces.
 - Full incremental clustering remains out of scope (§6.1): a rebuild still
   re-clusters the whole session, but rebuilds are debounced to at most one per
   flush burst (25ms trailing idle), and graph-projection fact-ownership /

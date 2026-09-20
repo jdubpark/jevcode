@@ -61,6 +61,21 @@ describe("ChangeOverview", () => {
     const link = screen.getByText("migrations/001_create_identities.sql").closest("button");
     expect(link?.hasAttribute("disabled")).toBe(true);
   });
+
+  it("summarizes non-inspectable evidence without exposing opaque ids", () => {
+    render(
+      <ChangeOverview
+        props={{
+          ...props,
+          evidenceLinks: ["fact_opaque_1", "fact_opaque_2"],
+          diffs: undefined,
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("evidence-toggle")).toBeNull();
+    expect(screen.getByText("Grounded in 2 evidence items")).toBeTruthy();
+    expect(screen.queryByText("fact_opaque_1")).toBeNull();
+  });
 });
 
 describe("Decision", () => {

@@ -25,7 +25,7 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
       .catch((error: unknown) => {
         console.error("failed to list sessions", error);
       });
-  }, [bridge, props.repo]);
+  }, [bridge, props.repo, props.sessionState?.ts]);
 
   if (!props.repo) return null;
 

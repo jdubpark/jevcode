@@ -33,7 +33,7 @@ interface WorkspaceHostProps {
   onStart: (prompt: string) => void | Promise<void>;
 }
 
-type WorkspaceFilter = "activity" | "changes" | "decisions";
+type WorkspaceFilter = "overview" | "conversation" | "decisions";
 type InstructionMode = "steer" | "queue";
 type SurfaceGroup = "change" | "decision" | "verification" | "detail";
 
@@ -108,7 +108,7 @@ function formatTime(value: string): string {
 function eventSummary(event: NormalizedAgentEvent): string {
   switch (event.type) {
     case "agent_started":
-      return "Started working on the latest instruction";
+      return "Started working on the task";
     case "agent_message":
       return event.role === "user" ? "Direction received" : event.text;
     case "tool_started":
@@ -139,17 +139,12 @@ function eventSummary(event: NormalizedAgentEvent): string {
 }
 
 function isConversationEvent(event: NormalizedAgentEvent): boolean {
-  return event.type !== "file_read" && event.type !== "tool_completed";
-}
-
-function isChangeEvent(event: NormalizedAgentEvent): boolean {
   return (
-    event.type === "file_changed" ||
-    event.type === "command_started" ||
-    event.type === "command_completed" ||
-    event.type === "test_started" ||
-    event.type === "test_completed" ||
-    event.type === "tool_started"
+    event.type === "agent_started" ||
+    event.type === "agent_message" ||
+    event.type === "agent_waiting" ||
+    event.type === "agent_completed" ||
+    event.type === "agent_failed"
   );
 }
 
@@ -224,6 +219,27 @@ function ActivityMark({ kind }: { kind: string }) {
   );
 }
 
+function MessageText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = text.length > 760;
+  const visible = collapsible && !expanded ? `${text.slice(0, 720).trimEnd()}…` : text;
+  return (
+    <>
+      <p>{visible}</p>
+      {collapsible ? (
+        <button
+          type="button"
+          className="activity-message-expand"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? "Show less" : "Read full update"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
   if (event.type === "agent_started") {
     return (
@@ -234,7 +250,7 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
             <strong>Task direction</strong>
             <time>{formatTime(event.ts)}</time>
           </div>
-          <p>{event.prompt}</p>
+          <MessageText text={event.prompt} />
         </div>
       </article>
     );
@@ -249,7 +265,7 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
             <strong>{event.role === "user" ? "Your direction" : "Agent note"}</strong>
             <time>{formatTime(event.ts)}</time>
           </div>
-          <p>{event.text}</p>
+          <MessageText text={event.text} />
         </div>
       </article>
     );
@@ -290,6 +306,86 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
   );
 }
 
+
+function SessionOverview({
+  sessionState,
+  events,
+  entries,
+  openDecisions,
+}: {
+  sessionState: SessionStatePayload;
+  events: NormalizedAgentEvent[];
+  entries: Array<{ meta: SurfaceMeta }>;
+  openDecisions: number;
+}) {
+  const notes = events.filter(
+    (event) => event.type === "agent_message" && event.role === "assistant",
+  ).length;
+  const verificationViews = entries.filter(
+    (entry) => entry.meta.group === "verification",
+  ).length;
+  const terminal = sessionState.state === "completed" || sessionState.state === "failed";
+  return (
+    <div className="session-overview" aria-label="Session overview">
+      <div className="overview-step" data-state={notes > 0 ? "complete" : "pending"}>
+        <span className="overview-node" />
+        <div>
+          <strong>Context</strong>
+          <span>{notes > 0 ? `${notes} meaningful agent updates` : "Forming an approach"}</span>
+        </div>
+      </div>
+      <div
+        className="overview-step"
+        data-state={openDecisions > 0 ? "active" : sessionState.decisionCount > 0 ? "complete" : "quiet"}
+      >
+        <span className="overview-node" />
+        <div>
+          <strong>Decisions</strong>
+          <span>
+            {openDecisions > 0
+              ? `${openDecisions} waiting for you`
+              : sessionState.decisionCount > 0
+                ? `${sessionState.decisionCount} resolved`
+                : "No decision requested"}
+          </span>
+        </div>
+      </div>
+      <div
+        className="overview-step"
+        data-state={sessionState.changeUnitCount > 0 ? "complete" : terminal ? "quiet" : "pending"}
+      >
+        <span className="overview-node" />
+        <div>
+          <strong>Changes</strong>
+          <span>
+            {sessionState.changeUnitCount > 0
+              ? `${sessionState.changeUnitCount} captured`
+              : "No changes captured yet"}
+          </span>
+        </div>
+      </div>
+      <div
+        className="overview-step"
+        data-state={verificationViews > 0 || terminal ? "complete" : "pending"}
+      >
+        <span className="overview-node" />
+        <div>
+          <strong>Outcome</strong>
+          <span>
+            {sessionState.state === "completed"
+              ? "Ready for review"
+              : sessionState.state === "failed"
+                ? "Needs intervention"
+                : verificationViews > 0
+                  ? `${verificationViews} verification views`
+                  : "Work in progress"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceHost(props: WorkspaceHostProps) {
   const bridge = getBridge();
   const sessionId = props.sessionState?.sessionId ?? null;
@@ -299,8 +395,9 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   sessionRef.current = props.sessionState;
   const [workspaceEl, setWorkspaceEl] = useState<HTMLElement | null>(null);
   const [events, setEvents] = useState<NormalizedAgentEvent[]>([]);
+  const [recordedFiles, setRecordedFiles] = useState<string[]>([]);
   const [pending, setPending] = useState<AgentInstructionStatePayload["pending"]>([]);
-  const [filter, setFilter] = useState<WorkspaceFilter>("activity");
+  const [filter, setFilter] = useState<WorkspaceFilter>("overview");
   const [instructionMode, setInstructionMode] = useState<InstructionMode>("steer");
   const [instruction, setInstruction] = useState("");
   const [sending, setSending] = useState(false);
@@ -321,8 +418,9 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   useEffect(() => {
     setManager(new SurfaceManager());
     setEvents([]);
+    setRecordedFiles([]);
     setPending([]);
-    setFilter("activity");
+    setFilter("overview");
     setInstruction("");
     setActionError(null);
   }, [sessionId]);
@@ -351,7 +449,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     if (!sessionId) return;
     let cancelled = false;
     void bridge.debug
-      .listEvents(sessionId, 500)
+      .listEvents(sessionId, 2000)
       .then((stored) => {
         if (cancelled) return;
         const restored = stored.flatMap((record) => {
@@ -360,6 +458,58 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
           return parsed.success ? [parsed.data] : [];
         });
         setEvents((current) => mergeEvents(restored, current));
+        setRecordedFiles([
+          ...new Set(
+            stored.flatMap((record) => {
+              if (record.type !== "change_unit") return [];
+              const files = record.payload["files"];
+              return Array.isArray(files)
+                ? files.filter((file): file is string => typeof file === "string")
+                : [];
+            }),
+          ),
+        ]);
+        const decisionStatuses = new Map<string, string>();
+        for (const record of stored) {
+          if (record.type !== "decision") continue;
+          const id = record.payload["id"];
+          const status = record.payload["status"];
+          if (typeof id === "string" && typeof status === "string") {
+            decisionStatuses.set(id, status);
+          }
+        }
+        const snapshots = new Map<
+          string,
+          { surfaceId: string; spec: UiSpecPayload["spec"]; seq: number }
+        >();
+        for (const record of stored) {
+          if (record.type !== "ui_snapshot") continue;
+          const surfaceId = record.payload["surfaceId"];
+          const spec = record.payload["spec"];
+          if (typeof surfaceId !== "string") continue;
+          const validated = validateIncomingSpec(spec);
+          if (!validated.ok) continue;
+          snapshots.set(surfaceId, { surfaceId, spec: validated.spec, seq: record.seq });
+        }
+        const eligibleSnapshots = [...snapshots.values()]
+          .filter(
+            (snapshot) =>
+              !snapshot.surfaceId.startsWith("decision:") ||
+              decisionStatuses.get(snapshot.surfaceId.slice("decision:".length)) === "open",
+          )
+          .sort((a, b) => a.seq - b.seq);
+        const snapshot =
+          [...eligibleSnapshots]
+            .reverse()
+            .find((candidate) => candidate.surfaceId !== "completion") ??
+          eligibleSnapshots.find((candidate) => candidate.surfaceId === "completion");
+        if (snapshot !== undefined) {
+          manager.propose({
+            id: snapshot.surfaceId,
+            spec: snapshot.spec,
+            slot: slotForSurfaceId(snapshot.surfaceId),
+          });
+        }
       })
       .catch((error: unknown) => {
         console.error("failed to restore session activity", error);
@@ -372,12 +522,25 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     const offInstructions = bridge.onInstructionState((instructionState) => {
       if (instructionState.sessionId === sessionId) setPending(instructionState.pending);
     });
+    const offChangeUnit = bridge.on("changeunit:upsert", (payload) => {
+      if (payload.sessionId !== sessionId) return;
+      setRecordedFiles((current) => [
+        ...new Set([...current, ...payload.changeUnit.files]),
+      ]);
+    });
+    const offDecisionResolved = bridge.on("decision:resolved", (payload) => {
+      if (payload.sessionId === sessionId) {
+        manager.dismiss(`decision:${payload.decisionId}`);
+      }
+    });
     return () => {
       cancelled = true;
       offEvent();
       offInstructions();
+      offChangeUnit();
+      offDecisionResolved();
     };
-  }, [bridge, sessionId]);
+  }, [bridge, manager, sessionId]);
 
   useEffect(() => {
     const offSpec = bridge.on("ui:spec", (payload: UiSpecPayload) => {
@@ -451,23 +614,18 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     if (filter === "decisions") {
       return entries.filter((entry) => entry.meta.group === "decision");
     }
-    if (filter === "changes") {
-      return entries.filter((entry) => entry.meta.group !== "decision");
-    }
-    return entries;
+    return filter === "overview" ? entries : [];
   }, [entries, filter]);
 
   const visibleEvents = useMemo(() => {
     const selected = events.filter((event) => {
-      if (filter === "decisions") return false;
-      if (filter === "changes") return isChangeEvent(event);
-      return isConversationEvent(event);
+      return filter === "conversation" && isConversationEvent(event);
     });
     return selected.slice(-MAX_VISIBLE_EVENTS);
   }, [events, filter]);
 
   const changedFiles = useMemo(() => {
-    const files = new Set<string>();
+    const files = new Set<string>(recordedFiles);
     for (const event of events) {
       if (event.type === "file_changed") files.add(event.path);
     }
@@ -484,12 +642,22 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
       }
     }
     return [...files];
-  }, [entries, events]);
+  }, [entries, events, recordedFiles]);
 
   const latestAssistant = [...events]
     .reverse()
     .find((event) => event.type === "agent_message" && event.role === "assistant");
-  const latestEvent = events.at(-1);
+  const latestEvent = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.type === "agent_message" ||
+        event.type === "file_changed" ||
+        event.type === "test_completed" ||
+        event.type === "agent_waiting" ||
+        event.type === "agent_completed" ||
+        event.type === "agent_failed",
+    );
   const openDecisions = entries.filter((entry) => entry.meta.group === "decision").length;
   const state = props.sessionState?.state;
 
@@ -566,17 +734,17 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
         <nav className="workspace-tabs" aria-label="Workspace views">
           <button
             type="button"
-            aria-pressed={filter === "activity"}
-            onClick={() => setFilter("activity")}
+            aria-pressed={filter === "overview"}
+            onClick={() => setFilter("overview")}
           >
-            Activity
+            Overview
           </button>
           <button
             type="button"
-            aria-pressed={filter === "changes"}
-            onClick={() => setFilter("changes")}
+            aria-pressed={filter === "conversation"}
+            onClick={() => setFilter("conversation")}
           >
-            Changes <span>{props.sessionState?.changeUnitCount ?? 0}</span>
+            Conversation <span>{events.filter(isConversationEvent).length}</span>
           </button>
           <button
             type="button"
@@ -588,14 +756,23 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
         </nav>
 
         <div className="session-scroll">
+          {filter === "overview" && props.sessionState ? (
+            <SessionOverview
+              sessionState={props.sessionState}
+              events={events}
+              entries={entries}
+              openDecisions={openDecisions}
+            />
+          ) : null}
+
           {visibleEvents.length === 0 && visibleEntries.length === 0 ? (
             <div className="activity-empty">
               <span className="activity-pulse" />
-              <h2>{filter === "activity" ? "Building session context" : `No ${filter} yet`}</h2>
+              <h2>{filter === "conversation" ? "No conversation yet" : "No decisions yet"}</h2>
               <p>
-                {filter === "activity"
-                  ? "The first agent update will appear here. You can steer the run at any time."
-                  : "This view will fill as the agent records concrete work."}
+                {filter === "conversation"
+                  ? "Meaningful agent updates will appear here without tool or command noise."
+                  : "Jev will place decisions here when your input is needed."}
               </p>
             </div>
           ) : null}
@@ -611,8 +788,8 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
           {visibleEntries.length > 0 ? (
             <div className="work-products">
               <div className="work-products-heading">
-                <h2>{filter === "decisions" ? "Decisions to make" : "Work products"}</h2>
-                <span>{visibleEntries.length}</span>
+                <h2>{filter === "decisions" ? "Decisions to make" : "Generative views"}</h2>
+                <span className="jev-view-label">Jev · {visibleEntries.length}</span>
               </div>
               {visibleEntries.map(({ surface, meta }) => (
                 <article
@@ -620,7 +797,6 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
                   className={`surface surface-${meta.group}`}
                   data-surface-id={surface.id}
                   data-pinned={surface.pinned ? "true" : "false"}
-                  title={surface.id}
                 >
                   <div className="surface-chrome">
                     <div className="surface-heading">
@@ -722,7 +898,13 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
           <h2>Current context</h2>
           <div className="context-now">
             <span className="context-now-label">Now</span>
-            <p>{latestEvent ? eventSummary(latestEvent) : "Preparing the session"}</p>
+            <p>
+              {state === "completed"
+                ? "Work is complete and ready for review or a follow-up."
+                : latestEvent
+                  ? eventSummary(latestEvent)
+                  : "Preparing the session"}
+            </p>
           </div>
           {latestAssistant?.type === "agent_message" ? (
             <div className="context-thinking">
@@ -759,8 +941,8 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
               ))}
             </ul>
             {changedFiles.length > 8 ? (
-              <button type="button" className="context-more" onClick={() => setFilter("changes")}>
-                View all {changedFiles.length} files
+              <button type="button" className="context-more" onClick={() => setFilter("overview")}>
+                View session overview
               </button>
             ) : null}
           </section>
