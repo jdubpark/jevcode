@@ -40,8 +40,8 @@ node dist/cli.js --json report.json  # write the machine-readable report
 node dist/cli.js --fixtures ../fixtures --no-table
 ```
 
-Exit codes: `0` all targets and guardrail checks pass; `1` a target was missed;
-`2` usage or loading error. `npm run evals` currently exits `1` in degrade mode:
+Exit codes: `0` means all targets and guardrail checks pass. `1` means a target was missed.
+`2` means a usage or loading error. `npm run evals` currently exits `1` in degrade mode:
 see "Degrade router misses" below.
 
 ## Modes
@@ -49,7 +49,7 @@ see "Degrade router misses" below.
 - **degrade** runs the real deterministic stack: `preClampAttention` ->
   `DegradeClient.attention` (`clampAttention`) -> `DegradeClient.project`
   (`clampProjection` + `renderPolicy`). This is the no-model path shipped in
-  the product; scores against it are honest heuristic quality, not model
+  the product. Scores against it are honest heuristic quality, not model
   quality.
 - **playback** runs `PlaybackClient` (in `src/playback.ts`), a `JevClient` that
   returns each labeled `AttentionDecision` / `UIIntent` verbatim. If the runner
@@ -74,7 +74,7 @@ category target).
 
 `config/alternatives.json` implements the PRD 46 "capture both correctness and
 acceptable alternatives" requirement. The canonical representation is the
-labeled one; the config adds alternatives per semantic category:
+labeled one. The config adds alternatives per semantic category:
 
 ```json
 {
@@ -110,12 +110,12 @@ command (required decision + interruption >= 0.9).
 
 ## Degrade router misses
 
-The degrade router is a heuristic; misses below are real calibration data for
-the live model, not runner bugs (verify against a run's per-unit table):
+The degrade router is a heuristic. The misses below are real calibration data for
+the live model, not runner bugs (check them against a run's per-unit table):
 
 - `decision_candidate` is only reachable via destructive commands, so
   non-destructive decision units (oauth account linking, rate-limit fail-open)
-  get other categories; the oauth decision also has no stream link
+  get other categories. The oauth decision also has no stream link
   (`affectedChangeUnits` and decision evidence are unlinked in the fixture).
 - The oauth failing-test unit matches the `/oauth/i` security path pattern, so
   it routes as `security_change` instead of `failure`.

@@ -37,6 +37,7 @@ function CodeEvidence({
 
 export function ChangeOverview({ props }: { props: ChangeOverviewProps }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const hasInspectableEvidence = (props.diffs?.length ?? 0) > 0;
   return (
     <div className="jevcode-change-overview" data-testid="change-overview">
       <div className="jevcode-badges">
@@ -63,14 +64,20 @@ export function ChangeOverview({ props }: { props: ChangeOverviewProps }) {
       <h3 className="jevcode-title">{props.title}</h3>
       {props.evidenceLinks !== undefined && props.evidenceLinks.length > 0 ? (
         <div className="jevcode-evidence">
-          <button
-            type="button"
-            data-testid="evidence-toggle"
-            onClick={() => setEvidenceOpen((open) => !open)}
-          >
-            Evidence ({props.evidenceLinks.length})
-          </button>
-          {evidenceOpen ? (
+          {hasInspectableEvidence ? (
+            <button
+              type="button"
+              data-testid="evidence-toggle"
+              onClick={() => setEvidenceOpen((open) => !open)}
+            >
+              Inspect evidence ({props.evidenceLinks.length})
+            </button>
+          ) : (
+            <span className="jevcode-evidence-summary">
+              Grounded in {props.evidenceLinks.length} evidence items
+            </span>
+          )}
+          {hasInspectableEvidence && evidenceOpen ? (
             <CodeEvidence links={props.evidenceLinks} diffs={props.diffs} />
           ) : null}
         </div>

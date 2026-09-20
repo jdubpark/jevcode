@@ -53,13 +53,12 @@ export function Header(props: HeaderProps) {
       </div>
       <div className="header-statuses">
         <span className={`chip agent-${agentStatusLabel(sessionState)}`}>
-          agent: {agentStatusLabel(sessionState)}
+          {taskStatusLabel(sessionState)}
         </span>
-        <span className="chip task-chip">task: {taskStatusLabel(sessionState)}</span>
       </div>
       <div className="header-actions">
         <button type="button" onClick={props.onOpenRepo}>
-          Open repo
+          Open
         </button>
         {repo && (
           <button type="button" onClick={props.onCloseRepo}>
@@ -78,7 +77,7 @@ export function Header(props: HeaderProps) {
           className={props.debugOpen ? "active" : ""}
           onClick={props.onToggleDebug}
         >
-          Debug
+          Inspect
         </button>
       </div>
     </header>

@@ -10,9 +10,9 @@ tests.
 |---|---|---|
 | `oauth/` | Google OAuth login + identity layer, identities migration, one required account-linking decision, one failing test | Security path floor (2), schema surface floor (3), decision interrupt floor (6), relevant-now floor for failed unit (7), formatting-only hunk and lockfile hunk suppressed (5) |
 | `rate-limit/` | Redis dependency + rate-limiter middleware, fail-open decision, all-green validation matrix | Decision interrupt floor (6), conservative render path (confidence 0.89, SPEC 8.4) |
-| `schema-change/` | users migration: add `full_name`/`last_login_at`, drop `password_hash`; query layer updated separately | Schema surface floor (3) |
-| `api-break/` | GET /users/:id changes 404 -> 200 + `{ user: null }`; old test goes stale | API public-export surface floor (4) |
-| `dep-change/` | axios removed, zod added, `fetchJson` rewritten on fetch + zod; formatting-only change and lockfile change suppressed | Suppress floor for formatting-only diffs and lockfile-only changes (5) |
+| `schema-change/` | users migration: add `full_name`/`last_login_at`, drop `password_hash`, with the query layer updated separately | Schema surface floor (3) |
+| `api-break/` | GET /users/:id changes 404 -> 200 + `{ user: null }`, and the old test goes stale | API public-export surface floor (4) |
+| `dep-change/` | axios removed, zod added, `fetchJson` rewritten on fetch + zod, with formatting-only change and lockfile change suppressed | Suppress floor for formatting-only diffs and lockfile-only changes (5) |
 
 ## ChangeUnit clustering (SPEC 6.1)
 
@@ -37,8 +37,8 @@ fixtures/<scenario>/
 ├── events.jsonl           Ordered event stream: NormalizedAgentEvent, EvidenceFact,
 │                          SemanticEvent, and Decision records, one JSON per line
 ├── labels/
-│   ├── attention.json     Per-unit gold AttentionDecision (Pass A); key = unit slug
-│   └── projection.json    Per-surfaced-unit gold UIIntent (Pass B); key = unit slug
+│   ├── attention.json     Per-unit gold AttentionDecision (Pass A). Key = unit slug
+│   └── projection.json    Per-surfaced-unit gold UIIntent (Pass B). Key = unit slug
 ├── golden_specs/<slug>.json  Expected json-render flat spec ({ root, elements }) from the
 │                          UI compiler, one per surfaced unit
 └── expected_units.json    Expected deterministic ChangeUnit clustering: array of
@@ -93,18 +93,18 @@ One json-render flat spec per surfaced unit: `{ "root": "<id>", "elements": { "<
   (`answer_decision`, `delegate_decision`, `restore_previous_api_semantics`,
   `inspect_call_sites`, `show_exact_diff`, `accept_changes`, `request_changes`,
   `continue_task`, `open_terminal`, `interrupt_agent`, `pin_surface`, `dismiss_surface`).
-- The `root` id must exist in `elements`; every child id must exist; every element must be
+- The `root` id must exist in `elements`. Every child id must exist. Every element must be
   reachable from the root (no orphans).
-- A golden spec covers only its unit's composition: secondary views and children whose
+- A golden spec covers only its unit's composition: the compiler drops secondary views and children whose
   evidence moved to another unit (e.g., the oauth schema/dependency children, or the
-  rate-limit dependency child) are dropped from the shrunken unit's spec and appear on the
+  rate-limit dependency child) from the shrunken unit's spec and puts them on the
   split-off unit instead.
 
 ## Expected units
 
 `expected_units.json` is the gold answer for deterministic ChangeUnit clustering (SPEC 6):
 the connected components the semantic engine should produce from the scenario facts.
-`category` is a valid `ChangeCategory`; `files` and `symbolNames` are drawn from the facts
+`category` is a valid `ChangeCategory`. `files` and `symbolNames` are drawn from the facts
 in `events.jsonl`.
 
 ## Validation

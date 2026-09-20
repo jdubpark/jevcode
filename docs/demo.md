@@ -4,7 +4,7 @@ The demo is the rate-limit scenario: the agent adds a Redis-backed rate
 limiter, the pipeline surfaces the architecture change, an open decision
 interrupts the agent (Redis unavailability policy), the developer answers
 "fail open", the agent resumes, the validation matrix renders, and a
-completion review appears — including the observed failure when the agent's
+completion review appears, including the observed failure when the agent's
 narration claims success.
 
 ## Headless E2E (accepted form, no Electron)
@@ -57,10 +57,10 @@ jevcode-desktop start` prints `SMOKE_OK` and exits.
 
 - An `ArchitectureDelta` surface appears for the rate-limiter change, then a
   `Decision` surface interrupts the agent (`agent:state` → `waiting_decision`).
-- Answering "fail open" resumes the agent (`agent:state` → `running`); the
+- Answering "fail open" resumes the agent (`agent:state` → `running`). The
   structured decision is serialized in the PRD §8 format and delivered to the
   agent (real Codex: `codex exec resume <thread_id>` with the decision as the
-  prompt; the thread id is visible on the session state as `agentThreadId`).
+  prompt. The thread id is visible on the session state as `agentThreadId`).
 - A `TestMatrix` validation surface renders after the test run.
 - On completion the `completion` surface summarizes change units, validation
   rows, open decisions, and failures from repository evidence. The oauth
