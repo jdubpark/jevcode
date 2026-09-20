@@ -222,6 +222,7 @@ export class PipelineRuntime {
         onFact: (fact) => {
           this.ingestRecord(sessionId, fact);
         },
+        log: (message) => this.log(message),
       });
       session.evidence = evidence;
       void evidence.start().catch((error: unknown) => {
