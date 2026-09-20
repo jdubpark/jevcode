@@ -8,17 +8,17 @@ Binary under test: `codex` 0.155.1 at `~/.local/bin/codex`
 Auth status on this machine: `codex login status` reports "Logged in using
 ChatGPT" and exits 0. The workspace is out of credits, so a full turn could not
 run live. Findings marked *recorded* come from real invocations on this
-machine; findings marked *source* come from the codex 0.155.x Rust source
-(`codex-rs/exec/`); findings marked *docs* come from the official
+machine. Findings marked *source* come from the codex 0.155.x Rust source
+(`codex-rs/exec/`). Findings marked *docs* come from the official
 non-interactive-mode documentation.
 
-All live runs used a throwaway git repo in the temp dir; nothing was run
+All live runs used a throwaway git repo in the temp dir. Nothing was run
 against a real repository.
 
 ## 1. Structured output availability
 
 `codex exec --json` (alias `--experimental-json`) prints newline-delimited JSON
-events to stdout; all other output goes to stderr. Confirmed in `codex exec
+events to stdout. All other output goes to stderr. Confirmed in `codex exec
 --help` ("Print events to stdout as JSONL") and in the source
 (`exec/src/cli.rs`, `json: bool`).
 
@@ -29,7 +29,7 @@ Related flags:
 | `--json` | JSONL event stream on stdout |
 | `-o, --output-last-message <FILE>` | write the final agent message to a file |
 | `--output-schema <FILE>` | constrain the final response to a JSON Schema |
-| `--color <always\|never\|auto>` | ANSI control (default auto; use `never` in a PTY) |
+| `--color <always\|never\|auto>` | ANSI control (default auto. Use `never` in a PTY) |
 | `--ephemeral` | do not persist session rollout files |
 | `-C, --cd <DIR>` | working root for the agent |
 | `--skip-git-repo-check` | allow running outside a git repo |
@@ -39,8 +39,8 @@ Related flags:
 | `-c key=value` | config override, e.g. `-c approval_policy=on-failure` |
 
 `codex exec resume <SESSION_ID> | --last` continues a previous non-interactive
-session; `codex exec fork <SESSION_ID>` forks one. There is no
-`--approval-policy` flag in this version; approval policy is controlled through
+session. `codex exec fork <SESSION_ID>` forks one. There is no
+`--approval-policy` flag in this version. Approval policy is controlled through
 `-c approval_policy=<never|on-failure|on-request>`.
 
 Note: there is no interactive input channel during an `exec` run. Stdin is only
@@ -95,7 +95,7 @@ Implemented in `packages/agent-codex/src/jsonl.ts` (`mapCodexJsonlEvent`).
 
 | codex `--json` event | NormalizedAgentEvent |
 |---|---|
-| `thread.started` | none (thread id captured internally; exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`) |
+| `thread.started` | none (thread id captured internally. Exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`) |
 | `turn.started` | none |
 | `item.started` `command_execution` | `command_started {command}` |
 | `item.completed` `command_execution` (completed/failed) | `command_completed {command, exitCode: exit_code ?? -1, stdout: aggregated_output, stderr: ""}` |
@@ -115,14 +115,14 @@ Implemented in `packages/agent-codex/src/jsonl.ts` (`mapCodexJsonlEvent`).
 ## 4. Interrupt / resume findings (gated decision from SPEC §3.1)
 
 Finding: **SIGINT does not pause-and-wait in `codex exec`. The SPEC §3.1
-interrupt/resume model does not apply to exec mode; the fallback ("restart-free
-next natural boundary") also has no anchor, because exec runs exactly one turn
+interrupt/resume model does not apply to exec mode. The fallback ("restart-free
+next natural boundary") also has no anchor: exec runs exactly one turn
 and never reads stdin mid-run.**
 
 Evidence:
 
 - Source `codex-rs/exec/src/lib.rs`: `codex exec` spawns
-  `tokio::signal::ctrl_c()`; on SIGINT it sends a `TurnInterrupt` request to the
+  `tokio::signal::ctrl_c()`. On SIGINT it sends a `TurnInterrupt` request to the
   in-process app server, the turn completes with `TurnStatus::Interrupted`,
   `error_seen` is set, and the process exits 1. No stdin read is registered
   after the initial prompt is resolved.
@@ -134,7 +134,7 @@ Evidence:
   whole prompt and mid-run stdin writes are ignored. A real run logged
   "Reading additional input from stdin..." to stderr when stdin was a pipe.
 - Consequence for the adapter: `interrupt()` writes `\u0003` to the PTY
-  (SIGINT) which terminates the current turn; the session then ends with exit
+  (SIGINT), which terminates the current turn. The session then ends with exit
   code 1 and the adapter emits `agent_failed`. `resume()`,
   `sendInstruction()`, and `sendDecision()` write to PTY stdin per the
   interface contract, but codex ignores them until a new exec process is
@@ -142,7 +142,7 @@ Evidence:
   `codex exec resume <thread_id> "<prompt>"` (a new process), which the
   desktop AgentController can use in a later milestone. This is documented in
   `codex-adapter.ts`.
-- PTY race note: input written to the PTY before the child has initialized its
+- PTY race note: input written to the PTY before the child initializes its
   terminal session is dropped by the line discipline. The adapter therefore
   queues writes until the first output chunk arrives (`writeQueue`).
 
@@ -151,15 +151,15 @@ Evidence:
 - `codex exec` is headless: the source hardcodes `approval_policy:
   Some(AskForApproval::Never)` ("Default to never ask for approvals in headless
   mode"), and rebuilds only when `approvals_reviewer` resolves to AutoReview.
-  There is no interactive approval prompt in exec mode; a command the policy
+  There is no interactive approval prompt in exec mode. A command the policy
   declines surfaces as `item.completed` `command_execution` with `status:
   "declined"` (the `CommandExecutionStatus::Declined` variant exists for this).
   The adapter maps `declined` to `approval_requested`, so the Jevcode Decision
   surface still has an event to anchor on.
-- `--approve-for-me` routes approval requests through automatic review;
+- `--approve-for-me` routes approval requests through automatic review.
   `--dangerously-bypass-approvals-and-sandbox` skips prompts entirely.
 - Adapter default: spawn with `--dangerously-bypass-approvals-and-sandbox` (SPEC
-  §3.7: v0 runs the agent as the user's own account, no sandboxing; the default
+  §3.7: v0 runs the agent as the user's own account, no sandboxing. The default
   exec sandbox is read-only and would block file edits). Overridable via
   `CodexAdapterOptions.sandboxArgs`.
 - `StartSessionInput.approvalMode` mapping: `default` → no flag (headless
@@ -180,14 +180,14 @@ Evidence:
   `Missing bearer` in `error` events or stderr lines.
 - Recorded out-of-credits run: `error {message: "Your workspace is out of
   credits. Ask your workspace owner to refill in order to continue."}` followed
-  by `turn.failed` with the same message; exit code 1. Detection: match
+  by `turn.failed` with the same message, exit code 1. Detection: match
   "out of credits".
 - Unauthenticated-vs-hang: with no credentials the process can hang for minutes
   in retries, so the adapter emits `agent_failed` on the first matching
   `error` event instead of waiting for exit.
 - False-positive guard: codex logs unrelated MCP OAuth noise to stderr (e.g.
   `codex_rmcp_client::oauth::refresh_transaction ... invalid_grant`). The
-  detector must not classify that as a codex auth failure; the committed unit
+  detector must not classify that as a codex auth failure. The committed unit
   test covers this exact line.
 
 Patterns live in `packages/agent-codex/src/auth.ts` (`detectAuthFailure`) with
@@ -201,11 +201,11 @@ kinds `not_signed_in`, `unauthorized`, `out_of_credits`.
 - `codex exec resume` integration: the desktop AgentController can restart
   sessions with `resume <thread_id>` once multi-turn flows are needed.
 - Item-level delta events (`agent_message.delta` etc.) do not exist in exec
-  `--json` output; only completed items are emitted for messages.
+  `--json` output. Only completed items are emitted for messages.
 
 ## Live verification (2026-09-19)
 
 - `codex exec -m gpt-5.6-luna -c model_reasoning_effort="xhigh"` runs successfully (logged in via ChatGPT).
-- Default sandbox is read-only: file writes are rejected (`patch rejected: writing is blocked by read-only sandbox`). Use `-s workspace-write` for the standard case; the Jevcode adapter's `--dangerously-bypass-approvals-and-sandbox` default remains overridable via `JEVCODE_CODEX_SANDBOX_ARGS`.
+- Default sandbox is read-only: file writes are rejected (`patch rejected: writing is blocked by read-only sandbox`). Use `-s workspace-write` for the standard case. The Jevcode adapter's `--dangerously-bypass-approvals-and-sandbox` default remains overridable via `JEVCODE_CODEX_SANDBOX_ARGS`.
 - Live run through `CodexAdapter` (model + xhigh effort + JSONL): state machine completed, 18 normalized events captured, `getThreadId()` returns the thread id post-run (enables `codex exec resume <thread_id>`).
 - `thread.started` JSONL shape confirmed as `{"type":"thread.started","thread_id":"..."}` matching the parser.

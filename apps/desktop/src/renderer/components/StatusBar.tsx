@@ -14,7 +14,7 @@ export function StatusBar(props: StatusBarProps) {
       </span>
       <span className="status-session">
         {sessionState
-          ? `session ${sessionState.sessionId} · ${sessionState.state} · ${sessionState.changeUnitCount} change units · ${sessionState.decisionCount} decisions`
+          ? `${sessionState.state.replaceAll("_", " ")} · ${sessionState.changeUnitCount} changes · ${sessionState.decisionCount} decisions`
           : "no active session"}
       </span>
     </footer>
