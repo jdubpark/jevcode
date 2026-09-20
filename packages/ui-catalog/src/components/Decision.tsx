@@ -1,9 +1,11 @@
 import { useActions } from "@json-render/react";
+import { useState } from "react";
 
 import type { AnswerDecisionParams, DecisionProps } from "@jevcode/contracts";
 
 export function Decision({ props }: { props: DecisionProps }) {
   const { execute } = useActions();
+  const [selected, setSelected] = useState<string | null>(null);
   const answerRef = props.actions?.find((a) => a.action === "answer_decision");
   const delegateRef = props.actions?.find(
     (a) => a.action === "delegate_decision",
@@ -17,6 +19,7 @@ export function Decision({ props }: { props: DecisionProps }) {
   const evidence = answerParams?.evidence;
 
   const choose = (optionId: string) => {
+    setSelected(optionId);
     const params: Record<string, unknown> = {
       decisionId,
       decision: { [decisionKey]: optionId },
@@ -28,6 +31,7 @@ export function Decision({ props }: { props: DecisionProps }) {
   };
 
   const delegate = () => {
+    setSelected("delegated");
     void execute({
       action: "delegate_decision",
       params: {
@@ -51,15 +55,17 @@ export function Decision({ props }: { props: DecisionProps }) {
             key={option.id}
             className="jevcode-option"
             data-option-id={option.id}
+            data-selected={selected === option.id ? "true" : "false"}
           >
             <div className="jevcode-option-head">
               <span className="jevcode-option-label">{option.label}</span>
               <button
                 type="button"
                 data-testid={`choose-${option.id}`}
+                aria-pressed={selected === option.id}
                 onClick={() => choose(option.id)}
               >
-                Choose
+                {selected === option.id ? "Selected" : "Choose"}
               </button>
             </div>
             <p className="jevcode-option-description">{option.description}</p>
@@ -91,9 +97,10 @@ export function Decision({ props }: { props: DecisionProps }) {
         type="button"
         className="jevcode-delegate"
         data-testid="delegate"
+        aria-pressed={selected === "delegated"}
         onClick={delegate}
       >
-        Let the agent decide
+        {selected === "delegated" ? "Agent will decide" : "Let the agent decide"}
       </button>
     </div>
   );
