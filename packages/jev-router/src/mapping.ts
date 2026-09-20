@@ -35,7 +35,7 @@ export function normalizeScore(answer: ScoreAnswer, levelCount: number): number 
   return clamp01(answer.score / (levelCount - 1));
 }
 
-function requireAnswer<T>(
+export function requireAnswer<T>(
   answers: Record<string, unknown>,
   key: string,
   type: string,

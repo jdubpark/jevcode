@@ -3,6 +3,7 @@ export * from "./degrade.js";
 export * from "./guardrails.js";
 export * from "./logging.js";
 export * from "./mapping.js";
+export * from "./model-policy.js";
 export * from "./patterns.js";
 export * from "./policy.js";
 export * from "./questions.js";

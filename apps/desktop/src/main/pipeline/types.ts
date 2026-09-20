@@ -14,6 +14,7 @@ import type { JevcodeDb } from "@jevcode/storage";
 
 import type { FromMainChannelName, FromMainPayload } from "../../shared/ipc-registry.js";
 import type { MockAgentScript } from "./mock-agent-adapter.js";
+import type { ModelSelector } from "./model-selection.js";
 
 export type AgentMode = "codex" | "mock" | "auto" | "replay";
 
@@ -37,6 +38,7 @@ export interface PipelineRuntimeOptions {
   terminal?: TerminalSink;
   nowIso?: () => string;
   log?: (message: string) => void;
+  modelSelector?: ModelSelector;
 }
 
 export interface SessionStartOptions {

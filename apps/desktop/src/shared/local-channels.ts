@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import { AgentStateSchema, RendererToMainChannels } from "@jevcode/contracts";
 
+import {
+  AGENT_MODEL_OPTIONS,
+  REASONING_EFFORT_OPTIONS,
+} from "./prefs.js";
+
 export const RendererToMainLocalChannels = {
   repoBrowse: "repo:browse",
   repoListRecent: "repo:listRecent",
@@ -11,12 +16,15 @@ export const RendererToMainLocalChannels = {
   debugListTelemetry: "debug:listTelemetry",
   debugListEvents: "debug:listEvents",
   debugListJevDecisions: "debug:listJevDecisions",
+  preferencesGet: "preferences:get",
+  preferencesSet: "preferences:set",
 } as const;
 
 export const MainToRendererLocalChannels = {
   recentRepos: "repo:recentRepos",
   repoSessions: "repo:sessions",
   debugTelemetry: "debug:telemetry",
+  preferencesUpdated: "preferences:updated",
 } as const;
 
 export type RendererToMainLocalChannelName =
@@ -156,6 +164,46 @@ export const DebugTelemetryPayloadSchema = z.object({
 
 export type DebugTelemetryPayload = z.infer<typeof DebugTelemetryPayloadSchema>;
 
+const AGENT_MODEL_ENUM = z.enum(AGENT_MODEL_OPTIONS);
+
+const REASONING_EFFORT_ENUM = z.enum(REASONING_EFFORT_OPTIONS);
+
+const BUDGET_FRACTION = z
+  .string()
+  .regex(/^(0(\.\d+)?|1(\.0+)?)$/, "usage budget fraction must be a 0..1 decimal string");
+
+export const AgentPreferencesSchema = z.object({
+  model: AGENT_MODEL_ENUM,
+  reasoningEffort: REASONING_EFFORT_ENUM,
+  usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]),
+});
+
+export type AgentPreferencesPayload = z.infer<typeof AgentPreferencesSchema>;
+
+export const PreferencesGetPayloadSchema = z.object({});
+
+export const PreferencesSetPayloadSchema = z
+  .object({
+    model: AGENT_MODEL_ENUM.optional(),
+    reasoningEffort: REASONING_EFFORT_ENUM.optional(),
+    usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]).optional(),
+  })
+  .refine(
+    (patch) =>
+      patch.model !== undefined ||
+      patch.reasoningEffort !== undefined ||
+      patch.usageBudgetFraction !== undefined,
+    { message: "at least one preference must be set" },
+  );
+
+export type PreferencesSetPayload = z.infer<typeof PreferencesSetPayloadSchema>;
+
+export const PreferencesUpdatedPayloadSchema = AgentPreferencesSchema;
+
+export type PreferencesUpdatedPayload = z.infer<
+  typeof PreferencesUpdatedPayloadSchema
+>;
+
 export const localToMain = {
   [RendererToMainChannels.sessionStart]: SessionStartPayloadSchema,
   [RendererToMainLocalChannels.repoBrowse]: RepoBrowsePayloadSchema,
@@ -169,10 +217,14 @@ export const localToMain = {
   [RendererToMainLocalChannels.debugListEvents]: DebugListEventsPayloadSchema,
   [RendererToMainLocalChannels.debugListJevDecisions]:
     DebugListJevDecisionsPayloadSchema,
+  [RendererToMainLocalChannels.preferencesGet]: PreferencesGetPayloadSchema,
+  [RendererToMainLocalChannels.preferencesSet]: PreferencesSetPayloadSchema,
 } as const;
 
 export const localFromMain = {
   [MainToRendererLocalChannels.recentRepos]: RecentReposPayloadSchema,
   [MainToRendererLocalChannels.repoSessions]: RepoSessionsPayloadSchema,
   [MainToRendererLocalChannels.debugTelemetry]: DebugTelemetryPayloadSchema,
+  [MainToRendererLocalChannels.preferencesUpdated]:
+    PreferencesUpdatedPayloadSchema,
 } as const;

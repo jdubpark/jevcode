@@ -131,6 +131,13 @@ describe("createJevcodeApi", () => {
       mode: "queue",
       text: "do the thing",
     });
+    await api.agent.sendInstruction("s1", "change direction", "steer");
+    expect(deps.invoke).toHaveBeenCalledWith("agent:sendInstruction", {
+      id: expect.stringMatching(/^instr_/),
+      sessionId: "s1",
+      mode: "steer",
+      text: "change direction",
+    });
     await api.agent.cancelInstruction("s1", "instr_1");
     expect(deps.invoke).toHaveBeenCalledWith("agent:cancelInstruction", {
       sessionId: "s1",

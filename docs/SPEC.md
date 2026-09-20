@@ -105,6 +105,18 @@ Agent instructions and decision answers are **admitted through a durable inbox**
 - Resume budget: `resume_attempts` increments per resume; ≥3 → session failed with "resume budget exhausted" (prevents crash-loops; OpenCode's resume counter).
 - PTY stall watchdog: `JEVCODE_AGENT_STALL_MS` (default 0 = off) emits an `agent_waiting` event when the agent produces no output while running.
 
+### 3.1c Model & reasoning configuration (auto-selection policy)
+
+In-app agent settings (persisted via storage preferences): `agent.model` (`"auto"` or a concrete model id from the catalog), `agent.reasoningEffort` (`"auto" | "low" | "medium" | "high" | "xhigh"`), `agent.usageBudgetFraction` (0..1, or unknown). Env overrides: `JEVCODE_CODEX_MODEL`, `JEVCODE_CODEX_REASONING_EFFORT`, `JEVCODE_USAGE_BUDGET`.
+
+Precedence at session start: explicit session input → env override → auto policy. The auto policy (TypeSafe composite-scoring pattern — Jev scores dimensions, deterministic code combines):
+
+- Jev Scores (one batched request, 3 Score questions): `prompt_complexity`, `topic_risk` (docs/tests < feature < bugfix/refactor < perf/concurrency < auth/security/migrations/infra), `work_complexity` (single file < small feature < large feature < architecture/repository-wide).
+- Deterministic `combinePolicy`: `complexity = 0.4·work + 0.35·topic + 0.25·prompt`; budget `< 0.2` → economy; `0.2–0.6` → premium iff complexity ≥ 0.7 else standard; `≥ 0.6` → premium iff complexity ≥ 0.5 else standard; unknown budget treated as 0.4 (conservative). Large expected context (≥32k tokens estimate from `⌊prompt/4⌋ + fileCount×300`) forces premium for prompt-caching benefit.
+- Effort from tier + complexity: economy→low (medium ≥0.6), standard→medium (high ≥0.6), premium→high (xhigh ≥0.75 or top topic-risk level).
+- Degrade fallback (no key/offline): keyword + prompt-length + file-count heuristics, confidence 0.6, flagged `[heuristic]`.
+- Result persisted as `model_selected` telemetry (modelId, tier, effort, confidence, rationale, context estimate) and shown in the session log line. Catalog: `DEFAULT_MODEL_CATALOG` = economy `gpt-5.6-mini`, standard `gpt-5.6-sol`, premium `gpt-5.6-luna` (overridable).
+
 ### 3.2 Repository intelligence
 
 | Question | Decision |

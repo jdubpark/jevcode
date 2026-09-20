@@ -1,6 +1,7 @@
 import type {
   AttentionDecision,
   JevResult,
+  ModelSelectionRequest,
   SemanticEventKind,
   UIIntent,
 } from "@jevcode/contracts";
@@ -9,7 +10,14 @@ import { clampAttention, clampProjection, preClampAttention } from "./guardrails
 import { isTestOnly } from "./patterns.js";
 import { renderPolicy } from "./policy.js";
 import { subjectFromCategory } from "./state.js";
-import type { AttentionInput, JevClient, JevHealth, ProjectionInput } from "./types.js";
+import { degradeModelScores } from "./model-policy.js";
+import type {
+  AttentionInput,
+  JevClient,
+  JevHealth,
+  ModelComplexityScores,
+  ProjectionInput,
+} from "./types.js";
 
 export const DEGRADE_CONFIDENCE = 0.6;
 
@@ -255,6 +263,12 @@ export class DegradeClient implements JevClient {
 
   async project(input: ProjectionInput): Promise<JevResult<UIIntent>> {
     return degradeProjection(input);
+  }
+
+  async scoreModelComplexity(
+    request: ModelSelectionRequest,
+  ): Promise<JevResult<ModelComplexityScores>> {
+    return degradeModelScores(request);
   }
 
   async health(): Promise<JevHealth> {

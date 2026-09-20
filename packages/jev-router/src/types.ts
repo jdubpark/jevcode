@@ -4,15 +4,25 @@ import type {
   ChangeUnitStatus,
   EvidenceFact,
   JevResult,
+  ModelSelectionRequest,
   UIIntent,
 } from "@jevcode/contracts";
 
 export type JevHealth = "ok" | "degraded";
 
+export interface ModelComplexityScores {
+  prompt: number;
+  topic: number;
+  work: number;
+}
+
 export interface JevClient {
   attention(batch: AttentionInput[]): Promise<JevResult<AttentionDecision>[]>;
   project(input: ProjectionInput): Promise<JevResult<UIIntent>>;
   health(): Promise<JevHealth>;
+  scoreModelComplexity?(
+    request: ModelSelectionRequest,
+  ): Promise<JevResult<ModelComplexityScores>>;
 }
 
 export interface DependencyHint {

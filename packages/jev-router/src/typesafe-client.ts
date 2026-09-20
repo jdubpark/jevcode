@@ -1,4 +1,9 @@
-import type { AttentionDecision, JevResult, UIIntent } from "@jevcode/contracts";
+import type {
+  AttentionDecision,
+  JevResult,
+  ModelSelectionRequest,
+  UIIntent,
+} from "@jevcode/contracts";
 import { TypeSafeClient as SdkClient } from "@typesafe-ai/sdk";
 
 import { clampAttention, clampProjection, preClampAttention } from "./guardrails.js";
@@ -10,6 +15,11 @@ import {
   passBAnswersFrom,
   projectionConfidence,
 } from "./mapping.js";
+import {
+  composeModelSelectionRequest,
+  degradeModelScores,
+  modelScoresFromAnswers,
+} from "./model-policy.js";
 import { renderPolicy } from "./policy.js";
 import { composeAttentionRequest, composeProjectionRequest } from "./questions.js";
 import { chunkAttentionBatch, MAX_ATTENTION_BATCH } from "./batch.js";
@@ -19,6 +29,7 @@ import type {
   EnvReader,
   JevClient,
   JevHealth,
+  ModelComplexityScores,
   ProjectionInput,
   SystemOneResultLike,
   SystemOneRequestLike,
@@ -165,6 +176,21 @@ export class TypeSafeClient implements JevClient {
     const env = this.env();
     const apiKey = env[TYPESAFE_API_KEY_ENV];
     return apiKey !== undefined && apiKey.trim().length > 0 ? "ok" : "degraded";
+  }
+
+  async scoreModelComplexity(
+    request: ModelSelectionRequest,
+  ): Promise<JevResult<ModelComplexityScores>> {
+    const { state, questions } = composeModelSelectionRequest(request);
+    for (let attempt = 0; attempt <= this.retries; attempt += 1) {
+      try {
+        const answers = await this.fetchAnswers(state, questions);
+        return modelScoresFromAnswers(answers);
+      } catch {
+        if (attempt >= this.retries) break;
+      }
+    }
+    return degradeModelScores(request);
   }
 
   private async fetchAnswers(

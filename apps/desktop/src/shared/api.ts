@@ -15,6 +15,9 @@ import type {
   FromMainPayload,
   ToMainChannelName,
 } from "./ipc-registry.js";
+import {
+  MainToRendererLocalChannels,
+} from "./local-channels.js";
 import type {
   DebugEventsPayload,
   DebugJevDecisionsPayload,
@@ -24,6 +27,10 @@ import type {
   RepoSessionsPayload,
   SessionSummary,
 } from "./local-channels.js";
+import type {
+  AgentPreferences,
+  AgentPreferencesPatch,
+} from "./prefs.js";
 
 export const IPC_ERROR_PREFIX = "jevcode.ipc.";
 
@@ -80,7 +87,11 @@ export interface JevcodeApi {
   agent: {
     interrupt(sessionId: string): Promise<void>;
     resume(sessionId: string): Promise<void>;
-    sendInstruction(sessionId: string, text: string): Promise<void>;
+    sendInstruction(
+      sessionId: string,
+      text: string,
+      mode?: "queue" | "steer",
+    ): Promise<void>;
     cancelInstruction(sessionId: string, instructionId: string): Promise<void>;
   };
   action: {
@@ -101,6 +112,10 @@ export interface JevcodeApi {
   };
   telemetry: {
     flush(sessionId?: string): Promise<{ count: number }>;
+  };
+  prefs: {
+    get(): Promise<AgentPreferences>;
+    set(patch: AgentPreferencesPatch): Promise<AgentPreferences>;
   };
   debug: {
     listTelemetry(
@@ -123,6 +138,7 @@ export interface JevcodeApi {
   onInstructionState(
     listener: (payload: AgentInstructionStatePayload) => void,
   ): () => void;
+  onPrefsUpdated(listener: (payload: AgentPreferences) => void): () => void;
 }
 
 export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
@@ -197,11 +213,11 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
       resume: async (sessionId) => {
         await invoke("agent:resume", { sessionId });
       },
-      sendInstruction: async (sessionId, text) => {
+      sendInstruction: async (sessionId, text, mode = "queue") => {
         await invoke("agent:sendInstruction", {
           id: newInstructionId(),
           sessionId,
-          mode: "queue",
+          mode,
           text,
         });
       },
@@ -242,6 +258,14 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
         return (await invoke("telemetry:flush", { sessionId })) as { count: number };
       },
     },
+    prefs: {
+      get: async () => {
+        return (await invoke("preferences:get", {})) as AgentPreferences;
+      },
+      set: async (patch) => {
+        return (await invoke("preferences:set", patch)) as AgentPreferences;
+      },
+    },
     debug: {
       listTelemetry: async (sessionId, limit) => {
         const result = (await invoke("debug:listTelemetry", {
@@ -268,5 +292,7 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
     on,
     onInstructionState: (listener) =>
       on(MainToRendererChannels.agentInstructionState, listener),
+    onPrefsUpdated: (listener) =>
+      on(MainToRendererLocalChannels.preferencesUpdated, listener),
   };
 }

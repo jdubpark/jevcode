@@ -68,4 +68,13 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["packages/**/*.cjs", "apps/**/*.cjs", "packages/**/*.mjs", "apps/**/*.mjs", "scripts/**/*.mjs", "evals/**/*.mjs"],
+    languageOptions: {
+      globals: { ...nodeGlobals, require: "readonly", module: "readonly", exports: "readonly", __filename: "readonly", __dirname: "readonly" },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 );

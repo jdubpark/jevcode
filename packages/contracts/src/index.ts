@@ -5,6 +5,7 @@ export * from "./id.js";
 export * from "./ipc.js";
 export * from "./jev.js";
 export * from "./json-render.js";
+export * from "./model.js";
 export * from "./security.js";
 export * from "./semantic.js";
 export * from "./ui/index.js";

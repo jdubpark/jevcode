@@ -69,6 +69,16 @@ const eventVariants = {
     type: z.literal("redaction"),
     count: z.number().int().nonnegative(),
   }),
+  model_selected: z.object({
+    type: z.literal("model_selected"),
+    modelId: z.string().min(1),
+    reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]),
+    tier: z.enum(["economy", "standard", "premium"]),
+    auto: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string(),
+    contextTokensEstimate: z.number().int().nonnegative(),
+  }),
 } as const;
 
 const v = eventVariants;
@@ -87,6 +97,7 @@ export const TelemetryEventInputSchema = z.discriminatedUnion("type", [
   v.agent_event_count,
   v.fact_count,
   v.redaction,
+  v.model_selected,
 ]);
 
 export const TelemetryEventSchema = z.discriminatedUnion("type", [
@@ -103,6 +114,7 @@ export const TelemetryEventSchema = z.discriminatedUnion("type", [
   z.object(eventBase).merge(v.agent_event_count),
   z.object(eventBase).merge(v.fact_count),
   z.object(eventBase).merge(v.redaction),
+  z.object(eventBase).merge(v.model_selected),
 ]);
 
 export type TelemetryEventInput = z.infer<typeof TelemetryEventInputSchema>;
