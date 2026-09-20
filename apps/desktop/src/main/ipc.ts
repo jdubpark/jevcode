@@ -22,6 +22,13 @@ import {
   MainToRendererLocalChannels,
   RendererToMainLocalChannels,
 } from "../shared/local-channels.js";
+import {
+  AGENT_MODEL_PREF_KEY,
+  REASONING_EFFORT_PREF_KEY,
+  USAGE_BUDGET_PREF_KEY,
+  applyPreferencesPatch,
+  readAgentPreferences,
+} from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
@@ -200,6 +207,21 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         startedAt: session.startedAt,
       })),
     };
+  });
+
+  handle(RendererToMainLocalChannels.preferencesGet, () => {
+    return readAgentPreferences((key) => deps.db.getPreference(key));
+  });
+
+  handle(RendererToMainLocalChannels.preferencesSet, (patch) => {
+    const current = readAgentPreferences((key) => deps.db.getPreference(key));
+    const next = applyPreferencesPatch(current, patch);
+    deps.db.setPreference(AGENT_MODEL_PREF_KEY, next.model);
+    deps.db.setPreference(REASONING_EFFORT_PREF_KEY, next.reasoningEffort);
+    // null marks the "unknown" state; storage has no deletePreference.
+    deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
+    sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, next);
+    return next;
   });
 
   handle(RendererToMainChannels.sessionStart, async ({ repoId, prompt, model, reasoningEffort, approvalMode }) => {

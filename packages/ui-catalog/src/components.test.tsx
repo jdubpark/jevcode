@@ -138,6 +138,10 @@ describe("Decision", () => {
         evidence: ["oauth_callback_change", "user_identity_schema_change"],
       },
     });
+    expect(screen.getByTestId("choose-explicit_link").textContent).toBe("Selected");
+    expect(
+      screen.getByTestId("choose-explicit_link").getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 
   it("emits delegate_decision with the decision id", async () => {

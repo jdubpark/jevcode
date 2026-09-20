@@ -46,6 +46,12 @@ import type { MockAgentScript } from "./mock-agent-adapter.js";
 import { PlaybackLabels } from "./playback.js";
 import { createStorageStores } from "./storage-stores.js";
 import {
+  defaultModelSelector,
+  type ModelSelectionResult,
+} from "./model-selection.js";
+import { resolveSessionModelSelection } from "./model-resolution.js";
+import { deriveRepoContext } from "./repo-context.js";
+import {
   compileCallsiteSurface,
   compileChangeUnitSurface,
   compileCompletionSurface,
@@ -181,6 +187,34 @@ export class PipelineRuntime {
       }
     }
 
+    let startModel =
+      input.model ?? process.env["JEVCODE_CODEX_MODEL"] ?? undefined;
+    let startEffort =
+      input.reasoningEffort ??
+      process.env["JEVCODE_CODEX_REASONING_EFFORT"] ??
+      undefined;
+    let modelSelection: ModelSelectionResult | null = null;
+
+    if (adapterKind === "codex") {
+      const resolution = await resolveSessionModelSelection(
+        {
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          prompt: input.prompt,
+          repoPath: input.repoPath,
+        },
+        {
+          env: (key) => process.env[key],
+          getPreference: (key) => this.opts.db.getPreference(key),
+          deriveContext: deriveRepoContext,
+          select: this.opts.modelSelector ?? defaultModelSelector,
+        },
+      );
+      startModel = resolution.model;
+      startEffort = resolution.reasoningEffort;
+      modelSelection = resolution.selection;
+    }
+
     const session: ActiveSession = {
       sessionId,
       repoId: input.repoId,
@@ -209,8 +243,26 @@ export class PipelineRuntime {
       playbackLabels: input.playbackLabels ?? null,
     };
     this.sessions.set(sessionId, session);
-    this.log(`session ${sessionId} started (agent: ${adapterKind})`);
+    this.log(
+      `session ${sessionId} started (agent: ${adapterKind}${
+        startModel !== undefined ? `, model: ${startModel}` : ""
+      }${
+        startEffort !== undefined ? `, effort: ${startEffort}` : ""
+      }${modelSelection !== null ? ", model: auto-selected" : ""})`,
+    );
     this.opts.db.setExecutionClaim(sessionId, this.nowIso());
+
+    if (modelSelection !== null) {
+      this.recordTelemetry(session, "model_selected", {
+        modelId: startModel,
+        reasoningEffort: startEffort,
+        tier: modelSelection.tier,
+        auto: true,
+        confidence: modelSelection.confidence,
+        rationale: modelSelection.rationale,
+        contextTokensEstimate: modelSelection.contextTokensEstimate,
+      });
+    }
 
     if (this.opts.evidence !== false && adapterKind !== "none") {
       const evidence = createEvidenceSession({
@@ -237,13 +289,14 @@ export class PipelineRuntime {
       this.handleAgentExit(session, code);
     });
 
+    this.ensureSessionRow(sessionId, input);
     this.opts.db.setSessionState(sessionId, "starting");
     await adapter?.startSession({
       repoPath: input.repoPath,
       cwd: input.repoPath,
       prompt: input.prompt,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
+      model: startModel,
+      reasoningEffort: startEffort,
       approvalMode: input.approvalMode,
       env: {},
     });
@@ -1108,6 +1161,21 @@ export class PipelineRuntime {
       case "redaction":
         input = { type, count: Number(payload["count"] ?? 0) };
         break;
+      case "model_selected": {
+        input = {
+          type,
+          modelId: String(payload["modelId"] ?? ""),
+          reasoningEffort: modelSelectedEffort(payload["reasoningEffort"]),
+          tier: modelSelectedTier(payload["tier"]),
+          auto: payload["auto"] === true,
+          confidence: Number(payload["confidence"] ?? 0),
+          rationale: String(payload["rationale"] ?? ""),
+          contextTokensEstimate: Number(
+            payload["contextTokensEstimate"] ?? 0,
+          ),
+        };
+        break;
+      }
     }
     const event = createTelemetryEvent(session.sessionId, input);
     const full = event as unknown as Record<string, unknown>;
@@ -1151,6 +1219,24 @@ export class PipelineRuntime {
       changeUnitId: record.changeUnitId,
       intent: record.intent,
       spec: record.spec,
+    });
+  }
+
+  private ensureSessionRow(sessionId: string, input: SessionStartOptions): void {
+    if (this.opts.db.getSession(sessionId) !== undefined) return;
+    const repository = this.opts.db.upsertRepository({
+      path: input.repoPath,
+      gitRoot: input.repoPath,
+      branch: "",
+      baseCommit: input.baseCommit ?? "",
+    });
+    this.opts.db.createSession({
+      id: sessionId,
+      repoId: repository.id,
+      prompt: input.prompt,
+      baseCommit: input.baseCommit ?? "",
+      branch: "",
+      state: "starting",
     });
   }
 
@@ -1260,3 +1346,16 @@ function defaultMockScript(input: SessionStartOptions): MockAgentScript {
     ],
   };
 }
+
+function modelSelectedEffort(value: unknown): "low" | "medium" | "high" | "xhigh" {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh"
+    ? value
+    : "medium";
+}
+
+function modelSelectedTier(value: unknown): "economy" | "standard" | "premium" {
+  return value === "economy" || value === "standard" || value === "premium"
+    ? value
+    : "standard";
+}
+
