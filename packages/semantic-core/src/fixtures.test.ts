@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { parseReplayLine, PipelineCoordinator } from "./coordinator.js";
+import { canonicalJson } from "@jevcode/contracts";
 import type { ChangeUnit, EvidenceFact } from "@jevcode/contracts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -112,6 +113,24 @@ describe("fixture replay through coordinator + clustering", () => {
       console.log(
         `[fixtures] ${scenario}: ${expected.length} expected units, ${units.length} produced, matched=${mappings.length}, formatting-only extras=${formattingExtras.map((u) => u.files.join(",")).join(" ") || "none"}`,
       );
+    });
+  }
+});
+
+describe("fixture records survive zod parsing unchanged (no-strip guard)", () => {
+  // A field the schemas do not declare is stripped silently on parse, and
+  // canonical fact ids would then differ between the stream and storage.
+  for (const scenario of SCENARIOS) {
+    it(`keeps every field of ${scenario}/events.jsonl`, () => {
+      const lines = readFileSync(path.join(FIXTURES_DIR, scenario, "events.jsonl"), "utf8")
+        .split("\n")
+        .filter((line) => line.trim() !== "");
+      const stripped: number[] = [];
+      for (const [index, line] of lines.entries()) {
+        const parsed = parseReplayLine(line);
+        if (canonicalJson(parsed) !== canonicalJson(JSON.parse(line))) stripped.push(index + 1);
+      }
+      expect(stripped).toEqual([]);
     });
   }
 });
