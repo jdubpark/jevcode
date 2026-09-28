@@ -10,6 +10,9 @@ export interface ClaimVsObservedProps extends GraphicBaseProps {
   claim: { text: string; span?: readonly [number, number]; tMs: number };
   observed: { passed: number; failed: number; command: string; tMs: number };
   onObservedClick?(): void;
+  /** Tab index of the observed button (default 0). A caller inside a roving-tabindex region
+   *  passes -1 so the region stays one tab stop (spec §7.13). */
+  observedTabIndex?: 0 | -1;
 }
 
 function ClaimText({ text, span }: { text: string; span?: readonly [number, number] }): JSX.Element {
@@ -23,7 +26,7 @@ function ClaimText({ text, span }: { text: string; span?: readonly [number, numb
   );
 }
 
-function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick }: ClaimVsObservedProps): JSX.Element {
+function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick, observedTabIndex }: ClaimVsObservedProps): JSX.Element {
   const content: ReactNode = (
     <>
       <TestDots size="xs" passed={observed.passed} failed={observed.failed} skipped={0} />
@@ -53,7 +56,9 @@ function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick }: 
       {onObservedClick === undefined ? (
         <span className={styles.observed}>{content}</span>
       ) : (
-        <button type="button" className={styles.observed} onClick={onObservedClick}>{content}</button>
+        <button type="button" className={styles.observed} tabIndex={observedTabIndex} onClick={onObservedClick}>
+          {content}
+        </button>
       )}
     </span>
   );
