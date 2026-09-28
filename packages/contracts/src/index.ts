@@ -9,4 +9,5 @@ export * from "./json-render.js";
 export * from "./model.js";
 export * from "./security.js";
 export * from "./semantic.js";
+export * from "./trace.js";
 export * from "./ui/index.js";
