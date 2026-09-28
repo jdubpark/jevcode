@@ -12,6 +12,8 @@ import {
   type FactSink,
 } from "@jevcode/evidence-engine";
 
+import { prepareDiffForStorage } from "./redactor.js";
+
 const execFileAsync = promisify(execFile);
 
 export interface EvidenceSessionOptions {
@@ -90,7 +92,10 @@ export function createEvidenceSession(
     sessionId: options.sessionId,
     sink: bridgeSink,
   };
-  const gitCollector = createGitCollector(options.repoPath, options.baseCommit, collectorOptions);
+  const gitCollector = createGitCollector(options.repoPath, options.baseCommit, {
+    ...collectorOptions,
+    prepareDiff: prepareDiffForStorage,
+  });
   const fileWatcher = createFileWatcher(options.repoPath, collectorOptions);
   const commandCollector = createCommandCollector(options.repoPath, collectorOptions);
   const revertDetector = createRevertDetector(options.repoPath, collectorOptions);
@@ -106,10 +111,11 @@ export function createEvidenceSession(
 
   return {
     async start(): Promise<void> {
+      // Collectors push every fact into bridgeSink themselves; re-pushing the
+      // returned facts would deliver each one twice.
       try {
-        const initialFacts = await gitCollector.collect();
+        await gitCollector.collect();
         collectTracker.success();
-        for (const fact of initialFacts) bridgeSink.push(fact);
       } catch (error) {
         collectTracker.failure("initial git collect", error);
       }
@@ -118,17 +124,11 @@ export function createEvidenceSession(
         if (stopped) return;
         void gitCollector
           .collect()
-          .then((facts) => {
-            collectTracker.success();
-            for (const fact of facts) bridgeSink.push(fact);
-          })
+          .then(() => collectTracker.success())
           .catch((error: unknown) => collectTracker.failure("git collect", error));
         void revertDetector
           .check()
-          .then((fact) => {
-            checkTracker.success();
-            if (fact !== null) bridgeSink.push(fact);
-          })
+          .then(() => checkTracker.success())
           .catch((error: unknown) => checkTracker.failure("revert check", error));
       }, options.pollGitMs ?? 5000);
     },
