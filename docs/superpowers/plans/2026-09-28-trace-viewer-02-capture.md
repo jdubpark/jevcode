@@ -28,6 +28,7 @@ Each item fixes a defect or gap found in the interfaces index while reading the 
 10. **SPEC §18 "replay UI".** D9 says the removal lands "in M1's PR"; the index assigns it to W0-1. A1-3 checks whether W0-1 already removed it and applies the index's exact edit only if it did not.
 11. **A1-4 does not edit `evidence-runtime.test.ts`.** The pass-through is covered end to end by a `pipeline-runtime.test.ts` test that stores real facts; a mock-interaction test would add no coverage.
 12. **The runtime stop row goes through `ingestRecord`, not a bare `appendAgentEvent`.** `ingestRecord` calls `appendAgentEvent` and also emits `agent:event`, writes the terminal line and applies the pause, while `stopping` is still false. The resume-budget failure keeps the bare `appendAgentEvent` the index specifies.
+13. **A1-7's diff policy goes beyond R3's minimum, and A1-6/A1-7 carry the spec §12 M1b measurements.** Index section 2.4 lists only `.env*`, `*.pem`, `*.key` and `id_rsa*`. A1-7 also withholds `id_ed25519*`, `id_ecdsa*` and `id_dsa*` (not `*.pub`), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc` and `.pgpass`, and in every other path it replaces each PEM private-key block with one `[REDACTED:private_key]` line counted in `redactions` (spec §16 "Plan follow-ups", A1-7). Without that pass a key pasted into `deploy/key.txt` whose hunk ends before the END line stored its body lines, and an `id_ed25519` file stored its whole key. The W0-4 schema is unchanged: `withheld` stays `"secret_path" | "not_captured"`. `id_rsa*` keeps R3's glob, so `id_rsa.pub` stays withheld. The rest of spec §4.3 rules 3–4 (header-aware line classification, the already-redacted guard, the new provider rules) stays out of this lane. For spec §12's M1b exit (index gap G2): A1-6 adds the git.test.ts proof that an unchanged diff costs one hash and no `prepareDiff` call, A1-7 adds `redactor.bench.ts` (and excludes benches from `tsconfig.build.json`), and "Lane completion" runs the 3 + 3 soak `ingestMs` comparison against the merge base.
 
 ## Lane prerequisites
 
@@ -78,6 +79,7 @@ Copied from the binding decision record and the interfaces index. Every task's r
 - R2: optional `turnId` on every agent event (the adapter mints one per Codex process and passes it via `EventNormalizerContext`); optional `callId = ${turnId}:${item.id}` on `command_started`/`_completed`, `tool_started`/`_completed`, `file_changed`, `approval_requested`; `agent_reasoning {text, callId?}`; `agent_interrupted`; `sourceCallId` on `command_executed` and `test_result`, stamped by `observeCommand`/`observeTestOutput`; the resume-budget `agent_failed` is persisted via `appendAgentEvent` before the emit.
 - D10: interrupt, steer and stop leave the session PAUSED and resumable, never failed. `agent_interrupted {reason: interrupt|steer|stop}` replaces the exit-time `agent_failed`.
 - R3: `factContentId` hashes `canonicalJson(record)`; `ChangeUnit.agentCallIds` is filled by `clusterSession` and included in `unitSignature`; `git_hunk.diff = {hash (16 hex), bytes, text?, truncated, redactions, withheld?: "secret_path"|"not_captured"}` via an injected `prepareDiff` (default `withheld: "not_captured"`); the desktop implementation withholds `.env*`, `*.pem`, `*.key`, `id_rsa*`, redacts per line after the diff prefix (fix the `env_value` `^` anchor), caps at 32 KiB cut at the last `@@` hunk boundary; the git collector emits only when a file's diff hash changes; remove the double push; zod no-strip guard test (`canonicalJson(parse(x)) === canonicalJson(x)`); fixtures updated with `callId`/`sourceCallId`/`diff`/one `agent_reasoning` line; oauth failure text fixed ("expected null to be 7"); `validate-fixtures.mjs` checks diff `+`/`-` counts.
+- Spec §12 M1b exit: "the median soak.mjs `ingestMs` over 3 runs is ≤ 1.10 × the median over 3 runs at the PR's merge base on the same machine, and the PR lists both medians and the unit counts before and after. soak runs with `evidence: false` (scripts/soak.mjs:361), so a `vitest bench` covers the desktop `prepareDiff`: a 2 MiB lockfile-style diff and a 32 KiB source diff each ≤ 10 ms per call; git.test.ts asserts that an unchanged diff triggers one hash and no `prepareDiff` call." Owners: A1-6 (git.test.ts), A1-7 (bench), Lane completion (soak). A1-7 also extends R3's withheld list and adds private-key blocks (deviation 13).
 - R4 (M1c, does not block the viewer): `Decision.ts` optional; `JevDecisionLog.pass` `"A"|"B"` optional; guardrail suppressions logged with their real `clientKind`/confidence; graph node data gains domain ids; SPEC §4.1–4.3, §7, §8.5 and docs/spikes/codex-spike.md §3 updated across M1.
 - D11: sessions recorded before M1 are not rewritten; no legacy-id resolver. The log stays append-only.
 - All new npm dependencies and every `pnpm-lock.yaml` change happen in W0-1 only. This lane edits no `package.json`, no lockfile and no `eslint.config.mjs`. A task that needs a dependency stops and escalates.
@@ -100,7 +102,7 @@ Five inputs this lane's producers meet in real use that the happy-path tests wou
 
 1. **Interrupt while a command runs, and Codex answers SIGINT with `turn.completed`** (a real `exec` reports `TurnStatus::Interrupted`, docs/spikes/codex-spike.md §4). Expected: exactly one `agent_interrupted {reason: "interrupt"}`, no `agent_completed`, no `agent_failed`, adapter state `paused`. Test: **A1-3** `codex-adapter.test.ts` "SIGINT during a command yields one agent_interrupted".
 2. **The supervisor presses Stop in the app on a running session** (IPC `session:stop` → `runtime.stopSession` → `session-service.stopSession`). Expected: one `agent_interrupted {reason: "stop"}` row, stored state `paused`, `endedAt` null, execution claim kept, so the boot sweep keeps it resumable for 24 h. Tests: **A1-3** `pipeline-runtime.test.ts` "stopping a running session records one agent_interrupted and leaves it paused and resumable" and `session-guard.test.ts` "pauses a running session on stop and leaves it resumable".
-3. **Secrets inside a stored diff:** a `+STRIPE_KEY=sk_live_…` line (the old `env_value` rule is anchored at `^` and misses it) and a `.env.local` file. Expected: the line is stored as `+STRIPE_KEY=[REDACTED:env_value]` with its prefix, `.env.local` stores no text (`withheld: "secret_path"`), `hash` is still the raw diff's. Tests: **A1-7** `redactor.test.ts` "redacts a prefixed env line inside a diff and keeps the prefix" and "withholds a secret path and stores no text".
+3. **Secrets inside a stored diff:** a `+STRIPE_KEY=sk_live_…` line (the old `env_value` rule is anchored at `^` and misses it), a `.env.local` file, an `id_ed25519` file, and a PEM private key pasted into an ordinary source file, including one whose hunk ends before the key's END line. Expected: the line is stored as `+STRIPE_KEY=[REDACTED:env_value]` with its prefix; `.env.local` and `id_ed25519` store no text (`withheld: "secret_path"`) while `id_ed25519.pub` is stored; each key block becomes one `[REDACTED:private_key]` line counted once in `redactions`, and a certificate block is kept; `hash` is still the raw diff's. Tests: **A1-7** `redactor.test.ts` "redacts a prefixed env line inside a diff and keeps the prefix", "withholds a secret path and stores no text", "withholds an id_ed25519 private key and stores its .pub diff", "replaces a private key inside a source file with one counted line", "redacts a private key block that its hunk cuts off before the END line" and "keeps public certificate and public key blocks".
 4. **A dirty file that is reverted (leaves `git status`) and later edited back to the same content.** Expected: change-only emission emits it again on return, and an unchanged 5 s re-poll emits nothing. Test: **A1-6** `git.test.ts` "emits again for a file that left git status and came back unchanged" and "emits a file only when its diff changes".
 5. **An existing install created by an older build:** `~/.jevcode` is 0755 and `jevcode.db`, `-wal`, `-shm` are 0644; another user points `JEVCODE_DB` into a shared 0755 directory. Expected: the store directory and all three files become owner-only on the next `openDb`, and a caller-chosen directory is never chmodded. Tests: **A1-1** `db.test.ts` "tightens an existing ~/.jevcode and its 0644 database files on open" and "never changes the mode of an existing directory it does not own by default".
 
@@ -2741,7 +2743,7 @@ git commit -m "fix(semantic-core): hash fact ids over canonical JSON and guard a
 - Create: `packages/evidence-engine/src/diff.ts`, `packages/evidence-engine/src/diff.test.ts`
 - Modify: `packages/evidence-engine/src/index.ts` (export `./diff.js`)
 - Modify: `packages/evidence-engine/src/collectors/git.ts` (imports lines 1-17, `GitCollectorOptions` lines 111-114, `createGitCollector` lines 137-138 and `collect()` lines 185-209)
-- Test: `packages/evidence-engine/src/collectors/git.test.ts` (test at lines 153-194 extended; three tests added)
+- Test: `packages/evidence-engine/src/collectors/git.test.ts` (imports lines 1-9; test at lines 153-194 extended; four tests added)
 - Modify: `docs/SPEC.md` §7
 
 **Interfaces:**
@@ -2749,6 +2751,7 @@ git commit -m "fix(semantic-core): hash fact ids over canonical JSON and guard a
 - Produces (exact, index section 2.4):
   - `packages/evidence-engine/src/diff.ts`: `export type PrepareDiff = (file: string, rawDiff: string) => GitHunkDiff;` `export function diffHash(rawDiff: string): string` (sha256 hex, first 16); `export function diffBytes(rawDiff: string): number` (UTF-8 bytes); `export const notCapturedDiff: PrepareDiff` returning `{hash, bytes, truncated: false, redactions: 0, withheld: "not_captured"}`. All re-exported from `@jevcode/evidence-engine`.
   - `GitCollectorOptions` gains `prepareDiff?: PrepareDiff`. `collect()` emits a `git_hunk` only when `diffHash(raw)` differs from the last emitted hash for that file, forgets files that leave `git status --porcelain`, and sets `diff` from `(opts.prepareDiff ?? notCapturedDiff)(file, raw)`.
+  - Cost of an unchanged poll (spec §12 M1b exit): per dirty file, one `diffHash` call and no `prepareDiff` call. The desktop `prepareDiff` redacts up to 2 MiB of text (A1-7 benchmarks it), so it must never run for a diff that did not change.
 
 - [ ] **Step 1: Write the failing diff-helper tests**
 
@@ -2794,7 +2797,43 @@ The expected hashes are the published SHA-256 test vectors for `""` and `"abc"`,
 
 - [ ] **Step 2: Write the failing collector tests**
 
-In `packages/evidence-engine/src/collectors/git.test.ts`, in the test "emits git_hunk facts with classifications", replace:
+In `packages/evidence-engine/src/collectors/git.test.ts`, replace:
+
+```ts
+import type { EvidenceFact } from "@jevcode/contracts";
+import { describe, expect, it } from "vitest";
+
+import {
+  createGitCollector,
+  isSafeRelativePath,
+  parsePorcelain,
+  type GitExec,
+} from "./git.js";
+```
+
+with:
+
+```ts
+import type { EvidenceFact } from "@jevcode/contracts";
+import { describe, expect, it, vi } from "vitest";
+
+import { diffHash, notCapturedDiff } from "../diff.js";
+import {
+  createGitCollector,
+  isSafeRelativePath,
+  parsePorcelain,
+  type GitExec,
+} from "./git.js";
+
+// The real diffHash wrapped in a spy, so a test can count the collector's hashes.
+// Calls made inside diff.ts itself (notCapturedDiff) reach the unwrapped function.
+vi.mock("../diff.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../diff.js")>();
+  return { ...actual, diffHash: vi.fn(actual.diffHash) };
+});
+```
+
+In the same file, in the test "emits git_hunk facts with classifications", replace:
 
 ```ts
     expect(byFile.get("src/renamed.ts")).toMatchObject({ added: 2, removed: 0 });
@@ -2890,12 +2929,34 @@ with:
     expect(seen).toEqual([["src/foo.ts", RESPONSES["diff HEAD -- src/foo.ts"]]]);
     expect(facts[0]?.diff).toMatchObject({ text: "prepared", hash: "0123456789abcdef" });
   });
+
+  it("hashes an unchanged diff once per poll and never prepares it again", async () => {
+    const hash = vi.mocked(diffHash);
+    const prepareDiff = vi.fn(notCapturedDiff);
+    const collector = createGitCollector("/repo", "HEAD", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      execGit: fakeGit({ ...RESPONSES, "status --porcelain": " M src/foo.ts\n" }),
+      prepareDiff,
+    });
+    hash.mockClear();
+    expect(await collector.collect()).toHaveLength(1);
+    expect(hash).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    // Spec §12 M1b exit: an unchanged diff costs one hash and no prepareDiff call.
+    hash.mockClear();
+    prepareDiff.mockClear();
+    expect(await collector.collect()).toEqual([]);
+    expect(hash.mock.calls).toEqual([[RESPONSES["diff HEAD -- src/foo.ts"]]]);
+    expect(prepareDiff).not.toHaveBeenCalled();
+  });
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `pnpm --filter @jevcode/evidence-engine exec vitest run src/diff.test.ts src/collectors/git.test.ts`
-Expected: FAIL. `src/diff.test.ts` fails to load (`Failed to load url ./diff.js` / cannot find module). In git.test.ts: "emits git_hunk facts with classifications" (`expected undefined to match object { withheld: 'not_captured', …(2) }`), "emits a file only when its diff changes" (`expected [ { type: 'git_hunk', …(9) }, …(6) ] to deeply equal []`) and "passes each file and its raw diff…" (`expected [] to deeply equal [ [ 'src/foo.ts', …(1) ] ]`). "emits again for a file that left git status…" passes today; it guards the change-only logic added next.
+Expected: FAIL, `Test Files  2 failed (2)` and `Tests  no tests`. Both files fail to load: `src/diff.test.ts` with `Error: Cannot find module './diff.js'`, and `src/collectors/git.test.ts` with `Error: [vitest] There was an error when mocking a module.` caused by `Cannot find module '../diff.js'`. Step 4 shows the per-test failures once `diff.ts` exists.
 
 - [ ] **Step 4: Create `packages/evidence-engine/src/diff.ts`**
 
@@ -2936,6 +2997,9 @@ In `packages/evidence-engine/src/index.ts`, replace `export * from "./hunks.js";
 export * from "./hunks.js";
 export * from "./diff.js";
 ```
+
+Run: `pnpm --filter @jevcode/evidence-engine exec vitest run src/diff.test.ts src/collectors/git.test.ts`
+Expected: FAIL, `Tests  4 failed | 10 passed (14)`. `src/diff.test.ts` passes (3 tests). In git.test.ts: "emits git_hunk facts with classifications" (`expected undefined to match object { withheld: 'not_captured', …(2) }`), "emits a file only when its diff changes" (`expected [ { type: 'git_hunk', …(9) }, …(6) ] to deeply equal []`), "passes each file and its raw diff…" (`expected [] to deeply equal [ [ 'src/foo.ts', …(1) ] ]`) and "hashes an unchanged diff once per poll…" (`expected "diffHash" to be called 1 times, but got 0 times`). "emits again for a file that left git status…" passes today; it guards the change-only logic added next.
 
 - [ ] **Step 5: Make the git collector change-only and diff-aware**
 
@@ -3119,17 +3183,20 @@ git commit -m "feat(evidence-engine): emit git hunks only on change and attach a
 **Files:**
 - Modify: `apps/desktop/src/main/pipeline/redactor.ts` (import line 1, `env_value` rule lines 41-45, new exports appended)
 - Test: `apps/desktop/src/main/pipeline/redactor.test.ts`
+- Create: `apps/desktop/src/main/pipeline/redactor.bench.ts` (spec §12 M1b exit, deviation 13)
+- Modify: `apps/desktop/tsconfig.build.json` (exclude `src/**/*.bench.ts` from the emitted build)
 - Modify: `apps/desktop/src/main/pipeline/evidence-runtime.ts` (imports, `createGitCollector` call line 92, `start()` lines 107-132)
 - Test: `apps/desktop/src/main/pipeline/evidence-runtime.test.ts`
 - Modify: `docs/SPEC.md` §3.7
 
 **Interfaces:**
-- Consumes: A1-6 `diffHash(rawDiff: string): string`, `diffBytes(rawDiff: string): number`, `PrepareDiff`, `GitCollectorOptions.prepareDiff` from `@jevcode/evidence-engine`; W0-4 `GitHunkDiff`, `GitHunkDiffSchema` from `@jevcode/contracts`.
-- Produces (exact, index section 2.4; lane A2's bundle calls `redactText`, which now also catches `+KEY=` lines):
+- Consumes: A1-6 `diffHash(rawDiff: string): string`, `diffBytes(rawDiff: string): number`, `PrepareDiff`, `GitCollectorOptions.prepareDiff` from `@jevcode/evidence-engine`; W0-4 `GitHunkDiff`, `GitHunkDiffSchema` from `@jevcode/contracts` (`withheld` stays `"secret_path" | "not_captured"`; this task adds no enum value).
+- Produces (exact, index section 2.4, with the secret-file and private-key additions of deviation 13; lane A2's bundle calls `redactText`, which now also catches `+KEY=` lines):
   - `export const DIFF_TEXT_CAP_BYTES = 32 * 1024;`
-  - `export function isSecretPath(file: string): boolean` — basename matches `.env*`, `*.pem`, `*.key`, `id_rsa*` (case-insensitive).
-  - `export function capDiffText(diff: string, capBytes?: number): { text: string; truncated: boolean }` — keeps every complete hunk that fits, cuts before the `@@` header of the first hunk that would overflow; when even the first hunk overflows, keeps the file header plus that hunk up to the last whole line within the cap.
-  - `export function prepareDiffForStorage(file: string, rawDiff: string): GitHunkDiff` — withholds secret paths (`withheld: "secret_path"`, no text), else `redactText` then `capDiffText`; `hash`/`bytes` describe the raw diff; `redactions` counts every replacement.
+  - `export function isSecretPath(file: string): boolean` — basename matches `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*` or `id_dsa*` (the last three not when the name ends in `.pub`), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc` or `.pgpass` (case-insensitive).
+  - `export function capDiffText(diff: string, capBytes?: number): { text: string; truncated: boolean }` — keeps every complete hunk that fits, cuts before the `@@` header of the first hunk that would overflow; when even the first hunk overflows, keeps the file header plus that hunk up to the last whole line within the cap. It walks only the lines it keeps.
+  - `export function prepareDiffForStorage(file: string, rawDiff: string): GitHunkDiff` — withholds secret paths (`withheld: "secret_path"`, no text); else replaces each PEM private-key block with one line, then `redactText`, then `capDiffText`; `hash`/`bytes` describe the raw diff; `redactions` counts every replacement, one per key block. A key block runs from a line containing `-----BEGIN … PRIVATE KEY-----` (after any diff prefix) through the next line containing `-----END … PRIVATE KEY-----`, or to the end of its hunk when no END line follows; it becomes the single line `[REDACTED:private_key]` behind the BEGIN line's prefix (`+`, `-` or space). `CERTIFICATE` and `PUBLIC KEY` blocks are kept. This applies to every path that is not withheld.
+  - Budget (spec §12 M1b exit): `prepareDiffForStorage` takes ≤ 10 ms per call (benchmark mean) on a 2 MiB lockfile-style diff and on a 32 KiB source diff.
   - `env_value` rule: pattern `/^([+\- ]?)([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*)\s*=\s*.+$/gm`, replacement `"$1$2=[REDACTED:env_value]"`.
   - `createEvidenceSession` passes `prepareDiff: prepareDiffForStorage` to the git collector and no longer re-pushes facts returned by `gitCollector.collect()` or `revertDetector.check()`; each fact reaches `onFact` once.
 
@@ -3200,12 +3267,43 @@ Append to the end of the file:
 
 ```ts
 describe("isSecretPath", () => {
-  it("matches .env*, *.pem, *.key and id_rsa* by basename", () => {
-    for (const file of [".env", ".env.local", "config/.env.production", "certs/server.pem", "deploy/app.key", "home/.ssh/id_rsa", "id_rsa.pub"]) {
-      expect(isSecretPath(file)).toBe(true);
+  it("matches secret files by basename", () => {
+    for (const file of [
+      ".env",
+      ".env.local",
+      "config/.env.production",
+      "certs/server.pem",
+      "deploy/app.key",
+      "home/.ssh/id_rsa",
+      "id_rsa.pub", // R3's id_rsa* keeps the public half too
+      "home/.ssh/id_ed25519",
+      "home/.ssh/id_ed25519_work",
+      "id_ecdsa",
+      "id_dsa",
+      "certs/client.p12",
+      "certs/client.PFX",
+      "android/release.jks",
+      "android/app.keystore",
+      ".npmrc",
+      "home/.netrc",
+      ".pgpass",
+    ]) {
+      expect(isSecretPath(file), file).toBe(true);
     }
-    for (const file of ["src/env.ts", "src/keyboard.ts", "docs/pem-notes.md", "src/.environment/readme.md"]) {
-      expect(isSecretPath(file)).toBe(false);
+    for (const file of [
+      "src/env.ts",
+      "src/keyboard.ts",
+      "docs/pem-notes.md",
+      "src/.environment/readme.md",
+      "home/.ssh/id_ed25519.pub",
+      "id_ecdsa.pub",
+      "id_dsa.pub",
+      "home/.ssh/id_ed25519-cert.pub",
+      "src/keystore.ts",
+      "docs/npmrc.md",
+      "src/.npmrc.ts",
+    ]) {
+      expect(isSecretPath(file), file).toBe(false);
     }
   });
 });
@@ -3271,8 +3369,141 @@ describe("prepareDiffForStorage", () => {
     expect(diff.text).not.toContain("sk_live");
     expect(GitHunkDiffSchema.safeParse(diff).success).toBe(true);
   });
+
+  it("withholds an id_ed25519 private key and stores its .pub diff", () => {
+    const key = [
+      "diff --git a/deploy/id_ed25519 b/deploy/id_ed25519",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/deploy/id_ed25519",
+      "@@ -0,0 +1,3 @@",
+      "+-----BEGIN OPENSSH PRIVATE KEY-----",
+      "+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW",
+      "+-----END OPENSSH PRIVATE KEY-----",
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("deploy/id_ed25519", key)).toEqual({
+      hash: diffHash(key),
+      bytes: Buffer.byteLength(key),
+      truncated: false,
+      redactions: 0,
+      withheld: "secret_path",
+    });
+
+    const pub = [
+      "diff --git a/deploy/id_ed25519.pub b/deploy/id_ed25519.pub",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/deploy/id_ed25519.pub",
+      "@@ -0,0 +1 @@",
+      "+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtestkeytestkeytestkeytestkeytestkeytestkey deploy@example.com",
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("deploy/id_ed25519.pub", pub)).toEqual({
+      hash: diffHash(pub),
+      bytes: Buffer.byteLength(pub),
+      text: pub,
+      truncated: false,
+      redactions: 0,
+    });
+  });
+
+  it("replaces a private key inside a source file with one counted line", () => {
+    const withKey = [
+      "diff --git a/src/config.ts b/src/config.ts",
+      "--- a/src/config.ts",
+      "+++ b/src/config.ts",
+      "@@ -1,2 +1,7 @@",
+      ' export const issuer = "https://auth.example.com";',
+      "+export const signingKey = `",
+      "+-----BEGIN RSA PRIVATE KEY-----",
+      "+MIIEowIBAAKCAQEAtestkeytestkeytestkeytestkeytestkeytestkeytest01",
+      "+testkeytestkeytestkeytestkeytestkeytestkeytestkeytestkeytest02==",
+      "+-----END RSA PRIVATE KEY-----`;",
+      ' export const audience = "jevcode";',
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("src/config.ts", withKey)).toEqual({
+      hash: diffHash(withKey),
+      bytes: Buffer.byteLength(withKey),
+      text: [
+        "diff --git a/src/config.ts b/src/config.ts",
+        "--- a/src/config.ts",
+        "+++ b/src/config.ts",
+        "@@ -1,2 +1,7 @@",
+        ' export const issuer = "https://auth.example.com";',
+        "+export const signingKey = `",
+        "+[REDACTED:private_key]",
+        ' export const audience = "jevcode";',
+        "",
+      ].join("\n"),
+      truncated: false,
+      redactions: 1,
+    });
+  });
+
+  it("redacts a private key block that its hunk cuts off before the END line", () => {
+    const partial = [
+      "diff --git a/deploy/key.txt b/deploy/key.txt",
+      "--- a/deploy/key.txt",
+      "+++ b/deploy/key.txt",
+      "@@ -1,3 +1,3 @@",
+      " -----BEGIN OPENSSH PRIVATE KEY-----",
+      "-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW",
+      "+QyNTUxOQAAACBtestkeytestkeytestkeytestkeytestkeytestkeytestkeyAAAAJgAAA",
+      " AAAAC3NzaC1lZDI1NTE5AAAAIGtestkeytestkeytestkeytestkeytestkeytestkey",
+      "@@ -9,2 +9,2 @@",
+      "-# rotated 2026-01-01",
+      "+# rotated 2026-09-28",
+      " # owner: platform",
+      "",
+    ].join("\n");
+    const diff = prepareDiffForStorage("deploy/key.txt", partial);
+    expect(diff.redactions).toBe(1);
+    expect(diff.text).toBe(
+      [
+        "diff --git a/deploy/key.txt b/deploy/key.txt",
+        "--- a/deploy/key.txt",
+        "+++ b/deploy/key.txt",
+        "@@ -1,3 +1,3 @@",
+        " [REDACTED:private_key]",
+        "@@ -9,2 +9,2 @@",
+        "-# rotated 2026-01-01",
+        "+# rotated 2026-09-28",
+        " # owner: platform",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps public certificate and public key blocks", () => {
+    const publicBlocks = [
+      "diff --git a/src/tls.ts b/src/tls.ts",
+      "--- a/src/tls.ts",
+      "+++ b/src/tls.ts",
+      "@@ -1 +1,8 @@",
+      " export const caBundle = `",
+      "+-----BEGIN CERTIFICATE-----",
+      "+MIIBszCCAVmgAwIBAgIUtestcerttestcerttestcerttestcertMAoGCCqGSM49BAMC",
+      "+-----END CERTIFICATE-----",
+      "+-----BEGIN PUBLIC KEY-----",
+      "+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtestpubtestpubtestpubtestpubtest",
+      "+-----END PUBLIC KEY-----",
+      "+`;",
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("src/tls.ts", publicBlocks)).toEqual({
+      hash: diffHash(publicBlocks),
+      bytes: Buffer.byteLength(publicBlocks),
+      text: publicBlocks,
+      truncated: false,
+      redactions: 0,
+    });
+  });
 });
 ```
+
+The key material in these tests is filler (`testkey…`, the fixed `openssh-key-v1` header); no real key appears.
 
 - [ ] **Step 2: Write the failing evidence-runtime tests**
 
@@ -3342,6 +3573,8 @@ with:
     it("gives the git collector the desktop diff policy", () => {
       makeSession();
       const options = vi.mocked(createGitCollector).mock.calls.at(-1)?.[2];
+      // Checked first: before redactor.ts exports it, both sides are undefined.
+      expect(prepareDiffForStorage).toBeTypeOf("function");
       expect(options?.prepareDiff).toBe(prepareDiffForStorage);
     });
 
@@ -3386,7 +3619,7 @@ with:
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `pnpm --filter "jevcode-desktop^..." build && pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/redactor.test.ts src/main/pipeline/evidence-runtime.test.ts`
-Expected: FAIL. redactor.test.ts: "redacts a prefixed env line…" (`expected { text: '+STRIPE_KEY=sk_live_abc', count: 0 } to deeply equal …`) and every `isSecretPath`/`capDiffText`/`prepareDiffForStorage` test (`… is not a function`). evidence-runtime.test.ts: "gives the git collector the desktop diff policy" (`expected undefined to be [Function prepareDiffForStorage]`) and "delivers each … once" (`expected [ 'git_hunk', 'git_hunk', …(2) ] to deeply equal [ 'git_hunk', 'revert_detected' ]`).
+Expected: FAIL, `Tests  13 failed | 16 passed (29)`. redactor.test.ts, 11 of 19: "redacts a prefixed env line…" (`expected { …(2) } to deeply equal { …(2) }`: the old rule leaves `+STRIPE_KEY=sk_live_abc` with count 0), "cuts a 40 KiB two-hunk diff…" (`expected value must be number or bigint, received "undefined"`: no `DIFF_TEXT_CAP_BYTES` yet) and the other nine `isSecretPath`/`capDiffText`/`prepareDiffForStorage` tests (`isSecretPath is not a function`, `capDiffText is not a function`, `prepareDiffForStorage is not a function`). evidence-runtime.test.ts, 2 of 10: "gives the git collector the desktop diff policy" (`expected undefined to be type of 'function'`) and "delivers each … once" (`expected [ 'git_hunk', 'git_hunk', …(2) ] to deeply equal [ 'git_hunk', 'revert_detected' ]`).
 
 - [ ] **Step 4: Implement the diff policy in `apps/desktop/src/main/pipeline/redactor.ts`**
 
@@ -3425,19 +3658,73 @@ Append to the end of the file:
 /** Stored diff text is capped at 32 KiB (UTF-8 bytes) (R3). */
 export const DIFF_TEXT_CAP_BYTES = 32 * 1024;
 
-const SECRET_BASENAMES: readonly RegExp[] = [/^\.env/i, /\.pem$/i, /\.key$/i, /^id_rsa/i];
+// Basenames whose diff is never stored. R3's .env*, *.pem, *.key and id_rsa*,
+// plus the other SSH private keys (their .pub halves stay visible), keystores
+// and credential dotfiles (spec §16 "Plan follow-ups", A1-7).
+const SECRET_BASENAMES: readonly RegExp[] = [
+  /^\.env/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /^id_rsa/i,
+  /^id_(?:ed25519|ecdsa|dsa)(?!.*\.pub$)/i,
+  /\.(?:p12|pfx|jks|keystore)$/i,
+  /^\.(?:npmrc|netrc|pgpass)$/i,
+];
 
-/** True for files whose diff is never stored: .env*, *.pem, *.key, id_rsa*. */
+/**
+ * True for files whose diff is never stored: .env*, *.pem, *.key, id_rsa*,
+ * id_ed25519*, id_ecdsa* and id_dsa* except *.pub, *.p12, *.pfx, *.jks,
+ * *.keystore, .npmrc, .netrc and .pgpass.
+ */
 export function isSecretPath(file: string): boolean {
   const basename = file.replace(/\\/g, "/").split("/").pop() ?? file;
   return SECRET_BASENAMES.some((pattern) => pattern.test(basename));
+}
+
+const PRIVATE_KEY_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
+const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY-----/;
+const HUNK_BOUNDARY = /^(?:@@|diff --git )/;
+
+/**
+ * Replaces each PEM private-key block in a unified diff with the single line
+ * "[REDACTED:private_key]", keeping the diff prefix ("+", "-" or " ") of the
+ * block's BEGIN line, and counts one redaction per block. A block runs from a
+ * line containing "-----BEGIN … PRIVATE KEY-----" through the next line
+ * containing "-----END … PRIVATE KEY-----"; without one it runs to the end of
+ * its hunk. Public blocks ("-----BEGIN CERTIFICATE-----", "PUBLIC KEY") stay.
+ */
+function redactPrivateKeyBlocks(diff: string): RedactionResult {
+  if (!diff.includes("PRIVATE KEY-----")) return { text: diff, count: 0 };
+  const lines = diff.split("\n");
+  // A diff ending in "\n" splits into a final "" that belongs to no block.
+  const end = lines.at(-1) === "" ? lines.length - 1 : lines.length;
+  const out: string[] = [];
+  let count = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const begin = index < end ? PRIVATE_KEY_BEGIN.exec(line) : null;
+    if (begin === null) {
+      out.push(line);
+      continue;
+    }
+    const prefix = begin.index > 0 && /^[+\- ]/.test(line) ? line.charAt(0) : "";
+    out.push(`${prefix}[REDACTED:private_key]`);
+    count += 1;
+    if (PRIVATE_KEY_END.test(line.slice(begin.index))) continue;
+    while (index + 1 < end && !HUNK_BOUNDARY.test(lines[index + 1] ?? "")) {
+      index += 1;
+      if (PRIVATE_KEY_END.test(lines[index] ?? "")) break;
+    }
+  }
+  return { text: out.join("\n"), count };
 }
 
 /**
  * Caps a single-file unified diff at `capBytes` UTF-8 bytes. Keeps every
  * complete hunk that fits and cuts before the "@@" header of the first hunk
  * that would overflow. When even the first hunk overflows, keeps the file
- * header and that hunk up to the last whole line within the cap.
+ * header and that hunk up to the last whole line within the cap. Walks only
+ * the lines it keeps, so a 2 MiB lockfile diff costs no more than 32 KiB.
  */
 export function capDiffText(
   diff: string,
@@ -3446,31 +3733,32 @@ export function capDiffText(
   if (Buffer.byteLength(diff, "utf8") <= capBytes) {
     return { text: diff, truncated: false };
   }
-  const lines = diff.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-  let kept = "";
+  let keptEnd = 0;
   let keptBytes = 0;
   let hunkStart = 0;
   let hunks = 0;
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      hunkStart = kept.length;
+  while (keptEnd < diff.length) {
+    const newline = diff.indexOf("\n", keptEnd);
+    const lineEnd = newline === -1 ? diff.length : newline + 1;
+    if (diff.startsWith("@@", keptEnd)) {
+      hunkStart = keptEnd;
       hunks += 1;
     }
-    const size = Buffer.byteLength(line, "utf8");
+    const size = Buffer.byteLength(diff.slice(keptEnd, lineEnd), "utf8");
     if (keptBytes + size > capBytes) {
-      return { text: hunks >= 2 ? kept.slice(0, hunkStart) : kept, truncated: true };
+      return { text: diff.slice(0, hunks >= 2 ? hunkStart : keptEnd), truncated: true };
     }
-    kept += line;
+    keptEnd = lineEnd;
     keptBytes += size;
   }
-  return { text: kept, truncated: false };
+  return { text: diff, truncated: false };
 }
 
 /**
  * The desktop PrepareDiff (injected into the git collector): withholds secret
- * paths, redacts every line after its diff prefix, then caps the text. `hash`
- * and `bytes` describe the raw diff; `redactions` counts every replacement
- * made before the cap.
+ * paths, replaces private-key blocks, redacts every line after its diff prefix,
+ * then caps the text. `hash` and `bytes` describe the raw diff; `redactions`
+ * counts every replacement made before the cap (one per key block).
  */
 export function prepareDiffForStorage(file: string, rawDiff: string): GitHunkDiff {
   const hash = diffHash(rawDiff);
@@ -3478,14 +3766,15 @@ export function prepareDiffForStorage(file: string, rawDiff: string): GitHunkDif
   if (isSecretPath(file)) {
     return { hash, bytes, truncated: false, redactions: 0, withheld: "secret_path" };
   }
-  const redacted = redactText(rawDiff);
+  const keys = redactPrivateKeyBlocks(rawDiff);
+  const redacted = redactText(keys.text);
   const capped = capDiffText(redacted.text);
   return {
     hash,
     bytes,
     text: capped.text,
     truncated: capped.truncated,
-    redactions: redacted.count,
+    redactions: keys.count + redacted.count,
   };
 }
 ```
@@ -3579,12 +3868,137 @@ with:
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `pnpm --filter jevcode-desktop typecheck && pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/redactor.test.ts src/main/pipeline/evidence-runtime.test.ts`
-Expected: typecheck exits 0; both files pass (0 failed).
+Expected: typecheck exits 0; `Test Files  2 passed (2)`, `Tests  29 passed (29)` (redactor.test.ts 19, evidence-runtime.test.ts 10).
 
 Run: `pnpm --filter jevcode-desktop test`
 Expected: every desktop test passes; no `Errors` line.
 
-- [ ] **Step 7: Document stored-diff redaction in SPEC §3.7**
+- [ ] **Step 7: Benchmark `prepareDiffForStorage` (spec §12 M1b exit)**
+
+soak.mjs runs the pipeline with `evidence: false` (scripts/soak.mjs:361), so no soak ever calls `prepareDiff`; this benchmark is its only timing. Budget: at most 10 ms per call (the `mean` column) on a 2 MiB lockfile-style diff and on a 32 KiB source diff. `vitest run` includes only `src/**/*.test.ts`, so `pnpm -r test` never runs it.
+
+Create `apps/desktop/src/main/pipeline/redactor.bench.ts`:
+
+```ts
+import { createHash } from "node:crypto";
+
+import { bench, describe } from "vitest";
+
+import { prepareDiffForStorage } from "./redactor.js";
+
+// Spec §12 M1b exit: the desktop prepareDiff takes <= 10 ms per call (the
+// "mean" column, in ms) on a 2 MiB lockfile-style diff and on a 32 KiB source
+// diff. soak.mjs runs with `evidence: false`, so only this bench times it.
+
+const MIB = 1024 * 1024;
+
+// A new pnpm-lock.yaml as one added hunk of package entries: 2,097,312 bytes.
+function lockfileDiff(minBytes: number): string {
+  const header = [
+    "diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml",
+    "--- a/pnpm-lock.yaml",
+    "+++ b/pnpm-lock.yaml",
+  ];
+  const body: string[] = [];
+  let bytes = 0;
+  for (let index = 0; bytes < minBytes; index += 1) {
+    const integrity = createHash("sha512").update(`pkg-${index}`).digest("base64");
+    const entry = [
+      `+  /pkg-${index}@1.${index % 50}.${index % 7}:`,
+      `+    resolution: {integrity: sha512-${integrity}}`,
+      "+    engines: {node: '>=18'}",
+      "+    dev: false",
+      "+",
+    ];
+    body.push(...entry);
+    bytes += Buffer.byteLength(entry.join("\n")) + 1;
+  }
+  return [...header, `@@ -0,0 +1,${body.length} @@`, ...body, ""].join("\n");
+}
+
+// An edit of a TypeScript file in hunks of 3 context, 2 removed and 3 added
+// lines: 32,938 bytes, so the 32 KiB cap drops its last hunk.
+function sourceDiff(minBytes: number): string {
+  const lines = [
+    "diff --git a/src/server/routes.ts b/src/server/routes.ts",
+    "--- a/src/server/routes.ts",
+    "+++ b/src/server/routes.ts",
+  ];
+  for (let hunk = 0; Buffer.byteLength(lines.join("\n")) < minBytes; hunk += 1) {
+    const at = 1 + hunk * 20;
+    lines.push(
+      `@@ -${at},8 +${at},9 @@ export function route${hunk}(app: App): void {`,
+      `   const handler${hunk} = createHandler("/api/v1/items/${hunk}");`,
+      `   app.use(logger({ level: "info", route: "items-${hunk}" }));`,
+      `   const limit = Number(process.env.PAGE_SIZE ?? 50);`,
+      `-  app.get("/api/v1/items/${hunk}", handler${hunk});`,
+      `-  app.post("/api/v1/items/${hunk}", validate(schema${hunk}), handler${hunk});`,
+      `+  app.get("/api/v1/items/${hunk}", cache({ ttlSeconds: 30 }), handler${hunk});`,
+      `+  app.post("/api/v1/items/${hunk}", validate(schema${hunk}), audit("items"), handler${hunk});`,
+      `+  app.delete("/api/v1/items/${hunk}/:id", requireRole("admin"), handler${hunk});`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+const LOCKFILE = lockfileDiff(2 * MIB);
+const SOURCE = sourceDiff(32 * 1024);
+
+describe("prepareDiffForStorage", () => {
+  bench("lockfile diff 2 MiB", () => {
+    prepareDiffForStorage("pnpm-lock.yaml", LOCKFILE);
+  });
+
+  bench("source diff 32 KiB", () => {
+    prepareDiffForStorage("src/server/routes.ts", SOURCE);
+  });
+});
+```
+
+In `apps/desktop/tsconfig.build.json`, replace:
+
+```json
+  "exclude": ["src/**/*.test.ts", "src/test-utils.ts"]
+```
+
+with:
+
+```json
+  "exclude": ["src/**/*.test.ts", "src/**/*.bench.ts", "src/test-utils.ts"]
+```
+
+`tsconfig.json` still includes the bench, so `pnpm --filter jevcode-desktop typecheck` checks it, and the build no longer emits it into `dist/main`.
+
+Run it with no soak, test suite or other benchmark running on the machine:
+
+```bash
+BENCH_JSON="${TMPDIR:-/tmp}/jevcode-prepare-diff-bench.json"
+pnpm --filter jevcode-desktop typecheck
+pnpm --filter jevcode-desktop exec vitest bench --run src/main/pipeline/redactor.bench.ts --outputJson "${BENCH_JSON}"
+node --input-type=module -e '
+import { readFileSync } from "node:fs";
+const report = JSON.parse(readFileSync(process.argv[1], "utf8"));
+const rows = report.files.flatMap((file) => file.groups.flatMap((group) => group.benchmarks));
+let ok = rows.length === 2;
+for (const row of rows) {
+  const pass = row.mean <= 10;
+  ok &&= pass;
+  console.log(`${row.name}: mean ${row.mean.toFixed(2)} ms, budget 10 ms, ${pass ? "PASS" : "FAIL"}`);
+}
+process.exit(ok ? 0 : 1);
+' "${BENCH_JSON}"
+```
+
+Expected: typecheck exits 0. vitest prints a table with the rows `lockfile diff 2 MiB` and `source diff 32 KiB`, then `Benchmark report written to …/jevcode-prepare-diff-bench.json`. The check prints exactly two lines and exits 0:
+
+```
+lockfile diff 2 MiB: mean <ms> ms, budget 10 ms, PASS
+source diff 32 KiB: mean <ms> ms, budget 10 ms, PASS
+```
+
+On 2026-09-28 (Apple silicon, Node 22.23.1, with other soaks running in parallel) this code measured 7.7 to 7.8 ms and 0.11 ms, and both inputs got 0 redactions; `redactText` is about 6.2 ms of the 2 MiB call, and the line walk in `capDiffText` keeps the cap under 0.1 ms. A `FAIL` line (exit 1) means the M1b exit is not met: record both means in the task report and stop; do not raise the budget or shrink the inputs. Keep the two printed lines for the lane's PR (Lane completion).
+
+- [ ] **Step 8: Document stored-diff redaction in SPEC §3.7**
 
 In `docs/SPEC.md` §3.7, replace:
 
@@ -3596,18 +4010,19 @@ with:
 
 ```
 | Model-context redaction | Same pipeline. Redacted spans replaced with `[REDACTED:<kind>]`, counts logged to telemetry. |
-| Stored diffs | `git_hunk.diff.text` is redacted before it is stored. Files named `.env*`, `*.pem`, `*.key` or `id_rsa*` are withheld (`withheld: "secret_path"`, no text). Every line is redacted after its diff prefix (`+`, `-` or space). The text is capped at 32 KiB, cut before the `@@` header of the first hunk that would overflow (`truncated: true`). `hash` and `bytes` describe the raw diff. The store itself is owner-only (§11). |
+| Stored diffs | `git_hunk.diff.text` is redacted before it is stored. Files named `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*` or `id_dsa*` (except `*.pub`), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc` or `.pgpass` are withheld (`withheld: "secret_path"`, no text). In every other file, each PEM private-key block (from a `-----BEGIN … PRIVATE KEY-----` line through its `-----END … PRIVATE KEY-----` line, or to the end of its hunk) becomes one `[REDACTED:private_key]` line behind the BEGIN line's diff prefix; certificates and public keys are kept. Every line is then redacted after its diff prefix (`+`, `-` or space). The text is capped at 32 KiB, cut before the `@@` header of the first hunk that would overflow (`truncated: true`). `hash` and `bytes` describe the raw diff; `redactions` counts every replacement, one per key block. The store itself is owner-only (§11). |
 ```
 
-- [ ] **Step 8: Root checks**
+- [ ] **Step 9: Root checks**
 
 Run: `pnpm -r build && pnpm -r typecheck && pnpm -r test && pnpm lint`
 Expected: every command exits 0.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add apps/desktop/src/main/pipeline/redactor.ts apps/desktop/src/main/pipeline/redactor.test.ts \
+  apps/desktop/src/main/pipeline/redactor.bench.ts apps/desktop/tsconfig.build.json \
   apps/desktop/src/main/pipeline/evidence-runtime.ts \
   apps/desktop/src/main/pipeline/evidence-runtime.test.ts docs/SPEC.md
 git commit -m "feat(desktop): store redacted, capped diffs and deliver each collector fact once"
@@ -5053,6 +5468,80 @@ git log --oneline main..HEAD
 
 Expected: every command exits 0; the validator prints `VALIDATION PASSED`; the log shows the 11 task commits (A1-1 … A1-11), none with a `Claude-Session:` trailer. `git rebase main` is a no-op when A1 merges first in W1. If a conflict appears, resolve it in the listed files only and rerun the checks.
 
+- [ ] **Rerun the `prepareDiff` benchmark at this HEAD** (spec §12 M1b exit): run the `BENCH_JSON` block of A1-7 Step 7 again, unchanged, with nothing else running. Expected: the same two `PASS` lines. Keep them for the PR.
+
+- [ ] **Measure the soak ingest cost against the merge base** (spec §12 M1b exit, index gap G2). The head median of `ingestMs` over 3 default soaks (`node scripts/soak.mjs`, 9,993 records) must be ≤ 1.10 × the median over 3 soaks at the PR's merge base, on the same machine. One full soak takes about 11 minutes (on 2026-09-28 one run at `b3488d0` printed `"ingestMs": 616940` and `"units": 4901` after 10 min 45 s, with another soak running in parallel), so the six runs take about 65 minutes. Run nothing else heavy meanwhile (no test suite, benchmark or other soak): a parallel load skews the sides unevenly.
+
+Set up a detached worktree at the merge base. `--detach` moves no branch; never use `git worktree add -f <path> <branch>` here.
+
+```bash
+BASE_WT="${TMPDIR:-/tmp}/jevcode-a1-soak-base"
+git worktree add --detach "${BASE_WT}" "$(git merge-base main HEAD)"
+pnpm -C "${BASE_WT}" install --frozen-lockfile
+NP=$(ls -d "${BASE_WT}"/node_modules/.pnpm/node-pty@*/node_modules/node-pty | head -1) && mkdir -p "${NP}/build/Release" && pnpm -C "${BASE_WT}" --filter jevcode-desktop rebuild:node && cp "${NP}/prebuilds/$(node -p 'process.platform + "-" + process.arch')/spawn-helper" "${NP}/build/Release/spawn-helper" && chmod +x "${NP}/build/Release/spawn-helper"
+pnpm -C "${BASE_WT}" -r build
+```
+
+Expected: each command exits 0; the fourth prints `better-sqlite3 loads under node ok`, `node-pty loads under node ok` and `native modules restored to node ABI`. The head side uses this worktree's `dist`, which the exit checks above built.
+
+Run the six soaks as one background command and wait for it to exit (about 65 minutes). The sides alternate, so drift over the hour affects both:
+
+```bash
+BASE_WT="${TMPDIR:-/tmp}/jevcode-a1-soak-base"
+SOAK_OUT="${TMPDIR:-/tmp}/jevcode-a1-soak"
+rm -rf "${SOAK_OUT}" && mkdir -p "${SOAK_OUT}"
+for run in 1 2 3; do
+  node "${BASE_WT}/scripts/soak.mjs" > "${SOAK_OUT}/base-${run}.log" 2>&1 || echo "base run ${run} exited $?"
+  node scripts/soak.mjs > "${SOAK_OUT}/head-${run}.log" 2>&1 || echo "head run ${run} exited $?"
+done
+```
+
+Expected: no output. soak.mjs imports `../packages/*/dist` and `../apps/desktop/dist` relative to its own path, so `node "${BASE_WT}/scripts/soak.mjs"` measures the merge base even though the shell stays in this worktree. An `exited` line, or a `SOAK_FAIL:` line in a log, stops the measurement: keep the logs and escalate.
+
+Compute the medians:
+
+```bash
+SOAK_OUT="${TMPDIR:-/tmp}/jevcode-a1-soak"
+node --input-type=module -e '
+import { readFileSync } from "node:fs";
+const [dir, baseSha, headSha] = process.argv.slice(1);
+const read = (side) =>
+  [1, 2, 3].map((run) => {
+    const log = readFileSync(`${dir}/${side}-${run}.log`, "utf8");
+    const start = log.indexOf("\n{\n");
+    const end = log.indexOf("\n}\n", start);
+    if (log.includes("SOAK_FAIL") || start < 0 || end < 0) {
+      console.error(`${side} run ${run} has no soak result; see ${dir}/${side}-${run}.log`);
+      process.exit(1);
+    }
+    const { ingestMs, units } = JSON.parse(log.slice(start + 1, end + 2));
+    return { ingestMs, units };
+  });
+const median = (values) => [...values].sort((a, b) => a - b)[1];
+const line = (label, runs) =>
+  `${label}: ingestMs ${runs.map((r) => r.ingestMs).join(", ")}; median ${median(runs.map((r) => r.ingestMs))} ms; units ${runs.map((r) => r.units).join(", ")}`;
+const base = read("base");
+const head = read("head");
+const ratio = median(head.map((r) => r.ingestMs)) / median(base.map((r) => r.ingestMs));
+console.log(line(`merge base ${baseSha}`, base));
+console.log(line(`head ${headSha}`, head));
+console.log(`ratio ${ratio.toFixed(3)} (budget 1.10): ${ratio <= 1.1 ? "PASS" : "FAIL"}`);
+process.exit(ratio <= 1.1 ? 0 : 1);
+' "${SOAK_OUT}" "$(git rev-parse --short "$(git merge-base main HEAD)")" "$(git rev-parse --short HEAD)"
+```
+
+Expected: exactly three lines, exit 0:
+
+```
+merge base <sha>: ingestMs <ms>, <ms>, <ms>; median <ms> ms; units <n>, <n>, <n>
+head <sha>: ingestMs <ms>, <ms>, <ms>; median <ms> ms; units <n>, <n>, <n>
+ratio <r> (budget 1.10): PASS
+```
+
+The three unit counts on each line are equal: the soak stream and its clock are fixed. A rehearsal with `JEVCODE_SOAK_EVENTS=2000` on 2026-09-28 printed `units 973, 973, 973` on both sides, `ingestMs` within 3% of each other, and `ratio 1.015`. If the unit counts differ between the two lines, the PR names the task that changed them. `FAIL` (exit 1) means the M1b exit is not met and the lane does not merge: keep the six logs and escalate; do not rerun until it passes.
+
+- [ ] **Record the M1b exit numbers for the PR and clean up.** Put the three soak lines and the two benchmark lines in the lane's hand-off note under "M1b exit (spec §12)", so the PR description lists both `ingestMs` medians, the unit counts before and after, and both `prepareDiff` means. Then run `git worktree remove "${TMPDIR:-/tmp}/jevcode-a1-soak-base"`. Expected: exits 0 (`node_modules` and `dist` are ignored files, so no `--force` is needed).
+
 ## Coverage against the binding decisions
 
 | Decision | Task |
@@ -5065,6 +5554,8 @@ Expected: every command exits 0; the validator prints `VALIDATION PASSED`; the l
 | R3 canonical `factContentId`; zod no-strip guard | A1-5 |
 | R3 `prepareDiff` injection (default `not_captured`), change-only emission | A1-6 |
 | R3 desktop diff policy (secret paths, prefixed `env_value`, 32 KiB at a hunk boundary); double push removed | A1-7 |
+| Spec §16 A1-7 follow-up, partly: more withheld basenames (`id_ed25519*`, `id_ecdsa*`, `id_dsa*` except `*.pub`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc`, `.pgpass`), private-key blocks in any path | A1-7 (deviation 13) |
+| Spec §12 M1b exit: unchanged diff = one hash, no `prepareDiff`; `prepareDiff` bench ≤ 10 ms; soak `ingestMs` median ≤ 1.10 × merge base, with unit counts | A1-6, A1-7, Lane completion |
 | R3 `agentCallIds` in `clusterSession` and `unitSignature` | A1-8 |
 | R3 fixtures (`callId`, `sourceCallId`, `diff`, one `agent_reasoning`), oauth failure text, validator `+`/`-` check | A1-9 |
 | R4 `Decision.ts`, `JevDecisionLog.pass`, real suppression `clientKind`/confidence | A1-10 |
@@ -5076,4 +5567,7 @@ Expected: every command exits 0; the validator prints `VALIDATION PASSED`; the l
 
 - **Token rule over-redaction in stored diffs.** `redactText`'s `token` rule matches `token: string` in TypeScript, so oauth's stored diff shows `verifyIdToken(token=[REDACTED:token])`. It fails safe (no leak) but reads badly in the viewer; tightening the rule for code is a separate PR alongside the pattern false positives already listed under "Separate PRs".
 - **Change-only emission changes live clustering.** Unchanged dirty files no longer re-emit every 5 s with a new `ts`, so live buckets can split where they used to merge under the 120 s gap. Fixtures are unaffected (verified); watch soak unit counts (lane A2-7 reports them).
+- **Private-key coverage is block-based.** A hunk inside a key that shows neither its BEGIN nor its END line (a one-line edit in the middle of a long key in a file that is not withheld) stores those body lines, because nothing marks them as key material. A collapsed key block also leaves the hunk's `@@` line counts larger than the lines stored, so a viewer that numbers diff lines from the header shifts the lines after the block; stored diffs are for reading, not for applying. `id_rsa.pub` stays withheld under R3's `id_rsa*` while the other `.pub` files are stored.
+- **The `prepareDiff` budget has about 20% headroom.** `redactText` over the whole raw diff is most of the 2 MiB cost (about 6.2 of 7.7 ms on the plan machine); a slower machine may miss 10 ms. The benchmark is an exit check, not a CI gate; a miss is escalated, not hidden by a smaller input.
+- **The soak comparison needs about 65 minutes of an otherwise idle machine.** A busy machine skews one side; the alternating order limits drift but not a load that starts mid-run.
 - **Codex's real SIGINT output is unverified on 0.155+.** The adapter treats `turn.completed`, `turn.failed`, an auth `agent_failed` and a bare exit as the interrupted process's terminal signal; if a future Codex emits more than one, only the first is reported and the rest are dropped, which is the intended behavior.

@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give the trace viewer a read-only path to stored jevcode sessions: a `query_only` SQLite reader, a main-process trace service (fact ids, 16 KiB clipping), three bounded `trace:*` IPC channels exposed as `window.jevcode.trace`, redacted `trace.json` bundles from `replay` and `replay export`, and a soak run that times full-session reads and single `trace:rows` calls, generates the spec §10 trace-profile reference input and can keep its database.
+**Goal:** Give the trace viewer a read-only path to stored jevcode sessions: a `query_only` SQLite reader whose pages stop after 2 MiB of payload, a main-process trace service (fact ids, 16 KiB clipping to a 4 KiB head and a 12 KiB tail), three bounded `trace:*` IPC channels exposed as `window.jevcode.trace`, redacted `trace.json` bundles from `replay` and `replay export`, and a soak run that times full-session reads and single `trace:rows` calls, generates the spec §10 trace-profile reference input and can keep its database.
 
-**Architecture:** `packages/storage/src/trace-reader.ts` opens a second better-sqlite3 connection on the same database file with `PRAGMA query_only = ON` and reads the existing `events`, `sessions` and `repositories` tables (no migration). `apps/desktop/src/main/trace-service.ts` turns reader rows into contract `TraceRow`s (`factId` from `factContentId` before clipping, long strings clipped to head and tail). Every consumer goes through the service: `trace-ipc.ts` on the existing `handle` wrapper, `trace-bundle.ts` (redaction and `$HOME` to `~`) used by `runReplay` and `exportMain`, and `scripts/soak.mjs`. The renderer API gains a read-only `trace` namespace. The viewer's `TraceSource` is session-bound (spec §7.7, UI index §1.2(b)), so lane M5 adapts the namespace with `createIpcTraceSource(bridge.trace, sessionId)`; its `summary()` uses the exact-id `trace:listSessions({ sessionId })` lookup, which also returns a session with zero events.
+**Architecture:** `packages/storage/src/trace-reader.ts` opens a second better-sqlite3 connection on the same database file with `PRAGMA query_only = ON` and reads the existing `events`, `sessions` and `repositories` tables (no migration). A `rows` page ends at `limit` rows or after the row that takes its stored payload past 2 MiB. `apps/desktop/src/main/trace-service.ts` turns reader rows into contract `TraceRow`s: `factId` from `factContentId` before clipping, and every string over 16 KiB of UTF-8 cut to its first 4 KiB and last 12 KiB, except a `git_hunk`'s `diff.text`. Every consumer goes through the service: `trace-ipc.ts` on the existing `handle` wrapper, `trace-bundle.ts` (redaction of whole strings, then the clip, and `$HOME` to `~`) used by `runReplay` and `exportMain`, and `scripts/soak.mjs`. The renderer API gains a read-only `trace` namespace. The viewer's `TraceSource` is session-bound (spec §7.7, UI index §1.2(b)), so lane M5 adapts the namespace with `createIpcTraceSource(bridge.trace, sessionId)`; its `summary()` uses the exact-id `trace:listSessions({ sessionId })` lookup, which also returns a session with zero events.
 
 **Tech Stack:** TypeScript 5.9.3 (NodeNext, `strict`, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`), better-sqlite3 11.10.0 (bundled SQLite 3.49.2 with `json_each`), zod 3.25.76, vitest 3.2.7, Electron 33 main process, Node 22, pnpm 9.15.0.
 
-**Spec:** `docs/superpowers/specs/2026-09-28-trace-viewer-design.md`, sections "User decisions" (D2, D9), "Accepted recommendations (data)" (R2, R5) and "Out of v1". Interface contract: `docs/superpowers/plans/2026-09-28-trace-viewer-interfaces.md` §2.1 (`trace.ts` and the paging contract), §2.5 (A2 read path API), §3 (A2 task list), §4 (waves, fixture drift) and §5 (gotchas), amended by `docs/superpowers/plans/2026-09-28-trace-viewer-interfaces-ui.md` §1.3 (the `sessionId` lookup on `trace:listSessions`). Spec sections this lane implements beyond the base index: §5.2 and §5.4 (`sessionId?`), §5.6 (`JEVCODE_SOAK_PROFILE=trace`, `JEVCODE_SOAK_KEEP_DB`, `storedRows`, `consumedRows`) and §10 (the M2 budgets and the measuring method). On any conflict the decision record wins, then the spec, then the interfaces file, then this file.
+**Spec:** `docs/superpowers/specs/2026-09-28-trace-viewer-design.md`, sections "User decisions" (D2, D9), "Accepted recommendations (data)" (R2, R5) and "Out of v1". Interface contract: `docs/superpowers/plans/2026-09-28-trace-viewer-interfaces.md` §2.1 (`trace.ts` and the paging contract), §2.5 (A2 read path API), §3 (A2 task list), §4 (waves, fixture drift) and §5 (gotchas), amended by `docs/superpowers/plans/2026-09-28-trace-viewer-interfaces-ui.md` §1.3 (the `sessionId` lookup on `trace:listSessions`). Spec sections this lane implements beyond the base index: §5.2 (`sessionId?` and the 2 MiB page bound), §5.3 (the 4 KiB head and 12 KiB tail of UTF-8, and the `git_hunk.diff.text` exemption), §5.4 (`sessionId?`), §5.6 (`JEVCODE_SOAK_PROFILE=trace`, `JEVCODE_SOAK_KEEP_DB`, `storedRows`, `consumedRows`), §5.7 (redaction before the clip) and §10 (the M2 budgets and the measuring method). The §5.2, §5.3 and §5.7 items close spec §16 "Plan follow-ups" row "A2-2, A2-5". On any conflict the decision record wins, then the spec, then the interfaces file, then this file.
 
 ## Interface deviations
 
-Each item changes or sharpens interfaces §1 or §2.5. Names and signatures in §2.5 are otherwise used verbatim.
+Each item changes or sharpens interfaces §1, §2.1 or §2.5. Names and signatures in §2.5 are otherwise used verbatim.
 
 1. **`docs/security.md` joins A2's files (task A2-6).** The index file map omits it, but this lane must add the viewer row to the SPEC §12 checklist. No other lane edits `docs/security.md`. Index §1 should list `docs/security.md mod: row 7, trace viewer read-only guarantee [A2-6]`.
 2. **`writeTraceBundle` writes rows one at a time** instead of building one `JSON.stringify(bundle)` string. The bytes are identical (`JSON.stringify(bundle) + "\n"`, pinned by a test). Reason: on 2026-09-28 the full soak session held 110,940 trace rows and exported to a 177 MB file, and a session near the 1M-event cap would approach V8's maximum string length.
@@ -21,7 +21,7 @@ Each item changes or sharpens interfaces §1 or §2.5. Names and signatures in �
 5. **`buildTraceBundle` restamps `session.lastEventSeq` and `session.state` from the final page**, so the summary describes exactly the bundled rows.
 6. **Reader errors:** `TraceReader.rows` throws `Error("trace reader: unknown session <id>")` for a missing session row, and `rows`/`listSessions` throw `RangeError` for a non-integer or out-of-range `afterSeq` or `limit`. The service checks the session first and throws `IpcError("UNKNOWN_SESSION")`, so IPC callers never see the plain error.
 7. **`toTraceRow` omits `payload` and `factId` when `payloadJson` is not valid JSON** instead of throwing. This applies §2.1's rule "consumers treat a missing payload as an invalid_row" to damaged rows, so one bad row cannot make a session unreadable.
-8. **`clipPayload` never splits a UTF-16 surrogate pair**; the head or the tail may be one code unit shorter than `maxChars / 2`. It throws `RangeError` when `maxChars < 2`.
+8. **Clipping follows spec §5.3, not §2.5's two 8,192-character halves.** A string whose UTF-8 length exceeds `TRACE_CLIP_CHARS` (16,384) keeps its first 4,096 and its last 12,288 UTF-8 bytes around the line `… [N bytes clipped] …`, where N is the number of UTF-8 bytes removed. The tail is longer because failures sit at the end of output. Both cuts fall on code-point boundaries, so the head or the tail may be up to 3 bytes short, and a surrogate pair is never split. W0's doc comment on `TRACE_CLIP_CHARS` says "UTF-16 code units"; spec §5.3 measures UTF-8 bytes and wins. `clipPayload(payload, maxBytes?)` takes the threshold in bytes (head `maxBytes / 4` rounded down, tail the rest) and throws `RangeError` when `maxBytes < 4`.
 9. **The service clamps limits** (`listSessions` to `TRACE_LIST_SESSIONS_MAX`, `rows` to `TRACE_ROWS_PAGE_MAX`) as well as the IPC schemas, because the export CLI and the soak call it directly. `readAllRows` defaults `pageSize` to `TRACE_ROWS_PAGE_MAX`.
 10. **The soak writes its optional bundle after `stopSession`**, so the bundle carries the terminal state. The timed read stays before `stopSession`, as §2.5 says.
 11. **`exportMain` accepts exactly `--db`, `--session` and `--out`**, each with a non-empty value. Anything else prints the usage line. Every failure returns `1` and prints `export: …` to stderr; it never throws. It also exports `EXPORT_USAGE`.
@@ -29,6 +29,9 @@ Each item changes or sharpens interfaces §1 or §2.5. Names and signatures in �
 13. **`JevcodeApi.trace` is no longer "structurally a `TraceSource`".** W0-6 (UI index §1.2(b), spec §7.7) made `TraceSource` session-bound (`sessionId`, `summary()`, `rows(request?)`, `payloads(seqs)`, `now()`), so A2-4 drops that claim and its `TraceSource` type test and pins the namespace keys instead. Lane M5 builds the port with `createIpcTraceSource(bridge.trace, sessionId)` and replaces the keys test when it adds `open` and `requestChanges`.
 14. **`scripts/soak.mjs` gains the spec §5.6 switches and fields.** `JEVCODE_SOAK_PROFILE=trace` generates the spec §10 reference input (seeded, so every run is identical; the default profile's stream is unchanged); any other non-empty value exits 1 with `SOAK_FAIL: unknown JEVCODE_SOAK_PROFILE …`. `JEVCODE_SOAK_KEEP_DB=<path>` copies the closed database (mode 0600) before the `rmSync`. The printed JSON gains `profile`, `storedRows` and `consumedRows` (spec §5.6) beside the base index's `traceRows`; `consumedRows` equals `traceRows`, and `storedRows` replaces this file's earlier `traceLastSeq` (seq is gapless, so the last seq counts every stored row). Lanes 06 (C2-16) and 08 (D-8) depend on all three.
 15. **The soak measures the two M2 budgets the spec §10 way.** `traceReadMs` is the median of 5 full reads after 1 discarded warm-up (`traceReadRunsMs` lists the 5), not one cold read; `tracePageMs` times single `trace:rows` calls at `TRACE_ROWS_PAGE_DEFAULT` (the viewer's page size) until 300 calls are timed, for the spec §12 M2 exit "`trace:rows` p95 ≤ 50 ms in main". Each budget prints a `soak: WARN …` line when missed, never a failure.
+16. **A `rows` page also stops after 2 MiB of stored payload** (spec §5.2). `TraceReader.rows` reads its page with `iterate()`, not `all()`, and stops after the row whose cumulative `payloadJson` passes 2,097,152 UTF-8 bytes, so it never reads the payloads after the cut. A page always holds at least one row, so a single larger row still arrives. `TraceReaderPage` gains `full: boolean`: true when the page stopped at `limit` rows or at the byte bound. The paging contract's `nextAfterSeq` becomes "the last row's seq when the page is full by `limit` or by the 2 MiB bound, else `null`". Every consumer already resumes from `nextAfterSeq` (`cursorAfter`, `readAllRows`, `readAllTraceRows`), so none changes. The bound is a constant in trace-reader.ts, not in contracts, which W0 owns.
+17. **A `git_hunk`'s `diff.text` is never clipped** (spec §5.3). A1's `prepareDiff` stores it redacted and capped at 32 KiB (spec §4.3), so `clipPayload` leaves the `text` of a `git_hunk` payload's `diff` object whole: Evidence receives the stored diff byte for byte, and that string never sets `clipped`. Every other string in the same payload, and a `text` key anywhere else, clips as usual. Bundle export still runs `redactText` over `diff.text` (spec §5.7), and counts only what that pass newly changes (deviation 4).
+18. **The bundle redacts whole strings, then clips** (spec §5.7). `TraceService.rows(request, options?: TraceRowsOptions)` and `toTraceRow(sessionId, row, options?)` accept `{ clip: false }`, which returns payloads as stored, and the new export `clipTraceRow(row)` applies the clip afterwards. `buildTraceBundle` pages with `{ clip: false }`, runs `redactBundleValue` over each whole payload, then `clipTraceRow`, one page at a time, so an unclipped page never holds more than the 2 MiB bound plus one row. A private key cut by the 4 KiB head boundary is therefore redacted as one block. `factId` is still computed from the stored payload before either step. `buildTraceBundle` no longer calls `readAllRows`. The `trace:*` handlers pass only the zod-parsed request, so a renderer cannot turn clipping off.
 
 ## Global Constraints
 
@@ -46,8 +49,8 @@ Binding values, copied verbatim from the binding decision record that the spec c
 
 Values fixed by the interfaces file (§2.1, §2.5, Global Constraints):
 
-- `TRACE_CLIP_CHARS = 16_384` UTF-16 code units. `TRACE_LIST_SESSIONS_DEFAULT = 100`, `TRACE_LIST_SESSIONS_MAX = 500`, `TRACE_ROWS_PAGE_DEFAULT = 2_000`, `TRACE_ROWS_PAGE_MAX = 5_000`, `TRACE_PAYLOADS_MAX = 50`. Import them from `@jevcode/contracts`; never repeat the numbers in source.
-- Paging contract: rows with `afterSeq < seq <= lastSeq` and `type` in `TRACE_ROW_TYPES`, ascending, at most `limit`, from one read transaction; `nextAfterSeq` is the last row's seq when `rows.length === limit`, else `null`.
+- `TRACE_CLIP_CHARS = 16_384` UTF-16 code units (spec §5.3 measures the threshold in UTF-8 bytes and wins; deviation 8). `TRACE_LIST_SESSIONS_DEFAULT = 100`, `TRACE_LIST_SESSIONS_MAX = 500`, `TRACE_ROWS_PAGE_DEFAULT = 2_000`, `TRACE_ROWS_PAGE_MAX = 5_000`, `TRACE_PAYLOADS_MAX = 50`. Import them from `@jevcode/contracts`; never repeat the numbers in source.
+- Paging contract: rows with `afterSeq < seq <= lastSeq` and `type` in `TRACE_ROW_TYPES`, ascending, at most `limit`, from one read transaction; `nextAfterSeq` is the last row's seq when `rows.length === limit`, else `null`. Spec §5.2 adds the 2 MiB page bound (deviation 16).
 - No new tables, columns or indexes; `LATEST_SCHEMA_VERSION` does not change.
 - This lane edits no `package.json`, no `pnpm-lock.yaml` and no `eslint.config.mjs`. A step that seems to need a new dependency stops and escalates.
 - `apps/desktop/src/main/pipeline/*` belongs to lane A1. Import `redactText` from `pipeline/redactor.ts`; never edit it.
@@ -57,8 +60,11 @@ Values fixed by the interfaces file (§2.1, §2.5, Global Constraints):
 - Never run `git stash`; set work aside with a WIP commit. Create worktrees with `git worktree add -b <branch> <path> <base>`, never `-f`.
 - The shell is zsh: write `${var}:suffix`, never `"$var:suffix"`, when a colon follows a variable. Do not put `# comments` after commands.
 
-Values fixed by the UI index §1.3 and the spec (interface deviations 12-15):
+Values fixed by the UI index §1.3 and the spec (interface deviations 8 and 12-18):
 
+- Spec §5.2: "The page also stops after the row whose cumulative `payloadJson` length exceeds 2 MiB (always at least one row)" and "`nextAfterSeq` is the last returned seq when the page is full (by `limit` or by the 2 MiB bound) and `null` otherwise".
+- Spec §5.3: the service "clips every string longer than 16 KiB (UTF-8) to its first 4 KiB and last 12 KiB with a `… [N bytes clipped] …` line between them, cut at code-point boundaries, and sets `clipped: true`. … `git_hunk.diff.text` is exempt: its 32 KiB cap (§4.3) already bounds it, so Evidence always receives the whole stored diff and `diff.text` never sets `clipped`".
+- Spec §5.7: "`buildTraceBundle` reads unclipped payloads and computes `factId`. `redactBundleValue(value, homeDir)` … then runs `redactText` … over every string of each row payload and of the summary … Only then is the service's 16 KiB head + tail clip applied, so a secret cannot escape redaction by straddling a cut".
 - `trace:listSessions {repoId?, sessionId?, limit ≤ 500}` (spec §5.4). "`sessionId` is an exact-match filter the trace window uses for its summary, and returns the session even with zero events" (spec §5.2). Spec §11 M2: "a zero-event session is readable by exact id and yields `{rows: [], nextAfterSeq: null, lastSeq: 0}`".
 - Spec §5.6: "With `JEVCODE_SOAK_PROFILE=trace` it draws `command_completed.stdout` sizes from {0.2, 2, 8, 32, 64} KiB and assistant texts from 0.2–4 KiB, and emits `command_started`/`command_completed` pairs with `callId`, an agent `file_changed` before each feature hunk, and an `agent_started` steer every 500 records. `JEVCODE_SOAK_KEEP_DB=<path>` copies the DB before the `rmSync`."
 - Spec §10 budgets gated at the M2 exit: full soak-session read in main ≤ 1.5 s; one `trace:rows` call in main (trace profile) p95 ≤ 50 ms. Method: "Single-run budgets (soak read, …) report the median of 5 runs after 1 discarded warm-up; p95 budgets use at least 300 samples."
@@ -66,14 +72,15 @@ Values fixed by the UI index §1.3 and the spec (interface deviations 12-15):
 
 ## Review Focus
 
-Six inputs the spec implies that a happy-path test would miss, most likely first. Each names the test that pins it and the task that owns it.
+Seven inputs the spec implies that a happy-path test would miss. Each names the test that pins it and the task that owns it.
 
 1. **A live session appends while the viewer pages.** Expected: every trace-type seq in `1..lastSeq` arrives exactly once, and no appended row is skipped. Test: A2-1 "pages stay gapless while the writer appends".
 2. **A trace window opened on a session that has not logged an event yet** (the Trace button pressed right after start). Expected: `trace:listSessions({ sessionId })` returns that session with `lastEventSeq: 0`, `trace:rows` returns `{rows: [], nextAfterSeq: null, lastSeq: 0, state}`, the default listing still hides it, an unknown id returns `[]`, and `sessionId: ""` is rejected with `INVALID_PAYLOAD`. Tests: A2-1 "lists a zero-event session by exact id"; A2-3 "lists a zero-event session by exact id and reads it as an empty page".
-3. **Oversized strings** (a 1 MiB `stdout`, a 40 KiB test failure message, emoji at the cut). Expected: `clipped: true`, both 8,192-character halves intact, `factId` computed before clipping, no split surrogate pair. Tests: A2-2 "clips a 1 MiB stdout to head and tail" and "never splits a surrogate pair at either cut".
+3. **Oversized strings** (a 20 KiB `stdout`, a 40 KiB test failure message, a 30 KiB diff, 2-byte characters and emoji at the cut). Expected: `clipped: true`; a 4 KiB head and a 12 KiB tail of UTF-8 around `… [N bytes clipped] …`; the 16 KiB threshold measured in UTF-8 bytes; no code point split; `factId` computed before clipping; a `git_hunk`'s `diff.text` byte-identical and without `clipped`. Tests: A2-2 "clips a 20 KiB stdout to a 4 KiB head and a 12 KiB tail", "measures the 16 KiB bound in UTF-8 bytes and cuts at code-point boundaries" and "passes a git_hunk's 30 KiB diff.text through whole and clips the same text elsewhere".
 4. **A damaged stored row** (`payloadJson` that is not JSON). Expected: the page still loads, that row arrives without `payload` or `factId`, and its neighbours are intact. Test: A2-2 "turns a damaged payload row into a row without payload and keeps its neighbors".
-5. **Secrets and home paths in an exported bundle**, including a sibling home directory (`/Users/tester2`) and already-redacted markers. Expected: no secret text, `$HOME` becomes `~` only at a path boundary, `redactionCount` counts new hits only, `factId` unchanged. Tests: A2-5 "redacts tokens and maps home" and "maps home only at a path boundary and does not recount redacted markers".
+5. **Secrets and home paths in an exported bundle**, including a private key block that straddles the 4 KiB head cut of a 40 KiB stdout, a sibling home directory (`/Users/tester2`) and already-redacted markers. Expected: no secret text (redaction runs on whole strings before the clip), `$HOME` becomes `~` only at a path boundary, `redactionCount` counts new hits only, `factId` unchanged. Tests: A2-5 "redacts tokens and maps home", "redacts a private key that straddles the 4 KiB head cut, then clips" and "maps home only at a path boundary and does not recount redacted markers".
 6. **Export CLI misuse** (a missing or malformed flag, an unknown session, a wrong database path). Expected: exit code 1 with a message, no bundle file, and no database file created. Tests: A2-6 "returns 1 with usage and writes nothing when a flag is missing or malformed" and "returns 1 and writes nothing for an unknown session or a missing database".
+7. **Rows too large for one page** (1 MiB messages, a 3 MiB message, 2-byte characters). Expected: a page ends after the row that takes its stored payload past 2 MiB of UTF-8, a single larger row still makes a page of one, and paging from `nextAfterSeq` reads every row exactly once. Tests: A2-1 "stops a page after the row whose payload bytes pass 2 MiB"; A2-3 "stops a trace:rows page after 2 MiB of payload and resumes at nextAfterSeq".
 
 ## Lane prerequisites
 
@@ -113,21 +120,21 @@ pnpm -r build
 
 | File | Task | Responsibility |
 |---|---|---|
-| `packages/storage/src/trace-reader.ts` (new) | A2-1 | `openTraceReader`, `openQueryOnlyConnection`: the only SQL the viewer runs |
-| `packages/storage/src/trace-reader.test.ts` (new) | A2-1 | paging, hidden types, live appends, listing, exact-id lookup, write refusal |
+| `packages/storage/src/trace-reader.ts` (new) | A2-1 | `openTraceReader`, `openQueryOnlyConnection`: the only SQL the viewer runs; the 2 MiB page bound |
+| `packages/storage/src/trace-reader.test.ts` (new) | A2-1 | paging, the 2 MiB page bound, hidden types, live appends, listing, exact-id lookup, write refusal |
 | `packages/storage/src/index.ts` (mod) | A2-1 | export the reader and its four types |
-| `apps/desktop/src/main/trace-service.ts` (new) | A2-2 | `TraceRow` mapping, `factId`, clipping, limits, `UNKNOWN_SESSION`, `readAllRows` |
-| `apps/desktop/src/main/trace-service.test.ts` (new) | A2-2 | fact ids, clipping, damaged rows, paging, `sessionId` pass-through |
+| `apps/desktop/src/main/trace-service.ts` (new) | A2-2 | `TraceRow` mapping, `factId`, the 4 KiB + 12 KiB clip with the `diff.text` exemption, the `clip: false` option, limits, `UNKNOWN_SESSION`, `readAllRows` |
+| `apps/desktop/src/main/trace-service.test.ts` (new) | A2-2 | fact ids, clipping in UTF-8 bytes, the diff exemption, damaged rows, paging, `sessionId` pass-through |
 | `apps/desktop/src/shared/local-channels.ts` (mod) | A2-3 | three channel names and zod request schemas (`sessionId?` on `trace:listSessions`) |
 | `apps/desktop/src/shared/ipc-registry.test.ts` (mod) | A2-3 | request bounds |
 | `apps/desktop/src/main/trace-ipc.ts` (new) | A2-3 | `registerTraceHandlers` (no `electron` import) |
-| `apps/desktop/src/main/trace-ipc.test.ts` (new) | A2-3 | read-only guarantee, rejections, cross-repo reads, zero-event session by exact id |
+| `apps/desktop/src/main/trace-ipc.test.ts` (new) | A2-3 | read-only guarantee, rejections, cross-repo reads, the 2 MiB page and its `nextAfterSeq`, zero-event session by exact id |
 | `apps/desktop/src/main/ipc.ts` (mod) | A2-3 | `IpcDeps.trace`, handler registration |
 | `apps/desktop/src/main/index.ts` (mod) | A2-3 | open and close the reader at boot and quit |
 | `apps/desktop/src/shared/api.ts` (mod) | A2-4 | `JevcodeApi.trace` (the preload exposes it unchanged) |
 | `apps/desktop/src/shared/api.test.ts` (mod) | A2-4 | channel use, client-side bounds, namespace keys |
-| `apps/desktop/src/main/trace-bundle.ts` (new) | A2-5 | `buildTraceBundle`, `redactBundleValue`, `writeTraceBundle` |
-| `apps/desktop/src/main/trace-bundle.test.ts` (new) | A2-5 | redaction, home mapping, byte-exact file, mode 0600 |
+| `apps/desktop/src/main/trace-bundle.ts` (new) | A2-5 | `buildTraceBundle` (redaction, then the clip), `redactBundleValue`, `writeTraceBundle` |
+| `apps/desktop/src/main/trace-bundle.test.ts` (new) | A2-5 | redaction, a private key across the head cut, home mapping, byte-exact file, mode 0600 |
 | `apps/desktop/src/main/replay/cli-entry.ts` (mod) | A2-5, A2-6 | `trace.json` in `runReplay`; `exportMain` and dispatch |
 | `apps/desktop/src/main/replay/cli-entry.test.ts` (new in A2-5, mod in A2-6) | A2-5, A2-6 | oauth replay bundle; export CLI |
 | `docs/demo.md` (mod) | A2-6 | `trace.json` and `replay export` usage |
@@ -165,10 +172,11 @@ pnpm -r build
   };
   ```
   Existing storage test helpers: `openSessionDb(sessionId = "sess_fixture"): JevcodeDb` (repository `repo_fixture` at `/work/fixture`, one session with zero events) and `tempDbPath(): string` (a path in a fresh temp dir; the file does not exist) from `./test-utils.js`; `SESSION = "sess_fixture"`, `REPO = "repo_fixture"`, `TS`, `makeAgentEvent`, `makeFact`, `makeChangeUnit`, `makeDecision`, `makeJevLog` from `./fixtures.js`.
-- Produces (interfaces §2.5, verbatim, plus `sessionId?` from UI index §1.3):
+- Produces (interfaces §2.5, verbatim, plus `sessionId?` from UI index §1.3 and `full` from spec §5.2, deviation 16):
   ```ts
   export interface TraceReaderRow { seq: number; type: string; ts: string; payloadJson: string }
-  export interface TraceReaderPage { rows: TraceReaderRow[]; lastSeq: number; state: TraceSessionSummary["state"] }
+  // full: the page stopped at `limit` rows or after the row whose cumulative payloadJson passed 2 MiB of UTF-8.
+  export interface TraceReaderPage { rows: TraceReaderRow[]; lastSeq: number; state: TraceSessionSummary["state"]; full: boolean }
   export interface ListTraceSessionsOptions { repoId?: string; sessionId?: string; limit: number }
   // listSessions with sessionId: at most that one session (none when repoId differs), zero-event sessions included.
   export interface TraceReader {
@@ -234,14 +242,14 @@ function traceSeqs(db: JevcodeDb, sessionId: string): number[] {
     .map((event) => event.seq);
 }
 
-/** Pages with the paging contract: afterSeq = last row seq when full, else lastSeq. */
+/** Pages with the paging contract: afterSeq = last row seq when the page is full, else lastSeq. */
 function readAll(reader: TraceReader, sessionId: string, limit: number): number[] {
   const seqs: number[] = [];
   let afterSeq = 0;
   for (let guard = 0; guard < 1_000; guard += 1) {
     const page = reader.rows(sessionId, afterSeq, limit, TRACE_ROW_TYPES);
     seqs.push(...page.rows.map((row) => row.seq));
-    if (page.rows.length < limit) return seqs;
+    if (!page.full) return seqs;
     afterSeq = page.rows.at(-1)?.seq ?? page.lastSeq;
   }
   throw new Error("readAll did not terminate");
@@ -280,7 +288,7 @@ describe("openTraceReader", () => {
     for (let guard = 0; guard < 100; guard += 1) {
       const page = reader.rows(SESSION, afterSeq, 3, TRACE_ROW_TYPES);
       seen.push(...page.rows.map((row) => row.seq));
-      const full = page.rows.length === 3;
+      const full = page.full;
       afterSeq = full ? (page.rows.at(-1)?.seq ?? page.lastSeq) : page.lastSeq;
       if (appendsLeft > 0) {
         appendsLeft -= 1;
@@ -307,8 +315,33 @@ describe("openTraceReader", () => {
     expect(page.rows.map((row) => row.seq)).toEqual([5, 6]);
     expect(page.lastSeq).toBe(10);
     expect(page.state).toBe("running");
+    expect(page.full).toBe(true);
+    expect(reader.rows(SESSION, 8, 5, TRACE_ROW_TYPES).full).toBe(false);
     expect(reader.rows(SESSION, 10, 5, TRACE_ROW_TYPES).rows).toEqual([]);
     expect(reader.rows(SESSION, 0, 5, ["telemetry"]).rows.map((row) => row.seq)).toEqual([2]);
+    reader.close();
+    db.close();
+  });
+
+  it("stops a page after the row whose payload bytes pass 2 MiB", () => {
+    const db = openSessionDb();
+    // "é" is one UTF-16 code unit but two UTF-8 bytes: each wide message
+    // stores about 1.2 MiB of payload JSON in 0.6 Mi code units.
+    const wide = "é".repeat(600 * 1024);
+    db.appendAgentEvent(SESSION, makeAgentEvent({ text: wide }));
+    db.appendAgentEvent(SESSION, makeAgentEvent({ text: wide }));
+    db.appendAgentEvent(SESSION, makeAgentEvent({ text: "small" }));
+    db.appendAgentEvent(SESSION, makeAgentEvent({ text: "x".repeat(3 * 1024 * 1024) }));
+    db.appendAgentEvent(SESSION, makeAgentEvent({ text: "last" }));
+    const reader = openTraceReader(db.dbPath);
+    const pages = [0, 2, 3, 4].map((afterSeq) => reader.rows(SESSION, afterSeq, 50, TRACE_ROW_TYPES));
+    expect(pages.map((page) => [page.rows.map((row) => row.seq), page.full])).toEqual([
+      [[1, 2], true], // about 2.4 MiB of UTF-8 in 1.2 Mi code units: the bound counts bytes
+      [[3, 4], true], // the 3 MiB row passes the bound and ends the page
+      [[4], true], // a row over 2 MiB on its own still makes a page
+      [[5], false],
+    ]);
+    expect(readAll(reader, SESSION, 50)).toEqual([1, 2, 3, 4, 5]);
     reader.close();
     db.close();
   });
@@ -467,6 +500,8 @@ export interface TraceReaderPage {
   rows: TraceReaderRow[];
   lastSeq: number;
   state: TraceSessionSummary["state"];
+  /** True when the page stopped at `limit` rows or at the 2 MiB payload bound; the caller resumes after its last row. */
+  full: boolean;
 }
 
 export interface ListTraceSessionsOptions {
@@ -481,7 +516,10 @@ export interface TraceReader {
   /** Joins repositories; ORDER BY startedAt DESC, id ASC. Hides sessions with lastEventSeq = 0 unless sessionId is given. */
   listSessions(options: ListTraceSessionsOptions): TraceSessionSummary[];
   getSession(sessionId: string): TraceSessionSummary | undefined;
-  /** One read transaction: session row, then seq > afterSeq AND seq <= lastEventSeq AND type IN (types) ORDER BY seq LIMIT limit. */
+  /**
+   * One read transaction: session row, then seq > afterSeq AND seq <= lastEventSeq AND type IN (types)
+   * ORDER BY seq LIMIT limit, stopping after the row whose cumulative payloadJson passes 2 MiB of UTF-8.
+   */
   rows(sessionId: string, afterSeq: number, limit: number, types: readonly string[]): TraceReaderPage;
   /** Rows of any type for the given seqs, ascending; unknown seqs omitted. */
   payloads(sessionId: string, seqs: readonly number[]): TraceReaderRow[];
@@ -494,6 +532,14 @@ const SUMMARY_SELECT =
   "s.lastEventSeq AS lastEventSeq FROM sessions s LEFT JOIN repositories r ON r.id = s.repoId";
 
 const LIST_ORDER = "ORDER BY s.startedAt DESC, s.id ASC LIMIT ?";
+
+/**
+ * A rows() page stops after the row whose cumulative payloadJson passes this
+ * many UTF-8 bytes (spec §5.2). Real agent rows average about 12 KB, so 5,000
+ * of them would otherwise make one page of about 60 MB. A page always holds at
+ * least one row, so a single larger row still arrives.
+ */
+const PAGE_MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
 
 function requireInteger(label: string, value: number, min: number): void {
   if (!Number.isInteger(value) || value < min) {
@@ -549,17 +595,31 @@ export function openTraceReader(dbPath: string): TraceReader {
       if (session === undefined) {
         throw new Error(`trace reader: unknown session ${sessionId}`);
       }
-      const rows = pageRows.all(
+      // iterate(), not all(): a page cut by the byte bound never reads the
+      // payloads of the rows after the cut.
+      const rows: TraceReaderRow[] = [];
+      let payloadBytes = 0;
+      let full = false;
+      const cursor = pageRows.iterate(
         sessionId,
         afterSeq,
         session.lastEventSeq,
         typesJson,
         limit,
-      ) as TraceReaderRow[];
+      ) as IterableIterator<TraceReaderRow>;
+      for (const row of cursor) {
+        rows.push(row);
+        payloadBytes += Buffer.byteLength(row.payloadJson, "utf8");
+        if (payloadBytes > PAGE_MAX_PAYLOAD_BYTES) {
+          full = true;
+          break;
+        }
+      }
       return {
         rows,
         lastSeq: session.lastEventSeq,
         state: session.state as TraceSessionSummary["state"],
+        full: full || rows.length === limit,
       };
     },
   );
@@ -601,7 +661,7 @@ export function openTraceReader(dbPath: string): TraceReader {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `pnpm --filter @jevcode/storage exec vitest run src/trace-reader.test.ts`
-Expected: PASS, `Tests  8 passed (8)`
+Expected: PASS, `Tests  9 passed (9)`
 
 - [ ] **Step 5: Export the reader from the package**
 
@@ -648,7 +708,7 @@ git commit -m "feat(storage): add query_only trace reader"
 
 ---
 
-### Task A2-2: trace service (`factId`, clipping, `readAllRows`, `UNKNOWN_SESSION`)
+### Task A2-2: trace service (`factId`, 4 KiB + 12 KiB clipping, `readAllRows`, `UNKNOWN_SESSION`)
 
 **Files:**
 - Create: `apps/desktop/src/main/trace-service.ts`
@@ -656,21 +716,25 @@ git commit -m "feat(storage): add query_only trace reader"
 
 **Interfaces:**
 - Consumes:
-  - A2-1 (`@jevcode/storage`): `openTraceReader(dbPath: string): TraceReader`, `TraceReader`, `TraceReaderRow`, `ListTraceSessionsOptions` (signatures in A2-1 Produces).
-  - W0-5 (`@jevcode/contracts`): `TRACE_CLIP_CHARS = 16_384`, `TRACE_LIST_SESSIONS_DEFAULT = 100`, `TRACE_LIST_SESSIONS_MAX = 500`, `TRACE_ROWS_PAGE_DEFAULT = 2_000`, `TRACE_ROWS_PAGE_MAX = 5_000`, `TRACE_ROW_TYPES`; types `TraceRow = { seq: number; type: string; ts: string; payload?: unknown; clipped?: boolean; factId?: string }`, `TraceRowsPage = { rows: TraceRow[]; nextAfterSeq: number | null; lastSeq: number; state: AgentState }`, `TraceSessionSummary`.
+  - A2-1 (`@jevcode/storage`): `openTraceReader(dbPath: string): TraceReader`, `TraceReader`, `TraceReaderRow`, `ListTraceSessionsOptions`, and `TraceReaderPage.full` (signatures in A2-1 Produces).
+  - W0-5 (`@jevcode/contracts`): `TRACE_CLIP_CHARS = 16_384` (used as a UTF-8 byte threshold, deviation 8), `TRACE_LIST_SESSIONS_DEFAULT = 100`, `TRACE_LIST_SESSIONS_MAX = 500`, `TRACE_ROWS_PAGE_DEFAULT = 2_000`, `TRACE_ROWS_PAGE_MAX = 5_000`, `TRACE_ROW_TYPES`; types `TraceRow = { seq: number; type: string; ts: string; payload?: unknown; clipped?: boolean; factId?: string }`, `TraceRowsPage = { rows: TraceRow[]; nextAfterSeq: number | null; lastSeq: number; state: AgentState }`, `TraceSessionSummary`.
   - `@jevcode/semantic-core`: `factContentId(sessionId: string, record: unknown): string` (returns `fact_<16 hex>`; lane A1-5 makes it hash `canonicalJson(record)` without changing the signature).
   - `apps/desktop/src/shared/errors.ts`: `class IpcError extends Error { constructor(code: IpcErrorCode, message: string); readonly code: IpcErrorCode }`; `"UNKNOWN_SESSION"` is an existing `IpcErrorCode`.
-- Produces (interfaces §2.5, verbatim, plus `sessionId?` from UI index §1.3):
+  - W0-4 (`@jevcode/contracts`): the optional `git_hunk.diff` object `{ hash, bytes, text?, truncated, redactions, withheld? }` on `EvidenceFactSchema`.
+- Produces (interfaces §2.5, verbatim, plus `sessionId?` from UI index §1.3, and the clip rules and `clip` option of deviations 8, 17 and 18):
   ```ts
+  export interface TraceRowsOptions { clip?: boolean } // default true; only buildTraceBundle passes false
   export interface TraceService {
     listSessions(request: { repoId?: string; sessionId?: string; limit?: number }): TraceSessionSummary[]; // passes sessionId through
     session(sessionId: string): TraceSessionSummary; // throws IpcError("UNKNOWN_SESSION")
-    rows(request: { sessionId: string; afterSeq?: number; limit?: number }): TraceRowsPage;
+    rows(request: { sessionId: string; afterSeq?: number; limit?: number }, options?: TraceRowsOptions): TraceRowsPage;
     payloads(request: { sessionId: string; seqs: readonly number[] }): TraceRow[];
   }
   export function createTraceService(reader: TraceReader): TraceService;
-  export function toTraceRow(sessionId: string, row: TraceReaderRow): TraceRow;
-  export function clipPayload(payload: unknown, maxChars?: number): { payload: unknown; clipped: boolean };
+  export function toTraceRow(sessionId: string, row: TraceReaderRow, options?: TraceRowsOptions): TraceRow;
+  // A string over maxBytes of UTF-8 -> first maxBytes/4 bytes + "\n… [N bytes clipped] …\n" + last 3*maxBytes/4 bytes; git_hunk diff.text exempt.
+  export function clipPayload(payload: unknown, maxBytes?: number): { payload: unknown; clipped: boolean };
+  export function clipTraceRow(row: TraceRow): TraceRow; // clipPayload over row.payload, clipped: true only when a string was cut
   export function readAllRows(
     service: TraceService,
     sessionId: string,
@@ -692,7 +756,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { TRACE_CLIP_CHARS, TRACE_ROW_TYPES } from "@jevcode/contracts";
+import { TRACE_ROW_TYPES } from "@jevcode/contracts";
 import type { EvidenceFact, TraceSessionSummary } from "@jevcode/contracts";
 import { factContentId } from "@jevcode/semantic-core";
 import { openDb, openTraceReader } from "@jevcode/storage";
@@ -777,10 +841,12 @@ function fakeReader(rows: TraceReaderRow[] = []): FakeReader {
     getSession: (sessionId) => (sessionId === SESSION ? summary : undefined),
     rows: (_sessionId, afterSeq, limit, types) => {
       rowCalls.push({ afterSeq, limit, types });
+      const page = rows.filter((row) => row.seq > afterSeq).slice(0, limit);
       return {
-        rows: rows.filter((row) => row.seq > afterSeq).slice(0, limit),
+        rows: page,
         lastSeq: summary.lastEventSeq,
         state: summary.state,
+        full: page.length === limit,
       };
     },
     payloads: () => [],
@@ -805,11 +871,10 @@ describe("trace service", () => {
     expect(page.rows.some((row) => "clipped" in row)).toBe(false);
   });
 
-  it("clips a 1 MiB stdout to head and tail", () => {
+  it("clips a 20 KiB stdout to a 4 KiB head and a 12 KiB tail", () => {
     const { db, reader } = seededStore();
     const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-    const body = alphabet.repeat(Math.ceil((1024 * 1024) / alphabet.length)).slice(0, 1024 * 1024);
-    const stdout = `HEAD:${body}:TAIL`;
+    const stdout = alphabet.repeat(Math.ceil((20 * 1024) / alphabet.length)).slice(0, 20 * 1024);
     db.appendAgentEvent(SESSION, {
       type: "command_completed",
       sessionId: SESSION,
@@ -831,17 +896,56 @@ describe("trace service", () => {
       failures: [{ file: "big.test.ts", testName: "big", message: "x".repeat(40 * 1024) }],
       ts: TS,
     });
-    const [commandRow, factRow] = createTraceService(reader).rows({ sessionId: SESSION }).rows;
+    const service = createTraceService(reader);
+    const [commandRow, factRow] = service.rows({ sessionId: SESSION }).rows;
     const payload = commandRow?.payload as { command: string; stdout: string };
     expect(commandRow?.clipped).toBe(true);
     expect(payload.command).toBe("cat big.log");
-    expect(payload.stdout.length).toBeLessThanOrEqual(TRACE_CLIP_CHARS + 64);
-    expect(payload.stdout.slice(0, 8192)).toBe(stdout.slice(0, 8192));
-    expect(payload.stdout.slice(-8192)).toBe(stdout.slice(-8192));
-    expect(payload.stdout).toContain(`[${stdout.length - TRACE_CLIP_CHARS} characters clipped]`);
+    // 20,480 bytes = 4,096 head + 4,096 clipped + 12,288 tail.
+    expect(payload.stdout).toBe(
+      `${stdout.slice(0, 4096)}\n… [4096 bytes clipped] …\n${stdout.slice(-12_288)}`,
+    );
     const stored = db.listEvents(SESSION).find((event) => event.type === "evidence_fact");
     expect(factRow?.clipped).toBe(true);
     expect(factRow?.factId).toBe(factContentId(SESSION, JSON.parse(stored?.payloadJson ?? "null")));
+    const [unclipped] = service.rows({ sessionId: SESSION }, { clip: false }).rows;
+    expect((unclipped?.payload as { stdout: string }).stdout).toBe(stdout);
+    expect(unclipped !== undefined && "clipped" in unclipped).toBe(false);
+  });
+
+  it("passes a git_hunk's 30 KiB diff.text through whole and clips the same text elsewhere", () => {
+    const { db, reader } = seededStore();
+    const hunkLine = "+export const answer = 42;\n";
+    const text =
+      "diff --git a/src/big.ts b/src/big.ts\n--- a/src/big.ts\n+++ b/src/big.ts\n@@ -0,0 +1,1180 @@\n" +
+      hunkLine.repeat(1_180);
+    expect(text.length).toBeGreaterThan(30 * 1024);
+    db.appendEvidenceFact(SESSION, {
+      type: "git_hunk",
+      repoId: REPO,
+      sessionId: SESSION,
+      file: "src/big.ts",
+      added: 1_180,
+      removed: 0,
+      isFormattingOnly: false,
+      isConfigOnly: false,
+      isLockfile: false,
+      diff: { hash: "0123456789abcdef", bytes: text.length, text, truncated: false, redactions: 0 },
+      ts: TS,
+    });
+    db.appendAgentEvent(SESSION, {
+      type: "agent_message",
+      sessionId: SESSION,
+      role: "assistant",
+      text,
+      ts: TS,
+    });
+    // The diff is redacted and capped at 32 KiB when stored (spec §4.3), so
+    // Evidence gets it byte for byte; the same text as a message is clipped.
+    const [hunkRow, messageRow] = createTraceService(reader).rows({ sessionId: SESSION }).rows;
+    expect((hunkRow?.payload as { diff: { text: string } }).diff.text).toBe(text);
+    expect(hunkRow !== undefined && "clipped" in hunkRow).toBe(false);
+    expect(messageRow?.clipped).toBe(true);
   });
 
   it("clipPayload keeps short payloads by reference and cuts long strings around a marker", () => {
@@ -849,18 +953,30 @@ describe("trace service", () => {
     expect(clipPayload(short).payload).toBe(short);
     expect(clipPayload(short).clipped).toBe(false);
     const long = { nested: [{ text: "abcdefghijklmnopqrstuvwxyz" }], keep: "ok" };
-    expect(clipPayload(long, 10)).toEqual({
-      payload: { nested: [{ text: "abcde\n… [16 characters clipped] …\nvwxyz" }], keep: "ok" },
+    expect(clipPayload(long, 16)).toEqual({
+      payload: { nested: [{ text: "abcd\n… [10 bytes clipped] …\nopqrstuvwxyz" }], keep: "ok" },
       clipped: true,
     });
     expect(long.nested[0]?.text).toBe("abcdefghijklmnopqrstuvwxyz");
-    expect(() => clipPayload("abc", 1)).toThrow(RangeError);
+    expect(() => clipPayload("abc", 3)).toThrow(RangeError);
   });
 
-  it("never splits a surrogate pair at either cut", () => {
-    const emoji = "😀".repeat(20);
-    expect(clipPayload(emoji, 11)).toEqual({
-      payload: "😀😀\n… [32 characters clipped] …\n😀😀",
+  it("measures the 16 KiB bound in UTF-8 bytes and cuts at code-point boundaries", () => {
+    const exact = "a".repeat(16 * 1024);
+    expect(clipPayload(exact)).toEqual({ payload: exact, clipped: false });
+    // 9,000 "é" are 9,000 UTF-16 code units but 18,000 UTF-8 bytes.
+    expect(clipPayload("é".repeat(9_000))).toEqual({
+      payload: `${"é".repeat(2_048)}\n… [1616 bytes clipped] …\n${"é".repeat(6_144)}`,
+      clipped: true,
+    });
+    // maxBytes 16: a 4-byte head and a 12-byte tail. "😀" (4 bytes) does not
+    // fit after "abc", and "é" (2 bytes) does not fit before the three emoji.
+    expect(clipPayload(`abc😀${"x".repeat(20)}é😀😀😀`, 16)).toEqual({
+      payload: "abc\n… [26 bytes clipped] …\n😀😀😀",
+      clipped: true,
+    });
+    expect(clipPayload(`abé${"x".repeat(20)}`, 16)).toEqual({
+      payload: `abé\n… [8 bytes clipped] …\n${"x".repeat(12)}`,
       clipped: true,
     });
   });
@@ -994,13 +1110,29 @@ import type { TraceReader, TraceReaderRow } from "@jevcode/storage";
 
 import { IpcError } from "../shared/errors.js";
 
+export interface TraceRowsOptions {
+  /**
+   * Default true. false returns every payload as stored, unclipped. Only
+   * buildTraceBundle passes it, because it must redact whole strings before it
+   * clips (spec §5.7); the trace:* handlers never pass options.
+   */
+  clip?: boolean;
+}
+
 export interface TraceService {
   /** With sessionId: that one session, even with zero events (spec §5.2); else sessions with events. */
   listSessions(request: { repoId?: string; sessionId?: string; limit?: number }): TraceSessionSummary[];
   /** Throws IpcError("UNKNOWN_SESSION") when the session row is missing. */
   session(sessionId: string): TraceSessionSummary;
-  /** Paging contract of section 2.1; types = TRACE_ROW_TYPES; limit defaults to TRACE_ROWS_PAGE_DEFAULT. */
-  rows(request: { sessionId: string; afterSeq?: number; limit?: number }): TraceRowsPage;
+  /**
+   * Paging contract of section 2.1; types = TRACE_ROW_TYPES; limit defaults to
+   * TRACE_ROWS_PAGE_DEFAULT. nextAfterSeq is set when the page is full by
+   * limit or by the reader's 2 MiB payload bound (spec §5.2).
+   */
+  rows(
+    request: { sessionId: string; afterSeq?: number; limit?: number },
+    options?: TraceRowsOptions,
+  ): TraceRowsPage;
   payloads(request: { sessionId: string; seqs: readonly number[] }): TraceRow[];
 }
 
@@ -1012,33 +1144,87 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff;
 }
 
-/** head + marker + tail; never cuts a UTF-16 surrogate pair in half. */
-function clipString(value: string, maxChars: number): string {
-  const half = Math.floor(maxChars / 2);
-  let headEnd = half;
-  if (isHighSurrogate(value.charCodeAt(headEnd - 1))) headEnd -= 1;
-  let tailStart = value.length - half;
-  if (isLowSurrogate(value.charCodeAt(tailStart))) tailStart += 1;
-  const omitted = tailStart - headEnd;
-  return `${value.slice(0, headEnd)}\n… [${omitted} characters clipped] …\n${value.slice(tailStart)}`;
+/** UTF-8 bytes of one code point. A lone surrogate counts 3, as Buffer.byteLength encodes it as U+FFFD. */
+function utf8Width(codePoint: number): number {
+  if (codePoint < 0x80) return 1;
+  if (codePoint < 0x800) return 2;
+  if (codePoint < 0x10000) return 3;
+  return 4;
 }
 
-/** Deep walk; a string longer than maxChars becomes head(maxChars/2) + "\n… [N characters clipped] …\n" + tail(maxChars/2). */
+/** Is the UTF-8 length over maxBytes? Each UTF-16 code unit is 1 to 3 UTF-8 bytes, so most strings skip the count. */
+function exceedsBytes(value: string, maxBytes: number): boolean {
+  if (value.length > maxBytes) return true;
+  if (value.length * 3 <= maxBytes) return false;
+  return Buffer.byteLength(value, "utf8") > maxBytes;
+}
+
+/** The first headBytes and the last tailBytes of UTF-8 around a marker line, cut at code-point boundaries. */
+function clipString(value: string, headBytes: number, tailBytes: number): string {
+  let headEnd = 0;
+  let headUsed = 0;
+  while (headEnd < value.length) {
+    const codePoint = value.codePointAt(headEnd) ?? 0;
+    const width = utf8Width(codePoint);
+    if (headUsed + width > headBytes) break;
+    headUsed += width;
+    headEnd += codePoint > 0xffff ? 2 : 1;
+  }
+  let tailStart = value.length;
+  let tailUsed = 0;
+  while (tailStart > headEnd) {
+    let start = tailStart - 1;
+    if (
+      start > headEnd &&
+      isLowSurrogate(value.charCodeAt(start)) &&
+      isHighSurrogate(value.charCodeAt(start - 1))
+    ) {
+      start -= 1;
+    }
+    const width = utf8Width(value.codePointAt(start) ?? 0);
+    if (tailUsed + width > tailBytes) break;
+    tailUsed += width;
+    tailStart = start;
+  }
+  const omitted = Buffer.byteLength(value, "utf8") - headUsed - tailUsed;
+  return `${value.slice(0, headEnd)}\n… [${omitted} bytes clipped] …\n${value.slice(tailStart)}`;
+}
+
+/** The diff object of a git_hunk payload; clipPayload leaves its text whole. */
+function gitHunkDiff(payload: unknown): object | undefined {
+  if (payload === null || typeof payload !== "object") return undefined;
+  const record = payload as Record<string, unknown>;
+  if (record["type"] !== "git_hunk") return undefined;
+  const diff = record["diff"];
+  return diff !== null && typeof diff === "object" && !Array.isArray(diff) ? diff : undefined;
+}
+
+/**
+ * Deep walk (spec §5.3). A string over maxBytes of UTF-8 becomes its first
+ * maxBytes/4 bytes + "\n… [N bytes clipped] …\n" + its last 3*maxBytes/4
+ * bytes, cut at code-point boundaries: 4 KiB + 12 KiB at the default 16 KiB,
+ * because failures sit at the end of output. A git_hunk's diff.text is never
+ * clipped: it is redacted and capped at 32 KiB when stored (spec §4.3), so
+ * Evidence always gets the whole stored diff.
+ */
 export function clipPayload(
   payload: unknown,
-  maxChars: number = TRACE_CLIP_CHARS,
+  maxBytes: number = TRACE_CLIP_CHARS,
 ): { payload: unknown; clipped: boolean } {
-  if (!Number.isInteger(maxChars) || maxChars < 2) {
-    throw new RangeError(`clipPayload: maxChars must be an integer >= 2, got ${String(maxChars)}`);
+  if (!Number.isInteger(maxBytes) || maxBytes < 4) {
+    throw new RangeError(`clipPayload: maxBytes must be an integer >= 4, got ${String(maxBytes)}`);
   }
+  const headBytes = Math.floor(maxBytes / 4);
+  const tailBytes = maxBytes - headBytes;
+  const exemptDiff = gitHunkDiff(payload);
   let clipped = false;
   // Returns the same reference when nothing below changed, so unclipped
   // payloads are never copied.
   const walk = (value: unknown): unknown => {
     if (typeof value === "string") {
-      if (value.length <= maxChars) return value;
+      if (!exceedsBytes(value, maxBytes)) return value;
       clipped = true;
-      return clipString(value, maxChars);
+      return clipString(value, headBytes, tailBytes);
     }
     if (Array.isArray(value)) {
       let changed = false;
@@ -1052,6 +1238,7 @@ export function clipPayload(
     if (value !== null && typeof value === "object") {
       let changed = false;
       const entries = Object.entries(value).map(([key, entry]): [string, unknown] => {
+        if (value === exemptDiff && key === "text") return [key, entry];
         const result = walk(entry);
         if (result !== entry) changed = true;
         return [key, result];
@@ -1065,8 +1252,19 @@ export function clipPayload(
   return { payload: result, clipped };
 }
 
-/** JSON.parse(payloadJson); factId = factContentId(sessionId, payload) for evidence_fact rows (before clipping); then clipPayload. */
-export function toTraceRow(sessionId: string, row: TraceReaderRow): TraceRow {
+/** clipPayload over row.payload, with clipped: true only when a string was cut. A row without payload is returned as is. */
+export function clipTraceRow(row: TraceRow): TraceRow {
+  if (!("payload" in row)) return row;
+  const result = clipPayload(row.payload);
+  return result.clipped ? { ...row, payload: result.payload, clipped: true } : row;
+}
+
+/** JSON.parse(payloadJson); factId = factContentId(sessionId, payload) for evidence_fact rows (before clipping); then clipTraceRow unless options.clip is false. */
+export function toTraceRow(
+  sessionId: string,
+  row: TraceReaderRow,
+  options: TraceRowsOptions = {},
+): TraceRow {
   const traceRow: TraceRow = { seq: row.seq, type: row.type, ts: row.ts };
   let payload: unknown;
   try {
@@ -1079,12 +1277,8 @@ export function toTraceRow(sessionId: string, row: TraceReaderRow): TraceRow {
   if (row.type === "evidence_fact") {
     traceRow.factId = factContentId(sessionId, payload);
   }
-  const clipped = clipPayload(payload);
-  traceRow.payload = clipped.payload;
-  if (clipped.clipped) {
-    traceRow.clipped = true;
-  }
-  return traceRow;
+  traceRow.payload = payload;
+  return options.clip === false ? traceRow : clipTraceRow(traceRow);
 }
 
 export function createTraceService(reader: TraceReader): TraceService {
@@ -1102,14 +1296,15 @@ export function createTraceService(reader: TraceReader): TraceService {
       return reader.listSessions({ repoId: request.repoId, sessionId: request.sessionId, limit });
     },
     session,
-    rows(request) {
+    rows(request, options = {}) {
       session(request.sessionId);
       const limit = Math.min(request.limit ?? TRACE_ROWS_PAGE_DEFAULT, TRACE_ROWS_PAGE_MAX);
       const page = reader.rows(request.sessionId, request.afterSeq ?? 0, limit, TRACE_ROW_TYPES);
       const last = page.rows.at(-1);
       return {
-        rows: page.rows.map((row) => toTraceRow(request.sessionId, row)),
-        nextAfterSeq: page.rows.length === limit && last !== undefined ? last.seq : null,
+        rows: page.rows.map((row) => toTraceRow(request.sessionId, row, options)),
+        // Full by limit or by the reader's 2 MiB bound: resume after the last row.
+        nextAfterSeq: page.full && last !== undefined ? last.seq : null,
         lastSeq: page.lastSeq,
         state: page.state,
       };
@@ -1145,7 +1340,7 @@ export function readAllRows(
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `pnpm --filter jevcode-desktop exec vitest run src/main/trace-service.test.ts`
-Expected: PASS, `Tests  9 passed (9)`
+Expected: PASS, `Tests  10 passed (10)`
 
 - [ ] **Step 6: Run the root checks**
 
@@ -1427,6 +1622,33 @@ describe("trace IPC handlers", () => {
     expect(page.rows.map((row) => row.type)).toEqual(["agent_event"]);
   });
 
+  it("stops a trace:rows page after 2 MiB of payload and resumes at nextAfterSeq", async () => {
+    const { db, ipc } = seeded();
+    // seq 4-6: three 1 MiB assistant messages; seq 7: agent_completed.
+    const oneMiB = "m".repeat(1024 * 1024);
+    for (let i = 0; i < 3; i += 1) {
+      db.appendAgentEvent(SESSION, {
+        type: "agent_message",
+        sessionId: SESSION,
+        role: "assistant",
+        text: oneMiB,
+        ts: TS,
+      });
+    }
+    db.appendAgentEvent(SESSION, { type: "agent_completed", sessionId: SESSION, ts: TS });
+    const first = (await ipc.invoke("trace:rows", { sessionId: SESSION })) as TraceRowsPage;
+    // Seq 5 takes the payload past 2 MiB, so the page ends with it.
+    expect(first.rows.map((row) => row.seq)).toEqual([1, 2, 4, 5]);
+    expect(first).toMatchObject({ nextAfterSeq: 5, lastSeq: 7 });
+    expect(first.rows.filter((row) => row.clipped === true).map((row) => row.seq)).toEqual([4, 5]);
+    const second = (await ipc.invoke("trace:rows", {
+      sessionId: SESSION,
+      afterSeq: first.nextAfterSeq,
+    })) as TraceRowsPage;
+    expect(second.rows.map((row) => row.seq)).toEqual([6, 7]);
+    expect(second).toMatchObject({ nextAfterSeq: null, lastSeq: 7 });
+  });
+
   it("lists a zero-event session by exact id and reads it as an empty page", async () => {
     const { db, ipc } = seeded();
     db.createSession({ id: EMPTY, repoId: "repo_open", prompt: "Not started yet" });
@@ -1591,7 +1813,7 @@ export function registerTraceHandlers(handle: IpcHandle, service: TraceService):
 - [ ] **Step 6: Run both tests to verify they pass**
 
 Run: `pnpm --filter jevcode-desktop exec vitest run src/shared/ipc-registry.test.ts src/main/trace-ipc.test.ts`
-Expected: PASS, `Tests  14 passed (14)` (9 registry tests, 5 handler tests).
+Expected: PASS, `Tests  15 passed (15)` (9 registry tests, 6 handler tests).
 
 - [ ] **Step 7: Register the handlers in `ipc.ts`**
 
@@ -2030,12 +2252,12 @@ git commit -m "feat(desktop): expose the trace namespace on window.jevcode"
 
 **Interfaces:**
 - Consumes:
-  - A2-2: `TraceService`, `createTraceService(reader: TraceReader): TraceService`, `readAllRows(service, sessionId, pageSize?): { rows: TraceRow[]; lastSeq: number; state: AgentState }`.
-  - A2-1: `openTraceReader(dbPath: string): TraceReader`.
+  - A2-2: `TraceService` with `rows(request, options?: { clip?: boolean })`, `createTraceService(reader: TraceReader): TraceService`, `clipTraceRow(row: TraceRow): TraceRow`; the test also uses `readAllRows(service, sessionId, pageSize?): { rows: TraceRow[]; lastSeq: number; state: AgentState }`.
+  - A2-1: `openTraceReader(dbPath: string): TraceReader` (pages stop after 2 MiB of payload, so one unclipped page stays small).
   - `apps/desktop/src/main/pipeline/redactor.ts` (owned by A1; import only): `redactText(input: string): { text: string; count: number }`. A1-7 widens the `env_value` rule to allow one leading diff prefix; the signature does not change.
   - W0-5 (`@jevcode/contracts`): `TraceBundleSchema`, `TRACE_BUNDLE_FORMAT = "jevcode.trace"`, `TRACE_BUNDLE_VERSION = 1`, `TRACE_ROWS_PAGE_MAX`, types `TraceBundle = { format; version; exportedAt: string; redactionCount: number; session: TraceSessionSummary; rows: TraceRow[] }`, `TraceRow`, `isTraceRowType`.
   - Existing: `runReplay(fixtureDir: string, outDir: string, log?: (message: string) => void): Promise<ReplayResult>`; `JevcodeDb.dbPath`.
-- Produces (interfaces §2.5, verbatim, plus `ReplayResult.bundlePath`):
+- Produces (interfaces §2.5, verbatim, plus `ReplayResult.bundlePath`; `buildTraceBundle` redacts whole strings before the clip, deviation 18):
   ```ts
   export interface BuildTraceBundleOptions {
     homeDir?: string;      // default os.homedir()
@@ -2168,6 +2390,50 @@ describe("trace bundle", () => {
     expect(TraceBundleSchema.safeParse(bundle).success).toBe(true);
   });
 
+  it("redacts a private key that straddles the 4 KiB head cut, then clips", () => {
+    const db = openDb({ dbPath: path.join(tempDir(), "pem.db") });
+    db.upsertRepository({ id: REPO, path: "/work/bundle", gitRoot: "/work/bundle" });
+    db.createSession({ id: SESSION, repoId: REPO, prompt: "Deploy" });
+    const logHead = "build log line\n".repeat(240);
+    const keyLines = Array.from(
+      { length: 24 },
+      (_, i) => `MIIE${String(i).padStart(2, "0")}${"q".repeat(58)}`,
+    );
+    const pem = ["-----BEGIN RSA PRIVATE KEY-----", ...keyLines, "-----END RSA PRIVATE KEY-----"].join(
+      "\n",
+    );
+    // The block spans bytes 3,600 to 5,221 of a 40 KiB stdout.
+    const stdout = `${logHead}${pem}\n`.padEnd(40 * 1024, "test log line\n");
+    db.appendAgentEvent(SESSION, {
+      type: "command_completed",
+      sessionId: SESSION,
+      command: "./deploy.sh",
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      ts: TS,
+    });
+    const reader = openTraceReader(db.dbPath);
+    closers.push(() => {
+      reader.close();
+      db.close();
+    });
+    const service = createTraceService(reader);
+    // The precondition: the service's 4 KiB head cut falls inside the block,
+    // so a clipped head holds the BEGIN line and key lines but no END line.
+    const clipped = (readAllRows(service, SESSION).rows[0]?.payload as { stdout: string }).stdout;
+    expect(clipped).toContain("-----BEGIN RSA PRIVATE KEY-----\nMIIE00");
+    expect(clipped).not.toContain("-----END RSA PRIVATE KEY-----");
+    const bundle = buildTraceBundle(service, SESSION, { homeDir: HOME });
+    const [row] = bundle.rows;
+    expect(JSON.stringify(bundle)).not.toMatch(/MIIE\d\d/);
+    expect((row?.payload as { stdout: string }).stdout.startsWith(
+      `${logHead}[REDACTED:private_key]\ntest log line\n`,
+    )).toBe(true);
+    expect(row?.clipped).toBe(true);
+    expect(bundle.redactionCount).toBe(1);
+  });
+
   it("maps home only at a path boundary and does not recount redacted markers", () => {
     expect(redactBundleValue({ a: "token=[REDACTED:token]" }, HOME)).toEqual({
       value: { a: "token=[REDACTED:token]" },
@@ -2211,6 +2477,8 @@ describe("trace bundle", () => {
 
 The expected `redactionCount` of 2 follows from the `redactText` rules: `token=abc123secret` matches the `token` rule once, and the line `STRIPE_SECRET_KEY=sk_live_1234` matches the `env_value` rule once; no other string in the session matches any rule.
 
+The private-key test pins spec §5.7's order. The key block starts at byte 3,600 and ends at byte 5,221 of a 40,960-byte stdout. Clipped first, the 4 KiB head would hold the BEGIN line, seven whole key lines and part of the eighth, but no END line, and the whole-block `private_key` rule (redactor.ts) would not match, so the key lines would reach the bundle. The test asserts that precondition through the clipping service, then asserts that the bundle holds no `MIIE<nn>` key line, that the head reads `…build log line\n[REDACTED:private_key]\ntest log line\n`, that the row is still `clipped` (39,361 bytes after redaction) and that `redactionCount` is 1 (the one block; the log lines, `./deploy.sh` and the summary match no rule). Against a `buildTraceBundle` that reads through the clipping service and redacts afterwards, it fails with `expected '{"format":"jevcode.trace","version":1…' not to match /MIIE\d\d/`.
+
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts`
@@ -2231,10 +2499,10 @@ import {
   TRACE_ROWS_PAGE_MAX,
   TraceBundleSchema,
 } from "@jevcode/contracts";
-import type { TraceBundle, TraceRow } from "@jevcode/contracts";
+import type { TraceBundle, TraceRow, TraceRowsPage } from "@jevcode/contracts";
 
 import { redactText } from "./pipeline/redactor.js";
-import { readAllRows } from "./trace-service.js";
+import { clipTraceRow } from "./trace-service.js";
 import type { TraceService } from "./trace-service.js";
 
 export interface BuildTraceBundleOptions {
@@ -2286,7 +2554,13 @@ export function redactBundleValue(
   return { value: walk(value), count };
 }
 
-/** readAllRows, then every string in session and rows passes redactText and has homeDir replaced by "~". factIds are kept as computed. */
+/**
+ * Pages the service to the end with clipping off, then per row: redactBundleValue
+ * over the whole payload, and only then the service's 16 KiB head + tail clip
+ * (spec §5.7). A secret that straddles the 4 KiB head cut is redacted before the
+ * cut exists. factId is kept as computed, before redaction. One unclipped page is
+ * bounded by the reader's 2 MiB payload bound.
+ */
 export function buildTraceBundle(
   service: TraceService,
   sessionId: string,
@@ -2294,23 +2568,35 @@ export function buildTraceBundle(
 ): TraceBundle {
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? (() => new Date().toISOString());
+  const pageSize = options.pageSize ?? TRACE_ROWS_PAGE_MAX;
   const summary = service.session(sessionId);
-  const all = readAllRows(service, sessionId, options.pageSize ?? TRACE_ROWS_PAGE_MAX);
+  const rows: TraceRow[] = [];
+  let redactionCount = 0;
+  let afterSeq = 0;
+  let page: TraceRowsPage;
+  for (;;) {
+    page = service.rows({ sessionId, afterSeq, limit: pageSize }, { clip: false });
+    for (const row of page.rows) {
+      // Envelope fields (seq, type, ts, factId) are machine values; factId
+      // must stay the pre-redaction content id.
+      if (!("payload" in row)) {
+        rows.push(row);
+        continue;
+      }
+      const payload = redactBundleValue(row.payload, homeDir);
+      redactionCount += payload.count;
+      rows.push(clipTraceRow({ ...row, payload: payload.value }));
+    }
+    if (page.nextAfterSeq === null) break;
+    afterSeq = page.nextAfterSeq;
+  }
   // The summary is re-stamped from the last page so lastEventSeq and state
   // describe exactly the rows in this bundle.
   const session = redactBundleValue(
-    { ...summary, lastEventSeq: all.lastSeq, state: all.state },
+    { ...summary, lastEventSeq: page.lastSeq, state: page.state },
     homeDir,
   );
-  let redactionCount = session.count;
-  const rows = all.rows.map((row): TraceRow => {
-    // Envelope fields (seq, type, ts, clipped, factId) are machine values;
-    // factId must stay the pre-redaction content id.
-    if (!("payload" in row)) return row;
-    const payload = redactBundleValue(row.payload, homeDir);
-    redactionCount += payload.count;
-    return { ...row, payload: payload.value };
-  });
+  redactionCount += session.count;
   return TraceBundleSchema.parse({
     format: TRACE_BUNDLE_FORMAT,
     version: TRACE_BUNDLE_VERSION,
@@ -2346,7 +2632,7 @@ export function writeTraceBundle(filePath: string, bundle: TraceBundle): void {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts`
-Expected: PASS, `Tests  4 passed (4)` (on win32 the mode test is skipped).
+Expected: PASS, `Tests  5 passed (5)` (on win32 the mode test is skipped).
 
 - [ ] **Step 5: Write the failing replay test**
 
@@ -2518,7 +2804,7 @@ with:
 - [ ] **Step 8: Run both tests to verify they pass**
 
 Run: `pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts src/main/replay/cli-entry.test.ts`
-Expected: PASS, `Tests  5 passed (5)`
+Expected: PASS, `Tests  6 passed (6)` (5 bundle tests, 1 replay test).
 
 - [ ] **Step 9: Replay a fixture through the CLI**
 
@@ -2618,7 +2904,7 @@ function seededDbPath(dir: string): string {
     type: "agent_message",
     sessionId: "sess_export",
     role: "assistant",
-    text: "export token=abc123secret",
+    text: "export token=tok_4f9a2c1e",
     ts: TS,
   });
   const dbPath = db.dbPath;
@@ -2669,7 +2955,7 @@ describe("replay export", () => {
     expect(await exportMain(["--db", dbPath, "--session", "sess_export", "--out", out])).toBe(0);
     const bundle = TraceBundleSchema.parse(JSON.parse(readFileSync(out, "utf8")));
     expect(bundle.rows.map((row) => row.seq)).toEqual([1, 2]);
-    expect(JSON.stringify(bundle)).not.toContain("abc123secret");
+    expect(JSON.stringify(bundle)).not.toContain("tok_4f9a2c1e");
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ out, rows: 2, redactionCount: 1 });
     if (process.platform !== "win32") {
       expect(statSync(out).mode & 0o777).toBe(0o600);
@@ -2917,7 +3203,8 @@ node apps/desktop/scripts/replay.mjs export --db ~/.jevcode/jevcode.db --session
 ```
 
 The export opens the database on a second, `query_only` connection and never
-writes to it. Every string in the bundle passes the redactor, your home
+writes to it. Every string in the bundle passes the redactor before strings
+over 16 KiB are clipped to their first 4 KiB and last 12 KiB, your home
 directory becomes `~`, and the file is written with mode 0600. On success it
 prints `{"out", "rows", "redactionCount"}` and exits 0; a missing flag, a
 missing database or an unknown session exits 1 and writes nothing.
@@ -2931,7 +3218,7 @@ machine; sharing them is out of scope for v1.
 Insert this line directly after line 12 (the table row that starts with ``| 6 | `json-render` specs validated against a closed catalog before render |``), so it becomes the new last row of the table:
 
 ```markdown
-| 7 | Trace viewer reads are read-only and bounded (trace viewer design spec, R5 and D9) | PASS | `apps/desktop/src/main/trace-ipc.ts` registers `trace:listSessions`, `trace:rows` and `trace:payloads` through the same `handle()` wrapper (sender check, then zod bounds from `src/shared/local-channels.ts`: `limit <= 500`, `limit <= 5000`, 1 to 50 `seqs`). The handlers receive only a `TraceService` over `openTraceReader` (`packages/storage/src/trace-reader.ts`), a second SQLite connection with `PRAGMA query_only = ON`, so they cannot reach the runtime, the instruction router, Jev or the network. Strings longer than 16 KiB are clipped to head and tail. `trace.json` bundles (`replay`, `replay export`) pass every payload string through `redactText`, map the home directory to `~` and are written with mode 0600 (`apps/desktop/src/main/trace-bundle.ts`). Covered by `packages/storage/src/trace-reader.test.ts` (writes throw), `apps/desktop/src/main/trace-ipc.test.ts` (a pending instruction stays pending; event count, `lastEventSeq` and the database files are unchanged), `trace-bundle.test.ts` and `replay/cli-entry.test.ts` | The viewer lists sessions from every repository by design. Bundles stay on this machine; sharing them is out of scope for v1 |
+| 7 | Trace viewer reads are read-only and bounded (trace viewer design spec, R5 and D9) | PASS | `apps/desktop/src/main/trace-ipc.ts` registers `trace:listSessions`, `trace:rows` and `trace:payloads` through the same `handle()` wrapper (sender check, then zod bounds from `src/shared/local-channels.ts`: `limit <= 500`, `limit <= 5000`, 1 to 50 `seqs`). The handlers receive only a `TraceService` over `openTraceReader` (`packages/storage/src/trace-reader.ts`), a second SQLite connection with `PRAGMA query_only = ON`, so they cannot reach the runtime, the instruction router, Jev or the network. A `trace:rows` page stops after 2 MiB of stored payload, and a string over 16 KiB of UTF-8 is clipped to a 4 KiB head and a 12 KiB tail; a `git_hunk`'s `diff.text`, already redacted and capped at 32 KiB when stored, passes whole. `trace.json` bundles (`replay`, `replay export`) pass every whole payload string through `redactText` before that clip, so a secret cannot straddle a cut, map the home directory to `~` and are written with mode 0600 (`apps/desktop/src/main/trace-bundle.ts`). Covered by `packages/storage/src/trace-reader.test.ts` (writes throw), `apps/desktop/src/main/trace-ipc.test.ts` (a pending instruction stays pending; event count, `lastEventSeq` and the database files are unchanged), `trace-bundle.test.ts` (a private key across the 4 KiB head cut leaves no key line) and `replay/cli-entry.test.ts` | The viewer lists sessions from every repository by design. Bundles stay on this machine; sharing them is out of scope for v1 |
 ```
 
 Run: `grep -c "^| 7 | Trace viewer reads" docs/security.md`
@@ -2968,7 +3255,7 @@ git commit -m "feat(desktop): add replay export subcommand"
   - `JEVCODE_SOAK_PROFILE`: unset, empty or `default` keeps today's stream (the 2,000-record run still prints `"records": 1987`). `trace` generates the spec §10 reference input from a seeded PRNG (mulberry32, seed `0x50a4`), so every run writes the same records: `command_completed.stdout` of 0.2, 2, 8, 32 or 64 KiB; assistant progress notes of 205 to 4,096 characters; a `callId` (`soak-turn-<turn>:item_<n>`) shared by each `command_started`/`command_completed` pair and cited as `sourceCallId` by the pair's `test_result`; an agent `file_changed` claim with its own `callId` before each feature hunk; and every 500 records a steer (an `agent_started` whose prompt is the steer text, then the same text as a user `agent_message`). Soak agent events carry no `turnId`, so the fold reads each relaunch as a steer (spec §6.6 "Turns"). Any other value prints `SOAK_FAIL: unknown JEVCODE_SOAK_PROFILE <value> (expected default or trace)` and exits 1 before any work.
   - `JEVCODE_SOAK_KEEP_DB=<path>`: after the trace reader and the database close (the last close checkpoints the WAL into `soak.db`), removes `<path>-wal` and `<path>-shm`, copies `soak.db` to `<path>` with mode 0600 (about 630 MB after the full trace-profile soak), prints `soak: kept the database at <absolute path>`, then the `rmSync` runs.
   - `JEVCODE_SOAK_EXPORT=<file>`: after `stopSession`, a redacted bundle at that path and the line `soak: wrote <n> trace rows to <absolute path>`.
-  - Printed JSON fields, after `jevDecisions`: `profile`; `traceReadMs` (median of 5 full-session reads in pages of 5,000 after 1 discarded warm-up) and `traceReadRunsMs` (those 5, in ms); `traceRows` and `consumedRows` (the trace-type rows one full read returns; the same number under the base index's and the spec's names); `storedRows` (the session's `lastSeq` at the read, which counts every stored row because seq is gapless); `tracePageMs: { p50, p95, max, samples, pageSize }` (single `trace:rows` calls at `TRACE_ROWS_PAGE_DEFAULT`, `samples` ≥ 300).
+  - Printed JSON fields, after `jevDecisions`: `profile`; `traceReadMs` (median of 5 full-session reads in pages of up to 5,000 rows and about 2 MiB of payload, after 1 discarded warm-up) and `traceReadRunsMs` (those 5, in ms); `traceRows` and `consumedRows` (the trace-type rows one full read returns; the same number under the base index's and the spec's names); `storedRows` (the session's `lastSeq` at the read, which counts every stored row because seq is gapless); `tracePageMs: { p50, p95, max, samples, pageSize }` (single `trace:rows` calls at `TRACE_ROWS_PAGE_DEFAULT`, `samples` ≥ 300).
   - Warnings on stderr, never failures: `soak: WARN trace read <ms> ms exceeds the 1500 ms budget` and `soak: WARN trace:rows p95 <ms> ms exceeds the 50 ms budget`.
 
 - [ ] **Step 1: Confirm the soak has none of this yet**
@@ -3296,8 +3583,9 @@ with:
 
   // Trace viewer budgets through the viewer's own read path: a second,
   // query_only connection, factId + clipping. Full reads page by
-  // TRACE_ROWS_PAGE_MAX (readAllRows' default); the first read is a discarded
-  // warm-up and traceReadMs is the median of the next five. Then single
+  // TRACE_ROWS_PAGE_MAX (readAllRows' default) or 2 MiB of stored payload,
+  // whichever ends a page first; the first read is a discarded warm-up and
+  // traceReadMs is the median of the next five. Then single
   // trace:rows calls are timed at TRACE_ROWS_PAGE_DEFAULT, the page size the
   // viewer requests, over repeated full reads until 300 calls are timed.
   const traceReader = openTraceReader(db.dbPath);
@@ -3457,14 +3745,14 @@ console.log(JSON.stringify({
   claims: of("file_changed").length,
   commands: completed.length,
   paired: completed.filter((event) => typeof event.callId === "string" && starts.has(event.callId)).length,
-  clipped: completed.filter((event) => event.stdout.includes("characters clipped")).length,
+  clipped: completed.filter((event) => event.stdout.includes("bytes clipped")).length,
   cited: rows.filter((row) => row.type === "evidence_fact" && typeof row.payload.sourceCallId === "string").length,
 }));
 reader.close();
 ' "${TMPDIR:-/tmp}/jevcode-soak-quick.db"
 ```
 
-Expected: `{"mode":"600","state":"completed","agentStarted":5,"steers":4,"claims":12,"commands":6,"paired":6,"clipped":4,"cited":6}`. The seeded stream fixes every count: the initial start plus 4 steers, 12 feature claims, 6 paired test commands whose `test_result` cites the `callId`, and 4 of the 6 stdouts drawn at 32 or 64 KiB, so the service clips them. `paired: 0` or `cited: 0` means the build lacks W0-4's `callId`/`sourceCallId` fields (storage strips undeclared keys): run `pnpm -r build` and repeat Step 3. The check leaves only `jevcode-soak-quick.db`: `query_only` blocks SQL writes but not the checkpoint on close, so the reader's `-wal` and `-shm` are gone when it exits (the `rm -f` above still clears any left by an interrupted run).
+Expected: `{"mode":"600","state":"completed","agentStarted":5,"steers":4,"claims":12,"commands":6,"paired":6,"clipped":4,"cited":6}`. The seeded stream fixes every count: the initial start plus 4 steers, 12 feature claims, 6 paired test commands whose `test_result` cites the `callId`, and 4 of the 6 stdouts drawn at 32 or 64 KiB, over the 16 KiB bound, so the service clips them to a 4 KiB head and a 12 KiB tail around `… [N bytes clipped] …`. `paired: 0` or `cited: 0` means the build lacks W0-4's `callId`/`sourceCallId` fields (storage strips undeclared keys): run `pnpm -r build` and repeat Step 3. The check leaves only `jevcode-soak-quick.db`: `query_only` blocks SQL writes but not the checkpoint on close, so the reader's `-wal` and `-shm` are gone when it exits (the `rm -f` above still clears any left by an interrupted run).
 
 - [ ] **Step 4: Run the full soak on the trace profile**
 
@@ -3477,7 +3765,7 @@ Run: `node -e 'const lines = require("fs").readFileSync(process.argv[1], "utf8")
 Expected: one JSON line with `"profile":"trace"`, `"records":10013` and the other eight fields; `traceRows` equals `consumedRows`, `storedRows` equals `eventStoreCount`, and `tracePageMs.samples` is 300 or more.
 
 Run: `grep -c "soak: WARN" "${TMPDIR:-/tmp}/jevcode-soak-full.out"`
-Expected: `0` when both budgets pass. `1` or `2` means a budget was missed; read the lines with `grep "soak: WARN" "${TMPDIR:-/tmp}/jevcode-soak-full.out"`. For scale, that prototype read 110,959 trace rows with a median of 733 ms (runs of 620 to 1,014 ms) and timed `trace:rows` at a p95 of 17.8 ms over 336 calls (max 185.8 ms), so both budgets are expected to pass. A WARN line is a finding to report, not a failure.
+Expected: `0` when both budgets pass. `1` or `2` means a budget was missed; read the lines with `grep "soak: WARN" "${TMPDIR:-/tmp}/jevcode-soak-full.out"`. For scale, that prototype read 110,959 trace rows with a median of 733 ms (runs of 620 to 1,014 ms) and timed `trace:rows` at a p95 of 17.8 ms over 336 calls (max 185.8 ms). A rerun of this task's code with the 2 MiB page bound and the 4 KiB + 12 KiB clip (2026-09-28, while a second full soak ran on the same machine) stored 452,319 events in 660 s, read 110,935 trace rows with a median of 857 ms (runs of 775 to 1,221 ms) and timed `trace:rows` at a p95 of 14.3 ms over 340 calls (max 161.6 ms), so both budgets are expected to pass. A WARN line is a finding to report, not a failure.
 
 - [ ] **Step 5: Record the measurement in `docs/perf.md`**
 
@@ -3504,12 +3792,14 @@ full soak on the spec §10 reference input: command stdout of 0.2 to 64 KiB,
 assistant notes of 0.2 to 4 KiB, `callId` pairs, agent `file_changed` claims
 and a steer every 500 records. Before it stops the session, the soak reads the
 whole session through the viewer's own path: a second `query_only` connection
-(`openTraceReader`), `createTraceService` (fact ids and 16 KiB clipping) and
-`readAllRows`. Only the six `TRACE_ROW_TYPES` are read; graph, telemetry,
-snapshot and failure rows are skipped. The full read runs 6 times in pages of
-5,000 rows; the first is a discarded warm-up and the budget uses the median of
-the other 5. The `trace:rows` budget times single calls at the viewer's page
-size of 2,000 rows over repeated full reads.
+(`openTraceReader`), `createTraceService` (fact ids, and strings over 16 KiB
+clipped to a 4 KiB head and a 12 KiB tail) and `readAllRows`. Only the six
+`TRACE_ROW_TYPES` are read; graph, telemetry, snapshot and failure rows are
+skipped. The full read runs 6 times in pages of up to 5,000 rows, and a page
+also ends after the row that takes its stored payload past 2 MiB; the first
+read is a discarded warm-up and the budget uses the median of the other 5. The
+`trace:rows` budget times single calls at the viewer's page size of 2,000 rows
+(or 2 MiB of payload) over repeated full reads.
 
 | Budget | Target | Measured | Status |
 |---|---|---|---|
