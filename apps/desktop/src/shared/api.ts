@@ -2,6 +2,11 @@ import {
   AgentInstructionStatePayloadSchema,
   MainToRendererChannels,
 } from "@jevcode/contracts";
+import type {
+  TraceRow,
+  TraceRowsPage,
+  TraceSessionSummary,
+} from "@jevcode/contracts";
 import type { z } from "zod";
 
 import { IpcError } from "./errors.js";
@@ -130,6 +135,20 @@ export interface JevcodeApi {
       sessionId?: string,
       limit?: number,
     ): Promise<DebugJevDecisionsPayload["decisions"]>;
+  };
+  /**
+   * Read-only trace access (R5). The trace window adapts it to the viewer's
+   * session-bound TraceSource with createIpcTraceSource(bridge.trace, sessionId).
+   * listSessions({ sessionId }) returns that one session even with zero events.
+   */
+  trace: {
+    listSessions(request?: {
+      repoId?: string;
+      sessionId?: string;
+      limit?: number;
+    }): Promise<TraceSessionSummary[]>;
+    rows(request: { sessionId: string; afterSeq?: number; limit?: number }): Promise<TraceRowsPage>;
+    payloads(request: { sessionId: string; seqs: readonly number[] }): Promise<TraceRow[]>;
   };
   on<C extends FromMainChannelName>(
     channel: C,
@@ -287,6 +306,24 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
           limit,
         })) as DebugJevDecisionsPayload;
         return result.decisions;
+      },
+    },
+    trace: {
+      listSessions: async (request) => {
+        const result = (await invoke("trace:listSessions", request ?? {})) as {
+          sessions: TraceSessionSummary[];
+        };
+        return result.sessions;
+      },
+      rows: async (request) => {
+        return (await invoke("trace:rows", request)) as TraceRowsPage;
+      },
+      payloads: async (request) => {
+        const result = (await invoke("trace:payloads", {
+          sessionId: request.sessionId,
+          seqs: [...request.seqs],
+        })) as { rows: TraceRow[] };
+        return result.rows;
       },
     },
     on,
