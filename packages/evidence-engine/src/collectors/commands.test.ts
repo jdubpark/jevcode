@@ -58,6 +58,19 @@ describe("createCommandCollector", () => {
     expect(fact?.exitCode).toBe(1);
   });
 
+  it("stamps the agent call id as sourceCallId", () => {
+    const collector = createCommandCollector("/repo", opts);
+    const fact = collector.observe("pnpm test", 1, "turn_a:item_7");
+    expect(fact).toMatchObject({ type: "command_executed", sourceCallId: "turn_a:item_7" });
+  });
+
+  it("omits sourceCallId when there is no call id", () => {
+    const collector = createCommandCollector("/repo", opts);
+    const fact = collector.observe("pnpm test", 0);
+    expect(fact).not.toBeNull();
+    expect("sourceCallId" in fact!).toBe(false);
+  });
+
   it("skips empty commands", () => {
     const collector = createCommandCollector("/repo", opts);
     expect(collector.observe("   ", 0)).toBeNull();

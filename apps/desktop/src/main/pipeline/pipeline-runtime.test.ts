@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1223,6 +1223,89 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       expect(db.getSession(sessionId)?.state).not.toBe("failed");
     } finally {
       await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+});
+
+describe("PipelineRuntime evidence provenance (R2)", () => {
+  it("stamps a command completion's callId on its command_executed and test_result facts", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/source-call-id");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    // The evidence session watches repoPath; keep the database out of it.
+    const repoDir = path.join(dir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    const sessionId = "sess-source-call";
+    db.upsertRepository({
+      id: "repo-source-call",
+      path: repoDir,
+      gitRoot: repoDir,
+      branch: "test",
+      baseCommit: "test",
+    });
+    db.createSession({ id: sessionId, repoId: "repo-source-call", prompt: "demo" });
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      jevClient: new DegradeClient(),
+      log: () => {},
+    });
+    await runtime.startSession({
+      sessionId,
+      repoId: "repo-source-call",
+      repoPath: repoDir,
+      prompt: "demo",
+      agentMode: "mock",
+      mockScript: {
+        sessionId,
+        repoPath: repoDir,
+        cwd: repoDir,
+        prompt: "demo",
+        entries: [
+          {
+            kind: "agent",
+            event: {
+              type: "command_completed",
+              sessionId,
+              callId: "turn_a:item_7",
+              command: "pnpm test",
+              exitCode: 1,
+              stdout: "Test Files  1 failed (1)\nTests  1 failed | 2 passed (3)\n",
+              stderr: "",
+              ts: "2026-09-28T10:00:00.000Z",
+            },
+          },
+        ],
+      },
+    });
+    try {
+      const facts = (): EvidenceFact[] =>
+        db
+          .listEvents(sessionId)
+          .filter((event) => event.type === "evidence_fact")
+          .map((event) => JSON.parse(event.payloadJson) as EvidenceFact);
+      await waitFor(
+        () => facts().some((fact) => fact.type === "test_result"),
+        8000,
+        "test_result fact stored",
+      );
+      // Drain the coordinator's debounced rebuild before the db closes.
+      await runtime.syncAll();
+      expect(facts().find((fact) => fact.type === "command_executed")).toMatchObject({
+        command: "pnpm test",
+        exitCode: 1,
+        sourceCallId: "turn_a:item_7",
+      });
+      expect(facts().find((fact) => fact.type === "test_result")).toMatchObject({
+        runner: "vitest",
+        passed: 2,
+        failed: 1,
+        sourceCallId: "turn_a:item_7",
+      });
+    } finally {
       await runtime.stopSession(sessionId);
       db.close();
     }

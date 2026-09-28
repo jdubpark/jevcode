@@ -765,9 +765,9 @@ export class PipelineRuntime {
   ): void {
     if (session.evidence === null) return;
     if (event.type === "command_completed") {
-      session.evidence.observeCommand(event.command, event.exitCode);
+      session.evidence.observeCommand(event.command, event.exitCode, event.callId);
       if (event.stdout.trim().length > 0) {
-        session.evidence.observeTestOutput(event.command, event.stdout);
+        session.evidence.observeTestOutput(event.command, event.stdout, event.callId);
       }
     }
   }
