@@ -29,12 +29,9 @@ import {
 } from "./fold-state.js";
 import { stepHeadline } from "./format.js";
 import { ENVELOPE_RULES } from "./registry.js";
+import { applySignals, computeCoverage } from "./signals.js";
 import {
-  CAPABILITIES,
-  SIGNAL_IDS,
   TRACE_SCHEMA_VERSION,
-  type Capability,
-  type Coverage,
   type Gap,
   type Step,
   type StepId,
@@ -273,16 +270,6 @@ function toPublicTurn(turn: TurnDraft, isLast: boolean, live: boolean): Turn {
   };
 }
 
-/** Capabilities present in the folded rows. No signal is evaluated yet, so each one reads inactive. */
-function coverageOf(capabilities: ReadonlySet<Capability>, approximateJoins: boolean, inferredSteps: number): Coverage {
-  return {
-    capabilities: CAPABILITIES.filter((capability) => capabilities.has(capability)),
-    signals: SIGNAL_IDS.map((id) => ({ id, active: false, missing: [] })),
-    approximateJoins,
-    inferredSteps,
-  };
-}
-
 function compareGaps(a: Gap, b: Gap): number {
   return a.atSeq - b.atSeq || a.kind.localeCompare(b.kind) || a.message.localeCompare(b.message);
 }
@@ -329,7 +316,7 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
 
   const loadedThroughSeq = Math.max(s.loadedThroughSeq, options.throughSeq ?? 0);
   const clock = s.clock;
-  return {
+  const partial = {
     schemaVersion: TRACE_SCHEMA_VERSION,
     meta: { ...s.meta, ...(options.state !== undefined ? { state: options.state } : {}) },
     live,
@@ -344,15 +331,16 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
     steps,
     chapters,
     entities,
-    findings: [],
     gaps: gaps.sort(compareGaps),
-    coverage: coverageOf(
-      s.capabilities,
-      chapters.some((chapter) => chapter.link === "inferred"),
-      steps.filter((step) => step.provenance === "inferred").length,
-    ),
     hidden: { byType: { ...s.hidden }, unreceived: Math.max(0, loadedThroughSeq - s.received) },
   };
+  const coverage = computeCoverage(
+    s.capabilities,
+    chapters.some((chapter) => chapter.link === "inferred"),
+    steps.filter((step) => step.provenance === "inferred").length,
+  );
+  const findings = applySignals({ session: partial }, coverage);
+  return { ...partial, findings, coverage };
 }
 
 export function foldRows(
