@@ -60,6 +60,20 @@ describe("DurationBar", () => {
     expect(Number(solid?.getAttribute("width"))).toBeCloseTo(20, 5);
     expect(Number(hollow?.getAttribute("width"))).toBeCloseTo(60 - 20 - 1.5, 5);
   });
+
+  it("omits the hollow extension when elapsedMs has not caught up to a known durationMs", () => {
+    const { container } = render(<DurationBar size="xs" durationMs={5_000} running elapsedMs={1_000} end="none" />);
+    const solid = container.querySelector('rect[data-bar="solid"]');
+    expect(container.querySelector('rect[data-bar="hollow"]')).toBeNull();
+    expect(Number(solid?.getAttribute("width"))).toBeCloseTo(20 + 40 * Math.log10(5), 5);
+    // Every rendered rect stays within the viewBox: no x + width past the drawn width.
+    const width = Number(container.querySelector("svg")?.getAttribute("width"));
+    for (const rect of container.querySelectorAll("rect")) {
+      const x = Number(rect.getAttribute("x"));
+      const w = Number(rect.getAttribute("width"));
+      expect(x + w).toBeLessThanOrEqual(width + 1e-9);
+    }
+  });
 });
 
 describe("DiffBar", () => {
