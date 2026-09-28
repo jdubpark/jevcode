@@ -70,6 +70,7 @@ Jevcode Desktop (Electron)
 ```
 jevcode/
 ├── apps/desktop/                 Electron main / preload / renderer
+├── apps/trace-viewer-dev/        Vite dev host that opens exported trace.json bundles
 ├── packages/
 │   ├── contracts/                ALL shared TS types + zod schemas + IPC channel defs
 │   ├── agent-core/               adapter interface, event normalizer, lifecycle
@@ -80,7 +81,8 @@ jevcode/
 │   ├── ui-compiler/              UIIntent → json-render spec compiler (pure, node+neutral)
 │   ├── ui-catalog/               json-render catalog + React registry + 11 components
 │   ├── storage/                  SQLite schema, event store, projections, queries
-│   └── telemetry/                local event schema + export
+│   ├── telemetry/                local event schema + export
+│   └── trace-viewer/             read-only trace model (src/model, React-free) + viewer UI (src/ui)
 ├── evals/                        labeled fixtures + jev eval runner
 ├── fixtures/                     replay scenarios (oauth, rate-limit, schema, api-break, dep)
 └── docs/
@@ -650,7 +652,7 @@ No test file is created merely to mirror a source file. Suites follow the packag
 
 ## 18. Deferred (explicit non-goals, revisited post-MVP)
 
-LSP, call/type graphs, embeddings, coverage/profiling, security scanners, CI/GitHub PR integration, Claude adapter implementation, multi-agent, personalization, policy engine, sandboxing/containers, and semantic Git history productization. Plus replay UI, team features, and Windows/Linux packaging (build config only in v0, target macOS dev first).
+LSP, call/type graphs, embeddings, coverage/profiling, security scanners, CI/GitHub PR integration, Claude adapter implementation, multi-agent, personalization, policy engine, sandboxing/containers, and semantic Git history productization. Plus team features and Windows/Linux packaging (build config only in v0, target macOS dev first). The read-only trace viewer (`docs/superpowers/specs/2026-09-28-trace-viewer-design.md`) supersedes the deferred replay UI item (plan-owner sign-off under IMPLEMENTATION-PLAN risk R8; design decision D9).
 
 ## 19. Build status (stabilization pass, 2026-09-19)
 
