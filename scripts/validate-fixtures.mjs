@@ -12,6 +12,7 @@ import {
   ChangeCategorySchema,
   JsonRenderSpecSchema,
 } from "../packages/contracts/dist/index.js";
+import { diffLineCounts } from "./diff-line-counts.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(scriptDir, "..");
@@ -129,24 +130,6 @@ function collectSpecActions(spec) {
     }
   }
   return actions;
-}
-
-// Counts "+" and "-" lines after the first "@@" header, so "---"/"+++" file
-// headers are never counted. scripts/fixture-diffs.mjs uses the same rule.
-function diffLineCounts(text) {
-  let added = 0;
-  let removed = 0;
-  let inHunk = false;
-  for (const line of text.split("\n")) {
-    if (line.startsWith("@@")) {
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk) continue;
-    if (line.startsWith("+")) added += 1;
-    else if (line.startsWith("-")) removed += 1;
-  }
-  return { added, removed };
 }
 
 function validateProvenance(prefix, eventsPath) {
