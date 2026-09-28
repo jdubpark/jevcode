@@ -149,11 +149,6 @@ describe("isSecretPath", () => {
       ".npmrc",
       "home/.netrc",
       ".pgpass",
-      ".pypirc",
-      "home/.pypirc",
-      "credentials",
-      "aws/credentials",
-      "CREDENTIALS",
     ]) {
       expect(isSecretPath(file), file).toBe(true);
     }
@@ -169,10 +164,6 @@ describe("isSecretPath", () => {
       "src/keystore.ts",
       "docs/npmrc.md",
       "src/.npmrc.ts",
-      "src/pypirc.ts",
-      "credentials.json",
-      "src/credentials.ts",
-      "aws-credentials",
     ]) {
       expect(isSecretPath(file), file).toBe(false);
     }

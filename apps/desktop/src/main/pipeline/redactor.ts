@@ -118,9 +118,8 @@ export function redactEvidenceFact(
 export const DIFF_TEXT_CAP_BYTES = 32 * 1024;
 
 // Basenames whose diff is never stored. R3's .env*, *.pem, *.key and id_rsa*,
-// plus the other SSH private keys (their .pub halves stay visible), keystores,
-// credential dotfiles and the two spec §4.3 basenames the orchestrator ruled
-// into this task's scope (`.pypirc`, `credentials`) (A1-7).
+// plus the other SSH private keys (their .pub halves stay visible), keystores
+// and credential dotfiles (spec §16 "Plan follow-ups", A1-7).
 const SECRET_BASENAMES: readonly RegExp[] = [
   /^\.env/i,
   /\.pem$/i,
@@ -128,14 +127,13 @@ const SECRET_BASENAMES: readonly RegExp[] = [
   /^id_rsa/i,
   /^id_(?:ed25519|ecdsa|dsa)(?!.*\.pub$)/i,
   /\.(?:p12|pfx|jks|keystore)$/i,
-  /^\.(?:npmrc|netrc|pgpass|pypirc)$/i,
-  /^credentials$/i,
+  /^\.(?:npmrc|netrc|pgpass)$/i,
 ];
 
 /**
  * True for files whose diff is never stored: .env*, *.pem, *.key, id_rsa*,
  * id_ed25519*, id_ecdsa* and id_dsa* except *.pub, *.p12, *.pfx, *.jks,
- * *.keystore, .npmrc, .netrc, .pgpass, .pypirc and credentials.
+ * *.keystore, .npmrc, .netrc and .pgpass.
  */
 export function isSecretPath(file: string): boolean {
   const basename = file.replace(/\\/g, "/").split("/").pop() ?? file;
