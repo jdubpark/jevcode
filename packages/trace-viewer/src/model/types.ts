@@ -450,7 +450,11 @@ export interface Coverage {
 }
 
 export interface Hidden {
-  /** Rows received but not rendered as steps (graph_*, telemetry, ui_snapshot, failure, command, …). */
+  /**
+   * Delivered rows that make no step. Empty in v1: trace:rows and bundles deliver only
+   * TRACE_ROW_TYPES, so graph_*, telemetry and ui_* rows are never delivered at all — they
+   * are filtered out before the model ever sees them, and count in `unreceived` below, not here.
+   */
   byType: Partial<Record<EventStoreType, number>>;
   /** loadedThroughSeq minus rows received: rows the source filtered out (gapless seq). */
   unreceived: number;

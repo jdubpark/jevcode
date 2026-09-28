@@ -105,6 +105,62 @@ const CASES: BoundaryCase[] = [
     expected: ["no-restricted-imports"],
   },
   {
+    // R17: every @jevcode/ui-catalog subpath is banned except .../components/CodeDiff.
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'import { ArchitectureDelta } from "@jevcode/ui-catalog/components/ArchitectureDelta"; export const x = ArchitectureDelta;',
+    expected: ["no-restricted-imports"],
+  },
+  {
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'import { CodeDiff } from "@jevcode/ui-catalog/components/CodeDiff"; export const x = CodeDiff;',
+    expected: [],
+  },
+  {
+    // Trust boundary (spec §3.3(2), §9): window.jevcode and the network, reached through
+    // `window.` or `globalThis.`, lint the same as the bare globals below.
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'export const x = () => window.jevcode.agent.sendInstruction({});',
+    expected: ["no-restricted-properties"],
+  },
+  {
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'export const x = () => globalThis.fetch("x");',
+    expected: ["no-restricted-properties"],
+  },
+  {
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'export const x = () => window.fetch("x");',
+    expected: ["no-restricted-properties"],
+  },
+  {
+    filePath: "packages/trace-viewer/src/model/probe.ts",
+    code: 'export const x = () => window.jevcode.agent.sendInstruction({});',
+    expected: ["no-restricted-properties"],
+  },
+  {
+    // no-restricted-imports does not inspect dynamic import(); a dedicated selector does.
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: 'export const x = () => import("node:fs");',
+    expected: ["no-restricted-syntax"],
+  },
+  {
+    // A Node built-in missing from the old hand-kept list; builtinModules now covers it.
+    filePath: "packages/trace-viewer/src/model/probe.ts",
+    code: 'import { runInNewContext } from "vm"; export const x = runInNewContext;',
+    expected: ["no-restricted-imports"],
+  },
+  {
+    // R7/§6.1: the model has no clock or randomness; src/ui is unrestricted.
+    filePath: "packages/trace-viewer/src/model/probe.ts",
+    code: "export const x = () => Date.now();",
+    expected: ["no-restricted-properties"],
+  },
+  {
+    filePath: "packages/trace-viewer/src/ui/probe.tsx",
+    code: "export const x = () => Date.now();",
+    expected: [],
+  },
+  {
     filePath: "packages/contracts/src/probe.ts",
     code: 'import { createHash } from "node:crypto"; export const x = createHash;',
     expected: ["no-restricted-imports"],

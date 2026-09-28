@@ -17,7 +17,7 @@ export interface TraceSource {
   summary(): Promise<TraceSessionSummary>;
   /** The paging contract of index §2.1 for this session: afterSeq defaults to 0, limit to TRACE_ROWS_PAGE_DEFAULT. */
   rows(request?: TraceRowsRequest): Promise<TraceRowsPage>;
-  /** Full rows (any type) for up to TRACE_PAYLOADS_MAX seqs, ascending; unknown seqs are omitted. */
+  /** Rows (any type) for up to TRACE_PAYLOADS_MAX seqs, ascending; same clipping as rows() (spec §5.4); unknown seqs are omitted. */
   payloads(seqs: readonly number[]): Promise<TraceRow[]>;
   /** Epoch ms on the session's source clock: Date.now() over IPC; a virtual clock for a drip source. */
   now(): number;

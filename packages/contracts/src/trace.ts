@@ -40,7 +40,7 @@ export function isTraceRowType(value: string): value is TraceRowType {
   return (TRACE_ROW_TYPES as readonly string[]).includes(value);
 }
 
-/** Strings longer than this many UTF-16 code units are clipped to head + tail. */
+/** Strings longer than this many UTF-8 bytes are clipped to head + tail (spec §5.3). */
 export const TRACE_CLIP_CHARS = 16_384;
 export const TRACE_LIST_SESSIONS_DEFAULT = 100;
 export const TRACE_LIST_SESSIONS_MAX = 500;

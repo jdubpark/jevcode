@@ -21,6 +21,7 @@ In scope:
 - semantic review at completion
 - terminal + raw diff escape hatches
 - local-only telemetry
+- read-only trace viewer (`docs/superpowers/specs/2026-09-28-trace-viewer-design.md`)
 
 Out of scope:
 - Claude adapter (interface only)
