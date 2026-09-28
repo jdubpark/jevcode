@@ -105,4 +105,47 @@ describe("ipc channel registry", () => {
       }),
     ).toThrowError(IpcError);
   });
+
+  it("bounds the read-only trace channels", () => {
+    expect(parseToMain("trace:listSessions", {})).toEqual({});
+    expect(parseToMain("trace:listSessions", { repoId: "r1", limit: 500 })).toEqual({
+      repoId: "r1",
+      limit: 500,
+    });
+    expect(parseToMain("trace:listSessions", { sessionId: "s", limit: 1 })).toEqual({
+      sessionId: "s",
+      limit: 1,
+    });
+    expect(parseToMain("trace:rows", { sessionId: "s", afterSeq: 0, limit: 5000 })).toEqual({
+      sessionId: "s",
+      afterSeq: 0,
+      limit: 5000,
+    });
+    expect(parseToMain("trace:payloads", { sessionId: "s", seqs: [1, 2] })).toEqual({
+      sessionId: "s",
+      seqs: [1, 2],
+    });
+    const rejected: Array<[string, unknown]> = [
+      ["trace:listSessions", { limit: 501 }],
+      ["trace:listSessions", { repoId: "" }],
+      ["trace:listSessions", { sessionId: "" }],
+      ["trace:rows", { sessionId: "s", limit: 5001 }],
+      ["trace:rows", { sessionId: "", afterSeq: 0 }],
+      ["trace:rows", { sessionId: "s", afterSeq: -1 }],
+      ["trace:rows", { sessionId: "s", afterSeq: 1.5 }],
+      ["trace:payloads", { sessionId: "s", seqs: [] }],
+      ["trace:payloads", { sessionId: "s", seqs: Array.from({ length: 51 }, (_, i) => i + 1) }],
+      ["trace:payloads", { sessionId: "s", seqs: [0] }],
+    ];
+    for (const [channel, payload] of rejected) {
+      let caught: unknown;
+      try {
+        parseToMain(channel, payload);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught, `${channel} ${JSON.stringify(payload).slice(0, 60)}`).toBeInstanceOf(IpcError);
+      expect(caught).toMatchObject({ code: "INVALID_PAYLOAD" });
+    }
+  });
 });
