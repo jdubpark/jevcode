@@ -1,5 +1,6 @@
 export * from "./agent-events.js";
 export * from "./agent.js";
+export * from "./canonical-json.js";
 export * from "./evidence.js";
 export * from "./id.js";
 export * from "./ipc.js";
