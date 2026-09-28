@@ -16,6 +16,7 @@ import {
 } from "@jevcode/agent-core";
 import {
   NormalizedAgentEventSchema,
+  newId,
   type AgentDetection,
   type AgentInstruction,
   type AgentSession,
@@ -179,7 +180,7 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
       this.reasoningEffort = input.reasoningEffort;
       this.state = "starting";
       this.threadId = null;
-      this.context = defaultNormalizerContext(sessionId);
+      this.context = { ...defaultNormalizerContext(sessionId), turnId: newId("turn") };
       this.deliveredIds = new Set();
       this.autoRelayArmed = true;
 
@@ -433,6 +434,9 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
       promptText,
     ];
     this.state = "starting";
+    // One turn per Codex process: every event of the relaunched process
+    // carries the new turn id.
+    this.context = { ...this.context, turnId: newId("turn") };
     this.emit({
       type: "agent_started",
       sessionId: this.sessionId,
@@ -615,7 +619,12 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
   }
 
   private emit(event: NormalizedAgentEvent): NormalizedAgentEvent {
-    const parsed = NormalizedAgentEventSchema.parse(event);
+    // Adapter-emitted and transcript-fallback events get the current turn id;
+    // JSONL-mapped events already carry it (mapCodexJsonlEvent).
+    const turnId = this.context?.turnId;
+    const stamped =
+      turnId !== undefined && event.turnId === undefined ? { ...event, turnId } : event;
+    const parsed = NormalizedAgentEventSchema.parse(stamped);
     for (const handler of this.eventHandlers) {
       try {
         handler(parsed);

@@ -62,7 +62,40 @@ export function extractCodexThreadId(raw: unknown): string | null {
     : null;
 }
 
+/**
+ * Correlates the start and the completion of one Codex item:
+ * `${turnId}:${item.id}` when the adapter minted a turn id, else the bare item
+ * id. Codex item ids may restart per process, so the turn prefix keeps them
+ * unique within a session. Returns undefined when the item has no id.
+ */
+export function callIdFor(
+  ctx: EventNormalizerContext,
+  itemId: string | undefined,
+): string | undefined {
+  if (itemId === undefined || itemId === "") return undefined;
+  return ctx.turnId !== undefined ? `${ctx.turnId}:${itemId}` : itemId;
+}
+
+// Spread into a mapped event: the key is omitted, never set to undefined.
+function callFields(
+  ctx: EventNormalizerContext,
+  item: CodexItem,
+): { callId?: string } {
+  const callId = callIdFor(ctx, item.id);
+  return callId !== undefined ? { callId } : {};
+}
+
 export function mapCodexJsonlEvent(
+  raw: unknown,
+  ctx: EventNormalizerContext,
+): NormalizedAgentEvent[] {
+  const events = mapEvent(raw, ctx);
+  const turnId = ctx.turnId;
+  if (turnId === undefined) return events;
+  return events.map((event) => ({ ...event, turnId }));
+}
+
+function mapEvent(
   raw: unknown,
   ctx: EventNormalizerContext,
 ): NormalizedAgentEvent[] {
@@ -131,6 +164,7 @@ function mapItemStarted(
         {
           type: "command_started",
           sessionId: ctx.sessionId,
+          ...callFields(ctx, item),
           command,
           ts: ctx.now(),
         },
@@ -142,6 +176,7 @@ function mapItemStarted(
         {
           type: "tool_started",
           sessionId: ctx.sessionId,
+          ...callFields(ctx, item),
           tool,
           input: JSON.stringify(item.arguments ?? {}),
           ts: ctx.now(),
@@ -160,7 +195,7 @@ function mapItemCompleted(
   if (item === undefined) return [];
   switch (item.type) {
     case "command_execution":
-      return mapCommandCompleted(item as CodexCommandExecutionItem, ctx);
+      return mapCommandCompleted(item as CodexItem & CodexCommandExecutionItem, ctx);
 
     case "agent_message":
       return item.text !== undefined
@@ -179,9 +214,9 @@ function mapItemCompleted(
       return item.text !== undefined
         ? [
             {
-              type: "agent_message",
+              type: "agent_reasoning",
               sessionId: ctx.sessionId,
-              role: "assistant" as const,
+              ...callFields(ctx, item),
               text: item.text,
               ts: ctx.now(),
             },
@@ -189,7 +224,7 @@ function mapItemCompleted(
         : [];
 
     case "file_change":
-      return mapFileChange(item as CodexFileChangeItem, ctx);
+      return mapFileChange(item as CodexItem & CodexFileChangeItem, ctx);
 
     case "mcp_tool_call": {
       const call = item as CodexMcpToolCallItem;
@@ -202,6 +237,7 @@ function mapItemCompleted(
         {
           type: "tool_completed",
           sessionId: ctx.sessionId,
+          ...callFields(ctx, item),
           tool: mcpToolName(item),
           output,
           ts: ctx.now(),
@@ -221,7 +257,7 @@ function mapItemCompleted(
 }
 
 function mapCommandCompleted(
-  item: CodexCommandExecutionItem,
+  item: CodexItem & CodexCommandExecutionItem,
   ctx: EventNormalizerContext,
 ): NormalizedAgentEvent[] {
   const command = item.command ?? "";
@@ -232,6 +268,7 @@ function mapCommandCompleted(
       {
         type: "approval_requested",
         sessionId: ctx.sessionId,
+        ...callFields(ctx, item),
         command,
         rationale: output !== "" ? output : "command declined by codex approval policy",
         ts: ctx.now(),
@@ -242,7 +279,9 @@ function mapCommandCompleted(
     {
       type: "command_completed",
       sessionId: ctx.sessionId,
+      ...callFields(ctx, item),
       command,
+      // -1 means Codex reported no exit code; readers show it as unknown.
       exitCode: item.exit_code ?? -1,
       stdout: output,
       stderr: "",
@@ -252,15 +291,17 @@ function mapCommandCompleted(
 }
 
 function mapFileChange(
-  item: CodexFileChangeItem,
+  item: CodexItem & CodexFileChangeItem,
   ctx: EventNormalizerContext,
 ): NormalizedAgentEvent[] {
   if (item.status !== "completed") return [];
+  const call = callFields(ctx, item);
   return item.changes
     .filter((change) => change.path !== "")
     .map((change) => ({
       type: "file_changed" as const,
       sessionId: ctx.sessionId,
+      ...call,
       path: change.path,
       ts: ctx.now(),
     }));

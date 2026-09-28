@@ -145,6 +145,34 @@ describe("CodexAdapter PTY integration (fake codex binary)", () => {
     });
   });
 
+  it("stamps one turnId per Codex process on every event", async () => {
+    const adapter = createAdapter();
+    const { events, exited } = collect(adapter);
+    const session = await adapter.startSession(sessionInput());
+    await adapter.sendInstruction({
+      id: "instr-turns",
+      sessionId: session.sessionId,
+      text: "then add a test",
+      mode: "queue",
+    });
+    await exited;
+    await waitFor(
+      () => events.filter((e) => e.type === "agent_completed").length === 2,
+      5000,
+      "second turn completes",
+    );
+
+    const starts = events.filter((e) => e.type === "agent_started");
+    expect(starts).toHaveLength(2);
+    const [first, second] = starts.map((e) => e.turnId);
+    expect(first).toMatch(/^turn_[0-9a-f]{32}$/);
+    expect(second).toMatch(/^turn_[0-9a-f]{32}$/);
+    expect(second).not.toBe(first);
+    const secondStart = events.indexOf(starts[1]!);
+    expect(events.slice(0, secondStart).every((e) => e.turnId === first)).toBe(true);
+    expect(events.slice(secondStart).every((e) => e.turnId === second)).toBe(true);
+  });
+
   it("routes a structured decision through the steer resume relaunch", async () => {
     const adapter = createAdapter();
     const { events, exited } = collect(adapter);

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { NormalizedAgentEventSchema } from "@jevcode/contracts";
 import { defaultNormalizerContext } from "@jevcode/agent-core";
 
-import { extractCodexThreadId, mapCodexJsonlEvent } from "./jsonl.js";
+import { callIdFor, extractCodexThreadId, mapCodexJsonlEvent } from "./jsonl.js";
 
 const fixture = (name: string): string =>
   readFileSync(
@@ -13,8 +13,11 @@ const fixture = (name: string): string =>
     "utf8",
   );
 
-function parseFixture(name: string, sessionId = "s1") {
-  const ctx = defaultNormalizerContext(sessionId);
+function parseFixture(name: string, sessionId = "s1", turnId?: string) {
+  const ctx = {
+    ...defaultNormalizerContext(sessionId),
+    ...(turnId !== undefined ? { turnId } : {}),
+  };
   const events = fixture(name)
     .split("\n")
     .filter((line) => line.trim() !== "")
@@ -47,17 +50,21 @@ describe("codex JSONL parser against recorded spike fixtures", () => {
   });
 
   it("maps the documented happy path exactly", () => {
-    const events = parseFixture("documented-happy-path.jsonl");
+    const events = parseFixture("documented-happy-path.jsonl", "s1", "turn_a");
     expect(events).toEqual([
       {
         type: "command_started",
         sessionId: "s1",
+        turnId: "turn_a",
+        callId: "turn_a:item_1",
         command: "bash -lc ls",
         ts: expect.any(String),
       },
       {
         type: "command_completed",
         sessionId: "s1",
+        turnId: "turn_a",
+        callId: "turn_a:item_1",
         command: "bash -lc ls",
         exitCode: 0,
         stdout: "docs\nsdk\nsrc",
@@ -67,19 +74,27 @@ describe("codex JSONL parser against recorded spike fixtures", () => {
       {
         type: "agent_message",
         sessionId: "s1",
+        turnId: "turn_a",
         role: "assistant",
         text: "Repo contains docs, sdk, and examples directories.",
         ts: expect.any(String),
       },
-      { type: "agent_completed", sessionId: "s1", ts: expect.any(String) },
+      { type: "agent_completed", sessionId: "s1", turnId: "turn_a", ts: expect.any(String) },
     ]);
+  });
+
+  it("omits turnId and uses the bare item id when the context has no turn", () => {
+    const events = parseFixture("documented-happy-path.jsonl");
+    expect(events.map((event) => "turnId" in event)).toEqual([false, false, false, false]);
+    expect(events[0]).toMatchObject({ type: "command_started", callId: "item_1" });
+    expect("callId" in events[2]!).toBe(false);
   });
 
   it("maps the documented tool-rich fixture: tools, files, approvals, todo ignored", () => {
     const events = parseFixture("documented-tool-rich.jsonl");
     const types = events.map((e) => e.type);
     expect(types).toEqual([
-      "agent_message",
+      "agent_reasoning",
       "tool_started",
       "tool_completed",
       "command_started",
@@ -110,6 +125,40 @@ describe("codex JSONL parser against recorded spike fixtures", () => {
       "src/rate-limit.ts",
       "package.json",
     ]);
+  });
+
+  it("pairs each start and completion by callId and keeps reasoning out of messages", () => {
+    const events = parseFixture("documented-tool-rich.jsonl", "s1", "turn_b");
+    expect(events.every((event) => event.turnId === "turn_b")).toBe(true);
+    const calls = events.map((event) => ("callId" in event ? event.callId : undefined));
+    expect(calls).toEqual([
+      "turn_b:item_2",
+      "turn_b:item_5",
+      "turn_b:item_5",
+      "turn_b:item_6",
+      "turn_b:item_6",
+      "turn_b:item_8",
+      "turn_b:item_8",
+      "turn_b:item_10",
+      undefined,
+      undefined,
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "agent_reasoning",
+      text: "Plan: update the rate limiter and add a Redis dependency.",
+    });
+    const messages = events.filter((event) => event.type === "agent_message");
+    expect(messages.map((event) => (event.type === "agent_message" ? event.text : ""))).toEqual([
+      "Rate limiter is now backed by Redis with fail-open on connection error.",
+    ]);
+  });
+
+  it("builds call ids only from a non-empty item id", () => {
+    const ctx = { ...defaultNormalizerContext("s1"), turnId: "turn_c" };
+    expect(callIdFor(ctx, "item_9")).toBe("turn_c:item_9");
+    expect(callIdFor(ctx, undefined)).toBeUndefined();
+    expect(callIdFor(ctx, "")).toBeUndefined();
+    expect(callIdFor(defaultNormalizerContext("s1"), "item_9")).toBe("item_9");
   });
 
   it("ignores unknown event types without failing", () => {

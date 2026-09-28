@@ -6,6 +6,9 @@ import {
 export interface EventNormalizerContext {
   sessionId: string;
   now: () => string;
+  // Minted by the adapter once per agent process (exec or exec resume) and
+  // stamped on every event that process produces. Absent in legacy callers.
+  turnId?: string;
 }
 
 export const defaultNormalizerContext = (
