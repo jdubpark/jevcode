@@ -31,6 +31,30 @@ export const TestFailureSchema = z.object({
 
 export type TestFailure = z.infer<typeof TestFailureSchema>;
 
+export const DiffWithheldReasonSchema = z.enum(["secret_path", "not_captured"]);
+
+export type DiffWithheldReason = z.infer<typeof DiffWithheldReasonSchema>;
+
+export const GitHunkDiffSchema = z
+  .object({
+    // First 16 hex chars of sha256 over the raw (pre-redaction) diff; the change key.
+    hash: z.string().regex(/^[0-9a-f]{16}$/),
+    // UTF-8 byte length of the raw diff, so "showing 32 KB of 410 KB" is truthful.
+    bytes: z.number().int().nonnegative(),
+    // Redacted, capped unified diff against baseCommit. Absent when withheld.
+    text: z.string().optional(),
+    // True when text was cut at the last "@@" hunk boundary under 32 KiB.
+    truncated: z.boolean(),
+    // Number of redactions applied to text.
+    redactions: z.number().int().nonnegative(),
+    withheld: DiffWithheldReasonSchema.optional(),
+  })
+  .refine((diff) => diff.withheld === undefined || diff.text === undefined, {
+    message: "a withheld diff carries no text",
+  });
+
+export type GitHunkDiff = z.infer<typeof GitHunkDiffSchema>;
+
 const factBase = {
   repoId: z.string().min(1),
   sessionId: z.string().min(1),
@@ -47,6 +71,7 @@ export const EvidenceFactSchema = z.discriminatedUnion("type", [
     isFormattingOnly: z.boolean(),
     isConfigOnly: z.boolean(),
     isLockfile: z.boolean(),
+    diff: GitHunkDiffSchema.optional(),
   }),
   z.object({
     type: z.literal("file_changed"),
@@ -82,6 +107,7 @@ export const EvidenceFactSchema = z.discriminatedUnion("type", [
     failed: z.number().int().nonnegative(),
     skipped: z.number().int().nonnegative(),
     failures: z.array(TestFailureSchema),
+    sourceCallId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal("command_executed"),
@@ -89,6 +115,7 @@ export const EvidenceFactSchema = z.discriminatedUnion("type", [
     command: z.string().min(1),
     exitCode: z.number().int(),
     isDestructive: z.boolean(),
+    sourceCallId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal("revert_detected"),

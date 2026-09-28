@@ -143,6 +143,12 @@ describe("ChangeUnitSchema", () => {
     expect(ChangeUnitSchema.safeParse({ ...unit, relevance: -0.1 }).success).toBe(false);
   });
 
+  it("keeps agentCallIds through a parse", () => {
+    const withCalls = { ...unit, agentCallIds: ["turn_1:item_2", "turn_1:item_5"] };
+    expect(ChangeUnitSchema.parse(withCalls).agentCallIds).toEqual(["turn_1:item_2", "turn_1:item_5"]);
+    expect(ChangeUnitSchema.safeParse({ ...unit, agentCallIds: [""] }).success).toBe(false);
+  });
+
   it("rejects an invalid blast radius scope", () => {
     const result = BlastRadiusSchema.safeParse({
       affectedFiles: 1,
@@ -187,6 +193,22 @@ describe("DecisionSchema", () => {
       status: "open",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("keeps the optional status-transition ts", () => {
+    const decision = {
+      id: "dec_1",
+      sessionId,
+      title: "Account linking policy",
+      context: "Existing users signing in through Google",
+      severity: "required",
+      options: [],
+      affectedChangeUnits: [],
+      evidence: [],
+      status: "answered",
+      ts,
+    };
+    expect(DecisionSchema.parse(decision)).toEqual(decision);
   });
 
   it("rejects an invalid severity", () => {
