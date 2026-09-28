@@ -423,15 +423,15 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
 
 | Collector | Input | Output facts | Notes |
 |---|---|---|---|
-| GitCollector | `git status/diff` against session base commit | `git_hunk` (per file, classified formatting-only/config/lockfile) | Classifier: whitespace-only hunk detection + path heuristics (`*.lock`, `package-lock.json`, `.prettierrc`, etc.) |
+| GitCollector | `git status/diff` against session base commit | `git_hunk` (per file, classified formatting-only/config/lockfile) | Classifier: whitespace-only hunk detection + path heuristics (`*.lock`, `package-lock.json`, `.prettierrc`, etc.). Emits a file only when its diff hash changes; a file that leaves and re-enters `git status` emits again. `diff` holds `{hash, bytes, text?, truncated, redactions, withheld?}` from an injected `prepareDiff`; the default stores no text (`withheld: "not_captured"`), the desktop policy is in §3.7 |
 | FileWatcher | chokidar on repo root | `file_changed` | 300ms debounce, ignores `.git`, drop policy merges same-file |
 | SymbolCollector (worker) | tree-sitter parse of changed files | `symbol_delta` | vs. base parse snapshot, signature hash identity |
 | DependencyCollector | `package.json` (+ `pnpm-lock.yaml`/`yarn.lock`/`package-lock.json` for resolution) | `dependency_change` | lockfile-only changes → still emit, guardrail suppresses UI |
-| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0, runner registry for extension |
-| CommandCollector | PTY log | `command_executed` | destructive classifier (§8.3.1) |
+| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0, runner registry for extension; `sourceCallId` = the agent call's `callId` |
+| CommandCollector | PTY log | `command_executed` | destructive classifier (§8.3.1); `sourceCallId` = the agent call's `callId` |
 | RevertDetector | git status/reset observation | `revert_detected` | |
 
-All collectors emit into the event store. None talk to the renderer directly.
+All collectors emit into the event store. None talk to the renderer directly. Each collector pushes every fact into its sink exactly once; callers must not push the returned facts again.
 
 ## 8. Jev Harness (`packages/jev-router`)
 
