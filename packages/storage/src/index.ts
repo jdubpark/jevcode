@@ -41,3 +41,10 @@ export type {
 } from "./local-schemas.js";
 export { LATEST_SCHEMA_VERSION, MIGRATIONS } from "./migrations.js";
 export type { Migration } from "./migrations.js";
+export { openTraceReader } from "./trace-reader.js";
+export type {
+  ListTraceSessionsOptions,
+  TraceReader,
+  TraceReaderPage,
+  TraceReaderRow,
+} from "./trace-reader.js";
