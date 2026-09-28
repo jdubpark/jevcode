@@ -228,6 +228,76 @@ function collectImportEdges(
   }
 }
 
+/**
+ * Unit to agent-call join (R3), stored as ChangeUnit.agentCallIds:
+ * 1. exact: the sourceCallId of every command_executed / test_result fact the
+ *    unit owns;
+ * 2. inferred: an agent file_changed with a callId links to every unit that owns
+ *    the evidence fact for that path nearest in time (ties go to the lower fact
+ *    seq). "Nearest", not "after": the watcher often sees a write before Codex
+ *    reports it.
+ * Ids are sorted and unique; the key is omitted when a unit has none.
+ */
+function attachAgentCallIds(
+  units: ChangeUnit[],
+  unitEvidenceFacts: ReadonlyMap<string, SequencedFact[]>,
+  facts: readonly SequencedFact[],
+  agentEvents: readonly NormalizedAgentEvent[],
+): void {
+  const callIds = new Map<string, Set<string>>();
+  const addCall = (unitId: string, callId: string): void => {
+    const set = callIds.get(unitId) ?? new Set<string>();
+    set.add(callId);
+    callIds.set(unitId, set);
+  };
+  const ownersByFactId = new Map<string, string[]>();
+  for (const unit of units) {
+    for (const entry of unitEvidenceFacts.get(unit.id) ?? []) {
+      const owners = ownersByFactId.get(entry.factId) ?? [];
+      if (!owners.includes(unit.id)) owners.push(unit.id);
+      ownersByFactId.set(entry.factId, owners);
+      const fact = entry.fact;
+      if (
+        (fact.type === "command_executed" || fact.type === "test_result") &&
+        fact.sourceCallId !== undefined
+      ) {
+        addCall(unit.id, fact.sourceCallId);
+      }
+    }
+  }
+  const ownedFactsByPath = new Map<string, SequencedFact[]>();
+  for (const entry of facts) {
+    if (!ownersByFactId.has(entry.factId)) continue;
+    for (const file of factFiles(entry.fact)) {
+      const list = ownedFactsByPath.get(file) ?? [];
+      list.push(entry);
+      ownedFactsByPath.set(file, list);
+    }
+  }
+  for (const event of agentEvents) {
+    if (event.type !== "file_changed" || event.callId === undefined) continue;
+    const eventMs = tsMs(event.ts);
+    let nearest: SequencedFact | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const entry of ownedFactsByPath.get(event.path) ?? []) {
+      const distance = Math.abs(tsMs(entry.fact.ts) - eventMs);
+      if (
+        distance < nearestDistance ||
+        (distance === nearestDistance && nearest !== null && entry.seq < nearest.seq)
+      ) {
+        nearest = entry;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest === null) continue;
+    for (const unitId of ownersByFactId.get(nearest.factId) ?? []) addCall(unitId, event.callId);
+  }
+  for (const unit of units) {
+    const ids = callIds.get(unit.id);
+    if (ids !== undefined && ids.size > 0) unit.agentCallIds = [...ids].sort();
+  }
+}
+
 export function buildPlaceholderTitle(files: readonly string[]): string {
   if (files.length === 0) return "Changed 0 files";
   const top = files.slice(0, 3).join(", ");
@@ -932,6 +1002,8 @@ export function clusterSession(input: SessionInput): SemanticProjection {
       updatedAt,
     });
   }
+
+  attachAgentCallIds(units, unitEvidenceFacts, facts, input.agentEvents);
 
   return {
     sessionId,
