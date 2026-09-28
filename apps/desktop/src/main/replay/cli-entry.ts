@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { openDb } from "@jevcode/storage";
+import { openDb, openTraceReader } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { parseReplayLine } from "@jevcode/semantic-core";
 import type { PipelineRecord } from "@jevcode/semantic-core";
@@ -14,6 +14,8 @@ import {
   loadPlaybackFixture,
 } from "../pipeline/playback.js";
 import { PipelineRuntime } from "../pipeline/pipeline-runtime.js";
+import { buildTraceBundle, writeTraceBundle } from "../trace-bundle.js";
+import { createTraceService } from "../trace-service.js";
 
 export interface ReplayResult {
   sessionId: string;
@@ -24,6 +26,8 @@ export interface ReplayResult {
   decisionCount: number;
   specCount: number;
   errors: string[];
+  /** <outDir>/trace.json: a TraceBundle (format jevcode.trace v1) of the replayed session. */
+  bundlePath: string;
 }
 
 export async function runReplay(
@@ -176,6 +180,16 @@ export async function runReplay(
 
     await runtime.stopSession(sessionId);
 
+    // Read back through a second, query_only connection, the same path the
+    // trace viewer uses, so trace.json holds exactly what the viewer loads.
+    const bundlePath = path.join(outDir, "trace.json");
+    const reader = openTraceReader(db.dbPath);
+    try {
+      writeTraceBundle(bundlePath, buildTraceBundle(createTraceService(reader), sessionId));
+    } finally {
+      reader.close();
+    }
+
     return {
       sessionId,
       records: records.length,
@@ -188,6 +202,7 @@ export async function runReplay(
       decisionCount: decisions.length,
       specCount: surfaces.size,
       errors,
+      bundlePath,
     };
   } finally {
     db.close();
