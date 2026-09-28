@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AttentionDecisionSchema,
   JevDecisionLogSchema,
+  JevPassSchema,
   JevResultSchema,
   UIIntentSchema,
   type JevResult,
@@ -258,6 +259,13 @@ describe("JevDecisionLogSchema", () => {
       probabilities: { schema_change: 0.9, failure: 0.1 },
     });
     expect(result.success).toBe(true);
+  });
+
+  it("keeps the optional Jev pass", () => {
+    expect(JevPassSchema.options).toEqual(["A", "B"]);
+    expect(JevDecisionLogSchema.parse({ ...baseLog, pass: "A" }).pass).toBe("A");
+    expect(JevDecisionLogSchema.parse({ ...baseLog, pass: "B" }).pass).toBe("B");
+    expect(JevDecisionLogSchema.safeParse({ ...baseLog, pass: "C" }).success).toBe(false);
   });
 
   it("rejects probabilities outside 0..1", () => {

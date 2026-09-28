@@ -64,6 +64,11 @@ export const JevClientKindSchema = z.enum([
 
 export type JevClientKind = z.infer<typeof JevClientKindSchema>;
 
+// Pass A = attention, pass B = projection (SPEC §3.3, §8.2).
+export const JevPassSchema = z.enum(["A", "B"]);
+
+export type JevPass = z.infer<typeof JevPassSchema>;
+
 export const JevResultSchema = z.object({
   value: z.unknown(),
   confidence: z.number().min(0).max(1),
@@ -91,6 +96,7 @@ export const JevDecisionLogSchema = z.object({
   latencyMs: z.number().int().nonnegative(),
   clientKind: JevClientKindSchema,
   clamps: z.array(z.string()),
+  pass: JevPassSchema.optional(),
   ts: z.string(),
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   EvidenceFactSchema,
+  GitHunkDiffSchema,
   SymbolInfoSchema,
   TestFailureSchema,
   type EvidenceFact,
@@ -170,5 +171,58 @@ describe("EvidenceFactSchema", () => {
       ts,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("trace fields on evidence facts", () => {
+  const gitHunk = {
+    type: "git_hunk",
+    repoId,
+    sessionId,
+    file: "src/a.ts",
+    added: 1,
+    removed: 1,
+    isFormattingOnly: false,
+    isConfigOnly: false,
+    isLockfile: false,
+    ts,
+  };
+  const diff = {
+    hash: "0123456789abcdef",
+    bytes: 58,
+    text: "@@ -1 +1 @@\n-export const a = 1;\n+export const a = 2;\n",
+    truncated: false,
+    redactions: 0,
+  };
+
+  it("keeps git_hunk.diff through a parse", () => {
+    expect(EvidenceFactSchema.parse({ ...gitHunk, diff })).toEqual({ ...gitHunk, diff });
+  });
+
+  it("accepts a withheld diff without text", () => {
+    const withheld = { hash: "fedcba9876543210", bytes: 120, truncated: false, redactions: 0, withheld: "secret_path" };
+    expect(GitHunkDiffSchema.parse(withheld)).toEqual(withheld);
+    expect(GitHunkDiffSchema.parse({ ...withheld, withheld: "not_captured" }).withheld).toBe("not_captured");
+  });
+
+  it("rejects a withheld diff that carries text", () => {
+    expect(GitHunkDiffSchema.safeParse({ ...diff, withheld: "secret_path" }).success).toBe(false);
+  });
+
+  it("rejects a hash that is not 16 lowercase hex characters", () => {
+    expect(GitHunkDiffSchema.safeParse({ ...diff, hash: "0123456789abcde" }).success).toBe(false);
+    expect(GitHunkDiffSchema.safeParse({ ...diff, hash: "0123456789ABCDEF" }).success).toBe(false);
+  });
+
+  it("rejects an unknown withheld reason", () => {
+    const result = GitHunkDiffSchema.safeParse({ hash: diff.hash, bytes: 1, truncated: false, redactions: 0, withheld: "too_big" });
+    expect(result.success).toBe(false);
+  });
+
+  it("keeps sourceCallId on test_result and command_executed", () => {
+    const sourceCallId = "turn_1:item_4";
+    for (const fact of facts.filter((f) => f.type === "test_result" || f.type === "command_executed")) {
+      expect(EvidenceFactSchema.parse({ ...fact, sourceCallId })).toEqual({ ...fact, sourceCallId });
+    }
   });
 });

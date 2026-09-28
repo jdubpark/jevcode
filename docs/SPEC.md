@@ -201,21 +201,26 @@ All types below are zod schemas with derived TS types. Field names are wire-stab
 ### 4.1 Normalized agent events (PRD §12, extended)
 
 ```ts
+// Every variant also carries turnId?: string   // optional; minted by the adapter once per agent process
 type NormalizedAgentEvent =
   | { type: "agent_started"; sessionId: string; prompt: string; ts: string }
   | { type: "agent_message"; sessionId: string; role: "assistant" | "user"; text: string; ts: string }
-  | { type: "tool_started"; sessionId: string; tool: string; input: string; ts: string }
-  | { type: "tool_completed"; sessionId: string; tool: string; output: string; ts: string }
-  | { type: "command_started"; sessionId: string; command: string; ts: string }
-  | { type: "command_completed"; sessionId: string; command: string; exitCode: number; stdout: string; stderr: string; ts: string }
+  | { type: "agent_reasoning"; sessionId: string; callId?: string; text: string; ts: string }   // optional variant; model reasoning, never a message
+  | { type: "tool_started"; sessionId: string; callId?: string; tool: string; input: string; ts: string }
+  | { type: "tool_completed"; sessionId: string; callId?: string; tool: string; output: string; ts: string }
+  | { type: "command_started"; sessionId: string; callId?: string; command: string; ts: string }
+  | { type: "command_completed"; sessionId: string; callId?: string; command: string; exitCode: number; stdout: string; stderr: string; ts: string }
   | { type: "file_read"; sessionId: string; path: string; ts: string }
-  | { type: "file_changed"; sessionId: string; path: string; ts: string }            // claim; evidence engine confirms
-  | { type: "approval_requested"; sessionId: string; command: string; rationale: string; ts: string }
+  | { type: "file_changed"; sessionId: string; callId?: string; path: string; ts: string }            // claim; evidence engine confirms
+  | { type: "approval_requested"; sessionId: string; callId?: string; command: string; rationale: string; ts: string }
   | { type: "test_started"; sessionId: string; command: string; ts: string }
   | { type: "test_completed"; sessionId: string; command: string; exitCode: number; ts: string }
   | { type: "agent_waiting"; sessionId: string; ts: string }
   | { type: "agent_completed"; sessionId: string; ts: string }
-  | { type: "agent_failed"; sessionId: string; error: string; ts: string };
+  | { type: "agent_failed"; sessionId: string; error: string; ts: string }
+  | { type: "agent_interrupted"; sessionId: string; reason: "interrupt" | "steer" | "stop"; ts: string };   // optional variant; the session pauses, never fails
+
+// callId?: string   // optional; `${turnId}:${item.id}` for Codex, shared by a call's start and completion
 ```
 
 ### 4.2 Evidence facts
@@ -223,21 +228,35 @@ type NormalizedAgentEvent =
 ```ts
 type EvidenceFact =
   | { type: "git_hunk"; repoId: string; sessionId: string; file: string; added: number; removed: number;
-      isFormattingOnly: boolean; isConfigOnly: boolean; isLockfile: boolean; ts: string }
+      isFormattingOnly: boolean; isConfigOnly: boolean; isLockfile: boolean;
+      diff?: GitHunkDiff;                 // optional
+      ts: string }
   | { type: "file_changed"; repoId: string; sessionId: string; path: string; kind: "added" | "modified" | "deleted"; ts: string }
   | { type: "symbol_delta"; repoId: string; sessionId: string; path: string;
       added: SymbolInfo[]; removed: SymbolInfo[]; modified: SymbolInfo[]; ts: string }
   | { type: "dependency_change"; repoId: string; sessionId: string; manifest: string;
       added: { name: string; version: string }[]; removed: { name: string; version: string }[]; ts: string }
   | { type: "test_result"; repoId: string; sessionId: string; runner: string; command: string;
-      passed: number; failed: number; skipped: number; failures: TestFailure[]; ts: string }
+      passed: number; failed: number; skipped: number; failures: TestFailure[];
+      sourceCallId?: string;              // optional; callId of the agent command that produced it
+      ts: string }
   | { type: "command_executed"; repoId: string; sessionId: string; command: string; exitCode: number;
-      isDestructive: boolean; ts: string }
+      isDestructive: boolean;
+      sourceCallId?: string;              // optional
+      ts: string }
   | { type: "revert_detected"; repoId: string; sessionId: string; files: string[]; ts: string };
 
 type SymbolInfo = { name: string; kind: "function" | "class" | "method" | "interface" | "type" | "variable" | "import" | "export";
   signature: string; startLine: number; endLine: number };
 type TestFailure = { file: string; testName: string; message: string };
+type GitHunkDiff = {
+  hash: string;                           // first 16 hex chars of sha256 over the raw diff (change key)
+  bytes: number;                          // UTF-8 bytes of the raw diff
+  text?: string;                          // redacted unified diff, capped at 32 KiB; absent when withheld
+  truncated: boolean;                     // text was cut at the last "@@" hunk boundary
+  redactions: number;
+  withheld?: "secret_path" | "not_captured";
+};
 ```
 
 ### 4.3 Semantic objects (PRD §9, §55)
@@ -267,7 +286,8 @@ interface ChangeUnit {
   relatedDecisions: string[]; validationResults: string[];
   blastRadius?: { affectedFiles: number; affectedSymbols: number; affectedTests: number; scope: "local" | "module" | "subsystem" | "repository" };
   importance?: number; relevance?: number; interruption?: number; uncertainty?: number; mentalModelChange?: number;
-  evidence: string[];                     // evidence fact ids
+  evidence: string[];                     // fact ids (fact_…), plus validation and semantic-event ids
+  agentCallIds?: string[];                // optional; agent call ids joined to this unit, sorted
   createdAt: string; updatedAt: string;
 }
 
@@ -278,6 +298,7 @@ interface Decision {
   affectedChangeUnits: string[]; evidence: string[];
   status: "open" | "answered" | "delegated" | "expired";
   answer?: StructuredDecision;
+  ts?: string;                            // optional; source time of the latest status transition
 }
 
 interface StructuredDecision {
