@@ -2,8 +2,10 @@
  * Deterministic JSON. Object keys are sorted by UTF-16 code unit order at
  * every depth, properties whose value is `undefined` are dropped, and arrays
  * keep their order. Two values that differ only in key order produce the
- * same string. Fact ids hash this string (packages/semantic-core/src/ids.ts),
- * so a collector-ordered fact and its zod-reordered stored copy share one id.
+ * same string. Fact ids hash this string (packages/semantic-core/src/ids.ts)
+ * only once lane A1's A1-5 switches factContentId to it; at W0, factContentId
+ * still hashes JSON.stringify(record) directly. Once switched, a
+ * collector-ordered fact and its zod-reordered stored copy share one id.
  * Integer-like keys enumerate in ascending numeric order (an engine rule);
  * the output is still a function of the key set alone.
  */

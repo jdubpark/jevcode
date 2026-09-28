@@ -8,6 +8,8 @@ import {
 
 const sid = "sess_abc";
 const ts = "2026-01-15T10:30:00.000Z";
+const turnId = "turn_0123456789abcdef0123456789abcdef";
+const callId = `${turnId}:item_7`;
 
 const events: NormalizedAgentEvent[] = [
   { type: "agent_started", sessionId: sid, prompt: "Add rate limiting to the public API.", ts },
@@ -39,6 +41,15 @@ const events: NormalizedAgentEvent[] = [
   { type: "agent_waiting", sessionId: sid, ts },
   { type: "agent_completed", sessionId: sid, ts },
   { type: "agent_failed", sessionId: sid, error: "codex exited unexpectedly", ts },
+  {
+    type: "agent_reasoning",
+    sessionId: sid,
+    turnId,
+    callId,
+    text: "Check the callback first.",
+    ts,
+  },
+  { type: "agent_interrupted", sessionId: sid, turnId, reason: "interrupt", ts },
 ];
 
 describe("NormalizedAgentEventSchema", () => {
@@ -94,8 +105,6 @@ describe("NormalizedAgentEventSchema", () => {
 });
 
 describe("trace identity fields and lifecycle variants", () => {
-  const turnId = "turn_0123456789abcdef0123456789abcdef";
-  const callId = `${turnId}:item_7`;
   const CALL_TYPES = new Set([
     "tool_started",
     "tool_completed",
@@ -142,5 +151,11 @@ describe("trace identity fields and lifecycle variants", () => {
     const base = { type: "command_started", sessionId: sid, command: "pnpm test", ts };
     expect(NormalizedAgentEventSchema.safeParse({ ...base, turnId: "" }).success).toBe(false);
     expect(NormalizedAgentEventSchema.safeParse({ ...base, callId: "" }).success).toBe(false);
+  });
+
+  it("covers every discriminator in NormalizedAgentEventSchema (a new variant must be added here)", () => {
+    const fixtureTypes = new Set(events.map((event) => event.type));
+    const schemaTypes = new Set(NormalizedAgentEventSchema.optionsMap.keys());
+    expect(fixtureTypes).toEqual(schemaTypes);
   });
 });
