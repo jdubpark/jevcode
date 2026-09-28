@@ -343,7 +343,8 @@ interface UIIntent {
         agent:interrupt, agent:resume, agent:sendInstruction,
         agent:cancelInstruction, action:invoke (whitelisted action payloads),
         terminal:input, terminal:resize, surface:pin, surface:dismiss,
-        telemetry:flush
+        telemetry:flush,
+        trace:listSessions, trace:rows, trace:payloads (read-only; query_only reader; see the trace viewer design spec)
 ← renderer: repo:opened, session:state, agent:event, agent:state,
         agent:instructionState, semantic:update, changeunit:upsert,
         decision:open, decision:resolved, validation:update, ui:spec (full),
@@ -636,6 +637,8 @@ Five scenarios. Each scenario folder contains:
 5. `dep-change` — added + removed packages with lockfile noise (guardrail suppression case).
 
 Replay runner: feeds `events.jsonl` through the real pipeline with Jev in `PlaybackMode` (deterministic stub returning labeled outputs) or `DegradeMode`. Used by M0 UI development, integration tests, and Jev evals.
+
+`replay <fixtureDir> <outDir>` also writes `<outDir>/trace.json` (`TraceBundle`, format `jevcode.trace` v1). `replay export --db <path> --session <id> --out <file>` exports any stored session. Every string in a bundle passes `redactText` and the home directory becomes `~`.
 
 ## 16. Testing Strategy
 
