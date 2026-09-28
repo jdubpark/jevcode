@@ -82,6 +82,19 @@ describe("ClaimVsObserved", () => {
     expect(onObservedClick).toHaveBeenCalledTimes(1);
   });
 
+  it("the observed button leaves the tab order when a roving region asks (spec §7.13)", () => {
+    const onObservedClick = vi.fn();
+    const claim = { text, span, tMs: 43_000 };
+    const observed = { passed: 14, failed: 1, command: "pnpm test", tMs: 35_000 };
+    const standalone = render(<ClaimVsObserved size="md" claim={claim} observed={observed} onObservedClick={onObservedClick} />);
+    expect(standalone.getByRole("button").tabIndex).toBe(0);
+    standalone.unmount();
+    render(<ClaimVsObserved size="md" claim={claim} observed={observed} onObservedClick={onObservedClick} observedTabIndex={-1} />);
+    const button = screen.getByRole("button", { name: /1 failed/ });
+    expect(button.getAttribute("tabindex")).toBe("-1");
+    fireEvent.click(button);
+    expect(onObservedClick).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("mono slots (spec §6.8, §9)", () => {
