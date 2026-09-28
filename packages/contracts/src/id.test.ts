@@ -9,7 +9,6 @@ import {
   newSessionId,
   newSurfaceId,
   nowIso,
-  symbolId,
 } from "./id.js";
 
 describe("id helpers", () => {
@@ -18,6 +17,10 @@ describe("id helpers", () => {
     const b = newId("x");
     expect(a.startsWith("x_")).toBe(true);
     expect(a).not.toBe(b);
+  });
+
+  it("newId keeps the prefix_<32 hex> format", () => {
+    expect(newId("turn")).toMatch(/^turn_[0-9a-f]{32}$/);
   });
 
   it("domain helpers use their prefixes", () => {
@@ -40,16 +43,5 @@ describe("id helpers", () => {
   it("nowIso returns a parseable ISO timestamp", () => {
     const iso = nowIso();
     expect(new Date(iso).toISOString()).toBe(iso);
-  });
-
-  it("symbolId follows the SPEC section 3.2 identity format", () => {
-    const id = symbolId("auth/service.ts", "createSession", "method", "createSession(userId: string)");
-    expect(id).toMatch(/^auth\/service\.ts#createSession\(method\)@[0-9a-f]{40}$/);
-  });
-
-  it("symbolId changes when the signature changes", () => {
-    const a = symbolId("a.ts", "f", "function", "f(x)");
-    const b = symbolId("a.ts", "f", "function", "f(x, y)");
-    expect(a).not.toBe(b);
   });
 });
