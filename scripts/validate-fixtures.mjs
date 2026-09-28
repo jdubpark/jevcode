@@ -131,6 +131,79 @@ function collectSpecActions(spec) {
   return actions;
 }
 
+// Counts "+" and "-" lines after the first "@@" header, so "---"/"+++" file
+// headers are never counted. scripts/fixture-diffs.mjs uses the same rule.
+function diffLineCounts(text) {
+  let added = 0;
+  let removed = 0;
+  let inHunk = false;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+function validateProvenance(prefix, eventsPath) {
+  const records = readFileSync(eventsPath, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    });
+  const callIds = new Set();
+  for (const record of records) {
+    if (record !== null && typeof record.callId === "string") callIds.add(record.callId);
+  }
+  let diffsOk = true;
+  let sourcesOk = true;
+  for (const [index, record] of records.entries()) {
+    if (record === null) continue;
+    if (record.type === "git_hunk") {
+      const diff = record.diff;
+      if (diff === undefined) {
+        check(`${prefix} line ${index + 1} git_hunk ${record.file} carries diff`, false);
+        diffsOk = false;
+        continue;
+      }
+      if (typeof diff.text === "string" && diff.truncated === false) {
+        const counts = diffLineCounts(diff.text);
+        if (counts.added !== record.added || counts.removed !== record.removed) {
+          check(
+            `${prefix} line ${index + 1} git_hunk ${record.file} +/- lines match added/removed`,
+            false,
+            `diff +${counts.added}/-${counts.removed}, fact +${record.added}/-${record.removed}`,
+          );
+          diffsOk = false;
+        }
+      }
+    }
+    if (
+      (record.type === "command_executed" || record.type === "test_result") &&
+      typeof record.repoId === "string" &&
+      !callIds.has(record.sourceCallId)
+    ) {
+      check(
+        `${prefix} line ${index + 1} ${record.type} sourceCallId names a call in the stream`,
+        false,
+        String(record.sourceCallId),
+      );
+      sourcesOk = false;
+    }
+  }
+  check(`${prefix} every git_hunk diff matches its added/removed counts`, diffsOk);
+  check(`${prefix} every derived command/test fact cites its agent call`, sourcesOk);
+}
+
 function validateScenario(scenario) {
   console.log(`\n== ${scenario} ==`);
   const dir = path.join(FIXTURES_DIR, scenario);
@@ -193,6 +266,7 @@ function validateScenario(scenario) {
     if (lines.length > 0 && recordCount === lines.length) {
       check(`${prefix} every event record validated (${recordCount} records)`, true);
     }
+    validateProvenance(prefix, eventsPath);
   }
 
   // 2. referenced paths exist in repo/ or changes/
