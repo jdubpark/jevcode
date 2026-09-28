@@ -2,6 +2,7 @@ import { memo, type JSX } from "react";
 
 import styles from "./graphics.module.css";
 import { compactCount, diffSidePx, graphicA11y, type GraphicBaseProps, type GraphicSize } from "./scales.js";
+import { displayUntrusted } from "./untrusted.js";
 
 export interface DiffBarProps extends GraphicBaseProps {
   added: number;
@@ -48,7 +49,7 @@ function DiffBarImpl({ size, label, added, removed, files, moreFiles }: DiffBarP
           {rows.map((file) => (
             <span key={file.path} className={styles.file} data-file={file.path}>
               <Bars added={file.added} removed={file.removed} h={BAR_H[size]} />
-              <span className={styles.path}>{file.path}</span>
+              <span className={styles.path}>{displayUntrusted(file.path)}</span>
             </span>
           ))}
           {moreFiles !== undefined && moreFiles > 0 ? <span className={styles.count}>{`+${moreFiles}`}</span> : null}
