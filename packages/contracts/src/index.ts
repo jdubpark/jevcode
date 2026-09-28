@@ -1,5 +1,6 @@
 export * from "./agent-events.js";
 export * from "./agent.js";
+export * from "./canonical-json.js";
 export * from "./evidence.js";
 export * from "./id.js";
 export * from "./ipc.js";
@@ -8,4 +9,5 @@ export * from "./json-render.js";
 export * from "./model.js";
 export * from "./security.js";
 export * from "./semantic.js";
+export * from "./trace.js";
 export * from "./ui/index.js";

@@ -2,10 +2,12 @@ import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { EVENT_TYPES as CONTRACT_EVENT_TYPES } from "@jevcode/contracts";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import {
+  EVENT_TYPES,
   LATEST_SCHEMA_VERSION,
   defaultDbPath,
   openDb,
@@ -152,5 +154,11 @@ describe("openDb", () => {
     expect(sessionColumns.map((column) => column.name)).toContain("resume_attempts");
     rawCheck.close();
     db.close();
+  });
+});
+
+describe("EVENT_TYPES", () => {
+  it("re-exports the contracts list instead of keeping a copy", () => {
+    expect(EVENT_TYPES).toBe(CONTRACT_EVENT_TYPES);
   });
 });

@@ -185,6 +185,9 @@ export const ChangeUnitSchema = z.object({
   uncertainty: score().optional(),
   mentalModelChange: score().optional(),
   evidence: z.array(z.string().min(1)),
+  // Agent call ids joined to this unit (sourceCallId of its facts, plus agent
+  // file_changed claims). Sorted ascending; omitted when empty.
+  agentCallIds: z.array(z.string().min(1)).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -222,6 +225,8 @@ export const DecisionSchema = z.object({
   evidence: z.array(z.string().min(1)),
   status: z.enum(["open", "answered", "delegated", "expired"]),
   answer: StructuredDecisionSchema.optional(),
+  // Source time of the latest status transition. Readers fall back to the row ts, then to seq.
+  ts: z.string().optional(),
 });
 
 export type Decision = z.infer<typeof DecisionSchema>;

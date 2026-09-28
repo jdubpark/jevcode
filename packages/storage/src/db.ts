@@ -10,6 +10,7 @@ import type { z } from "zod";
 import {
   ChangeUnitSchema,
   DecisionSchema,
+  EVENT_TYPES,
   EvidenceFactSchema,
   JevDecisionLogSchema,
   NormalizedAgentEventSchema,
@@ -19,6 +20,7 @@ import type {
   AgentState,
   ChangeUnit,
   Decision,
+  EventStoreType,
   EvidenceFact,
   JevDecisionLog,
   NormalizedAgentEvent,
@@ -50,24 +52,9 @@ import type {
 } from "./local-schemas.js";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS } from "./migrations.js";
 
-export const EVENT_TYPES = [
-  "agent_event",
-  "evidence_fact",
-  "change_unit",
-  "decision",
-  "validation",
-  "failure",
-  "jev_decision",
-  "ui_intent",
-  "ui_snapshot",
-  "graph_node",
-  "graph_edge",
-  "command",
-  "semantic_event",
-  "telemetry",
-] as const;
-
-export type EventStoreType = (typeof EVENT_TYPES)[number];
+// The envelope list lives in @jevcode/contracts (trace.ts) so browser code can read it.
+export { EVENT_TYPES };
+export type { EventStoreType };
 
 const eventStoreSchemas = {
   agent_event: NormalizedAgentEventSchema,

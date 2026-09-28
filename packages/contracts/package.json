@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "scripts": {
@@ -21,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "fast-check": "4.10.1",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }

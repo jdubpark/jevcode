@@ -111,6 +111,8 @@ function eventSummary(event: NormalizedAgentEvent): string {
       return "Started working on the task";
     case "agent_message":
       return event.role === "user" ? "Direction received" : event.text;
+    case "agent_reasoning":
+      return "Thinking";
     case "tool_started":
       return `Using ${shortToolName(event.tool)}`;
     case "tool_completed":
@@ -135,6 +137,12 @@ function eventSummary(event: NormalizedAgentEvent): string {
       return "Task completed";
     case "agent_failed":
       return `Stopped: ${event.error}`;
+    case "agent_interrupted":
+      return event.reason === "stop"
+        ? "Stopped"
+        : event.reason === "steer"
+          ? "Redirected"
+          : "Paused";
   }
 }
 
