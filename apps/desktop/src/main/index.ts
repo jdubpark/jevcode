@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
 import { app, BrowserWindow } from "electron";
-import { openDb } from "@jevcode/storage";
-import type { JevcodeDb } from "@jevcode/storage";
+import { openDb, openTraceReader } from "@jevcode/storage";
+import type { JevcodeDb, TraceReader } from "@jevcode/storage";
 
 import {
   openDirectoryDialog,
@@ -21,6 +21,7 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { createAppState } from "./state.js";
 import { TerminalManager } from "./terminal-manager.js";
+import { createTraceService } from "./trace-service.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +49,7 @@ const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
 let mainWindow: BrowserWindow | null = null;
 let terminals: TerminalManager | null = null;
 let db: JevcodeDb | null = null;
+let traceReader: TraceReader | null = null;
 let runtime: PipelineRuntime | null = null;
 const state = createAppState();
 
@@ -92,6 +94,10 @@ function runSmoke(window: BrowserWindow): void {
 
 app.whenReady().then(() => {
   db = openDb();
+  // A second, query_only connection for the trace viewer (R5): trace:*
+  // handlers read through it and can never write.
+  const reader = openTraceReader(db.dbPath);
+  traceReader = reader;
   const rebuild = db.rebuildOnBoot({ sinceDays: 30 });
   console.log(
     `rebuildOnBoot: ${rebuild.length} session(s), ${rebuild.reduce((sum, entry) => sum + entry.replayed, 0)} events`,
@@ -154,6 +160,7 @@ app.whenReady().then(() => {
     terminals,
     runtime,
     instructionRouter,
+    trace: createTraceService(reader),
     requestRepoPath: () => openDirectoryDialog(mainWindow),
     log: (message) => console.log(`[ipc] ${message}`),
   });
@@ -179,6 +186,8 @@ app.on("window-all-closed", () => {
 app.on("will-quit", () => {
   terminals?.disposeAll();
   terminals = null;
+  traceReader?.close();
+  traceReader = null;
   db?.close();
   db = null;
   runtime = null;

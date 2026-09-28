@@ -41,6 +41,8 @@ import {
 } from "./session-service.js";
 import type { AppState } from "./state.js";
 import type { TerminalManager } from "./terminal-manager.js";
+import { registerTraceHandlers } from "./trace-ipc.js";
+import type { TraceService } from "./trace-service.js";
 
 export type RepoOpenedPayload = z.infer<typeof RepoOpenedPayloadSchema>;
 
@@ -58,6 +60,8 @@ export interface IpcDeps {
   instructionRouter: InstructionRouter;
   requestRepoPath: () => Promise<string | null>;
   log: (message: string) => void;
+  /** Read-only trace access over a query_only reader (trace-ipc.ts). */
+  trace: TraceService;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -417,6 +421,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       }));
     return { decisions };
   });
+
+  registerTraceHandlers(handle, deps.trace);
 }
 
 export function openDirectoryDialog(
