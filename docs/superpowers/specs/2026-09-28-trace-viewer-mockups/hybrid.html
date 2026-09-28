@@ -1,0 +1,485 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mk2-2</title></head><body style="margin:0;padding:24px;background:#E9EBEF">
+<div class="mk2-2">
+<style>
+.mk2-2{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#9AA0AB;--hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--good:#2E9E6A;--shadow:0 1px 2px rgb(16 24 40 / .06), 0 4px 12px rgb(16 24 40 / .05);--sans:system-ui,-apple-system,"SF Pro Text",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace;
+  container-type:inline-size;position:relative;box-sizing:border-box;display:grid;grid-template-rows:40px minmax(0,1fr);width:100%;height:720px;overflow:hidden;border-radius:12px;box-shadow:0 0 0 1px var(--hair);background:var(--panel);color:var(--ink);font:400 13px/1.4 var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;text-align:left}
+.mk2-2 *,.mk2-2 *::before,.mk2-2 *::after{box-sizing:border-box;margin:0;padding:0}
+.mk2-2 .spr{position:absolute;width:0;height:0;overflow:hidden}
+.mk2-2 .i{display:block;width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mk2-2 .i.s16{width:16px;height:16px}
+.mk2-2 code,.mk2-2 .mono{font-family:var(--mono);font-size:12px}
+.mk2-2 .el{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mk2-2 .mut{color:var(--ink-3)}
+.mk2-2 .sub{color:var(--ink-2)}
+
+/* mini graphics */
+.mk2-2 .mg{display:block;flex:none;overflow:visible}
+.mk2-2 .mg .h{fill:none;stroke:var(--ink-3);stroke-width:1.25}
+.mk2-2 .mg .s{fill:var(--ink-2)}
+.mk2-2 .mg .ss{fill:none;stroke:var(--ink-2);stroke-width:1.5;stroke-linecap:round}
+.mk2-2 .mg .sd{fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:2 2.5;stroke-linecap:round}
+.mk2-2 .mg .w{fill:none;stroke:var(--panel);stroke-width:1}
+.mk2-2 .mg .gd{fill:var(--good)}
+.mk2-2 .mg .bf{fill:var(--bad)}
+.mk2-2 .db{display:inline-flex;gap:1px;height:6px;flex:none}
+.mk2-2 .db i{display:block;height:6px;border-radius:1.5px}
+.mk2-2 .db .a{background:var(--ink-2)}
+.mk2-2 .db .rm{box-shadow:inset 0 0 0 1px var(--ink-3)}
+.mk2-2 .du{display:inline-flex;align-items:center;gap:3px;flex:none}
+.mk2-2 .du i{display:block;height:6px;border-radius:3px;background:var(--ink-3)}
+.mk2-2 .pd{display:block;width:6px;height:6px;border-radius:50%;flex:none}
+.mk2-2 .pd.ok{background:var(--good)}
+.mk2-2 .pd.bad{background:var(--bad)}
+.mk2-2 .dm{display:flex;gap:3px;flex:none}
+.mk2-2 .dm i{display:block;width:5px;height:5px;border-radius:50%;background:var(--good)}
+.mk2-2 .dm i.f{background:var(--bad)}
+
+/* title bar */
+.mk2-2 .tb{display:flex;align-items:center;gap:10px;padding:0 12px 0 14px;border-bottom:1px solid var(--hair);min-width:0}
+.mk2-2 .lights{display:flex;gap:6px;margin-right:6px;flex:none}
+.mk2-2 .lights i{display:block;width:10px;height:10px;border-radius:50%;background:var(--fill-2)}
+.mk2-2 .mark{color:var(--ink)}
+.mk2-2 .crumb{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.mk2-2 .crumb .repo{color:var(--ink-3);white-space:nowrap;flex:none}
+.mk2-2 .crumb .intent{font-weight:500}
+.mk2-2 .crumb .tdur{color:var(--ink-3);white-space:nowrap;flex:none}
+.mk2-2 .seg{display:inline-flex;background:var(--fill);border-radius:7px;padding:2px;gap:2px;flex:none}
+.mk2-2 .seg span{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:5px;color:var(--ink-2);font-size:12px;white-space:nowrap}
+.mk2-2 .seg .on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.mk2-2 .ib{width:28px;height:28px;display:grid;place-items:center;border-radius:6px;color:var(--ink-2);flex:none}
+.mk2-2 .av{width:24px;height:24px;border-radius:50%;background:var(--fill-2);display:grid;place-items:center;color:var(--ink-2);flex:none}
+
+/* body */
+.mk2-2 .bd{display:grid;grid-template-columns:208px minmax(0,1fr) 284px;min-width:0;min-height:0}
+
+/* rail */
+.mk2-2 .rail{border-right:1px solid var(--hair);padding:10px 8px;display:flex;flex-direction:column;gap:14px;min-width:0;min-height:0;overflow:hidden}
+.mk2-2 .rh{display:flex;align-items:center;justify-content:space-between;height:24px;padding:0 8px;font-size:12px;font-weight:500;color:var(--ink-2)}
+.mk2-2 .rh .n{font-weight:400;color:var(--ink-3)}
+.mk2-2 .ch{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;min-width:0}
+.mk2-2 .ch>.i{color:var(--ink-2)}
+.mk2-2 .ch .el{flex:1}
+.mk2-2 .ch .g{flex:none;display:flex;align-items:center;justify-content:flex-end;min-width:24px;font-size:12px;color:var(--ink-3)}
+.mk2-2 .ch.cur{background:var(--fill)}
+.mk2-2 .ch.mute,.mk2-2 .ch.mute>.i{color:var(--ink-3)}
+.mk2-2 .fr{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;min-width:0}
+.mk2-2 .fr .el{flex:1;color:var(--ink-2)}
+.mk2-2 .fr .sh{color:var(--ink-3)}
+.mk2-2 .fr .slot{flex:none;width:44px;display:flex;align-items:center}
+
+/* center */
+.mk2-2 .ctr{display:grid;grid-template-rows:288px minmax(0,1fr);min-width:0;min-height:0}
+
+/* overview canvas */
+.mk2-2 .ov{position:relative;min-width:0;overflow:hidden;padding:10px 24px 0 0;background-color:var(--canvas);background-image:radial-gradient(circle,var(--fill-2) 1.1px,transparent 1.4px);background-size:16px 16px;background-position:4px 4px}
+.mk2-2 .ovg{display:grid;grid-template-columns:112px minmax(0,1fr);min-width:0}
+.mk2-2 .gut{padding-top:58px}
+.mk2-2 .lh{height:28px;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-right:16px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.mk2-2 .lh .i{color:var(--ink-2)}
+.mk2-2 .trk{position:relative;height:226px;min-width:0}
+.mk2-2 .band{position:absolute;top:18px;bottom:0;background:var(--fill);border-radius:6px}
+.mk2-2 .band.nest{top:36px}
+.mk2-2 .cl{position:absolute;top:0;height:16px;display:flex;align-items:center;gap:4px;font-size:12px;line-height:16px;color:var(--ink-3);white-space:nowrap;overflow:hidden}
+.mk2-2 .cl.nest{top:18px;padding-left:4px}
+.mk2-2 .cl span{overflow:hidden;text-overflow:ellipsis}
+.mk2-2 .cl.on{color:var(--ink-2)}
+.mk2-2 .vl{position:absolute;top:36px;bottom:0;width:1px;background:var(--hair)}
+.mk2-2 .rul{position:absolute;left:0;right:0;top:36px;height:22px}
+.mk2-2 .rul .t{position:absolute;top:2px;padding-left:5px;font-size:12px;line-height:14px;color:var(--ink-3);z-index:2}
+.mk2-2 .brush{position:absolute;top:0;bottom:0;left:66.667%;width:33.333%;background:var(--accent-soft);border-radius:4px}
+.mk2-2 .brush::before,.mk2-2 .brush::after{content:"";position:absolute;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--accent)}
+.mk2-2 .brush::before{left:-1px}
+.mk2-2 .brush::after{right:-1px}
+.mk2-2 .dens{position:absolute;left:0;bottom:2px;width:100%;height:5px;overflow:visible;z-index:2}
+.mk2-2 .dens path{stroke:var(--ink-3);stroke-width:1;vector-effect:non-scaling-stroke}
+.mk2-2 .lanes{position:absolute;left:0;right:0;top:58px;height:168px}
+.mk2-2 .ln{position:absolute;left:0;right:0;height:1px;background:var(--hair)}
+.mk2-2 .e{position:absolute;transform:translate(-50%,-50%);z-index:3}
+.mk2-2 .o{opacity:.4}
+.mk2-2 .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-3)}
+.mk2-2 .rd{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ink-3)}
+.mk2-2 .pin{width:22px;height:22px;border-radius:50%;background:var(--panel);box-shadow:var(--shadow);display:grid;place-items:center;color:var(--ink-2)}
+.mk2-2 .pin.bad{background:var(--bad);color:var(--panel);box-shadow:none}
+.mk2-2 .bar{position:absolute;height:6px;margin-top:-3px;border-radius:3px;background:var(--ink-3);z-index:2}
+.mk2-2 .bar.wait{background:transparent;box-shadow:inset 0 0 0 1px var(--ink-3)}
+.mk2-2 .hist{position:absolute;left:0;width:100%;height:28px;overflow:visible;z-index:2}
+.mk2-2 .hist path{fill:none;stroke-width:3;vector-effect:non-scaling-stroke}
+.mk2-2 .hist .a{stroke:var(--ink-2)}
+.mk2-2 .hist .rm{stroke:var(--ink-3)}
+.mk2-2 .hist .nz{stroke:var(--ink-3)}
+.mk2-2 .lk{position:absolute;left:0;top:0;width:100%;height:168px;overflow:visible;z-index:2}
+.mk2-2 .lk path{fill:none;stroke:var(--bad);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.mk2-2 .nb{width:22px;height:22px;border-radius:50%;background:var(--bad);color:var(--panel);display:grid;place-items:center;z-index:4}
+.mk2-2 .ph{position:absolute;top:36px;bottom:0;left:95.556%;width:1px;margin-left:-.5px;background:var(--accent);z-index:2}
+.mk2-2 .ph::before{content:"";position:absolute;top:0;left:-5px;width:11px;height:12px;background:var(--accent);clip-path:polygon(0 0,100% 0,100% 58%,50% 100%,0 58%)}
+.mk2-2 .sel{position:absolute;box-shadow:0 0 0 1px var(--accent);z-index:5;pointer-events:none}
+.mk2-2 .sel i{position:absolute;width:6px;height:6px;background:var(--panel);box-shadow:0 0 0 1px var(--accent)}
+.mk2-2 .sel i:nth-child(1){left:-3px;top:-3px}
+.mk2-2 .sel i:nth-child(2){right:-3px;top:-3px}
+.mk2-2 .sel i:nth-child(3){left:-3px;bottom:-3px}
+.mk2-2 .sel i:nth-child(4){right:-3px;bottom:-3px}
+.mk2-2 .tbar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:4px;background:var(--panel);border-radius:10px;box-shadow:var(--shadow);z-index:8;white-space:nowrap}
+.mk2-2 .tl{width:30px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--ink-2)}
+.mk2-2 .tl.on{background:var(--fill-2);color:var(--ink)}
+.mk2-2 .dv{width:1px;height:16px;background:var(--hair);margin:0 6px}
+.mk2-2 .zm{display:flex;align-items:center;gap:4px;padding:0 6px 0 4px;font-size:12px;color:var(--ink-2)}
+
+/* reading spine */
+.mk2-2 .sp{border-top:1px solid var(--hair);padding:8px 20px 12px;min-width:0;min-height:0;overflow:hidden}
+.mk2-2 .sph{display:flex;align-items:center;gap:8px;height:28px;margin-bottom:2px;font-size:12px;color:var(--ink-2)}
+.mk2-2 .bgl{position:relative;width:26px;height:10px;border-radius:3px;background:var(--accent-soft);flex:none}
+.mk2-2 .bgl::before,.mk2-2 .bgl::after{content:"";position:absolute;top:1px;bottom:1px;width:2px;border-radius:1px;background:var(--accent)}
+.mk2-2 .bgl::before{left:0}
+.mk2-2 .bgl::after{right:0}
+.mk2-2 .rows{position:relative;max-width:780px}
+.mk2-2 .rows::before{content:"";position:absolute;left:76px;top:16px;bottom:16px;width:2px;margin-left:-1px;background:var(--fill-2)}
+.mk2-2 .sr{display:grid;grid-template-columns:52px 24px 120px minmax(0,1fr) auto;column-gap:12px;align-items:center;min-height:32px;position:relative}
+.mk2-2 .sr .tm{justify-self:end;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.mk2-2 .sr .tm.ph2{background:var(--accent);color:var(--panel);border-radius:4px;padding:0 5px;line-height:18px;font-weight:500}
+.mk2-2 .nd{width:24px;height:24px;border-radius:50%;background:var(--panel);box-shadow:inset 0 0 0 24px var(--fill);display:grid;place-items:center;color:var(--ink-2);position:relative;z-index:1;flex:none}
+.mk2-2 .nd.bad{box-shadow:inset 0 0 0 24px var(--bad-soft);color:var(--bad)}
+.mk2-2 .nd.xx{background:var(--bad);box-shadow:none;color:var(--panel)}
+.mk2-2 .sr .gr{display:flex;align-items:center;min-width:0}
+.mk2-2 .sr .lb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mk2-2 .sr .mt{font-size:12px;color:var(--ink-3);display:flex;align-items:center;justify-content:flex-end}
+.mk2-2 .sr.x{align-items:start;padding:10px 0 12px}
+.mk2-2 .sr.x .tm{margin-top:3px}
+.mk2-2 .xb{grid-column:3 / 6;position:relative;min-width:0}
+.mk2-2 .xh{display:flex;align-items:center;gap:14px;height:24px;min-width:0}
+.mk2-2 .xh b{font-size:15px;font-weight:600;white-space:nowrap}
+.mk2-2 .gap{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.mk2-2 .gap .fl{color:var(--bad)}
+.mk2-2 .gap .ln2{width:40px;height:1px;background:var(--ink-3)}
+.mk2-2 .xc{display:flex;align-items:center;gap:12px;margin-top:10px;min-width:0}
+.mk2-2 .claim{position:relative;flex:1;min-width:0;display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:10px;background:var(--fill)}
+.mk2-2 .claim::after{content:"";position:absolute;left:16px;bottom:-6px;width:10px;height:6px;background:var(--fill);clip-path:polygon(0 0,100% 0,0 100%)}
+.mk2-2 .claim .i{color:var(--ink-3);margin-top:2px}
+.mk2-2 .claim p{min-width:0}
+.mk2-2 .claim u{text-decoration:underline;text-decoration-color:var(--bad);text-decoration-thickness:1.5px;text-underline-offset:3px}
+.mk2-2 .neq{width:24px;height:24px;border-radius:50%;background:var(--bad);color:var(--panel);display:grid;place-items:center;flex:none}
+.mk2-2 .obs{flex:none;display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;background:var(--bad-soft)}
+.mk2-2 .obs .ot,.mk2-2 .obs .ob{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.mk2-2 .obs .ot .i{color:var(--ink-2)}
+.mk2-2 .obs .ob b{color:var(--bad);font-weight:500}
+.mk2-2 .obs .ob code{color:var(--ink-2)}
+.mk2-2 .xb .sel{inset:-8px -10px}
+
+/* inspector */
+.mk2-2 .insp{border-left:1px solid var(--hair);display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.mk2-2 .ih{display:flex;align-items:flex-start;gap:10px;padding:16px 16px 12px}
+.mk2-2 .ih .nd{width:28px;height:28px}
+.mk2-2 .ih h3{font-size:15px;font-weight:600;line-height:1.3}
+.mk2-2 .ih .m{display:flex;align-items:center;gap:5px;margin-top:3px;font-size:12px;color:var(--ink-3)}
+.mk2-2 .is{padding:10px 16px}
+.mk2-2 .is h4{font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.mk2-2 .tn{font-size:13px;line-height:1.4}
+.mk2-2 .er{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mk2-2 .ck{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:6px;background:var(--fill);font-size:12px;color:var(--ink-3)}
+.mk2-2 .ck code{color:var(--ink)}
+.mk2-2 .ck.bad{background:var(--bad-soft)}
+.mk2-2 .ck.bad code{color:var(--bad)}
+.mk2-2 .pth{display:flex;align-items:center;gap:6px;margin-top:8px;color:var(--ink-3);min-width:0}
+.mk2-2 .ir{display:flex;align-items:center;gap:8px;height:30px;min-width:0}
+.mk2-2 .ir>.i{color:var(--ink-2)}
+.mk2-2 .ir .el{flex:1}
+.mk2-2 .ir .mt{font-size:12px;color:var(--ink-3);white-space:nowrap;min-width:36px;text-align:right}
+.mk2-2 .ir .sh{color:var(--ink-3)}
+.mk2-2 .if{margin-top:auto;display:flex;gap:8px;padding:12px 16px 16px}
+.mk2-2 .btn{height:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;white-space:nowrap}
+.mk2-2 .btn.p{flex:1;background:var(--accent);color:var(--panel)}
+.mk2-2 .btn.s{background:var(--fill);color:var(--ink)}
+
+@container (max-width:1180px){
+  .mk2-2 .bd{grid-template-columns:184px minmax(0,1fr) 248px}
+  .mk2-2 .ovg{grid-template-columns:40px minmax(0,1fr)}
+  .mk2-2 .lh span{display:none}
+  .mk2-2 .cl:not(.on) span{display:none}
+  .mk2-2 .sp{padding-left:12px;padding-right:14px}
+  .mk2-2 .sr{grid-template-columns:52px 24px 120px minmax(0,1fr) auto;column-gap:10px}
+  .mk2-2 .rows::before{left:74px}
+  .mk2-2 .ch .g .mg{transform:scale(.85);transform-origin:right center}
+}
+</style>
+
+<svg class="spr" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="m22-user" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.75"/><path d="M2.75 13.75c.6-2.6 2.7-4 5.25-4s4.65 1.4 5.25 4"/></symbol>
+  <symbol id="m22-msg" viewBox="0 0 16 16"><path d="M2.75 4.25c0-.83.67-1.5 1.5-1.5h7.5c.83 0 1.5.67 1.5 1.5v5.5c0 .83-.67 1.5-1.5 1.5H7.25L4.5 13.5v-2.25h-.25c-.83 0-1.5-.67-1.5-1.5z"/></symbol>
+  <symbol id="m22-think" viewBox="0 0 16 16"><path d="M5.25 10.25a2.75 2.75 0 0 1-.4-5.47A3.25 3.25 0 0 1 11 4.4a2.9 2.9 0 0 1 .25 5.85z"/><circle cx="4.25" cy="12.75" r="1" fill="currentColor" stroke="none"/><circle cx="2.6" cy="14.4" r=".6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="m22-plan" viewBox="0 0 16 16"><path d="M6.5 4.25h7M6.5 8h7M6.5 11.75h7"/><circle cx="3.25" cy="4.25" r="1" fill="currentColor" stroke="none"/><circle cx="3.25" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="3.25" cy="11.75" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="m22-cmd" viewBox="0 0 16 16"><rect x="2" y="2.75" width="12" height="10.5" rx="2"/><path d="M5 6.25 7 8l-2 1.75M8.75 10h2.5"/></symbol>
+  <symbol id="m22-edit" viewBox="0 0 16 16"><path d="M7.75 13.25H4.5A1.5 1.5 0 0 1 3 11.75v-8a1.5 1.5 0 0 1 1.5-1.5h4l3 3v1.5"/><path d="M12.4 8.1l1.5 1.5-4.4 4.4H8v-1.5z"/></symbol>
+  <symbol id="m22-file" viewBox="0 0 16 16"><path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6z"/><path d="M9 2v4h4"/></symbol>
+  <symbol id="m22-test" viewBox="0 0 16 16"><path d="M5.75 2.25h4.5M6.75 2.25v4.1L3.3 12.1a1.1 1.1 0 0 0 .95 1.65h7.5a1.1 1.1 0 0 0 .95-1.65L9.25 6.35v-4.1M4.9 9.75h6.2"/></symbol>
+  <symbol id="m22-fork" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="11.5" cy="3.5" r="1.5"/><circle cx="8" cy="12.5" r="1.5"/><path d="M4.5 5v.75A2.25 2.25 0 0 0 6.75 8h2.5a2.25 2.25 0 0 0 2.25-2.25V5M8 8v3"/></symbol>
+  <symbol id="m22-pkg" viewBox="0 0 16 16"><path d="M8 1.75l5.5 3v6.5L8 14.25l-5.5-3v-6.5z"/><path d="M2.5 4.75 8 7.75l5.5-3M8 7.75v6.5M5.25 3.25l5.5 3"/></symbol>
+  <symbol id="m22-db" viewBox="0 0 16 16"><rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.75"/><path d="M2.25 6.5h11.5M2.25 9.9h11.5M6.25 6.5v6.75"/></symbol>
+  <symbol id="m22-shield" viewBox="0 0 16 16"><path d="M8 1.75 13 3.6v4.1c0 3.05-2.05 5.25-5 6.55-2.95-1.3-5-3.5-5-6.55V3.6z"/></symbol>
+  <symbol id="m22-quote" viewBox="0 0 16 16"><path d="M2.75 7.75h3.5v3.5h-3.5V7.75c0-2.1 1-3.4 3-4M9.75 7.75h3.5v3.5h-3.5V7.75c0-2.1 1-3.4 3-4"/></symbol>
+  <symbol id="m22-eye" viewBox="0 0 16 16"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z"/><circle cx="8" cy="8" r="2"/></symbol>
+  <symbol id="m22-neq" viewBox="0 0 16 16"><path d="M3.25 6h9.5M3.25 10h9.5M10.25 2.75l-4.5 10.5"/></symbol>
+  <symbol id="m22-frame" viewBox="0 0 16 16"><path d="M5.5 2v12M10.5 2v12M2 5.5h12M2 10.5h12"/></symbol>
+  <symbol id="m22-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.75V8l2.25 1.5"/></symbol>
+  <symbol id="m22-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3.5 3.5"/></symbol>
+  <symbol id="m22-zoom" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3.5 3.5M5.25 7h3.5M7 5.25v3.5"/></symbol>
+  <symbol id="m22-hand" viewBox="0 0 16 16"><path d="M5.25 8.5V4a1 1 0 0 1 2 0v3.5M7.25 7V2.75a1 1 0 0 1 2 0V7.5M9.25 7.25V4a1 1 0 0 1 2 0v5a4.75 4.75 0 0 1-4.75 4.75h-.4a3.8 3.8 0 0 1-3.05-1.55L1.9 10.4a1 1 0 0 1 1.45-1.35l1.9 1.45"/></symbol>
+  <symbol id="m22-cursor" viewBox="0 0 16 16"><path d="M3.25 2.75 12.75 7l-4.1 1.35-1.4 4.4z"/></symbol>
+  <symbol id="m22-comment" viewBox="0 0 16 16"><path d="M8 2.75c3.04 0 5.25 2.02 5.25 4.6S11.04 11.95 8 11.95c-.72 0-1.4-.11-2.03-.32L2.75 13.25l.95-2.6C3.1 9.9 2.75 9.02 2.75 7.35 2.75 4.77 4.96 2.75 8 2.75z"/></symbol>
+  <symbol id="m22-check" viewBox="0 0 16 16"><path d="m3.5 8.25 3 3 6-6.5"/></symbol>
+  <symbol id="m22-jev" viewBox="0 0 16 16"><path d="M2.5 5.5V4A1.5 1.5 0 0 1 4 2.5h1.5M10.5 2.5H12A1.5 1.5 0 0 1 13.5 4v1.5M13.5 10.5V12a1.5 1.5 0 0 1-1.5 1.5h-1.5M5.5 13.5H4A1.5 1.5 0 0 1 2.5 12v-1.5"/><circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="m22-flag" viewBox="0 0 16 16"><path d="M3.5 14V2.5M3.5 3h8.5l-2 3 2 3H3.5"/></symbol>
+  <symbol id="m22-eyeoff" viewBox="0 0 16 16"><path d="M6.6 3.9A6 6 0 0 1 8 3.75c4 0 6.25 4.25 6.25 4.25a11.6 11.6 0 0 1-1.7 2.2M4.2 5.1C2.6 6.2 1.75 8 1.75 8S4 12.25 8 12.25a6.2 6.2 0 0 0 3.2-.9M2.25 2.25l11.5 11.5M6.6 6.6a2 2 0 0 0 2.8 2.8"/></symbol>
+  <symbol id="m22-reply" viewBox="0 0 16 16"><path d="M6.25 4 2.75 7.5 6.25 11"/><path d="M2.75 7.5h6.5a4 4 0 0 1 4 4v1"/></symbol>
+  <symbol id="m22-diff" viewBox="0 0 16 16"><path d="M8 2.75v5.5M5.25 5.5h5.5M5.25 12.25h5.5"/></symbol>
+  <symbol id="m22-live" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor" stroke="none"/><path d="M4.75 4.75a4.6 4.6 0 0 0 0 6.5M11.25 4.75a4.6 4.6 0 0 1 0 6.5"/></symbol>
+  <symbol id="m22-chev" viewBox="0 0 16 16"><path d="m4.75 6.5 3.25 3.25 3.25-3.25"/></symbol>
+</svg>
+
+<header class="tb">
+  <div class="lights"><i></i><i></i><i></i></div>
+  <svg class="i s16 mark"><use href="#m22-jev"/></svg>
+  <div class="crumb">
+    <span class="repo">repo-oauth-demo</span><span class="mut">/</span>
+    <span class="intent el">Add Google OAuth login while preserving existing email/password accounts.</span>
+    <span class="tdur">45 s</span>
+  </div>
+  <div class="seg"><span class="on"><svg class="i"><use href="#m22-clock"/></svg>Review</span><span><svg class="i"><use href="#m22-live"/></svg>Live</span></div>
+  <span class="ib"><svg class="i"><use href="#m22-search"/></svg></span>
+  <span class="av"><svg class="i"><use href="#m22-user"/></svg></span>
+</header>
+
+<div class="bd">
+  <nav class="rail">
+    <div>
+      <div class="rh">Chapters<span class="n">5</span></div>
+      <div class="ch"><svg class="i"><use href="#m22-pkg"/></svg><span class="el">Package</span><span class="g">+1</span></div>
+      <div class="ch"><svg class="i"><use href="#m22-frame"/></svg><span class="el">Identity layer</span><span class="g">
+        <svg class="mg" width="40" height="12" viewBox="0 0 40 12"><rect class="h" x=".75" y="2.5" width="9" height="7" rx="2"/><path class="h" d="M10 6h5"/><rect class="s" x="15" y="1.5" width="10" height="9" rx="2"/><path class="h" d="M25 6h5"/><rect class="h" x="30.25" y="2.5" width="9" height="7" rx="2"/></svg></span></div>
+      <div class="ch"><svg class="i"><use href="#m22-db"/></svg><span class="el">Migration</span><span class="g">
+        <svg class="mg" width="36" height="14" viewBox="0 0 36 14"><rect class="h" x=".75" y="2" width="12" height="10" rx="2"/><path class="h" d="M.75 5.5h12"/><path class="h" d="M13 7h7"/><rect class="s" x="20" y="1.25" width="15.25" height="11.5" rx="2"/><path class="w" d="M20 5h15.25M20 8.75h15.25M25 5v7.75"/></svg></span></div>
+      <div class="ch"><svg class="i"><use href="#m22-fork"/></svg><span class="el">Linking policy</span><span class="g">
+        <svg class="mg" width="34" height="16" viewBox="0 0 34 16"><path class="ss" d="M1 8h7c3.5 0 4.5-5 8.5-5H28"/><path class="sd" d="M8 8c3.5 0 4.5 5 8.5 5H28"/><circle class="s" cx="30.5" cy="3" r="2.25"/><circle class="h" cx="30.5" cy="13" r="2"/></svg></span></div>
+      <div class="ch cur"><svg class="i"><use href="#m22-test"/></svg><span class="el">Linking test</span><span class="g">
+        <svg class="mg" width="24" height="14" viewBox="0 0 24 14"><g class="gd"><circle cx="2" cy="2" r="1.75"/><circle cx="7" cy="2" r="1.75"/><circle cx="12" cy="2" r="1.75"/><circle cx="17" cy="2" r="1.75"/><circle cx="22" cy="2" r="1.75"/><circle cx="2" cy="7" r="1.75"/><circle cx="7" cy="7" r="1.75"/><circle cx="12" cy="7" r="1.75"/><circle cx="17" cy="7" r="1.75"/><circle cx="22" cy="7" r="1.75"/><circle cx="2" cy="12" r="1.75"/><circle cx="7" cy="12" r="1.75"/><circle cx="12" cy="12" r="1.75"/><circle cx="17" cy="12" r="1.75"/></g><circle class="bf" cx="22" cy="12" r="1.75"/></svg></span></div>
+      <div class="ch mute"><svg class="i"><use href="#m22-eyeoff"/></svg><span class="el">Noise</span><span class="g">2</span></div>
+    </div>
+
+    <div>
+      <div class="rh">Files<span class="n">7</span></div>
+      <div class="fr"><span class="el mono">identity.ts</span><svg class="i sh"><use href="#m22-shield"/></svg><span class="slot"><span class="db"><i class="a" style="width:29px"></i></span></span></div>
+      <div class="fr"><span class="el mono">google.ts</span><svg class="i sh"><use href="#m22-shield"/></svg><span class="slot"><span class="db"><i class="a" style="width:41px"></i></span></span></div>
+      <div class="fr"><span class="el mono">service.ts</span><svg class="i sh"><use href="#m22-shield"/></svg><span class="slot"><span class="db"><i class="a" style="width:8px"></i><i class="rm" style="width:14px"></i></span></span></div>
+      <div class="fr"><span class="el mono">server/index.ts</span><span class="slot"><span class="db"><i class="a" style="width:13px"></i><i class="rm" style="width:4px"></i></span></span></div>
+      <div class="fr"><span class="el mono">001_create_identities.sql</span><span class="slot"><span class="db"><i class="a" style="width:14px"></i></span></span></div>
+      <div class="fr"><span class="el mono">oauth.test.ts</span><span class="slot"><span class="db"><i class="a" style="width:20px"></i></span></span></div>
+      <div class="fr"><span class="el mono">package.json</span><span class="slot"><span class="db"><i class="a" style="width:3px"></i><i class="rm" style="width:2px"></i></span></span></div>
+    </div>
+
+    <div>
+      <div class="rh">Commands<span class="n">2</span></div>
+      <div class="fr"><span class="el mono">pnpm add google-auth-library</span><span class="pd ok"></span></div>
+      <div class="fr"><span class="el mono">pnpm test</span><span class="pd bad"></span></div>
+    </div>
+  </nav>
+
+  <main class="ctr">
+    <section class="ov">
+      <div class="ovg">
+        <div class="gut">
+          <div class="lh"><span>Supervisor</span><svg class="i"><use href="#m22-user"/></svg></div>
+          <div class="lh"><span>Agent</span><svg class="i"><use href="#m22-msg"/></svg></div>
+          <div class="lh"><span>Commands</span><svg class="i"><use href="#m22-cmd"/></svg></div>
+          <div class="lh"><span>Edits</span><svg class="i"><use href="#m22-edit"/></svg></div>
+          <div class="lh"><span>Tests</span><svg class="i"><use href="#m22-test"/></svg></div>
+          <div class="lh"><span>Jev</span><svg class="i"><use href="#m22-jev"/></svg></div>
+        </div>
+
+        <div class="trk">
+          <i class="band" style="left:21.9%;width:11%"></i>
+          <i class="band" style="left:33.1%;width:10.8%"></i>
+          <i class="band nest" style="left:37.3%;width:1.6%"></i>
+          <i class="band" style="left:53%;width:16.3%"></i>
+          <i class="band" style="left:73.3%;width:26.7%"></i>
+
+          <span class="cl" style="left:21.9%;max-width:calc(11.2% - 6px)"><svg class="i"><use href="#m22-pkg"/></svg><span>Package</span></span>
+          <span class="cl" style="left:33.1%;max-width:calc(19.9% - 6px)"><svg class="i"><use href="#m22-frame"/></svg><span>Identity layer</span></span>
+          <span class="cl nest" style="left:37.3%"><svg class="i"><use href="#m22-db"/></svg><span>Migration</span></span>
+          <span class="cl" style="left:53%;max-width:calc(20% - 6px)"><svg class="i"><use href="#m22-fork"/></svg><span>Linking policy</span></span>
+          <span class="cl on" style="left:73.3%;max-width:calc(27% - 4px)"><svg class="i"><use href="#m22-test"/></svg><span>Linking test</span></span>
+
+          <i class="vl" style="left:0"></i><i class="vl" style="left:33.333%"></i><i class="vl" style="left:66.667%"></i><i class="vl" style="left:100%"></i>
+
+          <div class="rul">
+            <span class="brush"></span>
+            <svg class="dens" viewBox="0 0 100 5" preserveAspectRatio="none"><path d="M0 0v5M4.667 0v5M7.556 0v5M8.667 0v5M9.111 0v5M11.556 0v5M14 0v5M17.778 0v5M22.222 0v5M32.222 0v5M32.444 0v5M32.667 0v5M33.333 0v5M34 0v5M34.667 0v5M35.556 0v5M36.222 0v5M36.889 0v5M37.778 0v5M38.444 0v5M40 0v5M40.667 0v5M41.333 0v5M42.222 0v5M42.889 0v5M43.556 0v5M44.444 0v5M45.111 0v5M46.667 0v5M47.333 0v5M48.889 0v5M49.556 0v5M51.111 0v5M53.333 0v5M55.556 0v5M57.778 0v5M66.667 0v5M68.889 0v5M73.333 0v5M74 0v5M77.778 0v5M78.889 0v5M87.778 0v5M88.222 0v5M88.889 0v5M95.556 0v5M100 0v5"/></svg>
+            <span class="t" style="left:0">0:00</span><span class="t" style="left:33.333%">0:15</span><span class="t" style="left:66.667%">0:30</span>
+          </div>
+
+          <div class="lanes">
+            <i class="ln" style="top:14px"></i><i class="ln" style="top:42px"></i><i class="ln" style="top:70px"></i><i class="ln" style="top:98px"></i><i class="ln" style="top:126px"></i><i class="ln" style="top:154px"></i>
+
+            <!-- supervisor -->
+            <span class="e pin o" style="left:0;top:14px"><svg class="i"><use href="#m22-user"/></svg></span>
+            <span class="bar wait o" style="left:55.556%;width:11.111%;top:14px"></span>
+            <span class="e pin" style="left:66.667%;top:14px"><svg class="i"><use href="#m22-fork"/></svg></span>
+
+            <!-- agent -->
+            <span class="e dot o" style="left:4.667%;top:42px"></span>
+            <span class="e dot o" style="left:17.778%;top:42px"></span>
+            <span class="e dot o" style="left:53.333%;top:42px"></span>
+            <span class="e dot" style="left:68.889%;top:42px"></span>
+            <span class="e pin" style="left:95.556%;top:42px"><svg class="i"><use href="#m22-quote"/></svg></span>
+
+            <!-- commands -->
+            <span class="bar o" style="left:7.556%;width:1.111%;top:70px"></span>
+            <span class="bar o" style="left:22.222%;width:10%;top:70px"></span>
+            <span class="e pd ok o" style="left:calc(32.222% + 6px);top:70px"></span>
+            <span class="bar" style="left:77.778%;width:11.111%;top:70px"></span>
+            <span class="e pd bad" style="left:calc(88.889% + 6px);top:70px"></span>
+
+            <!-- edits: reads hollow, writes as up (added) / down (removed) strokes -->
+            <span class="e rd o" style="left:9.111%;top:98px"></span>
+            <span class="e rd o" style="left:11.556%;top:98px"></span>
+            <span class="e rd o" style="left:14%;top:98px"></span>
+            <svg class="hist o" style="top:84px" viewBox="0 0 100 28" preserveAspectRatio="none">
+              <path class="a" d="M33.333 13V3.9M35.556 13V.5M37.778 13V8.4M40 13V10.3M42.222 13V8.8M44.444 13V11"/>
+              <path class="rm" d="M40 15v4.6M42.222 15v2M44.444 15v2"/>
+              <path class="nz" d="M46.667 13v-2.3M46.667 15v2M48.889 13v-2M48.889 15v2" opacity=".6"/>
+            </svg>
+            <svg class="hist" style="top:84px" viewBox="0 0 100 28" preserveAspectRatio="none"><path class="a" d="M73.333 13V6.5"/></svg>
+
+            <!-- tests -->
+            <span class="bar" style="left:78.889%;width:8.889%;top:126px"></span>
+            <span class="e pin bad" style="left:88.222%;top:126px"><svg class="i"><use href="#m22-test"/></svg></span>
+
+            <!-- jev -->
+            <span class="e pin o" style="left:33.333%;top:154px"><svg class="i"><use href="#m22-shield"/></svg></span>
+            <span class="e dot o" style="left:51.111%;top:154px"></span>
+            <span class="e dot o" style="left:57.778%;top:154px"></span>
+
+            <!-- failed test linked to the claim -->
+            <svg class="lk" viewBox="0 0 100 168" preserveAspectRatio="none"><path d="M88.222 126C92 126 91.5 42 95.556 42"/></svg>
+            <span class="e nb" style="left:91.785%;top:84px"><svg class="i"><use href="#m22-neq"/></svg></span>
+
+            <span class="sel" style="left:calc(88.222% - 16px);width:calc(7.334% + 32px);top:26px;height:116px"><i></i><i></i><i></i><i></i></span>
+          </div>
+
+          <span class="ph"></span>
+        </div>
+      </div>
+
+      <div class="tbar">
+        <span class="tl on"><svg class="i"><use href="#m22-cursor"/></svg></span>
+        <span class="tl"><svg class="i"><use href="#m22-hand"/></svg></span>
+        <span class="tl"><svg class="i"><use href="#m22-comment"/></svg></span>
+        <span class="dv"></span>
+        <div class="seg"><span>Session</span><span class="on">Chapter</span><span>Step</span></div>
+        <span class="dv"></span>
+        <span class="zm"><svg class="i"><use href="#m22-zoom"/></svg>100%<svg class="i"><use href="#m22-chev"/></svg></span>
+      </div>
+    </section>
+
+    <section class="sp">
+      <div class="sph"><span class="bgl"></span><span>+0:30 – +0:45</span></div>
+      <div class="rows">
+        <div class="sr">
+          <span class="tm">+0:30</span>
+          <span class="nd"><svg class="i"><use href="#m22-fork"/></svg></span>
+          <span class="gr"><svg class="mg" width="48" height="18" viewBox="0 0 48 18"><path class="ss" d="M1 9h10c4 0 6-5.5 11-5.5h18"/><path class="sd" d="M11 9c4 0 6 5.5 11 5.5h18"/><circle class="s" cx="43.5" cy="3.5" r="2.5"/><circle class="h" cx="43.5" cy="14.5" r="2.25"/></svg></span>
+          <span class="lb">Explicit linking</span>
+          <span class="mt"><svg class="i"><use href="#m22-user"/></svg></span>
+        </div>
+        <div class="sr">
+          <span class="tm">+0:31</span>
+          <span class="nd"><svg class="i"><use href="#m22-msg"/></svg></span>
+          <span class="gr"></span>
+          <span class="lb sub">Applying explicit linking</span>
+          <span class="mt"></span>
+        </div>
+        <div class="sr">
+          <span class="tm">+0:33</span>
+          <span class="nd"><svg class="i"><use href="#m22-edit"/></svg></span>
+          <span class="gr"><span class="db"><i class="a" style="width:20px"></i></span></span>
+          <span class="lb mono">tests/auth/oauth.test.ts</span>
+          <span class="mt">+17</span>
+        </div>
+        <div class="sr">
+          <span class="tm">+0:35</span>
+          <span class="nd"><svg class="i"><use href="#m22-cmd"/></svg></span>
+          <span class="gr"><span class="du"><i style="width:40px"></i><span class="pd bad"></span></span></span>
+          <span class="lb mono">pnpm test</span>
+          <span class="mt">5.0 s</span>
+        </div>
+        <div class="sr">
+          <span class="tm">+0:39</span>
+          <span class="nd bad"><svg class="i"><use href="#m22-test"/></svg></span>
+          <span class="gr"><span class="dm"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="f"></i></span></span>
+          <span class="lb mono sub">vitest</span>
+          <span class="mt">14/15</span>
+        </div>
+        <div class="sr x">
+          <span class="tm ph2">+0:43</span>
+          <span class="nd xx"><svg class="i"><use href="#m22-neq"/></svg></span>
+          <div class="xb">
+            <div class="xh">
+              <b>Claim contradicts tests</b>
+              <span class="gap"><svg class="i fl"><use href="#m22-test"/></svg><span class="ln2"></span><svg class="i"><use href="#m22-quote"/></svg>3.3 s</span>
+            </div>
+            <div class="xc">
+              <div class="claim"><svg class="i"><use href="#m22-quote"/></svg><p>OAuth implementation complete; <u>all checks pass</u>.</p></div>
+              <span class="neq"><svg class="i"><use href="#m22-neq"/></svg></span>
+              <div class="obs">
+                <div class="ot"><svg class="i"><use href="#m22-eye"/></svg><span class="dm"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="f"></i></span></div>
+                <div class="ob"><b>1 failed</b><code>pnpm test</code></div>
+              </div>
+            </div>
+            <span class="sel"><i></i><i></i><i></i><i></i></span>
+          </div>
+        </div>
+        <div class="sr">
+          <span class="tm">+0:45</span>
+          <span class="nd"><svg class="i"><use href="#m22-flag"/></svg></span>
+          <span class="gr"></span>
+          <span class="lb mut">Ended</span>
+          <span class="mt"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="insp">
+    <div class="ih">
+      <span class="nd xx"><svg class="i"><use href="#m22-neq"/></svg></span>
+      <div>
+        <h3>Claim contradicts tests</h3>
+        <div class="m"><svg class="i"><use href="#m22-clock"/></svg>+0:43</div>
+      </div>
+    </div>
+
+    <div class="is">
+      <h4>Failing test</h4>
+      <p class="tn">links a Google identity to an existing account by email</p>
+      <div class="er"><span class="ck">expected <code>null</code></span><span class="ck bad">received <code>7</code></span></div>
+      <div class="pth"><svg class="i"><use href="#m22-file"/></svg><span class="el mono">tests/auth/oauth.test.ts</span></div>
+    </div>
+
+    <div class="is">
+      <h4>Evidence</h4>
+      <div class="ir"><svg class="i"><use href="#m22-cmd"/></svg><code class="el">pnpm test</code><span class="du"><i style="width:40px"></i><span class="pd bad"></span></span><span class="mt">exit 1</span></div>
+      <div class="ir"><svg class="i"><use href="#m22-test"/></svg><code class="el">vitest</code><span class="mt">14/15</span></div>
+      <div class="ir"><svg class="i"><use href="#m22-quote"/></svg><span class="el">Agent claim</span><span class="mt">+0:43</span></div>
+    </div>
+
+    <div class="is">
+      <h4>Related</h4>
+      <div class="ir"><svg class="i"><use href="#m22-fork"/></svg><span class="el">Explicit linking</span><svg class="mg" width="34" height="16" viewBox="0 0 34 16"><path class="ss" d="M1 8h7c3.5 0 4.5-5 8.5-5H28"/><path class="sd" d="M8 8c3.5 0 4.5 5 8.5 5H28"/><circle class="s" cx="30.5" cy="3" r="2.25"/><circle class="h" cx="30.5" cy="13" r="2"/></svg><span class="mt">+0:30</span></div>
+      <div class="ir"><svg class="i"><use href="#m22-frame"/></svg><span class="el">Identity layer</span><svg class="i sh"><use href="#m22-shield"/></svg><span class="mt">+0:15</span></div>
+    </div>
+
+    <div class="if">
+      <span class="btn p"><svg class="i"><use href="#m22-reply"/></svg>Request changes</span>
+      <span class="btn s"><svg class="i"><use href="#m22-diff"/></svg>Diff</span>
+    </div>
+  </aside>
+</div>
+</div>
+</body></html>
