@@ -1,4 +1,5 @@
-import { symbolId, type SymbolInfo } from "@jevcode/contracts";
+import type { SymbolInfo } from "@jevcode/contracts";
+import { symbolId } from "@jevcode/contracts/node";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -21,6 +21,7 @@ In scope:
 - semantic review at completion
 - terminal + raw diff escape hatches
 - local-only telemetry
+- read-only trace viewer (`docs/superpowers/specs/2026-09-28-trace-viewer-design.md`)
 
 Out of scope:
 - Claude adapter (interface only)
@@ -70,6 +71,7 @@ Jevcode Desktop (Electron)
 ```
 jevcode/
 ├── apps/desktop/                 Electron main / preload / renderer
+├── apps/trace-viewer-dev/        Vite dev host that opens exported trace.json bundles
 ├── packages/
 │   ├── contracts/                ALL shared TS types + zod schemas + IPC channel defs
 │   ├── agent-core/               adapter interface, event normalizer, lifecycle
@@ -80,7 +82,8 @@ jevcode/
 │   ├── ui-compiler/              UIIntent → json-render spec compiler (pure, node+neutral)
 │   ├── ui-catalog/               json-render catalog + React registry + 11 components
 │   ├── storage/                  SQLite schema, event store, projections, queries
-│   └── telemetry/                local event schema + export
+│   ├── telemetry/                local event schema + export
+│   └── trace-viewer/             read-only trace model (src/model, React-free) + viewer UI (src/ui)
 ├── evals/                        labeled fixtures + jev eval runner
 ├── fixtures/                     replay scenarios (oauth, rate-limit, schema, api-break, dep)
 └── docs/
@@ -199,21 +202,26 @@ All types below are zod schemas with derived TS types. Field names are wire-stab
 ### 4.1 Normalized agent events (PRD §12, extended)
 
 ```ts
+// Every variant also carries turnId?: string   // optional; minted by the adapter once per agent process
 type NormalizedAgentEvent =
   | { type: "agent_started"; sessionId: string; prompt: string; ts: string }
   | { type: "agent_message"; sessionId: string; role: "assistant" | "user"; text: string; ts: string }
-  | { type: "tool_started"; sessionId: string; tool: string; input: string; ts: string }
-  | { type: "tool_completed"; sessionId: string; tool: string; output: string; ts: string }
-  | { type: "command_started"; sessionId: string; command: string; ts: string }
-  | { type: "command_completed"; sessionId: string; command: string; exitCode: number; stdout: string; stderr: string; ts: string }
+  | { type: "agent_reasoning"; sessionId: string; callId?: string; text: string; ts: string }   // optional variant; model reasoning, never a message
+  | { type: "tool_started"; sessionId: string; callId?: string; tool: string; input: string; ts: string }
+  | { type: "tool_completed"; sessionId: string; callId?: string; tool: string; output: string; ts: string }
+  | { type: "command_started"; sessionId: string; callId?: string; command: string; ts: string }
+  | { type: "command_completed"; sessionId: string; callId?: string; command: string; exitCode: number; stdout: string; stderr: string; ts: string }
   | { type: "file_read"; sessionId: string; path: string; ts: string }
-  | { type: "file_changed"; sessionId: string; path: string; ts: string }            // claim; evidence engine confirms
-  | { type: "approval_requested"; sessionId: string; command: string; rationale: string; ts: string }
+  | { type: "file_changed"; sessionId: string; callId?: string; path: string; ts: string }            // claim; evidence engine confirms
+  | { type: "approval_requested"; sessionId: string; callId?: string; command: string; rationale: string; ts: string }
   | { type: "test_started"; sessionId: string; command: string; ts: string }
   | { type: "test_completed"; sessionId: string; command: string; exitCode: number; ts: string }
   | { type: "agent_waiting"; sessionId: string; ts: string }
   | { type: "agent_completed"; sessionId: string; ts: string }
-  | { type: "agent_failed"; sessionId: string; error: string; ts: string };
+  | { type: "agent_failed"; sessionId: string; error: string; ts: string }
+  | { type: "agent_interrupted"; sessionId: string; reason: "interrupt" | "steer" | "stop"; ts: string };   // optional variant; the session pauses, never fails
+
+// callId?: string   // optional; `${turnId}:${item.id}` for Codex, shared by a call's start and completion
 ```
 
 ### 4.2 Evidence facts
@@ -221,21 +229,35 @@ type NormalizedAgentEvent =
 ```ts
 type EvidenceFact =
   | { type: "git_hunk"; repoId: string; sessionId: string; file: string; added: number; removed: number;
-      isFormattingOnly: boolean; isConfigOnly: boolean; isLockfile: boolean; ts: string }
+      isFormattingOnly: boolean; isConfigOnly: boolean; isLockfile: boolean;
+      diff?: GitHunkDiff;                 // optional
+      ts: string }
   | { type: "file_changed"; repoId: string; sessionId: string; path: string; kind: "added" | "modified" | "deleted"; ts: string }
   | { type: "symbol_delta"; repoId: string; sessionId: string; path: string;
       added: SymbolInfo[]; removed: SymbolInfo[]; modified: SymbolInfo[]; ts: string }
   | { type: "dependency_change"; repoId: string; sessionId: string; manifest: string;
       added: { name: string; version: string }[]; removed: { name: string; version: string }[]; ts: string }
   | { type: "test_result"; repoId: string; sessionId: string; runner: string; command: string;
-      passed: number; failed: number; skipped: number; failures: TestFailure[]; ts: string }
+      passed: number; failed: number; skipped: number; failures: TestFailure[];
+      sourceCallId?: string;              // optional; callId of the agent command that produced it
+      ts: string }
   | { type: "command_executed"; repoId: string; sessionId: string; command: string; exitCode: number;
-      isDestructive: boolean; ts: string }
+      isDestructive: boolean;
+      sourceCallId?: string;              // optional
+      ts: string }
   | { type: "revert_detected"; repoId: string; sessionId: string; files: string[]; ts: string };
 
 type SymbolInfo = { name: string; kind: "function" | "class" | "method" | "interface" | "type" | "variable" | "import" | "export";
   signature: string; startLine: number; endLine: number };
 type TestFailure = { file: string; testName: string; message: string };
+type GitHunkDiff = {
+  hash: string;                           // first 16 hex chars of sha256 over the raw diff (change key)
+  bytes: number;                          // UTF-8 bytes of the raw diff
+  text?: string;                          // redacted unified diff, capped at 32 KiB; absent when withheld
+  truncated: boolean;                     // text was cut at the last "@@" hunk boundary
+  redactions: number;
+  withheld?: "secret_path" | "not_captured";
+};
 ```
 
 ### 4.3 Semantic objects (PRD §9, §55)
@@ -265,7 +287,8 @@ interface ChangeUnit {
   relatedDecisions: string[]; validationResults: string[];
   blastRadius?: { affectedFiles: number; affectedSymbols: number; affectedTests: number; scope: "local" | "module" | "subsystem" | "repository" };
   importance?: number; relevance?: number; interruption?: number; uncertainty?: number; mentalModelChange?: number;
-  evidence: string[];                     // evidence fact ids
+  evidence: string[];                     // fact ids (fact_…), plus validation and semantic-event ids
+  agentCallIds?: string[];                // optional; agent call ids joined to this unit, sorted
   createdAt: string; updatedAt: string;
 }
 
@@ -276,6 +299,7 @@ interface Decision {
   affectedChangeUnits: string[]; evidence: string[];
   status: "open" | "answered" | "delegated" | "expired";
   answer?: StructuredDecision;
+  ts?: string;                            // optional; source time of the latest status transition
 }
 
 interface StructuredDecision {
@@ -320,7 +344,8 @@ interface UIIntent {
         agent:interrupt, agent:resume, agent:sendInstruction,
         agent:cancelInstruction, action:invoke (whitelisted action payloads),
         terminal:input, terminal:resize, surface:pin, surface:dismiss,
-        telemetry:flush
+        telemetry:flush,
+        trace:listSessions, trace:rows, trace:payloads (read-only; query_only reader; see the trace viewer design spec)
 ← renderer: repo:opened, session:state, agent:event, agent:state,
         agent:instructionState, semantic:update, changeunit:upsert,
         decision:open, decision:resolved, validation:update, ui:spec (full),
@@ -614,6 +639,8 @@ Five scenarios. Each scenario folder contains:
 
 Replay runner: feeds `events.jsonl` through the real pipeline with Jev in `PlaybackMode` (deterministic stub returning labeled outputs) or `DegradeMode`. Used by M0 UI development, integration tests, and Jev evals.
 
+`replay <fixtureDir> <outDir>` also writes `<outDir>/trace.json` (`TraceBundle`, format `jevcode.trace` v1). `replay export --db <path> --session <id> --out <file>` exports any stored session. Every string in a bundle passes `redactText` and the home directory becomes `~`.
+
 ## 16. Testing Strategy
 
 | Level | Scope | Tool |
@@ -650,7 +677,7 @@ No test file is created merely to mirror a source file. Suites follow the packag
 
 ## 18. Deferred (explicit non-goals, revisited post-MVP)
 
-LSP, call/type graphs, embeddings, coverage/profiling, security scanners, CI/GitHub PR integration, Claude adapter implementation, multi-agent, personalization, policy engine, sandboxing/containers, and semantic Git history productization. Plus replay UI, team features, and Windows/Linux packaging (build config only in v0, target macOS dev first).
+LSP, call/type graphs, embeddings, coverage/profiling, security scanners, CI/GitHub PR integration, Claude adapter implementation, multi-agent, personalization, policy engine, sandboxing/containers, and semantic Git history productization. Plus team features and Windows/Linux packaging (build config only in v0, target macOS dev first). The read-only trace viewer (`docs/superpowers/specs/2026-09-28-trace-viewer-design.md`) supersedes the deferred replay UI item (plan-owner sign-off under IMPLEMENTATION-PLAN risk R8; design decision D9).
 
 ## 19. Build status (stabilization pass, 2026-09-19)
 

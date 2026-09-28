@@ -1,0 +1,58 @@
+{
+  "name": "@jevcode/trace-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./model": {
+      "types": "./dist/model/index.d.ts",
+      "import": "./dist/model/index.js"
+    },
+    "./sources": {
+      "types": "./dist/sources/index.d.ts",
+      "import": "./dist/sources/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "bench": "vitest bench --run"
+  },
+  "dependencies": {
+    "@jevcode/contracts": "workspace:*",
+    "@jevcode/ui-catalog": "workspace:^",
+    "@tanstack/react-virtual": "3.14.13",
+    "d3-selection": "3.0.0",
+    "d3-zoom": "3.0.0",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@jevcode/semantic-core": "workspace:^",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/d3-selection": "3.0.12",
+    "@types/d3-zoom": "3.0.8",
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "9.39.5",
+    "fast-check": "4.10.1",
+    "jsdom": "30.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

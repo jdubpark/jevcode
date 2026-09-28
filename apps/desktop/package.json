@@ -22,6 +22,7 @@
     "@jevcode/semantic-core": "workspace:^",
     "@jevcode/storage": "workspace:^",
     "@jevcode/telemetry": "workspace:^",
+    "@jevcode/trace-viewer": "workspace:^",
     "@jevcode/ui-catalog": "workspace:^",
     "@jevcode/ui-compiler": "workspace:^",
     "@json-render/core": "0.21.0",

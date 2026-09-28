@@ -13,7 +13,7 @@ import type {
   ValidationResult,
 } from "@jevcode/contracts";
 
-import { symbolId } from "@jevcode/contracts";
+import { symbolId } from "@jevcode/contracts/node";
 import { deterministicCategory, isTestPath } from "./categories.js";
 import { hashId } from "./ids.js";
 import type { FailureRecord } from "./persistence.js";
