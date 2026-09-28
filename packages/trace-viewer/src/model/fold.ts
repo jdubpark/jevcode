@@ -14,6 +14,7 @@ import {
 import type { z } from "zod";
 
 import { foldAgentEvent } from "./fold-agent.js";
+import { buildChapters, foldChangeUnit, foldDecision, foldJevDecision } from "./fold-chapters.js";
 import { buildEntities, foldEvidenceFact, foldValidation } from "./fold-evidence.js";
 import {
   addGap,
@@ -35,6 +36,7 @@ import {
   type Coverage,
   type Gap,
   type Step,
+  type StepId,
   type StepStatus,
   type TraceSession,
   type Turn,
@@ -142,16 +144,21 @@ export function accumulate(state: TraceState, row: TraceRow): TraceState {
       if (validation !== null) foldValidation(s, validation, inheritedContext(s, row));
       break;
     }
-    // The remaining consumed types are validated against their contracts schema here.
-    case "change_unit":
-      parseOrGap(s, row, ChangeUnitSchema);
+    case "change_unit": {
+      const unit = parseOrGap(s, row, ChangeUnitSchema);
+      if (unit !== null) foldChangeUnit(s, unit, inheritedContext(s, row));
       break;
-    case "decision":
-      parseOrGap(s, row, DecisionSchema);
+    }
+    case "decision": {
+      const decision = parseOrGap(s, row, DecisionSchema);
+      if (decision !== null) foldDecision(s, decision, inheritedContext(s, row));
       break;
-    case "jev_decision":
-      parseOrGap(s, row, JevDecisionLogSchema);
+    }
+    case "jev_decision": {
+      const log = parseOrGap(s, row, JevDecisionLogSchema);
+      if (log !== null) foldJevDecision(s, log, inheritedContext(s, row));
       break;
+    }
     default:
       s.hidden[type] = (s.hidden[type] ?? 0) + 1;
   }
@@ -241,7 +248,7 @@ function outcomeOf(turn: TurnDraft, isLast: boolean, live: boolean): Pick<Turn, 
       ? { outcome: "interrupted", interruptReason: terminal.reason }
       : { outcome: "interrupted" };
   }
-  if (!isLast) return { outcome: "interrupted" };
+  if (!isLast) return { outcome: turn.decisionAnswered ? "waiting" : "interrupted" };
   if (!live) return { outcome: "unknown" };
   const waiting: TurnOutcome =
     turn.lastAgentEvent === "agent_waiting" || turn.lastAgentEvent === "approval_requested" ? "waiting" : "running";
@@ -311,8 +318,10 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
     for (const step of steps) if (step.status === "running") step.durationMs = Math.max(0, nowMs - step.startMs);
   }
   steps.sort((a, b) => a.firstSeq - b.firstSeq);
+  const stepById = new Map<StepId, Step>(steps.map((step) => [step.id, step]));
 
   const entities = buildEntities(steps, s.evidence.duplicates);
+  const chapters = buildChapters(s, steps, stepById, entities);
 
   const loadedThroughSeq = Math.max(s.loadedThroughSeq, options.throughSeq ?? 0);
   const clock = s.clock;
@@ -329,11 +338,15 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
     },
     turns,
     steps,
-    chapters: [],
+    chapters,
     entities,
     findings: [],
     gaps: gaps.sort(compareGaps),
-    coverage: coverageOf(s.capabilities, false, steps.filter((step) => step.provenance === "inferred").length),
+    coverage: coverageOf(
+      s.capabilities,
+      chapters.some((chapter) => chapter.link === "inferred"),
+      steps.filter((step) => step.provenance === "inferred").length,
+    ),
     hidden: { byType: { ...s.hidden }, unreceived: Math.max(0, loadedThroughSeq - s.received) },
   };
 }
