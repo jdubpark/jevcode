@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -157,10 +157,14 @@ export interface CreateSessionInput {
   state?: AgentState;
 }
 
+function defaultDataDir(): string {
+  return path.join(os.homedir(), ".jevcode");
+}
+
 export function defaultDbPath(): string {
   const override = process.env.JEVCODE_DB;
   if (override && override.length > 0) return override;
-  return path.join(os.homedir(), ".jevcode", "jevcode.db");
+  return path.join(defaultDataDir(), "jevcode.db");
 }
 
 export interface OpenDbOptions {
@@ -1507,15 +1511,47 @@ function decisionFromRow(id: string, row: DecisionRow, options: Decision["option
   return parseWith(DecisionSchema, JSON.stringify(payload), `decision ${id}`);
 }
 
+// The store holds prompts, agent output and diffs: owner-only access (R1).
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+
+function isFileBackedPath(dbPath: string): boolean {
+  return dbPath !== "" && dbPath !== ":memory:" && !dbPath.startsWith("file:");
+}
+
+// Creates the parent directory 0700 and the database file 0600 before SQLite
+// opens it. SQLite creates -wal and -shm with the database file's mode.
+function preparePrivateDbFile(dbPath: string): void {
+  const dir = path.dirname(dbPath);
+  mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  // Tighten ~/.jevcode even when an older build created it 0755. A directory
+  // chosen by the caller (dbPath or JEVCODE_DB, e.g. /tmp) is never chmodded.
+  if (path.resolve(dir) === path.resolve(defaultDataDir())) {
+    chmodSync(dir, PRIVATE_DIR_MODE);
+  }
+  closeSync(openSync(dbPath, "a", PRIVATE_FILE_MODE));
+  chmodSync(dbPath, PRIVATE_FILE_MODE);
+}
+
+// An older build may have left 0644 sidecars; they hold unflushed rows.
+function tightenSidecars(dbPath: string): void {
+  for (const suffix of ["-wal", "-shm"]) {
+    const sidecar = `${dbPath}${suffix}`;
+    if (existsSync(sidecar)) chmodSync(sidecar, PRIVATE_FILE_MODE);
+  }
+}
+
 export function openDb(options: OpenDbOptions = {}): JevcodeDb {
   const dbPath = options.dbPath ?? defaultDbPath();
-  mkdirSync(path.dirname(dbPath), { recursive: true });
+  const fileBacked = isFileBackedPath(dbPath);
+  if (fileBacked) preparePrivateDbFile(dbPath);
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   migrate(db);
+  if (fileBacked) tightenSidecars(dbPath);
   return new JevcodeDb(dbPath, db);
 }
 

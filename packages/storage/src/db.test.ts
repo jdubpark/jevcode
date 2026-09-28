@@ -1,10 +1,17 @@
-import { rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { EVENT_TYPES as CONTRACT_EVENT_TYPES } from "@jevcode/contracts";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   EVENT_TYPES,
@@ -160,5 +167,86 @@ describe("openDb", () => {
 describe("EVENT_TYPES", () => {
   it("re-exports the contracts list instead of keeping a copy", () => {
     expect(EVENT_TYPES).toBe(CONTRACT_EVENT_TYPES);
+  });
+});
+
+function modeOf(target: string): number {
+  return statSync(target).mode & 0o777;
+}
+
+describe.skipIf(process.platform === "win32")("openDb file modes (POSIX)", () => {
+  const roots: string[] = [];
+  const makeRoot = (): string => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "jevcode-modes-"));
+    roots.push(root);
+    return root;
+  };
+  const savedHome = process.env.HOME;
+  const savedDb = process.env.JEVCODE_DB;
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    if (savedDb === undefined) delete process.env.JEVCODE_DB;
+    else process.env.JEVCODE_DB = savedDb;
+    while (roots.length > 0) {
+      const root = roots.pop();
+      if (root) rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a missing parent directory 0700 and the db, -wal and -shm files 0600", () => {
+    const dir = path.join(makeRoot(), "nested", "store");
+    const dbPath = path.join(dir, "jevcode.db");
+    const db = openDb({ dbPath });
+    db.setPreference("probe", { v: 1 });
+    expect(modeOf(dir)).toBe(0o700);
+    expect(modeOf(dbPath)).toBe(0o600);
+    expect(modeOf(`${dbPath}-wal`)).toBe(0o600);
+    expect(modeOf(`${dbPath}-shm`)).toBe(0o600);
+    db.close();
+  });
+
+  it("tightens an existing ~/.jevcode and its 0644 database files on open", () => {
+    const home = makeRoot();
+    process.env.HOME = home;
+    delete process.env.JEVCODE_DB;
+    const dataDir = path.join(home, ".jevcode");
+    mkdirSync(dataDir, { mode: 0o755 });
+    chmodSync(dataDir, 0o755);
+    const dbPath = path.join(dataDir, "jevcode.db");
+    const legacy = new Database(dbPath);
+    legacy.pragma("journal_mode = WAL");
+    legacy.exec("CREATE TABLE legacy (x INTEGER)");
+    for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) chmodSync(file, 0o644);
+
+    const db = openDb();
+    expect(db.dbPath).toBe(dbPath);
+    expect(modeOf(dataDir)).toBe(0o700);
+    expect(modeOf(dbPath)).toBe(0o600);
+    expect(modeOf(`${dbPath}-wal`)).toBe(0o600);
+    expect(modeOf(`${dbPath}-shm`)).toBe(0o600);
+    db.close();
+    legacy.close();
+  });
+
+  it("never changes the mode of an existing directory it does not own by default", () => {
+    const shared = makeRoot();
+    chmodSync(shared, 0o755);
+    const dbPath = path.join(shared, "custom.db");
+    process.env.JEVCODE_DB = dbPath;
+    const db = openDb();
+    expect(modeOf(shared)).toBe(0o755);
+    expect(modeOf(dbPath)).toBe(0o600);
+    db.close();
+  });
+
+  it("still opens an in-memory database without touching the filesystem", () => {
+    const cwdMarker = path.resolve(":memory:");
+    const db = openDb({ dbPath: ":memory:" });
+    db.setPreference("k", { v: 1 });
+    expect(db.getPreference("k")).toEqual({ v: 1 });
+    expect(existsSync(cwdMarker)).toBe(false);
+    db.close();
   });
 });
