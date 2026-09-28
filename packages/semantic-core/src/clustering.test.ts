@@ -6,7 +6,10 @@ import {
   type SequencedFact,
   type SessionInput,
 } from "./clustering.js";
+import type { EvidenceFact } from "@jevcode/contracts";
+
 import {
+  agentEvent,
   commandExecuted,
   depChange,
   fileChanged,
@@ -527,5 +530,49 @@ describe("clustering: determinism", () => {
 
   it("uses REPO constant in every generated fact", () => {
     expect(REPO).toBe("repo-test");
+  });
+});
+
+describe("clustering: unit to agent call join (agentCallIds)", () => {
+  const withCall = (fact: EvidenceFact, sourceCallId: string): EvidenceFact =>
+    ({ ...fact, sourceCallId }) as EvidenceFact;
+
+  it("collects the sourceCallId of every command and test fact on the unit", () => {
+    const result = run([
+      seq({ fact: fileChanged("src/a.ts", "modified", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: withCall(commandExecuted(tsOf(0, 1)), "turn_a:item_3"), factId: "f2", seq: 2, batchId: 0 }),
+      seq({ fact: withCall(testResult(tsOf(0, 2), { passed: 2 }), "turn_a:item_3"), factId: "f3", seq: 3, batchId: 0 }),
+      seq({ fact: withCall(commandExecuted(tsOf(0, 3), "pnpm lint"), "turn_a:item_1"), factId: "f4", seq: 4, batchId: 0 }),
+    ]);
+    const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    expect(unit?.agentCallIds).toEqual(["turn_a:item_1", "turn_a:item_3"]);
+  });
+
+  it("links an agent file_changed call to the unit owning the nearest fact for that path", () => {
+    const result = run(
+      [
+        seq({ fact: hunk("src/a.ts", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),
+        seq({ fact: hunk("src/b.ts", tsOf(5)), factId: "f2", seq: 2, batchId: 1 }),
+        seq({ fact: hunk("src/a.ts", tsOf(10)), factId: "f3", seq: 3, batchId: 2 }),
+      ],
+      {
+        agentEvents: [
+          agentEvent("file_changed", tsOf(9, 58), { path: "src/a.ts", callId: "turn_a:item_8" }),
+          agentEvent("file_changed", tsOf(5, 1), { path: "src/b.ts" }),
+        ],
+      },
+    );
+    const owner = result.units.find((unit) => unit.evidence.includes("f3"));
+    expect(owner?.agentCallIds).toEqual(["turn_a:item_8"]);
+    const other = result.units.find((unit) => unit.files.includes("src/b.ts"));
+    expect(other !== undefined && "agentCallIds" in other).toBe(false);
+  });
+
+  it("omits the key when a unit has no linked call", () => {
+    const result = run([
+      seq({ fact: fileChanged("src/a.ts", "modified", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),
+    ]);
+    expect(result.units).toHaveLength(1);
+    expect("agentCallIds" in result.units[0]!).toBe(false);
   });
 });

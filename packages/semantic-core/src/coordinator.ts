@@ -531,6 +531,8 @@ function unitSignature(unit: ChangeUnit): string {
     files: unit.files,
     symbols: unit.symbols.map((symbol) => symbol.name),
     evidence: unit.evidence,
+    // A newly linked agent call is a new unit version (R3).
+    agentCallIds: unit.agentCallIds ?? [],
     status: unit.status,
     category: unit.category,
     depChanges: unit.dependencyChanges,
