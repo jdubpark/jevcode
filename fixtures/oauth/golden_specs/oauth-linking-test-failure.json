@@ -12,7 +12,7 @@
           {
             "file": "tests/auth/oauth.test.ts",
             "testName": "oauth account linking > links a Google identity to an existing account by email",
-            "message": "expected 7 to be null"
+            "message": "expected null to be 7"
           }
         ],
         "linkedChangeUnits": ["oauth-identity-layer"],

@@ -490,7 +490,7 @@ describe("PipelineRuntime with MockAgentAdapter over fixtures", () => {
         ),
       ).toBe(true);
       expect(
-        JSON.stringify(spec).includes("expected 7 to be null"),
+        JSON.stringify(spec).includes("expected null to be 7"),
       ).toBe(true);
 
       const summaries = Object.values(spec.elements)

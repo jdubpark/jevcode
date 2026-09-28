@@ -134,3 +134,13 @@ describe("fixture records survive zod parsing unchanged (no-strip guard)", () =>
     });
   }
 });
+
+describe("fixture provenance (agent call joins)", () => {
+  it("links oauth units to the agent calls that produced their evidence", () => {
+    const { units } = runFixture("oauth");
+    const testUnit = units.find((unit) => sameFileSet(unit.files, ["tests/auth/oauth.test.ts"]));
+    expect(testUnit?.agentCallIds).toContain("turn-oauth-1:item_3");
+    const manifestUnit = units.find((unit) => sameFileSet(unit.files, ["package.json"]));
+    expect(manifestUnit?.agentCallIds).toContain("turn-oauth-1:item_2");
+  });
+});
