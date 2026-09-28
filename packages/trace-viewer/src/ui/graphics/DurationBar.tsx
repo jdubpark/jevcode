@@ -6,7 +6,7 @@ import { durationPx, graphicA11y, type GraphicBaseProps, type GraphicSize } from
 export interface DurationBarProps extends GraphicBaseProps {
   durationMs: number | null;
   running: boolean;
-  /** Running: elapsed so far, drawn as the hollow extension to now. */
+  /** Running: elapsed so far. Extends any known durationMs (drawn solid) with a hollow bar out to now (spec §7.12); with no known durationMs the whole running bar is hollow. */
   elapsedMs?: number;
   end: "none" | "bad_dot" | "exit_x";
 }
@@ -17,16 +17,24 @@ const END_W = 10;
 
 function DurationBarImpl({ size, label, durationMs, running, elapsedMs, end }: DurationBarProps): JSX.Element {
   const h = BAR_H[size];
-  const w = durationPx(running ? (elapsedMs ?? 0) : (durationMs ?? 0));
+  // Running: durationMs (when known) is the solid, already-confirmed portion; the growth from
+  // there out to elapsedMs ("now") is the hollow extension (spec §7.12). No known durationMs
+  // yet (null) means nothing is confirmed, so the whole bar to elapsedMs stays hollow.
+  const knownW = running && durationMs !== null ? durationPx(durationMs) : 0;
+  const w = running ? durationPx(Math.max(elapsedMs ?? 0, durationMs ?? 0)) : durationPx(durationMs ?? 0);
+  const hollowW = Math.max(0, w - knownW - STROKE);
   const width = w + (end === "none" ? 0 : END_W);
   const cy = h / 2;
   const ex = w + END_W / 2;
   return (
     <span className={`${styles.graphic} ${styles[size]}`} {...graphicA11y(label)}>
       <svg width={width} height={h} viewBox={`0 0 ${width} ${h}`} aria-hidden="true" focusable="false">
+        {running && knownW > 0 ? (
+          <rect data-bar="solid" data-tone="neutral" className={styles.bar} x={0} y={0} width={knownW} height={h} rx={1} />
+        ) : null}
         {running ? (
           <rect data-bar="hollow" data-tone="neutral" className={styles.hollow}
-            x={STROKE / 2} y={STROKE / 2} width={w - STROKE} height={h - STROKE} rx={1} />
+            x={knownW + STROKE / 2} y={STROKE / 2} width={hollowW} height={h - STROKE} rx={1} />
         ) : (
           <rect data-bar="solid" data-tone="neutral" className={styles.bar} x={0} y={0} width={w} height={h} rx={1} />
         )}
