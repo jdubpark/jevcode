@@ -55,14 +55,14 @@ export function stopSession(
   if (!session) {
     throw new IpcError("UNKNOWN_SESSION", `no session with id ${sessionId}`);
   }
-  db.setSessionEnded(sessionId);
-  // Preserve a terminal state: a session that already failed or completed
-  // keeps that state instead of being rewritten to "completed".
-  const terminalState =
-    session.state === "failed" || session.state === "completed"
-      ? session.state
-      : "completed";
-  db.setSessionState(sessionId, terminalState);
+  if (session.state === "failed" || session.state === "completed") {
+    // A session that already ended keeps its terminal state.
+    db.setSessionEnded(sessionId);
+    return buildSessionState(db, sessionId);
+  }
+  // D10: stop pauses a live session. It stays resumable: no endedAt, and the
+  // execution claim is kept for the boot sweep's 24 h window.
+  db.setSessionState(sessionId, "paused");
   return buildSessionState(db, sessionId);
 }
 

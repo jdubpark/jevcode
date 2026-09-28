@@ -18,6 +18,7 @@ import {
   NormalizedAgentEventSchema,
   newId,
   type AgentDetection,
+  type AgentInterruptReason,
   type AgentInstruction,
   type AgentSession,
   type AgentState,
@@ -104,6 +105,10 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
     [];
   private stallTimer: NodeJS.Timeout | null = null;
   private stallNotified = false;
+  // D10: the process that interrupt() signalled. Its first terminal signal
+  // becomes one agent_interrupted; later ones are dropped.
+  private interruptedProc: IPty | null = null;
+  private interruptReported = false;
 
   private readonly eventHandlers = new Set<(e: NormalizedAgentEvent) => void>();
   private readonly exitHandlers = new Set<(code: number) => void>();
@@ -269,6 +274,7 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
         return;
       }
       this.write("\u0003");
+      this.interruptedProc = this.ptyProc;
       this.applyEvent("interrupted");
     });
   }
@@ -358,6 +364,10 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
       return "declined";
     }
     this.deliveredIds.add(id);
+    if (this.ptyProc !== null && !this.terminalEventSeen) {
+      // D10: the running turn ends because of the steer, not a failure.
+      this.reportInterrupt("steer");
+    }
     this.terminateRunningProcess();
     this.spawnResume(text);
     return "delivered";
@@ -453,6 +463,8 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
     extraEnv: Record<string, string>,
   ): void {
     this.terminalEventSeen = false;
+    this.interruptedProc = null;
+    this.interruptReported = false;
     this.dataReceived = false;
     this.writeQueue = [];
     this.lineBuffer = "";
@@ -483,7 +495,9 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
       }
       const code =
         (signal ?? 0) > 0 && exitCode === 0 ? 128 + (signal ?? 0) : exitCode;
-      if (!this.terminalEventSeen) {
+      if (!this.terminalEventSeen && this.interruptedProc === proc) {
+        this.reportInterrupt("interrupt");
+      } else if (!this.terminalEventSeen) {
         const authFailure = detectAuthFailure(this.lineBuffer);
         this.emit({
           type: "agent_failed",
@@ -569,6 +583,15 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
   }
 
   private dispatchEvent(event: NormalizedAgentEvent): void {
+    if (
+      this.interruptedProc !== null &&
+      (event.type === "agent_completed" || event.type === "agent_failed")
+    ) {
+      // D10: after interrupt() a real exec answers with turn.completed or
+      // turn.failed; neither means the task finished or failed.
+      this.reportInterrupt("interrupt");
+      return;
+    }
     const validated = this.emit(event);
     switch (validated.type) {
       case "agent_completed":
@@ -587,6 +610,18 @@ export class CodexAdapter implements DeliveryAwareCodingAgentAdapter
     if (validated.type === "agent_completed" || validated.type === "agent_failed") {
       this.terminalEventSeen = true;
     }
+  }
+
+  private reportInterrupt(reason: AgentInterruptReason): void {
+    if (this.interruptReported) return;
+    this.interruptReported = true;
+    this.terminalEventSeen = true;
+    this.emit({
+      type: "agent_interrupted",
+      sessionId: this.sessionId,
+      reason,
+      ts: this.now(),
+    });
   }
 
   private scheduleAutoRelay(): void {

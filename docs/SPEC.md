@@ -106,7 +106,7 @@ No package may depend on another package's internals. All cross-package communic
 | Which events are directly available? | Determined by T2-1 spike. Expected: turn start/end, message deltas, tool calls (read/write/exec), approval requests, agent finish. Mapping table is an artifact of the spike. |
 | Which must be inferred? | Anything not in the structured stream: exact file edits (from git diff), test outcomes (from output parsing), dependency intent (from manifests + import edges). |
 | How are approvals mapped? | **Verified by spike:** headless `codex exec` runs with approval_policy=Never — no interactive approval prompts exist. Declined commands surface as `command_execution` `status:"declined"` and map to `ApprovalRequested` events. The Decision flow covers cases the agent itself asks about plus declined-command surfacing. |
-| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait. It ends the current turn and the process exits 1 with no resume channel. Mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn. Queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
+| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait. It ends the current turn and the process exits 1 with no resume channel. Mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn and **pauses** the session (resumable, never failed): the process's first terminal signal (`turn.completed`, `turn.failed` or exit) becomes one `agent_interrupted {reason: "interrupt"}` event and later ones are dropped. A steer records `agent_interrupted {reason: "steer"}` for the running turn before the relaunch. Stopping a live session records `agent_interrupted {reason: "stop"}` and leaves it `paused`, with no `endedAt` and its execution claim kept (§3.1b). Queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
 | Structured decision response format | A fixed markdown/YAML block appended as a user message (PRD §8 format): `decision:`, `evidence:`, `instruction:`. Deterministic serialization from `StructuredDecision` contract. Two deny semantics (OpenCode v2 pattern): `instruction` present = correction-with-feedback (model-visible). Absent = plain decline (serializer emits an explicit decline line). |
 
 ### 3.1a Durable instruction admission (OpenCode v2 pattern)
@@ -123,7 +123,7 @@ Agent instructions and decision answers are **admitted through a durable inbox**
 
 - `sessions.execution_claim_ts` is set at session start and released on terminal agent exit (write-ahead claim, OpenCode's `time_suspended`).
 - Boot sweep: any session still `running` (and stale `paused`/`waiting_decision` with claim older than 24h) is marked `failed`. The codex thread id stays on the session row for later resumption.
-- Resume budget: `resume_attempts` increments per resume. At ≥3 the session fails with "resume budget exhausted" (prevents crash-loops, as in OpenCode's resume counter).
+- Resume budget: `resume_attempts` increments per resume. At ≥3 the session fails with "resume budget exhausted" (prevents crash-loops, as in OpenCode's resume counter). The `agent_failed` event is written to the event log before it is sent to the renderer.
 - PTY stall watchdog: `JEVCODE_AGENT_STALL_MS` (default 0 = off) emits an `agent_waiting` event when the agent produces no output while running.
 
 ### 3.1c Model & reasoning configuration (auto-selection policy)
@@ -583,6 +583,8 @@ interface StartSessionInput {
 ```
 
 Codex adapter responsibilities: PTY lifecycle, JSONL parse (or transcript normalization fallback), event mapping (spike artifact), approval flow, interrupt/resume, and exit handling. Plus auth error surfacing (missing login → surface actionable FailureAnalysis instead of silent hang).
+
+Each Codex process (`exec` or `exec resume`) is one turn: the adapter mints a `turnId` (`turn_<32 hex>`) and stamps it on every event of that process. Call events carry `callId = ${turnId}:${item.id}`, shared by a call's start and completion, and `reasoning` items map to `agent_reasoning`. Interrupt, steer and stop emit `agent_interrupted` instead of `agent_failed` (§3.1). A missing Codex exit code is stored as `-1` and means unknown.
 
 ## 11. Storage (`packages/storage`)
 

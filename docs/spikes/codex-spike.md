@@ -113,7 +113,8 @@ the same on an item's `item.started` and `item.completed`.
 | `error` otherwise | none (codex uses it for retry chatter) |
 | `turn.completed` | `agent_completed` |
 | `turn.failed` | `agent_failed {error: error.message}` |
-| process exit without a terminal event | `agent_failed {error: "codex exited with code N"}` (adapter) |
+| `turn.completed` / `turn.failed` after `interrupt()` | one `agent_interrupted {reason: "interrupt"}` (adapter); later terminal events of that process are dropped |
+| process exit without a terminal event | `agent_failed {error: "codex exited with code N"}` (adapter), or `agent_interrupted {reason: "interrupt"}` when `interrupt()` signalled that process |
 
 ## 4. Interrupt / resume findings (gated decision from SPEC §3.1)
 
@@ -137,8 +138,9 @@ Evidence:
   whole prompt and mid-run stdin writes are ignored. A real run logged
   "Reading additional input from stdin..." to stderr when stdin was a pipe.
 - Consequence for the adapter: `interrupt()` writes `\u0003` to the PTY
-  (SIGINT), which terminates the current turn. The session then ends with exit
-  code 1 and the adapter emits `agent_failed`. `resume()`,
+  (SIGINT), which terminates the current turn. The process then exits with
+  code 1, and the adapter emits one `agent_interrupted {reason: "interrupt"}`
+  instead of `agent_failed`: the session is paused, not failed (D10). `resume()`,
   `sendInstruction()`, and `sendDecision()` write to PTY stdin per the
   interface contract, but codex ignores them until a new exec process is
   started. The working continuation mechanism in this codex version is
