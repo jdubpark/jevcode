@@ -13,6 +13,7 @@ import {
 } from "@jevcode/contracts";
 import type { z } from "zod";
 
+import { applyNoise, applyProblems, flagMissingEvidence } from "./classify.js";
 import { foldAgentEvent } from "./fold-agent.js";
 import { buildChapters, foldChangeUnit, foldDecision, foldJevDecision } from "./fold-chapters.js";
 import { buildEntities, foldEvidenceFact, foldValidation } from "./fold-evidence.js";
@@ -322,6 +323,9 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
 
   const entities = buildEntities(steps, s.evidence.duplicates);
   const chapters = buildChapters(s, steps, stepById, entities);
+  applyProblems(steps);
+  flagMissingEvidence(steps, turns, live, gaps);
+  applyNoise(steps, { duplicates: s.evidence.duplicates, chapters });
 
   const loadedThroughSeq = Math.max(s.loadedThroughSeq, options.throughSeq ?? 0);
   const clock = s.clock;
