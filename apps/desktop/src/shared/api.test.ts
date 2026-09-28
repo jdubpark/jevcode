@@ -169,4 +169,54 @@ describe("createJevcodeApi", () => {
     });
     unsubscribe();
   });
+
+  it("reads traces through the three trace channels", async () => {
+    const deps = makeDeps();
+    const page = {
+      rows: [{ seq: 1, type: "agent_event", ts: "2026-09-28T10:00:00.000Z", payload: {} }],
+      nextAfterSeq: null,
+      lastSeq: 1,
+      state: "running",
+    };
+    deps.invoke.mockImplementation(async (channel: string) => {
+      if (channel === "trace:listSessions") return { sessions: [] };
+      if (channel === "trace:rows") return page;
+      if (channel === "trace:payloads") return { rows: page.rows };
+      return undefined;
+    });
+    const api = createJevcodeApi(deps);
+    await expect(api.trace.listSessions()).resolves.toEqual([]);
+    expect(deps.invoke).toHaveBeenCalledWith("trace:listSessions", {});
+    await expect(api.trace.listSessions({ sessionId: "s", limit: 1 })).resolves.toEqual([]);
+    expect(deps.invoke).toHaveBeenCalledWith("trace:listSessions", { sessionId: "s", limit: 1 });
+    await expect(api.trace.rows({ sessionId: "s" })).resolves.toEqual(page);
+    expect(deps.invoke).toHaveBeenCalledWith("trace:rows", { sessionId: "s" });
+    const seqs: readonly number[] = Object.freeze([3, 1]);
+    await expect(api.trace.payloads({ sessionId: "s", seqs })).resolves.toEqual(page.rows);
+    const sent = deps.invoke.mock.calls.find(([channel]) => channel === "trace:payloads")?.[1] as
+      | { sessionId: string; seqs: number[] }
+      | undefined;
+    expect(sent).toEqual({ sessionId: "s", seqs: [3, 1] });
+    expect(sent !== undefined && Object.isFrozen(sent.seqs)).toBe(false);
+  });
+
+  it("rejects out-of-bounds trace requests before they reach main", async () => {
+    const deps = makeDeps();
+    const api = createJevcodeApi(deps);
+    await expect(api.trace.rows({ sessionId: "s", limit: 5001 })).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(api.trace.payloads({ sessionId: "s", seqs: [] })).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    await expect(api.trace.listSessions({ sessionId: "" })).rejects.toMatchObject({
+      code: "INVALID_PAYLOAD",
+    });
+    expect(deps.invoke).not.toHaveBeenCalled();
+  });
+
+  it("the trace namespace holds exactly the three reads", () => {
+    const trace = createJevcodeApi(makeDeps()).trace;
+    expect(Object.keys(trace).sort()).toEqual(["listSessions", "payloads", "rows"]);
+  });
 });
