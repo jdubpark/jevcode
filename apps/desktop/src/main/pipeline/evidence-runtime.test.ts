@@ -31,9 +31,16 @@ vi.mock("@jevcode/evidence-engine", async (importOriginal) => {
   };
 });
 
-import { createTestCollector } from "@jevcode/evidence-engine";
+import type { EvidenceFact } from "@jevcode/contracts";
+import {
+  createGitCollector,
+  createRevertDetector,
+  createTestCollector,
+  type FactSink,
+} from "@jevcode/evidence-engine";
 
 import { createEvidenceSession, isEBADF } from "./evidence-runtime.js";
+import { prepareDiffForStorage } from "./redactor.js";
 
 function makeSession(log?: (message: string) => void) {
   return createEvidenceSession({
@@ -56,6 +63,80 @@ describe("createEvidenceSession", () => {
     session.observeTestOutput("pnpm test", "Tests  1 passed (1)\n");
     session.observeTestOutput("pnpm test", "Tests  2 passed (2)\n");
     expect(createTestCollectorMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("fact delivery", () => {
+    const hunk: EvidenceFact = {
+      type: "git_hunk",
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      file: "src/app.ts",
+      added: 1,
+      removed: 0,
+      isFormattingOnly: false,
+      isConfigOnly: false,
+      isLockfile: false,
+      ts: "2026-09-28T10:00:00.000Z",
+    };
+    const revert: EvidenceFact = {
+      type: "revert_detected",
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      files: ["src/app.ts"],
+      ts: "2026-09-28T10:00:05.000Z",
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mocks.gitCollect.mockReset();
+      mocks.revertCheck.mockReset();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("gives the git collector the desktop diff policy", () => {
+      makeSession();
+      const options = vi.mocked(createGitCollector).mock.calls.at(-1)?.[2];
+      // Checked first: before redactor.ts exports it, both sides are undefined.
+      expect(prepareDiffForStorage).toBeTypeOf("function");
+      expect(options?.prepareDiff).toBe(prepareDiffForStorage);
+    });
+
+    it("delivers each collected git and revert fact to onFact once", async () => {
+      const onFact = vi.fn();
+      const session = createEvidenceSession({
+        repoId: "repo-1",
+        sessionId: "sess-1",
+        repoPath: "/tmp/jevcode-evidence-test",
+        sink: { push: () => {} },
+        onFact,
+        log: () => {},
+      });
+      // Like the real collectors: push into the injected sink, then return.
+      const gitSink = vi.mocked(createGitCollector).mock.calls.at(-1)?.[2]?.sink as FactSink;
+      const revertSink = vi.mocked(createRevertDetector).mock.calls.at(-1)?.[1]?.sink as FactSink;
+      mocks.gitCollect.mockImplementationOnce(async () => {
+        gitSink.push(hunk);
+        return [hunk];
+      });
+      mocks.gitCollect.mockResolvedValue([]);
+      mocks.revertCheck.mockImplementationOnce(async () => {
+        revertSink.push(revert);
+        return revert;
+      });
+      mocks.revertCheck.mockResolvedValue(null);
+
+      await session.start();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(onFact.mock.calls.map(([fact]) => (fact as EvidenceFact).type)).toEqual([
+        "git_hunk",
+        "revert_detected",
+      ]);
+      await session.stop();
+    });
   });
 
   describe("git poll failures", () => {
