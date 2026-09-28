@@ -45,9 +45,9 @@ describe("truncateMiddle", () => {
 
   it("counts precomposed and decomposed Hangul as one grapheme per syllable", () => {
     expect(truncateMiddle("한국어/경로/파일이름.ts", 10)).toBe("한…/파일이름.ts");
-    const decomposed = "한".repeat(6);
+    const decomposed = "한".repeat(6);
     const result = truncateMiddle(decomposed, 5);
-    expect(result).toBe(`${"한".repeat(2)}…${"한".repeat(2)}`);
+    expect(result).toBe(`${"한".repeat(2)}…${"한".repeat(2)}`);
     expect(graphemeCount(result)).toBe(5);
   });
 
