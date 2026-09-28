@@ -104,6 +104,16 @@ const CASES: BoundaryCase[] = [
     code: 'import { openDb } from "@jevcode/storage"; export const x = openDb;',
     expected: ["no-restricted-imports"],
   },
+  {
+    filePath: "packages/contracts/src/probe.ts",
+    code: 'import { createHash } from "node:crypto"; export const x = createHash;',
+    expected: ["no-restricted-imports"],
+  },
+  {
+    filePath: "packages/contracts/src/node.ts",
+    code: 'import { createHash } from "node:crypto"; export const x = createHash;',
+    expected: [],
+  },
 ];
 
 describe("lint boundaries (eslint.config.mjs)", () => {

@@ -115,6 +115,18 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/contracts/src/**/*.ts"],
+    ignores: ["packages/contracts/src/node.ts", "packages/contracts/src/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          regex: "^node:",
+          message: "The @jevcode/contracts barrel is browser-safe; put Node-only helpers in src/node.ts (@jevcode/contracts/node).",
+        }],
+      }],
+    },
+  },
+  {
     files: ["packages/trace-viewer/src/**/*.ts", "packages/trace-viewer/src/**/*.tsx"],
     ignores: [
       "packages/trace-viewer/src/**/*.test.ts",

@@ -1,9 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-
-import type { SymbolKind } from "./evidence.js";
-
+// Browser-safe: no node: imports. Web Crypto's randomUUID is global in Node >= 19 and every
+// browser this code targets. Node-only helpers live in node.ts (@jevcode/contracts/node).
 export function newId(prefix: string): string {
-  return `${prefix}_${randomUUID().replaceAll("-", "")}`;
+  return `${prefix}_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
 }
 
 export function newSessionId(): string {
@@ -41,14 +39,4 @@ export function newSurfaceId(
 
 export function nowIso(): string {
   return new Date().toISOString();
-}
-
-export function symbolId(
-  path: string,
-  name: string,
-  kind: SymbolKind,
-  signatureText: string,
-): string {
-  const hash = createHash("sha1").update(signatureText).digest("hex");
-  return `${path}#${name}(${kind})@${hash}`;
 }
