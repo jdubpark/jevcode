@@ -1,0 +1,120 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { GraphicSpec } from "../../model/index.js";
+import { ClaimVsObserved } from "./ClaimVsObserved.js";
+import { FlowGlyph } from "./FlowGlyph.js";
+import { ForkGlyph } from "./ForkGlyph.js";
+import { Graphic, GRAPHIC_COMPONENTS } from "./Graphic.js";
+import { TableGlyph } from "./TableGlyph.js";
+
+afterEach(() => cleanup());
+
+const KINDS = ["diff", "tests", "duration", "fork", "flow", "table", "claim"] as const satisfies readonly GraphicSpec["kind"][];
+type Missing = Exclude<GraphicSpec["kind"], (typeof KINDS)[number]>;
+const exhaustive: [Missing] extends [never] ? true : false = true;
+
+describe("ForkGlyph", () => {
+  it("draws 3 branches and +1 for 4 options, the chosen branch solid and others dashed", () => {
+    const options = [
+      { label: "explicit_link", chosen: true },
+      { label: "auto_link_by_email", chosen: false },
+      { label: "reject", chosen: false },
+      { label: "ask_later", chosen: false },
+    ];
+    const { container } = render(<ForkGlyph size="sm" options={options} decidedBy="supervisor" />);
+    const branches = [...container.querySelectorAll("path[data-branch]")];
+    expect(branches).toHaveLength(3);
+    const chosen = branches.filter((b) => b.getAttribute("data-chosen") === "true");
+    expect(chosen).toHaveLength(1);
+    expect(chosen[0]?.getAttribute("stroke-dasharray")).toBeNull();
+    for (const b of branches.filter((x) => x.getAttribute("data-chosen") === "false")) {
+      expect(b.getAttribute("stroke-dasharray")).toBe("2 2");
+    }
+    expect(container.textContent).toContain("+1");
+  });
+
+  it("keeps the chosen option when it is the fourth", () => {
+    const options = ["a", "b", "c", "d"].map((label) => ({ label, chosen: label === "d" }));
+    const { container } = render(<ForkGlyph size="xs" options={options} decidedBy="delegated" />);
+    const branches = [...container.querySelectorAll("path[data-branch]")];
+    expect(branches.map((b) => b.getAttribute("data-branch"))).toEqual(["a", "b", "d"]);
+  });
+
+  it("an open decision has no solid branch", () => {
+    const options = [{ label: "a", chosen: false }, { label: "b", chosen: false }];
+    const { container } = render(<ForkGlyph size="xs" options={options} decidedBy="open" />);
+    expect(container.querySelectorAll('path[data-chosen="true"]')).toHaveLength(0);
+  });
+});
+
+describe("ClaimVsObserved", () => {
+  const text = "OAuth implementation complete; all checks pass.";
+  const start = text.indexOf("all checks pass");
+  const span = [start, start + "all checks pass".length] as const;
+
+  it("underlines exactly the claim span and renders the claim as text", () => {
+    const { container } = render(
+      <ClaimVsObserved size="md" claim={{ text, span, tMs: 43_000 }} observed={{ passed: 14, failed: 1, command: "pnpm test", tMs: 35_000 }} />,
+    );
+    expect(container.querySelector("[data-claim-span]")?.textContent).toBe("all checks pass");
+    expect(container.textContent).toContain(text);
+    expect(container.textContent).toContain("1 failed");
+    expect(container.textContent).toContain("pnpm test");
+  });
+
+  it("renders markup in agent text as text", () => {
+    const hostile = "<img src=x onerror=alert(1)> all tests pass";
+    const { container } = render(
+      <ClaimVsObserved size="sm" claim={{ text: hostile, tMs: 1 }} observed={{ passed: 0, failed: 1, command: "pnpm test", tMs: 0 }} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("the observed card is a button when clickable", () => {
+    const onObservedClick = vi.fn();
+    render(
+      <ClaimVsObserved size="md" claim={{ text, span, tMs: 43_000 }} observed={{ passed: 14, failed: 1, command: "pnpm test", tMs: 35_000 }} onObservedClick={onObservedClick} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /1 failed/ }));
+    expect(onObservedClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FlowGlyph and TableGlyph", () => {
+  it("FlowGlyph shows 3 nodes then an ellipsis and marks the focus", () => {
+    const { container } = render(<FlowGlyph size="md" nodes={["identity", "google", "service", "index"]} focus={1} />);
+    const nodes = [...container.querySelectorAll("[data-node]")];
+    expect(nodes.map((n) => n.textContent)).toEqual(["identity", "google", "service"]);
+    expect(nodes[1]?.getAttribute("data-focus")).toBe("true");
+    expect(container.textContent).toContain("…");
+  });
+
+  it("TableGlyph shows at most two tables with column counts", () => {
+    const tables = [
+      { name: "identities", role: "new" as const, columns: 5 },
+      { name: "users", role: "altered" as const, columns: 1 },
+      { name: "sessions", role: "altered" as const, columns: 2 },
+    ];
+    const { container } = render(<TableGlyph size="sm" tables={tables} />);
+    expect(container.querySelectorAll("[data-table]")).toHaveLength(2);
+    expect(container.textContent).toContain("identities");
+    expect(container.textContent).toContain("5 cols");
+  });
+});
+
+describe("Graphic map", () => {
+  it("has an entry for every GraphicSpec kind", () => {
+    expect(exhaustive).toBe(true);
+    expect(Object.keys(GRAPHIC_COMPONENTS).sort()).toEqual([...KINDS].sort());
+  });
+
+  it("renders a spec through its component", () => {
+    const { container } = render(<Graphic spec={{ kind: "tests", passed: 14, failed: 1, skipped: 0 }} size="xs" label="14 passed, 1 failed" />);
+    expect(container.querySelectorAll("circle[data-state]")).toHaveLength(15);
+    const running = render(<Graphic spec={{ kind: "duration", durationMs: null, running: true, status: "running", end: "none" }} size="xs" elapsedMs={10_000} />);
+    expect(running.container.querySelector('rect[data-bar="hollow"]')).not.toBeNull();
+  });
+});
