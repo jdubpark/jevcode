@@ -45,11 +45,20 @@ describe("DurationBar", () => {
     expect(container.querySelector('[data-end="bad_dot"]')?.getAttribute("data-tone")).toBe("bad");
   });
 
-  it("draws a running step as a hollow bar of its elapsed time", () => {
+  it("draws a running step with no known duration as a fully hollow bar of its elapsed time", () => {
     const { container } = render(<DurationBar size="xs" durationMs={null} running elapsedMs={10_000} end="none" />);
+    expect(container.querySelector('rect[data-bar="solid"]')).toBeNull();
     const bar = container.querySelector("rect[data-bar]");
     expect(bar?.getAttribute("data-bar")).toBe("hollow");
     expect(Number(bar?.getAttribute("width"))).toBeCloseTo(60 - 1.5, 5);
+  });
+
+  it("draws a running step with a known duration as solid, extended by a hollow bar to elapsedMs (spec §7.12)", () => {
+    const { container } = render(<DurationBar size="xs" durationMs={1_000} running elapsedMs={10_000} end="none" />);
+    const solid = container.querySelector('rect[data-bar="solid"]');
+    const hollow = container.querySelector('rect[data-bar="hollow"]');
+    expect(Number(solid?.getAttribute("width"))).toBeCloseTo(20, 5);
+    expect(Number(hollow?.getAttribute("width"))).toBeCloseTo(60 - 20 - 1.5, 5);
   });
 });
 
