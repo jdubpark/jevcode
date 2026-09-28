@@ -1,0 +1,528 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>mk2-1</title></head><body style="margin:0;padding:24px;background:#E9EBEF">
+<div class="mk2-1">
+<style>
+.mk2-1{
+  --canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#9AA0AB;
+  --hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);
+  --accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);
+  --bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--good:#2E9E6A;
+  --shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);
+  --sans:system-ui,-apple-system,"SF Pro Text",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  container:mk21 / inline-size;
+  position:relative;display:flex;flex-direction:column;
+  width:100%;height:720px;overflow:hidden;border-radius:12px;
+  box-shadow:0 0 0 1px var(--hair);background:var(--panel);color:var(--ink);
+  font:400 13px/18px var(--sans);font-variant-numeric:tabular-nums;
+  letter-spacing:0;text-align:left;-webkit-font-smoothing:antialiased;color-scheme:light;
+}
+.mk2-1 *,.mk2-1 *::before,.mk2-1 *::after{box-sizing:border-box;margin:0;padding:0}
+.mk2-1 button{font:inherit;color:inherit;background:none;border:0;cursor:default}
+.mk2-1 code,.mk2-1 .mono{font-family:var(--mono);font-size:12px}
+.mk2-1 .sprite{position:absolute;width:0;height:0;overflow:hidden}
+.mk2-1 .ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mk2-1 .ic.s14{width:14px;height:14px}
+.mk2-1 .ic.s12{width:12px;height:12px}
+.mk2-1 .bad{color:var(--bad)}
+.mk2-1 .good{color:var(--good)}
+.mk2-1 .i3{color:var(--ink-3)}
+
+/* title bar */
+.mk2-1 .top{flex:none;display:flex;align-items:center;gap:16px;height:40px;padding:0 12px 0 14px;border-bottom:1px solid var(--hair);min-width:0}
+.mk2-1 .lights{display:flex;gap:8px;flex:none}
+.mk2-1 .lights i{width:12px;height:12px;border-radius:50%;background:var(--fill-2)}
+.mk2-1 .crumb{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.mk2-1 .crumb .repo{color:var(--ink-3);flex:none}
+.mk2-1 .crumb .ttl{font-weight:500;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mk2-1 .seg{flex:none;display:flex;padding:2px;border-radius:8px;background:var(--fill)}
+.mk2-1 .seg span{display:flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:6px;font-size:12px;color:var(--ink-2)}
+.mk2-1 .seg .on{background:var(--panel);color:var(--ink);font-weight:500}
+.mk2-1 .seg .live{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ink-3)}
+.mk2-1 .meta{flex:none;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.mk2-1 .meta .ic{color:var(--ink-3)}
+.mk2-1 .av{flex:none;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--panel);font:600 12px/24px var(--sans);text-align:center}
+
+/* layout */
+.mk2-1 .main{--lw:224px;--rw:272px;--wx:20px;flex:1 1 auto;min-height:0;display:flex;min-width:0}
+.mk2-1 .layers{flex:0 0 var(--lw);width:var(--lw);min-width:0;border-right:1px solid var(--hair);overflow:hidden;padding-bottom:12px}
+.mk2-1 .canvas{flex:1 1 0;min-width:0;position:relative;overflow:hidden;background-color:var(--canvas);
+  background-image:radial-gradient(circle,var(--ink-3) .6px,transparent 1.1px);background-size:20px 20px;background-position:10px 18px}
+.mk2-1 .insp{flex:0 0 var(--rw);width:var(--rw);min-width:0;border-left:1px solid var(--hair);display:flex;flex-direction:column;overflow:hidden}
+
+/* layers */
+.mk2-1 .ph{display:flex;align-items:center;justify-content:space-between;height:40px;padding:0 16px;font-weight:600;color:var(--ink)}
+.mk2-1 .ph .ic{color:var(--ink-3)}
+.mk2-1 .ph2{margin-top:12px}
+.mk2-1 .row{--d:0;display:flex;align-items:center;gap:6px;height:28px;margin:0 8px;padding:0 8px 0 calc(4px + var(--d) * 16px);border-radius:6px;white-space:nowrap;min-width:0}
+.mk2-1 .row .cv{width:12px;height:12px;color:var(--ink-3)}
+.mk2-1 .row .sl{width:12px;flex:none}
+.mk2-1 .row>.ic.s14{color:var(--ink-2)}
+.mk2-1 .row .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .row .fl{display:flex;align-items:center;flex:none}
+.mk2-1 .row .rd{width:6px;height:6px;border-radius:50%;background:var(--bad)}
+.mk2-1 .row .tm{flex:none;font-size:12px;color:var(--ink-3);margin-left:4px}
+.mk2-1 .row.sel{background:var(--accent-soft)}
+.mk2-1 .row.sel>.ic.s14{color:var(--accent)}
+.mk2-1 .row.sub{color:var(--ink-2)}
+.mk2-1 .row.sub>.ic.s14{color:var(--ink-3)}
+.mk2-1 .row.dim{color:var(--ink-3)}
+.mk2-1 .row.dim>.ic.s14{color:var(--ink-3)}
+
+/* canvas world */
+.mk2-1 .rulerbg{position:absolute;left:0;right:0;top:0;height:28px;background:var(--canvas);z-index:1}
+.mk2-1 .world{position:absolute;top:0;bottom:0;left:var(--wx);width:864px;z-index:2}
+.mk2-1 .ruler{position:absolute;left:0;top:0;width:844px;height:28px;overflow:visible}
+.mk2-1 .ruler text{font:400 12px var(--sans);fill:var(--ink-3)}
+.mk2-1 .ruler .tk{stroke:var(--ink-3);stroke-width:1}
+.mk2-1 .ruler .tkb{stroke:var(--bad);stroke-width:1.5;stroke-linecap:round}
+.mk2-1 .ruler .band{fill:var(--accent-soft)}
+.mk2-1 .ruler .bandx{stroke:var(--accent);stroke-width:1.5}
+.mk2-1 .plane{position:absolute;left:0;top:28px;width:864px;height:620px}
+.mk2-1 .edges{position:absolute;left:0;top:0;width:864px;height:620px;overflow:visible}
+.mk2-1 .edges .e{fill:none;stroke:var(--ink-3);stroke-width:1.25;opacity:.7}
+.mk2-1 .edges .p{fill:var(--ink-3)}
+.mk2-1 .edges .x{fill:none;stroke:var(--bad);stroke-width:2}
+.mk2-1 .edges .xp{fill:var(--bad)}
+
+.mk2-1 .fr{position:absolute;z-index:1}
+.mk2-1 .lab{display:flex;align-items:center;gap:6px;height:16px;margin-bottom:6px;font-size:12px;color:var(--ink-2);white-space:nowrap;min-width:0}
+.mk2-1 .lab .ic{width:14px;height:14px;color:var(--ink-3)}
+.mk2-1 .lab .lt{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mk2-1 .lab .tm{color:var(--ink-3)}
+.mk2-1 .lab .ic.flag{width:12px;height:12px;color:var(--bad)}
+.mk2-1 .fr.sel .lab,.mk2-1 .fr.sel .lab .ic{color:var(--accent)}
+.mk2-1 .card{position:relative;background:var(--panel);border-radius:8px;box-shadow:var(--shadow);padding:12px;display:flex;flex-direction:column;gap:12px;min-width:0}
+
+.mk2-1 .intent{font-size:15px;line-height:20px;color:var(--ink)}
+.mk2-1 .steps{list-style:none;display:flex;flex-direction:column;gap:4px;margin:-2px 0}
+.mk2-1 .steps li{display:flex;align-items:center;gap:8px;height:22px;color:var(--ink-2)}
+.mk2-1 .steps li>.ic{width:14px;height:14px;color:var(--ink-3)}
+.mk2-1 .steps li span{flex:1}
+.mk2-1 .steps li>.ic:last-child{width:12px;height:12px}
+
+.mk2-1 .pkg{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .dur{display:flex;align-items:center;gap:8px;height:16px;font-size:12px;color:var(--ink-3)}
+.mk2-1 .dur .ic{width:14px;height:14px}
+.mk2-1 .track{position:relative;flex:1;height:4px;border-radius:2px;background:var(--fill-2)}
+.mk2-1 .track i{position:absolute;top:0;bottom:0;border-radius:2px;background:var(--ink-2)}
+.mk2-1 .ok{width:6px;height:6px;border-radius:50%;background:var(--good);flex:none}
+
+.mk2-1 .flow{display:flex;align-items:center;height:24px}
+.mk2-1 .bx{flex:none;height:24px;padding:0 8px;border-radius:6px;background:var(--fill);font:400 12px/24px var(--sans);color:var(--ink-2)}
+.mk2-1 .bx.on{background:var(--ink-2);color:var(--panel);font-weight:500}
+.mk2-1 .ar{flex:1;min-width:12px;display:flex;align-items:center;padding:0 3px 0 4px}
+.mk2-1 .ar i{flex:1;height:1.5px;background:var(--ink-3)}
+.mk2-1 .ar svg{width:5px;height:8px;fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;margin-left:-3px}
+
+.mk2-1 .files{display:grid;grid-template-columns:minmax(0,1fr) 52px 44px;column-gap:8px;row-gap:4px;align-items:center}
+.mk2-1 .files .p{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mk2-1 .files .n{font-size:12px;color:var(--ink-3);text-align:right;white-space:nowrap}
+.mk2-1 .files.one{grid-template-columns:minmax(0,1fr) auto auto}
+.mk2-1 .db{display:flex;align-items:center;gap:1px;height:8px}
+.mk2-1 .db .a{height:6px;border-radius:1.5px;background:var(--ink-2);flex:none}
+.mk2-1 .db .r{height:6px;border-radius:1.5px;box-shadow:inset 0 0 0 1px var(--ink-3);flex:none}
+
+.mk2-1 .tbl{display:block;width:100%;height:52px}
+.mk2-1 .tbl text{font:400 12px var(--sans)}
+.mk2-1 .tbl .t1{fill:var(--ink-2)}
+.mk2-1 .tbl .t2{fill:var(--panel);font-weight:500}
+.mk2-1 .tbl .f1{fill:var(--fill)}
+.mk2-1 .tbl .f2{fill:var(--fill-2)}
+.mk2-1 .tbl .f3{fill:var(--ink-2)}
+.mk2-1 .tbl .f4{fill:var(--ink-3)}
+.mk2-1 .tbl .fk{fill:none;stroke:var(--ink-3);stroke-width:1.25}
+
+.mk2-1 .stack{padding:8px 12px;opacity:.85}
+.mk2-1 .stack::before{content:"";position:absolute;left:6px;right:6px;bottom:-5px;height:12px;border-radius:0 0 8px 8px;background:var(--panel);box-shadow:var(--shadow);z-index:-1}
+.mk2-1 .nz{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.mk2-1 .nz .db .a{background:var(--ink-3)}
+
+.mk2-1 .fork{display:block;width:132px;height:60px}
+.mk2-1 .fork text{font:400 12px var(--sans);fill:var(--ink-3)}
+.mk2-1 .fork .ch{font-size:13px;font-weight:500;fill:var(--ink)}
+.mk2-1 .fork .solid{fill:none;stroke:var(--ink);stroke-width:1.5;stroke-linecap:round}
+.mk2-1 .fork .dash{fill:none;stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:2.5 3;stroke-linecap:round}
+.mk2-1 .fork .dot{fill:var(--ink)}
+.mk2-1 .fork .hol{fill:var(--panel);stroke:var(--ink-3);stroke-width:1.5}
+.mk2-1 .who{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);height:16px}
+.mk2-1 .who .ic{width:14px;height:14px;color:var(--ink-3)}
+.mk2-1 .who .sp{flex:1}
+
+.mk2-1 .claim{font-size:15px;line-height:20px;color:var(--ink)}
+.mk2-1 .claim mark{background:none;color:inherit;text-decoration:underline wavy var(--bad) 1.5px;text-underline-offset:4px;text-decoration-skip-ink:none}
+
+.mk2-1 .fr.sel .card{outline:1.5px solid var(--accent);outline-offset:0}
+.mk2-1 .hd{position:absolute;width:7px;height:7px;background:var(--panel);box-shadow:inset 0 0 0 1.25px var(--accent);z-index:2}
+.mk2-1 .hd.a{left:-4px;top:-4px}.mk2-1 .hd.b{right:-4px;top:-4px}.mk2-1 .hd.c{left:-4px;bottom:-4px}.mk2-1 .hd.d{right:-4px;bottom:-4px}
+.mk2-1 .selpill{position:absolute;left:50%;bottom:-26px;transform:translateX(-50%);height:18px;padding:0 6px;border-radius:4px;background:var(--accent);color:var(--panel);font:500 12px/18px var(--sans);white-space:nowrap}
+.mk2-1 .dots{display:grid;grid-template-columns:repeat(15,1fr);align-items:center;justify-items:center;height:10px}
+.mk2-1 .dots i{width:7px;height:7px;border-radius:50%;background:var(--ink-3);opacity:.55}
+.mk2-1 .dots i.x{width:10px;height:10px;background:var(--bad);opacity:1}
+.mk2-1 .res{display:flex;align-items:baseline;gap:6px;height:24px;white-space:nowrap}
+.mk2-1 .res .big{font-size:20px;line-height:24px;font-weight:600;color:var(--bad)}
+.mk2-1 .res .lb{color:var(--bad);font-weight:500}
+.mk2-1 .res .sp{flex:1}
+.mk2-1 .res .ic{width:12px;height:12px;align-self:center}
+.mk2-1 .res .ps{color:var(--ink-2)}
+
+.mk2-1 .xlabel{position:absolute;display:flex;align-items:center;gap:8px;font:500 12px/24px var(--sans);color:var(--bad);white-space:nowrap;z-index:3}
+.mk2-1 .neq{width:24px;height:24px;border-radius:50%;background:var(--bad);color:var(--panel);display:grid;place-items:center;flex:none}
+.mk2-1 .neq .ic{width:14px;height:14px}
+
+.mk2-1 .pin{position:absolute;width:28px;height:28px;border-radius:14px 14px 14px 3px;background:var(--panel);box-shadow:var(--shadow);display:grid;place-items:center;z-index:3}
+.mk2-1 .pin span{width:22px;height:22px;border-radius:50%;background:var(--ink);color:var(--panel);font:600 12px/22px var(--sans);text-align:center}
+
+.mk2-1 .toolbar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:4px;background:var(--panel);border-radius:12px;box-shadow:var(--shadow);z-index:5}
+.mk2-1 .tb{width:32px;height:32px;display:grid;place-items:center;border-radius:8px;color:var(--ink-2)}
+.mk2-1 .tb.on{background:var(--accent);color:var(--panel)}
+.mk2-1 .tgap{width:8px}
+
+.mk2-1 .mini{position:absolute;right:16px;bottom:16px;width:152px;height:96px;padding:6px;background:var(--panel);border-radius:8px;box-shadow:var(--shadow);z-index:5}
+.mk2-1 .mini svg{display:block;width:140px;height:84px}
+.mk2-1 .mini .m{fill:var(--fill-2)}
+.mk2-1 .mini .ms{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+.mk2-1 .mini .mx{stroke:var(--bad);stroke-width:1.5}
+.mk2-1 .mini .vp{fill:none;stroke:var(--ink-3);stroke-width:1.25}
+.mk2-1 .mini .vp-m,.mk2-1 .mini .vp-n{display:none}
+
+/* inspector */
+.mk2-1 .ihead{display:flex;align-items:center;gap:12px;padding:16px 16px 20px}
+.mk2-1 .itile{width:32px;height:32px;border-radius:8px;background:var(--fill);color:var(--ink);display:grid;place-items:center;flex:none}
+.mk2-1 .ittl{min-width:0;display:flex;flex-direction:column;gap:2px}
+.mk2-1 .ittl b{font-size:15px;line-height:20px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .ittl span{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .ittl code{color:var(--ink-2)}
+.mk2-1 .isec{padding:0 16px 24px;min-width:0}
+.mk2-1 .ih{display:flex;align-items:center;justify-content:space-between;font-weight:500;margin-bottom:10px}
+.mk2-1 .ih span{font-size:12px;font-weight:400;color:var(--ink-3)}
+.mk2-1 .cvo{position:relative;display:flex;flex-direction:column;gap:4px}
+.mk2-1 .cvb{display:flex;align-items:center;gap:8px;height:48px;padding:0 12px;border-radius:8px;background:var(--fill);min-width:0}
+.mk2-1 .cvb.obs{background:var(--bad-soft)}
+.mk2-1 .cvb>.ic{width:14px;height:14px;color:var(--ink-3)}
+.mk2-1 .cvv{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .cvv.bad{display:flex;align-items:baseline;gap:4px}
+.mk2-1 .cvv.bad b{font-size:20px;line-height:24px;font-weight:600}
+.mk2-1 .cvt{flex:none;font-size:12px;color:var(--ink-3)}
+.mk2-1 .cvo .neq{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 3px var(--panel)}
+.mk2-1 .mtx{display:grid;grid-template-columns:repeat(15,1fr);justify-items:center;align-items:center;height:12px;margin-bottom:12px}
+.mk2-1 .mtx i{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.55}
+.mk2-1 .mtx i.x{width:12px;height:12px;background:var(--bad);opacity:1}
+.mk2-1 .fail{display:flex;gap:8px;align-items:flex-start;min-width:0}
+.mk2-1 .fail .ic{width:14px;height:14px;color:var(--ink-3);margin-top:2px}
+.mk2-1 .fail div{min-width:0;display:flex;flex-direction:column;gap:2px}
+.mk2-1 .fail .tn{font-size:12px;color:var(--ink-2)}
+.mk2-1 .fail code{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk2-1 .bars{display:grid;grid-template-columns:88px minmax(0,1fr) 32px;column-gap:10px;row-gap:8px;align-items:center;font-size:12px}
+.mk2-1 .bars .l{color:var(--ink-2)}
+.mk2-1 .bars .v{text-align:right;color:var(--ink)}
+.mk2-1 .bars .track i{left:0}
+.mk2-1 .gr{display:flex;align-items:center;gap:8px;height:24px;min-width:0}
+.mk2-1 .gr .ic{width:14px;height:14px;color:var(--bad)}
+.mk2-1 .gr code{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mk2-1 .gr span{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--ink-3);white-space:nowrap;padding-left:8px}
+.mk2-1 .ifoot{margin-top:auto;display:flex;gap:8px;padding:16px}
+.mk2-1 .pri{flex:1;height:32px;border-radius:8px;background:var(--accent);color:var(--panel);font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+.mk2-1 .sec{width:32px;height:32px;border-radius:8px;background:var(--fill);color:var(--ink-2);display:grid;place-items:center;flex:none}
+
+/* mid window: canvas scrolled past intent + plan (edge falls in the 176-212 gap) */
+@container mk21 (max-width: 1379px){
+  .mk2-1 .main{--wx:-188px}
+  .mk2-1 .mini .vp-w{display:none}
+  .mk2-1 .mini .vp-m{display:inline}
+}
+/* narrow window: slimmer panels, canvas scrolled to decision + contradiction (edge in the 432-460 gap) */
+@container mk21 (max-width: 1180px){
+  .mk2-1 .main{--lw:200px;--rw:248px;--wx:-440px}
+  .mk2-1 .mini .vp-m{display:none}
+  .mk2-1 .mini .vp-n{display:inline}
+  .mk2-1 .bars{grid-template-columns:80px minmax(0,1fr) 32px}
+  .mk2-1 .row .tm.t{display:none}
+}
+</style>
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="mk21-person" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-4 5-4s4.4 1.6 5 4"/></symbol>
+  <symbol id="mk21-bubble" viewBox="0 0 16 16"><path d="M4.5 3h7A1.5 1.5 0 0 1 13 4.5v5a1.5 1.5 0 0 1-1.5 1.5H7.5l-3 2.5V11A1.5 1.5 0 0 1 3 9.5v-5A1.5 1.5 0 0 1 4.5 3z"/></symbol>
+  <symbol id="mk21-thought" viewBox="0 0 16 16"><path d="M5.6 10.5h5.1a2.4 2.4 0 0 0 .2-4.8 3 3 0 0 0-5.7-.4 2.6 2.6 0 0 0 .4 5.2z"/><circle cx="4" cy="13.2" r="1"/></symbol>
+  <symbol id="mk21-list" viewBox="0 0 16 16"><path d="M6.5 4.5H13M6.5 8H13M6.5 11.5H13"/><circle cx="3.5" cy="4.5" r="1" fill="currentColor" stroke="none"/><circle cx="3.5" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="3.5" cy="11.5" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="mk21-term" viewBox="0 0 16 16"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 11.5h4"/></symbol>
+  <symbol id="mk21-edit" viewBox="0 0 16 16"><path d="M8 13.5H4.5A1.5 1.5 0 0 1 3 12V4a1.5 1.5 0 0 1 1.5-1.5h4L12 6v1"/><path d="M8.5 2.5V6H12"/><path d="m12.3 9 1.6 1.6-3.8 3.9H8.5v-1.6z"/></symbol>
+  <symbol id="mk21-file" viewBox="0 0 16 16"><path d="M9 2.5H4.5A1.5 1.5 0 0 0 3 4v8a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 13 12V6.5z"/><path d="M9 2.5v4h4"/></symbol>
+  <symbol id="mk21-test" viewBox="0 0 16 16"><path d="M6 2.5v4.3l-2.9 5.1a1.1 1.1 0 0 0 1 1.6h7.8a1.1 1.1 0 0 0 1-1.6L10 6.8V2.5"/><path d="M5 2.5h6M4.8 10h6.4"/></symbol>
+  <symbol id="mk21-fork" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.5"/><path d="M5 8h1.5c1.8 0 2-3.5 4-3.5H13M6.5 8c1.8 0 2 3.5 4 3.5H13"/></symbol>
+  <symbol id="mk21-pkg" viewBox="0 0 16 16"><path d="m8 1.8 5.5 3v6.4L8 14.2l-5.5-3V4.8z"/><path d="M2.7 4.9 8 7.8l5.3-2.9M8 7.8v6.2"/></symbol>
+  <symbol id="mk21-db" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5" ry="1.8"/><path d="M3 4v8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V4M3 8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8"/></symbol>
+  <symbol id="mk21-shield" viewBox="0 0 16 16"><path d="m8 1.8 5 1.9v3.9c0 3-2.1 5.3-5 6.6-2.9-1.3-5-3.6-5-6.6V3.7z"/></symbol>
+  <symbol id="mk21-quote" viewBox="0 0 16 16"><path d="M3 12.5V9c0-2.6 1.2-4.2 3.2-4.8M3 9h3.2v3.5H3zM9.3 12.5V9c0-2.6 1.2-4.2 3.2-4.8M9.3 9h3.2v3.5H9.3z"/></symbol>
+  <symbol id="mk21-eye" viewBox="0 0 16 16"><path d="M1.8 8S4.2 3.8 8 3.8 14.2 8 14.2 8 11.8 12.2 8 12.2 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="2"/></symbol>
+  <symbol id="mk21-neq" viewBox="0 0 16 16"><path d="M3.5 6.2h9M3.5 9.8h9M10.2 3 5.8 13"/></symbol>
+  <symbol id="mk21-frame" viewBox="0 0 16 16"><path d="M5.5 2.5v11M10.5 2.5v11M2.5 5.5h11M2.5 10.5h11"/></symbol>
+  <symbol id="mk21-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.3"/></symbol>
+  <symbol id="mk21-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.1 3.1"/></symbol>
+  <symbol id="mk21-zoom" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.4 10.4 3.1 3.1M5 7h4M7 5v4"/></symbol>
+  <symbol id="mk21-hand" viewBox="0 0 16 16"><path d="M5.5 8.5V4a1 1 0 0 1 2 0v3.5M7.5 7V3a1 1 0 0 1 2 0v4M9.5 7V4a1 1 0 0 1 2 0v4M11.5 6.5a1 1 0 0 1 2 0V10a4 4 0 0 1-4 4H8.7a4 4 0 0 1-3.3-1.7L3.2 9.2a1 1 0 0 1 1.6-1.2l.7.9"/></symbol>
+  <symbol id="mk21-cursor" viewBox="0 0 16 16"><path d="m3.5 2.5 9.3 4.2-4.2 1.4-1.6 4.4z"/></symbol>
+  <symbol id="mk21-comment" viewBox="0 0 16 16"><path d="M2.5 13.5V8a5.5 5.5 0 1 1 5.5 5.5z"/></symbol>
+  <symbol id="mk21-fit" viewBox="0 0 16 16"><path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"/></symbol>
+  <symbol id="mk21-key" viewBox="0 0 16 16"><circle cx="5.5" cy="10.5" r="2.5"/><path d="M7.3 8.7 13 3m-2 2 1.6 1.6"/></symbol>
+  <symbol id="mk21-route" viewBox="0 0 16 16"><path d="M13 3v4a2 2 0 0 1-2 2H3.5M6 6.5 3.5 9 6 11.5"/></symbol>
+  <symbol id="mk21-stack" viewBox="0 0 16 16"><path d="m8 2.5 5.5 3L8 8.5l-5.5-3z"/><path d="m2.5 8.5 5.5 3 5.5-3M2.5 11.2 8 14.2l5.5-3"/></symbol>
+  <symbol id="mk21-check" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-6.5"/></symbol>
+  <symbol id="mk21-chev-r" viewBox="0 0 16 16"><path d="M6.5 4.5 10 8l-3.5 3.5"/></symbol>
+  <symbol id="mk21-chev-d" viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="lights"><i></i><i></i><i></i></div>
+  <div class="crumb"><span class="repo">repo-oauth-demo</span><span class="repo">/</span><span class="ttl">Google OAuth login</span></div>
+  <div class="seg"><span class="on">Review</span><span><i class="live"></i>Live</span></div>
+  <span class="meta"><svg class="ic s14"><use href="#mk21-clock"/></svg>45 s</span>
+  <span class="meta">100%<svg class="ic s12"><use href="#mk21-chev-d"/></svg></span>
+  <span class="av">JP</span>
+</header>
+
+<div class="main">
+  <aside class="layers">
+    <div class="ph"><span>Layers</span><svg class="ic s14"><use href="#mk21-search"/></svg></div>
+    <div class="row"><span class="sl"></span><svg class="ic s14"><use href="#mk21-person"/></svg><span class="nm">Intent</span><span class="tm t">+0:00</span></div>
+    <div class="row"><svg class="ic cv"><use href="#mk21-chev-d"/></svg><svg class="ic s14"><use href="#mk21-frame"/></svg><span class="nm">Turn 1</span><span class="tm">45 s</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-list"/></svg><span class="nm">Plan</span><span class="tm t">+0:08</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-pkg"/></svg><span class="nm">Dependency</span><span class="tm t">+0:10</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-edit"/></svg><span class="nm">Identity layer</span><span class="fl bad"><svg class="ic s12"><use href="#mk21-shield"/></svg></span><span class="tm t">+0:15</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-db"/></svg><span class="nm">Migration</span><span class="tm t">+0:17</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-fork"/></svg><span class="nm">Account linking</span><span class="tm t">+0:25</span></div>
+    <div class="row sel" style="--d:1"><svg class="ic cv"><use href="#mk21-chev-d"/></svg><svg class="ic s14"><use href="#mk21-test"/></svg><span class="nm">Linking test</span><span class="fl"><i class="rd"></i></span><span class="tm t">+0:33</span></div>
+    <div class="row sub" style="--d:2"><span class="sl"></span><svg class="ic s14"><use href="#mk21-file"/></svg><span class="nm mono">oauth.test.ts</span></div>
+    <div class="row sub" style="--d:2"><span class="sl"></span><svg class="ic s14"><use href="#mk21-term"/></svg><span class="nm mono">pnpm test</span></div>
+    <div class="row" style="--d:1"><span class="sl"></span><svg class="ic s14"><use href="#mk21-quote"/></svg><span class="nm">Final claim</span><span class="fl bad"><svg class="ic s12"><use href="#mk21-neq"/></svg></span><span class="tm t">+0:43</span></div>
+    <div class="row dim" style="--d:1"><svg class="ic cv"><use href="#mk21-chev-r"/></svg><svg class="ic s14"><use href="#mk21-stack"/></svg><span class="nm">Noise</span><span class="tm">2</span></div>
+
+    <div class="ph ph2"><span>Entities</span></div>
+    <div class="row"><svg class="ic cv"><use href="#mk21-chev-r"/></svg><svg class="ic s14"><use href="#mk21-file"/></svg><span class="nm">Files</span><span class="tm">9</span></div>
+    <div class="row"><svg class="ic cv"><use href="#mk21-chev-r"/></svg><svg class="ic s14"><use href="#mk21-term"/></svg><span class="nm">Commands</span><span class="tm">2</span></div>
+    <div class="row"><svg class="ic cv"><use href="#mk21-chev-r"/></svg><svg class="ic s14"><use href="#mk21-test"/></svg><span class="nm">Tests</span><span class="tm">15</span></div>
+  </aside>
+
+  <section class="canvas">
+    <div class="rulerbg"></div>
+    <div class="world">
+      <svg class="ruler" viewBox="0 0 844 28" aria-hidden="true">
+        <rect class="band" x="618.9" y="0" width="131.3" height="28"/>
+        <path class="bandx" d="M618.9 0v28M750.2 0v28"/>
+        <text x="3" y="12">+0:00</text><text x="190.6" y="12">+0:10</text><text x="378.1" y="12">+0:20</text><text x="565.7" y="12">+0:30</text><text x="753.2" y="12">+0:40</text>
+        <path class="tk" d="M0.5 17v6M39.4 17v6M63.8 17v6M73.1 17v6M76.9 17v6M97.5 17v6M118.2 17v6M150 17v6M187.6 17v6M272 17v6M273.8 17v6M275.7 17v6M281.3 17v6M287 17v6M292.6 17v6M300.1 17v6M305.7 17v6M311.3 17v6M318.8 17v6M324.5 17v6M337.6 17v6M343.2 17v6M348.9 17v6M356.4 17v6M362 17v6M367.6 17v6M375.1 17v6M380.7 17v6M393.9 17v6M399.5 17v6M412.6 17v6M418.2 17v6M431.4 17v6M450.1 17v6M468.9 17v6M487.6 17v6M497 17v6M562.7 17v6M566.4 17v6M581.4 17v6M618.9 17v6M624.6 17v6M656.4 17v6M665.8 17v6M740.8 17v6M750.2 17v6M843.5 17v6"/>
+        <path class="tkb" d="M744.6 15v10M806.5 15v10"/>
+      </svg>
+
+      <div class="plane">
+        <svg class="edges" viewBox="0 0 864 620" aria-hidden="true">
+          <path class="e" d="M150 158V212"/>
+          <path class="e" d="M176 270C196 270 192 72 212 72"/>
+          <path class="e" d="M176 270C196 270 192 228 212 228"/>
+          <path class="e" d="M176 270C196 270 192 400 212 400"/>
+          <circle class="p" cx="176" cy="270" r="2.5"/>
+          <path class="e" d="M432 196C450 196 442 96 460 96"/>
+          <path class="e" d="M616 96C634 96 626 262 644 262"/>
+          <path class="x" d="M820 126V212"/>
+          <circle class="xp" cx="820" cy="126" r="3"/>
+        </svg>
+
+        <!-- Intent -->
+        <div class="fr" style="left:0;top:16px;width:176px">
+          <div class="lab"><svg class="ic"><use href="#mk21-person"/></svg><span class="lt">Intent</span><span class="tm t">+0:00</span></div>
+          <div class="card" style="height:120px"><p class="intent">Add Google OAuth login while preserving existing email/password accounts.</p></div>
+        </div>
+
+        <!-- Plan -->
+        <div class="fr" style="left:0;top:190px;width:176px">
+          <div class="lab"><svg class="ic"><use href="#mk21-list"/></svg><span class="lt">Plan</span><span class="tm t">+0:08</span></div>
+          <div class="card" style="height:116px">
+            <ul class="steps">
+              <li><svg class="ic"><use href="#mk21-edit"/></svg><span>Identity</span><svg class="ic"><use href="#mk21-check"/></svg></li>
+              <li><svg class="ic"><use href="#mk21-key"/></svg><span>Google</span><svg class="ic"><use href="#mk21-check"/></svg></li>
+              <li><svg class="ic"><use href="#mk21-route"/></svg><span>Callback</span><svg class="ic"><use href="#mk21-check"/></svg></li>
+              <li><svg class="ic"><use href="#mk21-db"/></svg><span>Migration</span><svg class="ic"><use href="#mk21-check"/></svg></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Dependency -->
+        <div class="fr" style="left:212px;top:16px;width:220px">
+          <div class="lab"><svg class="ic"><use href="#mk21-pkg"/></svg><span class="lt">Dependency</span><span class="tm t">+0:10</span></div>
+          <div class="card" style="height:68px;gap:10px">
+            <div class="pkg">google-auth-library</div>
+            <div class="dur"><svg class="ic"><use href="#mk21-term"/></svg><span class="track"><i style="left:22.2%;width:10%"></i></span><span>4.5 s</span><i class="ok"></i></div>
+          </div>
+        </div>
+
+        <!-- Identity layer -->
+        <div class="fr" style="left:212px;top:134px;width:220px">
+          <div class="lab"><svg class="ic"><use href="#mk21-edit"/></svg><span class="lt">Identity layer</span><svg class="ic flag"><use href="#mk21-shield"/></svg><span class="tm t">+0:15</span></div>
+          <div class="card" style="height:144px">
+            <div class="flow">
+              <span class="bx">Google</span>
+              <span class="ar"><i></i><svg viewBox="0 0 5 8"><path d="M1 1l3 3-3 3"/></svg></span>
+              <span class="bx on">Identity</span>
+              <span class="ar"><i></i><svg viewBox="0 0 5 8"><path d="M1 1l3 3-3 3"/></svg></span>
+              <span class="bx">Session</span>
+            </div>
+            <div class="files">
+              <span class="p">identity.ts</span><span class="db"><i class="a" style="width:36px"></i></span><span class="n">+24</span>
+              <span class="p">google.ts</span><span class="db"><i class="a" style="width:51px"></i></span><span class="n">+34</span>
+              <span class="p">service.ts</span><span class="db"><i class="a" style="width:11px"></i><i class="r" style="width:18px"></i></span><span class="n">+7 −12</span>
+              <span class="p">index.ts</span><span class="db"><i class="a" style="width:17px"></i><i class="r" style="width:5px"></i></span><span class="n">+11 −3</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Migration -->
+        <div class="fr" style="left:212px;top:324px;width:220px">
+          <div class="lab"><svg class="ic"><use href="#mk21-db"/></svg><span class="lt">Migration</span><span class="tm t">+0:17</span></div>
+          <div class="card" style="height:112px">
+            <svg class="tbl" viewBox="0 0 196 52" preserveAspectRatio="xMinYMid meet" aria-hidden="true">
+              <rect class="f1" x="0" y="0" width="64" height="52" rx="5"/>
+              <rect class="f2" x="0" y="0" width="64" height="18" rx="5"/>
+              <text class="t1" x="8" y="13">users</text>
+              <rect class="f2" x="8" y="25" width="40" height="3" rx="1.5"/>
+              <rect class="f2" x="8" y="33" width="30" height="3" rx="1.5"/>
+              <rect class="f2" x="8" y="41" width="36" height="3" rx="1.5"/>
+              <path class="fk" d="M104 42.5C86 42.5 80 26.5 56 26.5"/>
+              <circle class="f4" cx="56" cy="26.5" r="2"/>
+              <rect class="f1" x="104" y="0" width="92" height="52" rx="5"/>
+              <rect class="f3" x="104" y="0" width="92" height="18" rx="5"/>
+              <text class="t2" x="112" y="13">identities</text>
+              <rect class="f4" x="112" y="23.5" width="22" height="3" rx="1.5"/>
+              <rect class="f4" x="112" y="29.5" width="50" height="3" rx="1.5"/>
+              <rect class="f4" x="112" y="35.5" width="44" height="3" rx="1.5"/>
+              <rect class="f4" x="112" y="41.5" width="38" height="3" rx="1.5"/>
+              <rect class="f4" x="112" y="47.5" width="58" height="3" rx="1.5"/>
+            </svg>
+            <div class="files one">
+              <span class="p">001_create_identities.sql</span><span class="db"><i class="a" style="width:18px"></i></span><span class="n">+12</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Noise -->
+        <div class="fr" style="left:212px;top:486px;width:160px">
+          <div class="lab"><svg class="ic"><use href="#mk21-stack"/></svg><span class="lt">Noise</span><span class="tm t">+0:21</span></div>
+          <div class="card stack">
+            <div class="nz"><span>2 files</span><span class="db"><i class="a" style="width:15px"></i><i class="r" style="width:9px"></i></span><span>+10 −6</span></div>
+          </div>
+        </div>
+
+        <!-- Decision -->
+        <div class="fr" style="left:460px;top:16px;width:156px">
+          <div class="lab"><svg class="ic"><use href="#mk21-fork"/></svg><span class="lt">Account linking</span><span class="tm t">+0:25</span></div>
+          <div class="card" style="height:116px">
+            <svg class="fork" viewBox="0 0 132 60" aria-hidden="true">
+              <circle class="dot" cx="4" cy="30" r="3"/>
+              <path class="solid" d="M7 30H20"/>
+              <path class="dash" d="M20 30C30 30 30 12 42 12"/>
+              <path class="solid" d="M20 30C30 30 30 48 42 48"/>
+              <circle class="hol" cx="45" cy="12" r="3"/>
+              <circle class="dot" cx="45" cy="48" r="3.5"/>
+              <text x="56" y="16">By email</text>
+              <text class="ch" x="56" y="52.5">Explicit link</text>
+            </svg>
+            <div class="who"><svg class="ic"><use href="#mk21-person"/></svg><span>+0:30</span><span class="sp"></span><svg class="ic"><use href="#mk21-clock"/></svg><span class="i3">5 s</span></div>
+          </div>
+        </div>
+        <div class="pin" style="left:584px;top:134px"><span>JP</span></div>
+
+        <!-- Agent claim -->
+        <div class="fr" style="left:644px;top:16px;width:200px">
+          <div class="lab"><svg class="ic"><use href="#mk21-quote"/></svg><span class="lt">Final claim</span><span class="tm t">+0:43</span></div>
+          <div class="card" style="height:88px"><p class="claim">OAuth implementation complete; <mark>all checks pass.</mark></p></div>
+        </div>
+
+        <div class="xlabel" style="right:32px;top:157px">contradicts<span class="neq"><svg class="ic"><use href="#mk21-neq"/></svg></span></div>
+
+        <!-- Test run (selected) -->
+        <div class="fr sel" style="left:644px;top:190px;width:200px">
+          <div class="lab"><svg class="ic"><use href="#mk21-test"/></svg><span class="lt">Linking test</span><span class="tm t">+0:33</span></div>
+          <div class="card" style="height:100px">
+            <i class="hd a"></i><i class="hd b"></i><i class="hd c"></i><i class="hd d"></i>
+            <div class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="x"></i></div>
+            <div class="res"><span class="big">1</span><span class="lb">failed</span><span class="sp"></span><svg class="ic good"><use href="#mk21-check"/></svg><span class="ps">14</span></div>
+            <div class="dur"><svg class="ic"><use href="#mk21-term"/></svg><span class="track"><i style="left:77.8%;width:11.1%"></i></span><span>5.0 s</span></div>
+            <span class="selpill">+0:33 – 0:40</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <span class="tb on"><svg class="ic"><use href="#mk21-cursor"/></svg></span>
+      <span class="tb"><svg class="ic"><use href="#mk21-hand"/></svg></span>
+      <span class="tb"><svg class="ic"><use href="#mk21-comment"/></svg></span>
+      <span class="tgap"></span>
+      <span class="tb"><svg class="ic"><use href="#mk21-fit"/></svg></span>
+    </div>
+
+    <div class="mini" aria-hidden="true">
+      <svg viewBox="-130 -60 1150 690" preserveAspectRatio="xMidYMid meet">
+        <rect class="m" x="0" y="38" width="176" height="120" rx="10"/>
+        <rect class="m" x="0" y="212" width="176" height="116" rx="10"/>
+        <rect class="m" x="212" y="38" width="220" height="68" rx="10"/>
+        <rect class="m" x="212" y="156" width="220" height="144" rx="10"/>
+        <rect class="m" x="212" y="346" width="220" height="112" rx="10"/>
+        <rect class="m" x="212" y="508" width="160" height="36" rx="10"/>
+        <rect class="m" x="460" y="38" width="156" height="116" rx="10"/>
+        <rect class="m" x="644" y="38" width="200" height="88" rx="10"/>
+        <path class="mx" d="M820 126V212" vector-effect="non-scaling-stroke"/>
+        <rect class="ms" x="644" y="212" width="200" height="100" rx="10" vector-effect="non-scaling-stroke"/>
+        <rect class="vp vp-w" x="-20" y="-28" width="894" height="660" rx="14" vector-effect="non-scaling-stroke"/>
+        <rect class="vp vp-m" x="188" y="-28" width="760" height="660" rx="14" vector-effect="non-scaling-stroke"/>
+        <rect class="vp vp-n" x="440" y="-28" width="552" height="660" rx="14" vector-effect="non-scaling-stroke"/>
+      </svg>
+    </div>
+  </section>
+
+  <aside class="insp">
+    <div class="ihead">
+      <span class="itile"><svg class="ic"><use href="#mk21-test"/></svg></span>
+      <div class="ittl"><b>Linking test failure</b><span><code>pnpm test</code> · +0:35 · 5.0 s</span></div>
+    </div>
+
+    <div class="isec">
+      <div class="cvo">
+        <div class="cvb"><svg class="ic"><use href="#mk21-quote"/></svg><span class="cvv">all checks pass</span><span class="cvt">+0:43</span></div>
+        <span class="neq"><svg class="ic"><use href="#mk21-neq"/></svg></span>
+        <div class="cvb obs"><svg class="ic"><use href="#mk21-eye"/></svg><span class="cvv bad"><b>1</b><span>failed</span></span><span class="cvt">+0:39.7</span></div>
+      </div>
+    </div>
+
+    <div class="isec">
+      <div class="ih">Tests<span>14 / 15</span></div>
+      <div class="mtx"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="x"></i></div>
+      <div class="fail">
+        <svg class="ic"><use href="#mk21-file"/></svg>
+        <div><span class="tn">links a Google identity to an existing account by email</span><code>expected 7 to be null</code></div>
+      </div>
+    </div>
+
+    <div class="isec">
+      <div class="ih">Attention</div>
+      <div class="bars">
+        <span class="l">Importance</span><span class="track"><i style="width:66%"></i></span><span class="v">.66</span>
+        <span class="l">Relevance</span><span class="track"><i style="width:95%"></i></span><span class="v">.95</span>
+        <span class="l">Interruption</span><span class="track"><i style="width:25%"></i></span><span class="v">.25</span>
+      </div>
+    </div>
+
+    <div class="isec">
+      <div class="ih">Guardrails</div>
+      <div class="gr"><svg class="ic"><use href="#mk21-shield"/></svg><code>failed_unit_relevance</code><span>≥ .50</span></div>
+      <div class="gr"><svg class="ic"><use href="#mk21-shield"/></svg><code>security_path</code><span>auth/</span></div>
+    </div>
+
+    <div class="ifoot">
+      <button class="pri" type="button">Request changes</button>
+      <button class="sec" type="button" aria-label="Diff"><svg class="ic"><use href="#mk21-edit"/></svg></button>
+    </div>
+  </aside>
+</div>
+</div>
+
+</body></html>
