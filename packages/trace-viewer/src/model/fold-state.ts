@@ -116,6 +116,23 @@ export interface TurnDraft {
   readonly edits: Map<string, StepDraft>;
 }
 
+export interface EvidenceState {
+  /** path -> key of the latest non-duplicate git_hunk (diff.hash, else "added:removed"). */
+  readonly lastHunkKey: Map<string, string>;
+  /** edit step -> key of the git_hunk it holds. */
+  readonly hunkKeyByStep: Map<StepId, string>;
+  /** Edit steps made by a git_hunk identical to the path's previous one (duplicate_poll). */
+  readonly duplicates: Set<StepId>;
+  /** row factId -> seq; the first row with an id wins. */
+  readonly factSeqById: Map<string, number>;
+  /** fact or validation seq -> the step it joined. */
+  readonly stepByEvidenceSeq: Map<number, StepDraft>;
+  /** `${normalized command}\u0000${test_result ts}` -> the step holding that result. */
+  readonly testRunByKey: Map<string, StepDraft>;
+  /** validation id -> seq. */
+  readonly validationSeqById: Map<string, number>;
+}
+
 export class FoldState {
   loadedThroughSeq = 0;
   received = 0;
@@ -130,6 +147,15 @@ export class FoldState {
   /** Every step that carries a callId (open or closed). */
   readonly stepsByCallId = new Map<string, StepDraft>();
   readonly turns: TurnDraft[] = [];
+  readonly evidence: EvidenceState = {
+    lastHunkKey: new Map(),
+    hunkKeyByStep: new Map(),
+    duplicates: new Set(),
+    factSeqById: new Map(),
+    stepByEvidenceSeq: new Map(),
+    testRunByKey: new Map(),
+    validationSeqById: new Map(),
+  };
 
   constructor(readonly meta: TraceSessionSummary) {
     this.clock = createClock();

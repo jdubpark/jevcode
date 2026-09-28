@@ -14,6 +14,7 @@ import {
 import type { z } from "zod";
 
 import { foldAgentEvent } from "./fold-agent.js";
+import { buildEntities, foldEvidenceFact, foldValidation } from "./fold-evidence.js";
 import {
   addGap,
   advanceClock,
@@ -77,6 +78,11 @@ function clockContext(state: FoldState, row: TraceRow, payloadTs: string): RowCo
   return { seq: row.seq, sourceTs: payloadTs, t: advanceClock(state.clock, payloadTs) };
 }
 
+function inheritedContext(state: FoldState, row: TraceRow): RowContext {
+  const t = state.clock.last;
+  return { seq: row.seq, sourceTs: clockTs(state.clock, t, row.ts), t };
+}
+
 /** The parsed payload, or null after recording an invalid_row gap (the fold continues). */
 function parseOrGap<T>(state: FoldState, row: TraceRow, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T | null {
   const parsed = schema.safeParse(row.payload);
@@ -126,13 +132,17 @@ export function accumulate(state: TraceState, row: TraceRow): TraceState {
       if (event !== null) foldAgentEvent(s, event, clockContext(s, row, event.ts));
       break;
     }
+    case "evidence_fact": {
+      const fact = parseOrGap(s, row, EvidenceFactSchema);
+      if (fact !== null) foldEvidenceFact(s, row, fact, clockContext(s, row, fact.ts));
+      break;
+    }
+    case "validation": {
+      const validation = parseOrGap(s, row, ValidationResultSchema);
+      if (validation !== null) foldValidation(s, validation, inheritedContext(s, row));
+      break;
+    }
     // The remaining consumed types are validated against their contracts schema here.
-    case "evidence_fact":
-      parseOrGap(s, row, EvidenceFactSchema);
-      break;
-    case "validation":
-      parseOrGap(s, row, ValidationResultSchema);
-      break;
     case "change_unit":
       parseOrGap(s, row, ChangeUnitSchema);
       break;
@@ -302,6 +312,8 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
   }
   steps.sort((a, b) => a.firstSeq - b.firstSeq);
 
+  const entities = buildEntities(steps, s.evidence.duplicates);
+
   const loadedThroughSeq = Math.max(s.loadedThroughSeq, options.throughSeq ?? 0);
   const clock = s.clock;
   return {
@@ -318,7 +330,7 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
     turns,
     steps,
     chapters: [],
-    entities: [],
+    entities,
     findings: [],
     gaps: gaps.sort(compareGaps),
     coverage: coverageOf(s.capabilities, false, steps.filter((step) => step.provenance === "inferred").length),
