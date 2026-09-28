@@ -1,6 +1,8 @@
 import type {
   AgentInterruptReason,
+  ChangeUnit,
   EventStoreType,
+  JevClientKind,
   NormalizedAgentEventType,
   TraceSessionSummary,
 } from "@jevcode/contracts";
@@ -107,6 +109,8 @@ export interface TurnDraft {
   endTMs: number;
   stepIds: StepId[];
   terminal: TerminalEvent | null;
+  /** A decision row answered or delegated a decision in this turn. */
+  decisionAnswered: boolean;
   lastAgentEvent: NormalizedAgentEventType | null;
   /** Open starts, FIFO per `${family}\u0000${target}`. */
   readonly queues: Map<string, QueueEntry[]>;
@@ -133,6 +137,38 @@ export interface EvidenceState {
   readonly validationSeqById: Map<string, number>;
 }
 
+export interface UnitEntry {
+  /** The latest version. */
+  unit: ChangeUnit;
+  firstSeq: number;
+  lastSeq: number;
+  versions: number;
+}
+
+/** Scores and client kind of a unit's latest Pass A attention row (Chapter.triad, spec §6.6). */
+export interface UnitAttention {
+  importance: number;
+  relevance: number;
+  interruption: number;
+  clientKind: JevClientKind;
+}
+
+export interface ChapterState {
+  /** change unit id -> latest version, in first-seen order. */
+  readonly units: Map<string, UnitEntry>;
+  /** decision id -> its one decision step. */
+  readonly decisionSteps: Map<string, StepDraft>;
+  /** decision id -> affectedChangeUnits of its latest row. */
+  readonly decisionUnits: Map<string, string[]>;
+  /** change unit id -> guardrail and attention steps from jev_decision rows naming it. */
+  readonly jevStepsByUnit: Map<string, StepDraft[]>;
+  /** change unit id -> shouldSurface of its latest Pass A jev_decision row (Chapter.noise, R25). */
+  readonly surfaceByUnit: Map<string, boolean>;
+  /** change unit id -> its latest non-Pass-B row whose output parses with AttentionDecisionSchema
+   *  (Chapter.triad, UI index §1.4 B-5). */
+  readonly attentionByUnit: Map<string, UnitAttention>;
+}
+
 export class FoldState {
   loadedThroughSeq = 0;
   received = 0;
@@ -156,6 +192,14 @@ export class FoldState {
     testRunByKey: new Map(),
     validationSeqById: new Map(),
   };
+  readonly chapters: ChapterState = {
+    units: new Map(),
+    decisionSteps: new Map(),
+    decisionUnits: new Map(),
+    jevStepsByUnit: new Map(),
+    surfaceByUnit: new Map(),
+    attentionByUnit: new Map(),
+  };
 
   constructor(readonly meta: TraceSessionSummary) {
     this.clock = createClock();
@@ -169,7 +213,8 @@ export function addGap(state: FoldState, kind: GapKind, atSeq: number, message: 
 function previousTrigger(previous: TurnDraft | undefined): TurnTrigger {
   if (previous === undefined) return "initial";
   const terminal = previous.terminal;
-  if (terminal === null) return "steer";
+  // A turn that stopped on an answered decision resumes; one that just stopped was steered.
+  if (terminal === null) return previous.decisionAnswered ? "resume" : "steer";
   if (terminal.type === "agent_interrupted" && terminal.reason === "steer") return "steer";
   return "resume";
 }
@@ -193,6 +238,7 @@ export function openTurn(
     endTMs: ctx.t,
     stepIds: [],
     terminal: null,
+    decisionAnswered: false,
     lastAgentEvent: null,
     queues: new Map(),
     commands: new Map(),
