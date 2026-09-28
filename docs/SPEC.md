@@ -586,7 +586,7 @@ Codex adapter responsibilities: PTY lifecycle, JSONL parse (or transcript normal
 
 ## 11. Storage (`packages/storage`)
 
-SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes.
+SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes. The store holds prompts, agent output and diffs, so `openDb` creates `~/.jevcode` with mode 0700 (and tightens an existing one) and `jevcode.db`, `-wal` and `-shm` with mode 0600. A directory chosen through `dbPath` or `JEVCODE_DB` is created 0700 when missing but never chmodded.
 
 Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`). Projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`.
 
