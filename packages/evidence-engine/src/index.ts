@@ -1,5 +1,6 @@
 export * from "./sink.js";
 export * from "./hunks.js";
+export * from "./diff.js";
 export * from "./destructive.js";
 export * from "./symbol-diff.js";
 export * from "./worker/parser.js";
