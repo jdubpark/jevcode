@@ -1,6 +1,15 @@
 import type { AgentState, NormalizedAgentEvent } from "@jevcode/contracts";
 
-import type { StepKind, TestCounts } from "./types.js";
+import type {
+  Chapter,
+  DecisionDetail,
+  Entity,
+  GraphicSpec,
+  Step,
+  StepKind,
+  TestCounts,
+  TraceSession,
+} from "./types.js";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -298,5 +307,210 @@ export function stepHeadline(input: StepHeadlineInput): string {
     }
     case "attention":
       return "Attention scored";
+  }
+}
+
+// ------------------------------------------------------------ mini graphics (D8, R25)
+
+type DurationEnd = Extract<GraphicSpec, { kind: "duration" }>["end"];
+type TableEntry = Extract<GraphicSpec, { kind: "table" }>["tables"][number];
+
+/** DiffBar lists at most this many files for a chapter, then "+k" (spec §7.5). */
+const DIFF_FILES_MAX = 4;
+/** FlowGlyph shows at most this many file stems (spec §7.12). */
+const FLOW_NODES_MAX = 3;
+
+function isChapter(target: Step | Chapter): target is Chapter {
+  return target.id.startsWith("unit:");
+}
+
+function linesChanged(entity: Entity): number {
+  return entity.added + entity.removed;
+}
+
+/** The chapter's file entities, in first-edit order (buildEntities builds them in step order). */
+function chapterEntities(chapter: Chapter, session: TraceSession): Entity[] {
+  const files = new Set(chapter.files);
+  return session.entities.filter((entity) => files.has(entity.path));
+}
+
+/** Chapter.schema (spec §6.6): one entry per table named by a table/model item or by the prefix
+ *  before the last "." of a column/field item; null without schema data. */
+function tableSpec(chapter: Chapter): GraphicSpec | null {
+  const tables = new Map<string, TableEntry>();
+  const tableFor = (name: string): TableEntry => {
+    let table = tables.get(name);
+    if (table === undefined) {
+      table = { name, role: "altered", columns: 0 };
+      tables.set(name, table);
+    }
+    return table;
+  };
+  for (const change of chapter.schemaChanges) {
+    if (change.entityType === "table" || change.entityType === "model") {
+      const table = tableFor(change.entity);
+      if (change.change === "added") table.role = "new";
+      continue;
+    }
+    if (change.entityType !== "column" && change.entityType !== "field") continue;
+    const dot = change.entity.lastIndexOf(".");
+    if (dot <= 0) continue;
+    tableFor(change.entity.slice(0, dot)).columns += 1;
+  }
+  return tables.size === 0 ? null : { kind: "table", tables: [...tables.values()] };
+}
+
+function fileStem(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/** FlowGlyph (spec §7.12): up to 3 file stems in first-edit order; focus = most lines changed. */
+function flowSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+  const nodes = chapterEntities(chapter, session).slice(0, FLOW_NODES_MAX);
+  if (nodes.length === 0) return null;
+  let focus = 0;
+  nodes.forEach((entity, index) => {
+    const best = nodes[focus];
+    if (best !== undefined && linesChanged(entity) > linesChanged(best)) focus = index;
+  });
+  return { kind: "flow", nodes: nodes.map((entity) => fileStem(entity.path)), focus };
+}
+
+/** TestDots for a tests chapter: the latest run with a test result among the steps its
+ *  validations attached to and its joined steps. */
+function chapterTestsSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+  const ids = new Set<string>([...chapter.validationStepIds, ...chapter.stepIds]);
+  let latest: Step | undefined;
+  for (const step of session.steps) if (ids.has(step.id) && step.tests !== undefined) latest = step;
+  const tests = latest?.tests;
+  return tests === undefined
+    ? null
+    : { kind: "tests", passed: tests.passed, failed: tests.failed, skipped: tests.skipped };
+}
+
+function forkSpec(decision: DecisionDetail): GraphicSpec {
+  return {
+    kind: "fork",
+    options: decision.options.map((option) => ({ label: option.label, chosen: option.chosen })),
+    decidedBy: decision.decidedBy ?? "open",
+  };
+}
+
+/** ForkGlyph for a chapter with an answered or delegated decision. */
+function chapterForkSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+  if (chapter.decisionIds.length === 0) return null;
+  const ids = new Set(chapter.decisionIds.map((id) => id.slice("decision:".length)));
+  const step = session.steps.find(
+    (candidate) =>
+      candidate.decision !== undefined &&
+      ids.has(candidate.decision.decisionId) &&
+      candidate.decision.decidedBy !== undefined,
+  );
+  return step?.decision === undefined ? null : forkSpec(step.decision);
+}
+
+/** DiffBar list: totals over the chapter's files, the top 4 by lines changed (ties by path), and
+ *  how many more there are. */
+function diffListSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+  const entities = chapterEntities(chapter, session);
+  if (entities.length === 0) return null;
+  const ranked = [...entities].sort(
+    (a, b) => linesChanged(b) - linesChanged(a) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+  );
+  return {
+    kind: "diff",
+    added: entities.reduce((sum, entity) => sum + entity.added, 0),
+    removed: entities.reduce((sum, entity) => sum + entity.removed, 0),
+    files: ranked.slice(0, DIFF_FILES_MAX).map((entity) => ({ path: entity.path, added: entity.added, removed: entity.removed })),
+    ...(ranked.length > DIFF_FILES_MAX ? { moreFiles: ranked.length - DIFF_FILES_MAX } : {}),
+  };
+}
+
+/** spec §7.12 CHAPTER_GRAPHIC: the first rule that matches; a rule without data falls through. */
+function chapterGraphic(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+  let spec: GraphicSpec | null = null;
+  if (chapter.category === "schema") spec = tableSpec(chapter);
+  else if (chapter.category === "architecture" || chapter.category === "api") spec = flowSpec(chapter, session);
+  else if (chapter.category === "tests") spec = chapterTestsSpec(chapter, session);
+  return spec ?? chapterForkSpec(chapter, session) ?? diffListSpec(chapter, session);
+}
+
+function durationSpec(step: Step): GraphicSpec {
+  const running = step.status === "running";
+  const exitCode = step.command?.exitCode ?? null;
+  const end: DurationEnd =
+    (step.kind === "test" || step.kind === "check") && step.status === "failed"
+      ? "bad_dot"
+      : step.kind === "command" && exitCode !== null && exitCode > 0
+        ? "exit_x"
+        : "none";
+  return { kind: "duration", durationMs: running ? null : step.durationMs, running, status: step.status, end };
+}
+
+/** The mini graphic (D8) that replaces prose for a step or chapter, or null when none fits. */
+export function pickGraphic(target: Step | Chapter, session: TraceSession): GraphicSpec | null {
+  if (isChapter(target)) return chapterGraphic(target, session);
+  const step = target;
+  const finding = session.findings.find(
+    (candidate) => candidate.ruleId === "claim_contradicted" && candidate.claim?.claim.stepId === step.id,
+  );
+  const claim = finding?.claim;
+  if (claim !== undefined) {
+    return {
+      kind: "claim",
+      claim: {
+        text: claim.claim.text,
+        ...(finding?.claimSpan !== undefined ? { span: finding.claimSpan } : {}),
+        tMs: claim.claim.tMs,
+      },
+      observed: {
+        passed: claim.observed.passed,
+        failed: claim.observed.failed,
+        command: claim.observed.command,
+        tMs: claim.observed.tMs,
+      },
+    };
+  }
+  if (step.edit !== undefined) return { kind: "diff", added: step.edit.added, removed: step.edit.removed };
+  if (step.tests !== undefined) {
+    return { kind: "tests", passed: step.tests.passed, failed: step.tests.failed, skipped: step.tests.skipped };
+  }
+  if (step.decision !== undefined) return forkSpec(step.decision);
+  if (step.command !== undefined) return durationSpec(step);
+  return null;
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Text alternative for a graphic (screen readers, tooltips, copy). */
+export function describeGraphic(spec: GraphicSpec): string {
+  switch (spec.kind) {
+    case "diff": {
+      const counts = `+${spec.added} −${spec.removed}`;
+      const files = spec.files === undefined ? 0 : spec.files.length + (spec.moreFiles ?? 0);
+      return files > 0 ? `${counts} in ${plural(files, "file")}` : counts;
+    }
+    case "tests":
+      return `${spec.passed} passed, ${spec.failed} failed${spec.skipped > 0 ? `, ${spec.skipped} skipped` : ""}`;
+    case "duration":
+      if (spec.running) return "running";
+      return spec.durationMs === null ? spec.status : `${formatDuration(spec.durationMs)}, ${spec.status}`;
+    case "fork": {
+      const chosen = spec.options.filter((option) => option.chosen).map((option) => option.label);
+      const who = spec.decidedBy === "supervisor" ? "you chose" : spec.decidedBy === "delegated" ? "delegated:" : "open";
+      return `${plural(spec.options.length, "option")}; ${who}${chosen.length > 0 ? ` ${chosen.join(", ")}` : ""}`;
+    }
+    case "flow":
+      return spec.nodes.join(" → ");
+    case "table":
+      return spec.tables
+        .map((table) => `${table.name} (${table.role}${table.columns > 0 ? `, ${plural(table.columns, "column")}` : ""})`)
+        .join("; ");
+    case "claim":
+      return `Claimed "${spec.claim.text}"; ${spec.observed.command} had ${spec.observed.passed} passed, ${spec.observed.failed} failed`;
   }
 }
