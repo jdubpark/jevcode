@@ -21,6 +21,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareDiffForStorage } from "../apps/desktop/dist/main/pipeline/redactor.js";
+import { diffLineCounts } from "./diff-line-counts.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCENARIOS = ["oauth", "rate-limit", "schema-change", "api-break", "dep-change"];
@@ -47,23 +48,6 @@ function spacedJson(value) {
 
 function isAgentEvent(record) {
   return !("repoId" in record) && !("severity" in record) && !("kind" in record);
-}
-
-// Same rule as scripts/validate-fixtures.mjs: count lines after the first "@@".
-function diffLineCounts(text) {
-  let added = 0;
-  let removed = 0;
-  let inHunk = false;
-  for (const line of text.split("\n")) {
-    if (line.startsWith("@@")) {
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk) continue;
-    if (line.startsWith("+")) added += 1;
-    else if (line.startsWith("-")) removed += 1;
-  }
-  return { added, removed };
 }
 
 // Pinned flags keep the text independent of the user's git config and of the
