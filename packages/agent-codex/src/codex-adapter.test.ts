@@ -215,7 +215,7 @@ describe("CodexAdapter PTY integration (fake codex binary)", () => {
     );
   });
 
-  it("interrupt sends SIGINT-equivalent control and the session fails on exit", async () => {
+  it("interrupt pauses the session and records one agent_interrupted on exit", async () => {
     const adapter = createAdapter();
     const { events, exited } = collect(adapter);
     await adapter.startSession(sessionInput());
@@ -225,9 +225,74 @@ describe("CodexAdapter PTY integration (fake codex binary)", () => {
     const code = await exited;
 
     expect(code).toBe(1);
-    expect(adapter.getState()).toBe("failed");
-    const failed = events.find((e) => e.type === "agent_failed");
-    expect(failed).toBeDefined();
+    expect(adapter.getState()).toBe("paused");
+    const interrupted = events.filter((e) => e.type === "agent_interrupted");
+    expect(interrupted).toHaveLength(1);
+    expect(interrupted[0]).toMatchObject({ type: "agent_interrupted", reason: "interrupt" });
+    expect(events.some((e) => e.type === "agent_failed")).toBe(false);
+  });
+
+  it("SIGINT during a command yields one agent_interrupted", async () => {
+    const adapter = new CodexAdapter({
+      binPath: FAKE_BIN,
+      env: { FAKE_CODEX_COMPLETE_ON_INTERRUPT: "1" },
+    });
+    openAdapters.push(adapter);
+    const { events, exited } = collect(adapter);
+    await adapter.startSession(sessionInput());
+    await waitFor(
+      () => events.some((e) => e.type === "command_started"),
+      5000,
+      "command running",
+    );
+    await adapter.interrupt();
+
+    const code = await exited;
+
+    expect(code).toBe(1);
+    expect(events.map((e) => e.type)).toEqual([
+      "agent_started",
+      "command_started",
+      "agent_interrupted",
+    ]);
+    expect(events[2]).toMatchObject({ reason: "interrupt", turnId: events[0]?.turnId });
+    expect(adapter.getState()).toBe("paused");
+  });
+
+  it("a steer records agent_interrupted for the running turn before the relaunch", async () => {
+    const adapter = new CodexAdapter({
+      binPath: FAKE_BIN,
+      env: { FAKE_CODEX_COMPLETE_ON_INTERRUPT: "1" },
+    });
+    openAdapters.push(adapter);
+    const { events } = collect(adapter);
+    const session = await adapter.startSession(sessionInput());
+    await waitFor(
+      () => events.some((e) => e.type === "command_started"),
+      5000,
+      "command running",
+    );
+    const status = await adapter.sendInstruction({
+      id: "steer-1",
+      sessionId: session.sessionId,
+      text: "use fetch instead",
+      mode: "steer",
+    });
+    expect(status).toBe("delivered");
+    await waitFor(
+      () => events.some((e) => e.type === "agent_completed"),
+      5000,
+      "relaunched turn completes",
+    );
+
+    const starts = events.filter((e) => e.type === "agent_started");
+    const interrupted = events.filter((e) => e.type === "agent_interrupted");
+    expect(starts).toHaveLength(2);
+    expect(interrupted).toHaveLength(1);
+    expect(interrupted[0]).toMatchObject({ reason: "steer", turnId: starts[0]?.turnId });
+    expect(events.indexOf(interrupted[0]!)).toBeLessThan(events.indexOf(starts[1]!));
+    expect(starts[1]?.turnId).not.toBe(starts[0]?.turnId);
+    expect(events.some((e) => e.type === "agent_failed")).toBe(false);
   });
 
   it("captures the codex thread id from thread.started", async () => {
@@ -251,7 +316,12 @@ describe("CodexAdapter PTY integration (fake codex binary)", () => {
 
     const code = await exited;
     expect(code).toBe(1);
-    await waitFor(() => adapter.getState() === "failed", 5000, "failed after interrupt");
+    await waitFor(
+      () => events.some((e) => e.type === "agent_interrupted"),
+      5000,
+      "agent_interrupted after interrupt",
+    );
+    expect(adapter.getState()).toBe("paused");
 
     const exitPromise = new Promise<number>((resolve) => {
       adapter.onExit((resumeCode) => resolve(resumeCode));
@@ -280,6 +350,8 @@ describe("CodexAdapter PTY integration (fake codex binary)", () => {
     }
     expect(events.filter((e) => e.type === "agent_started").length).toBe(2);
     expect(events.filter((e) => e.type === "agent_completed").length).toBe(1);
+    expect(events.filter((e) => e.type === "agent_interrupted").length).toBe(1);
+    expect(events.some((e) => e.type === "agent_failed")).toBe(false);
   });
 
   it("stop transitions to completed without emitting agent_failed", async () => {

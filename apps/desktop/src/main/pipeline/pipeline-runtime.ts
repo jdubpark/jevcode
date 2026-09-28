@@ -423,6 +423,18 @@ export class PipelineRuntime {
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
+    // D10: stopping a live session pauses it (resumable). Record why before
+    // `stopping` makes ingestRecord drop records.
+    const pausing =
+      session.agentState !== "completed" && session.agentState !== "failed";
+    if (pausing) {
+      this.ingestRecord(sessionId, {
+        type: "agent_interrupted",
+        sessionId,
+        reason: "stop",
+        ts: this.nowIso(),
+      });
+    }
     session.stopping = true;
     if (session.syncTimer !== null) {
       clearTimeout(session.syncTimer);
@@ -431,18 +443,20 @@ export class PipelineRuntime {
     await session.evidence?.stop();
     await session.adapter?.stop();
     this.sessions.delete(sessionId);
-    // Preserve a terminal state: a session that already failed or completed
-    // keeps that state instead of being rewritten to "completed".
-    const terminalState =
-      session.agentState === "failed" || session.agentState === "completed"
-        ? session.agentState
-        : "completed";
-    this.opts.db.setSessionState(sessionId, terminalState);
-    this.opts.db.setSessionEnded(sessionId);
-    this.opts.db.setExecutionClaim(sessionId, null);
+    if (pausing) {
+      // Paused, not ended: endedAt stays unset and the execution claim is
+      // kept, so the boot sweep keeps the session resumable for 24 h.
+      session.agentState = "paused";
+      this.opts.db.setSessionState(sessionId, "paused");
+    } else {
+      // A session that already failed or completed keeps that state.
+      this.opts.db.setSessionState(sessionId, session.agentState);
+      this.opts.db.setSessionEnded(sessionId);
+      this.opts.db.setExecutionClaim(sessionId, null);
+    }
     this.emitAgentState(session);
     this.emitSessionState(sessionId);
-    this.log(`session ${sessionId} stopped (state ${terminalState})`);
+    this.log(`session ${sessionId} stopped (state ${session.agentState})`);
   }
 
   async interrupt(sessionId: string): Promise<void> {
@@ -465,12 +479,16 @@ export class PipelineRuntime {
       this.opts.db.setSessionState(sessionId, "failed");
       this.opts.db.setSessionEnded(sessionId);
       this.opts.db.setExecutionClaim(sessionId, null);
-      this.opts.emit(MainToRendererChannels.agentEvent, {
+      const failed: NormalizedAgentEvent = {
         type: "agent_failed",
         sessionId,
         error: "resume budget exhausted",
         ts: this.nowIso(),
-      });
+      };
+      // Persist first: the trace must show why the session ended. Not through
+      // ingestRecord, which would rerun the terminal transition.
+      this.opts.db.appendAgentEvent(sessionId, failed);
+      this.opts.emit(MainToRendererChannels.agentEvent, failed);
       this.opts.terminal?.data(
         sessionId,
         "[agent] failed: resume budget exhausted",
@@ -783,6 +801,16 @@ export class PipelineRuntime {
           this.opts.db.setSessionState(session.sessionId, "failed");
           this.opts.db.setSessionEnded(session.sessionId);
           this.opts.db.setExecutionClaim(session.sessionId, null);
+          this.emitAgentState(session);
+          this.emitSessionState(session.sessionId);
+        }
+        break;
+      case "agent_interrupted":
+        // D10: interrupt and stop pause the session; it is never failed or
+        // ended. A steer relaunches the agent at once, so the state stays.
+        if (event.reason !== "steer" && session.agentState !== "paused") {
+          session.agentState = "paused";
+          this.opts.db.setSessionState(session.sessionId, "paused");
           this.emitAgentState(session);
           this.emitSessionState(session.sessionId);
         }
@@ -1302,6 +1330,12 @@ function formatAgentEventForTerminal(event: NormalizedAgentEvent): string | null
       return "[agent] completed";
     case "agent_failed":
       return `[agent] failed: ${event.error}`;
+    case "agent_interrupted":
+      return event.reason === "stop"
+        ? "[agent] stopped"
+        : event.reason === "steer"
+          ? "[agent] redirected"
+          : "[agent] paused";
     case "approval_requested":
       return `[approval] ${event.command}`;
     default:

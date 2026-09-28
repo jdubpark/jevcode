@@ -1013,6 +1013,9 @@ describe("PipelineRuntime stability fixes", () => {
       );
       await runtime.stopSession(sessionId);
       expect(db.getSession(sessionId)?.state).toBe("failed");
+      expect(
+        db.listAgentEvents(sessionId).some((event) => event.type === "agent_interrupted"),
+      ).toBe(false);
     } finally {
       db.close();
     }
@@ -1081,6 +1084,145 @@ describe("PipelineRuntime stability fixes", () => {
           ?.some((entry) => (entry as { state: string }).state === "failed"),
       ).toBe(true);
     } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+});
+
+describe("PipelineRuntime honest lifecycle (D10)", () => {
+  async function startScripted(
+    name: string,
+    entries: MockScriptEntry[],
+  ): Promise<{
+    db: JevcodeDb;
+    runtime: PipelineRuntime;
+    sessionId: string;
+    terminal: string[];
+  }> {
+    const dir = path.join(repoRoot, `apps/desktop/.test-tmp/${name}`);
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = `sess-${name}`;
+    db.upsertRepository({
+      id: "repo-lifecycle",
+      path: dir,
+      gitRoot: dir,
+      branch: "test",
+      baseCommit: "test",
+    });
+    db.createSession({ id: sessionId, repoId: "repo-lifecycle", prompt: "demo" });
+    const terminal: string[] = [];
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      terminal: {
+        data: (_sessionId, data) => {
+          terminal.push(data);
+        },
+        ensure: () => {},
+      },
+    });
+    await runtime.startSession({
+      sessionId,
+      repoId: "repo-lifecycle",
+      repoPath: dir,
+      prompt: "demo",
+      agentMode: "mock",
+      mockScript: { sessionId, repoPath: dir, cwd: dir, prompt: "demo", entries },
+    });
+    return { db, runtime, sessionId, terminal };
+  }
+
+  it("stopping a running session records one agent_interrupted and leaves it paused and resumable", async () => {
+    const { db, runtime, sessionId, terminal } = await startScripted("stop-pauses", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      // Drain the coordinator's debounced rebuild before the db closes.
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+
+      const events = db.listAgentEvents(sessionId);
+      const interrupted = events.filter((event) => event.type === "agent_interrupted");
+      expect(interrupted).toHaveLength(1);
+      expect(interrupted[0]).toMatchObject({ reason: "stop", sessionId });
+      expect(events.some((event) => event.type === "agent_failed")).toBe(false);
+      const stored = db.getSession(sessionId);
+      expect(stored?.state).toBe("paused");
+      expect(stored?.endedAt).toBeNull();
+      expect(stored?.executionClaimTs).not.toBeNull();
+      expect(terminal).toContain("[agent] stopped");
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+
+  it("an agent_interrupted from the adapter pauses the session without ending it", async () => {
+    const { db, runtime, sessionId } = await startScripted("interrupt-pauses", [
+      {
+        kind: "agent",
+        event: {
+          type: "agent_interrupted",
+          sessionId: "sess-interrupt-pauses",
+          reason: "interrupt",
+          ts: "2026-09-28T10:00:00.000Z",
+        },
+      },
+    ]);
+    try {
+      await waitFor(
+        () => db.getSession(sessionId)?.state === "paused",
+        8000,
+        "paused after agent_interrupted",
+      );
+      expect(db.getSession(sessionId)?.endedAt).toBeNull();
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+
+  it("a steer interruption keeps the session state while the agent relaunches", async () => {
+    const { db, runtime, sessionId } = await startScripted("steer-keeps-state", [
+      {
+        kind: "agent",
+        event: {
+          type: "agent_interrupted",
+          sessionId: "sess-steer-keeps-state",
+          reason: "steer",
+          ts: "2026-09-28T10:00:00.000Z",
+        },
+      },
+      {
+        kind: "agent",
+        event: {
+          type: "agent_message",
+          sessionId: "sess-steer-keeps-state",
+          role: "assistant",
+          text: "working on the steer",
+          ts: "2026-09-28T10:00:01.000Z",
+        },
+      },
+    ]);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_message"),
+        8000,
+        "message after steer",
+      );
+      expect(db.getSession(sessionId)?.state).not.toBe("paused");
+      expect(db.getSession(sessionId)?.state).not.toBe("failed");
+    } finally {
+      await runtime.syncAll();
       await runtime.stopSession(sessionId);
       db.close();
     }
