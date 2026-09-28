@@ -1,0 +1,54 @@
+.graphic {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+  flex: none;
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.xs { gap: 4px; }
+.sm { gap: 6px; }
+.md { gap: 8px; }
+
+.count {
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.added { fill: var(--tv-ink-2); }
+.removed { fill: none; stroke: var(--tv-ink-3); stroke-width: 1.5; }
+
+.files {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.path {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--tv-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pass { fill: var(--tv-good); }
+.fail { fill: var(--tv-bad); }
+.skip { fill: none; stroke: var(--tv-mark); stroke-width: 1; }
+
+.bar { fill: var(--tv-mark); }
+.hollow { fill: none; stroke: var(--tv-mark); stroke-width: 1.5; }
+.badDot { fill: var(--tv-bad); }
+.exitX { fill: none; stroke: var(--tv-ink-2); stroke-width: 1.5; stroke-linecap: round; }
