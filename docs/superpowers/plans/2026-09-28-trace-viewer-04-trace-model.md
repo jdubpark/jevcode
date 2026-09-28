@@ -23,8 +23,13 @@ Every name and type in index §2.6 is kept. These additions and changes were nee
 7. **The legacy-join test (Review Focus 1) asserts on chapters that cite fact ids.** Index §3 B-5 says "every chapter's `link` is `inferred`". A failure-only unit (api-break's stale-test unit cites only `fail_…`/`val_…` ids) has no content-hash join to lose, so it stays `observed`. `coverage.approximateJoins` is still `true` for every legacy fixture fold.
 8. **Clock and turn rules from spec §6.5/§6.6** (behavior only, no type change): only `agent_event` and `evidence_fact` times move the display clock and the first of them is the origin (`meta.startedAt` is only the fallback); `change_unit`, `decision`, `validation` and `jev_decision` rows inherit the clock and get `startTs = origin + t`. A turn closed by the next `agent_started` without a terminal event is `waiting` when a decision was answered in it (and the next turn is `resume`), else `interrupted` (next turn `steer`). Single-row steps have `durationMs: null`.
 9. **`pickGraphic` and `describeGraphic` live in `format.ts` (B-10), not `graphics.ts`.** Decision record R25 names `model/format.ts`. The tests stay in `graphics.test.ts`. There is no `src/model/graphics.ts`.
-10. **R25 UI-required fields** (consistency review, 2026-09-28). R25 puts them in "W0 model types and lane B", and the UI lanes C1a and C1b run in W1 beside this lane on W0's types. W0-6 therefore declares `Step.startMs`, `Turn.planStepId?`, `Turn.claimStepId?`, `Chapter.current`, `Chapter.noise`, `Chapter.validationStepIds`, `Finding.anchorStepId`, `Finding.claimStepId?`, `Finding.evidenceStepIds?`, `Finding.claimSpan?` and `DecisionDetail.answerSeq?`, and this lane fills each required field in the task that builds the object: `startMs` in B-3 (`sourceMs`, `createStep`, `toPublicStep`), `current`, `noise` (joined edits all lockfile or formatting-only, or the latest Pass A row did not surface the unit; `ChapterState.surfaceByUnit`) and `validationStepIds` in B-5, and `anchorStepId` in B-7 (every rule; `applySignals` clears `noise` on a chapter a finding names). Task B-12 derives the optional rest: `Turn.planStepId`/`claimStepId` (`markTurns`), the `claim_contradicted` fields (`matchSuccessClaim`), decision `target` and the absorbed decision answer. B-10 also takes the oauth `identity.ts` diff counts from the fixture row instead of a literal, because A1-9 reconciles fixture counts. Verified by replaying B-1 to B-12 from this file on the W0-6 types: every task typechecks and passes its tests, and ESLint reports nothing. With the amendments in item 11 the lane ends at 251 model tests.
+10. **R25 UI-required fields** (consistency review, 2026-09-28). R25 puts them in "W0 model types and lane B", and the UI lanes C1a and C1b run in W1 beside this lane on W0's types. W0-6 therefore declares `Step.startMs`, `Turn.planStepId?`, `Turn.claimStepId?`, `Chapter.current`, `Chapter.noise`, `Chapter.validationStepIds`, `Finding.anchorStepId`, `Finding.claimStepId?`, `Finding.evidenceStepIds?`, `Finding.claimSpan?` and `DecisionDetail.answerSeq?`, and this lane fills each required field in the task that builds the object: `startMs` in B-3 (`sourceMs`, `createStep`, `toPublicStep`), `current`, `noise` (joined edits all lockfile or formatting-only, or the latest Pass A row did not surface the unit; `ChapterState.surfaceByUnit`) and `validationStepIds` in B-5, and `anchorStepId` in B-7 (every rule; `applySignals` clears `noise` on a chapter a finding names). Task B-12 derives the optional rest: `Turn.planStepId`/`claimStepId` (`markTurns`), the `claim_contradicted` fields (`matchSuccessClaim`), decision `target` and the absorbed decision answer. B-10 also takes the oauth `identity.ts` diff counts from the fixture row instead of a literal, because A1-9 reconciles fixture counts. Verified by replaying B-1 to B-12 from this file on the W0-6 types: every task typechecks and passes its tests, and ESLint reports nothing. With the amendments in items 11 and 12 the lane ends at 275 model tests.
 11. **UI index amendments** (`docs/superpowers/plans/2026-09-28-trace-viewer-interfaces-ui.md` §1.4, 2026-09-28). The W0-6 amendment in UI index §1.2 declares `CommandDetail.outputTail?`, `TraceSession.originMs`, `Chapter.triad.clientKind?` and the reshaped `GraphicSpec` members `diff` (`files?`, `moreFiles?`), `duration` (`durationMs`, `running`, `status`, `end`), `claim` (`claim {text, span?, tMs}`, `observed {…, tMs}`) and `table` (`tables {name, role: "new" | "altered", columns: number}[]`, no `fks`). This lane fills them: B-1 adds `exitLabel` and `displayUntrusted`, and `truncateMiddle` and `stepHeadline` show bidi and control characters as `⟨U+XXXX⟩` tokens; B-2 pins the kind → lane table (`read` moves to `edits`); B-3 adds `TraceSession.originMs`, `CommandDetail.outputTail` and `FinalizeOptions.nowMs` (an open step at the live edge lasts `nowMs − startMs`); B-5 adds `triad.clientKind` and takes the triad from the unit's latest Pass A attention row (`ChapterState.attentionByUnit`); B-7 adds `FINDING_RULE_RANK` and `compareFindings` (spec §6.7 `FINDING_ORDER`); B-10's `pickGraphic` follows spec §7.12 `CHAPTER_GRAPHIC` (schema → table, architecture and api → flow, tests → the latest run's counts, answered decision → fork, else a diff list of the top 4 files) and emits the reshaped members. Decision `target`, the absorbed decision answer, `Chapter.noise`/`current`/`validationStepIds`, the `FindingDraft` claim fields and `matchSuccessClaim` were already built (B-5, B-7, B-12) and are unchanged.
+12. **Spec §16 "Plan follow-ups"** (2026-09-28). The four rows of that table that name this lane are resolved here; B-1 to B-12 were replayed from this file on the W0-6 state after the change (every task typechecks, passes its tests and lints clean):
+    - **B-2 anchored check pattern.** `CHECK_COMMAND` matches only at the head of `normalizeCommand(command)` (spec §6.6): `tsc`, `eslint` or `vite build`, bare or through `npx` or pnpm/npm/yarn (optionally with `run` or `exec`), or a pnpm/npm/yarn `typecheck`, `lint` or `build` script after `-r`, `-w`, `--filter x`, `--filter=x`, `-F x` or `--workspace x`. `commandKind` normalizes before it matches, and B-4's `testKind` calls `commandKind`. `ls build`, `grep -r build src`, `pnpm add eslint` and `git commit -m 'fix lint'` are plain commands, so their non-zero exits no longer read as failed checks that paint red and contradict a claim.
+    - **B-6 and B-7 info-only clamp rows.** A guardrail step whose clamps are all info (unknown ids included) carries no `guardrail` problem, raises no `guardrail_clamp` finding and is `lifecycle` noise (spec §6.6, §6.7). Routine `suppress_formatting` and `suppress_lockfile` rows therefore add no `n`/`N` stop and pin no step open. A warning or critical clamp still raises one finding at the most severe clamp.
+    - **B-7 claim rule.** `claim_contradicted` keeps the per-command comparison; see "Spec alignment notes", "Claim rule".
+    - **B-12 instruction dedupe** (spec §6.6). It lives in B-12, not B-3 or a new B-13, because its decision rule reuses B-12's answer absorption; B-12 also adds the two B-8 mutations spec §11 names ("a steer yields one instruction step", "a decision answered with an instruction yields no instruction step").
 
 ## Spec alignment notes
 
@@ -32,12 +37,14 @@ Points where the design spec's §6 text differs from what this lane builds. The 
 
 - **`finalize` options.** Spec §6.4 shows `finalize(state, {live, nowMs?, page})` and a `TraceMeta` input. The index and W0 fix `FinalizeOptions {live; state?; throughSeq?}` and `TraceSessionSummary`; this lane implements those plus `nowMs?` (UI index §1.4 B-3). `originMs` is a `TraceSession` field, not a `meta` field.
 - **Types named in spec §6.2.** W0-6 declares, and B-3, B-5, B-7 and B-12 derive, the ones decision record R25 and UI index §1.2 require: `Turn.planStepId`/`claimStepId`, `Chapter.current`/`noise`/`validationStepIds`/`triad.clientKind`, `Step.startMs`, `CommandDetail.outputTail`, `TraceSession.originMs`, and `Finding.anchorStepId`/`claimStepId`/`evidenceStepIds`/`claimSpan`. The type is named `Lane` (W0-6), not `LaneId`. `coverage.approximateChapters` and `hidden.total` are not in the decision record and are not built. The UI reads `coverage.approximateJoins` and `hidden.unreceived` instead.
-- **Decision-answer absorption** (spec §6.6, R25) is built in B-12: a user message whose next decision row answers or delegates an already-open decision joins that decision step (`DecisionDetail.answerSeq`), and its instruction step is removed. A user message that no answer follows stays an instruction step, and its headline reads the answer's `instruction:` line ("Continue with fail-open behavior.") instead of "decision:". The spec's instruction-dedupe rules (a steer echoed as the next `agent_started` prompt) are not built.
+- **Decision-answer absorption** (spec §6.6, R25) is built in B-12: a user message whose next decision row answers or delegates an already-open decision joins that decision step (`DecisionDetail.answerSeq`), and its instruction step is removed. A user message that no answer follows stays an instruction step, and its headline reads the answer's `instruction:` line ("Continue with fail-open behavior.") instead of "decision:".
+- **Instruction dedupe** (spec §6.6) is built in B-12. A user message whose trimmed text equals the prompt of the `agent_started` just before it (no other agent event between them) joins that instruction step, so a steer is one step whose `firstSeq` is the relaunch and whose `seqs` hold both rows. An `agent_started` whose trimmed prompt equals an earlier undelivered user message (a queued instruction) opens no instruction step: its seq joins that earlier step, which stays in the earlier turn's `stepIds`. A relaunch that delivers a decision answer loses its instruction step when the answer row lands: both of its seqs join the decision step, `answerSeq` names the echoed message, and `Turn.prompt` is the decision title; when the answer row comes first, the later relaunch's seq joins the decision step the same way. In every case a started turn's instruction item is the step whose `seqs` hold `turn.startSeq`.
 - **Chapter noise and attention** (B-5): a chapter is noise when it joins at least one edit and every joined edit is a lockfile or formatting-only change, or when the unit's latest Pass A row has `shouldSurface: false` (`ChapterState.surfaceByUnit`). A row counts as Pass A unless `pass === "B"`. `triad` takes importance, relevance, interruption and `clientKind` from the latest non-Pass-B row whose `output` parses with `AttentionDecisionSchema`, else the unit's own scores without `clientKind`.
 - **Edit split rule.** Spec: a repo observation after the turn's latest test or check opens a new edit step. This lane opens a new edit step when a `git_hunk` with new content arrives for a path whose latest edit step already holds a hunk. The git collector polls every 5 s, so under the spec rule a claim whose poll lands after a quick test would be left unobserved and raise a false `missing_evidence` (B-4 test "joins a git poll that lands after a test run to the claim it confirms").
 - **Duplicate polls** become their own edit step with noise `duplicate_poll` (spec: "adds only its seq"), so the step that holds the real change keeps a truthful `lastSeq`, and `recovery_arc` ignores them.
 - **Approximate window** (D11): edit steps on `unit.files` inside `[createdAt, updatedAt]` widened by 5 s (the git poll interval), and for a file with none there its latest earlier edit. The strict spec window joins nothing for decision units, whose `createdAt` is the decision time (oauth's linking unit).
-- **Claim lexicon and scope.** The claim is contradicted when the latest earlier run of any test or check command in the session failed (spec: in the same turn), because a claim made in a resumed turn without rerunning the tests still contradicts the last evidence. Completion words ("complete", "done", "finished") count only at the end of a clause. An unverified claim raises no gap.
+- **Claim rule (adopted 2026-09-28).** A claim is contradicted when, for any test or check command, that command's latest run before the claim in the session failed (`latestByTarget` in B-7); the finding cites the most recent such failed run. This is the rule the lane adopts, by the orchestrator's ruling of 2026-09-28. Spec §6.6 and its §16 B-7 row still compare with the single latest test or check step and call the per-command rule the §15 variant; the per-command rule is kept because it catches "tests failed, then lint passed, then 'all checks pass'", which the single-run rule misses (B-7 test "compares with the latest run of every command"). The oauth and api-break expectations are the same under both rules. The spec owner should align §6.6 and drop the B-7 row from §16. The scope is the session, so a claim made in a resumed turn without rerunning the tests still contradicts the last evidence. Completion words ("complete", "done", "finished") count only at the end of a clause. An unverified claim raises no gap.
+- **Info findings and noise.** Only the guardrail rule changes (spec §6.6, §6.7): a Jev row whose clamps are all info raises no finding and its step is `lifecycle` noise. `recovery_arc` is still an info finding that keeps the steps it names from collapsing, because spec §6.6 ("the close of a recovery arc carries a finding, so it is never noise") and W0-6's `Step.noise` contract ("Never set when problems or findingIds are non-empty") require it.
 - **Labels pinned by the index.** `formatDuration` (`2 m 05 s`, `1 h 02 m`) and `agentStateLabel` (WorkspaceHost's strings) follow index §2.6, not spec §6.8's examples, because B-11 swaps them into the live desktop UI.
 - **Chapter graphics** (B-10): a `CHAPTER_GRAPHIC` rule whose data is missing (a schema chapter without `schemaChanges`, an architecture or api chapter without edited files, a tests chapter without a joined test run) falls through to the next rule, so it ends at the fork or the diff list.
 - **Not in lane B:** `toneOf` (UI lane, `layout/tone.ts`), the `src/layout/**` lint block (UI lane).
@@ -128,7 +135,7 @@ All paths are under `packages/trace-viewer/` unless a path starts with `apps/`.
 | `src/model/fold-chapters.ts` | Change units to chapters, decision steps, guardrail and attention steps | B-5 (B-12 extends) |
 | `src/model/classify.ts` | Problems, `missing_evidence`, noise | B-6 |
 | `src/model/signals.ts` | Signal registry, the five v1 rules, coverage, finding assembly, `FINDING_RULE_RANK` and `compareFindings` | B-7 (B-12 extends) |
-| `src/model/fold.fixtures.test.ts`, `fold.mutations.test.ts` | Five-fixture assertions (three variants) and mutations | B-8 |
+| `src/model/fold.fixtures.test.ts`, `fold.mutations.test.ts` | Five-fixture assertions (three variants) and mutations | B-8 (B-12 extends both) |
 | `src/test-support/synthetic-rows.ts`, `src/model/fold.parity.test.ts`, `fold.bench.ts` | Synthetic session, parity property, budgets | B-9 |
 | `src/model/search.ts`, `lookup.ts`, `graphics.test.ts` | Step search, stable-id resolution; tests for the mini-graphic specs in `format.ts` | B-10 |
 | `src/model/index.ts` | Barrel: each task appends its export lines | B-1, B-2, B-3, B-7, B-10 |
@@ -810,7 +817,7 @@ git commit -m "feat(trace-viewer): add model label and duration formatters"
 **Interfaces:**
 - Consumes: B-1 `normalizeCommand(command: string): string`. From `@jevcode/contracts`: `EVENT_TYPES`, `type EventStoreType`, `TRACE_ROW_TYPES`, `type TraceRow`, `type TraceSessionSummary`, `type EvidenceFact`, `type EvidenceFactType`, `type NormalizedAgentEventType`, and the schemas `EvidenceFactSchema`, `NormalizedAgentEventSchema`, `DecisionSchema`, `ChangeUnitSchema`, `ValidationResultSchema`, `JevDecisionLogSchema`, `SemanticEventSchema`. From `./types.js`: `LANES`, `STEP_KINDS`, `type Lane`, `type Actor`, `type Severity`, `type StepKind`. From `@jevcode/semantic-core` (test-support only): `parseReplayLine(line: string): PipelineRecord | null` (zod-parses with the contracts schemas), `new PipelineCoordinator()` with `ingest(record)`, `flush()`, `snapshot(): { units: ChangeUnit[]; validations: ValidationResult[]; … }`, `factContentId(sessionId: string, record: unknown): string`.
 - Produces:
-  - `registry.ts`: `interface KindMeta { lane: Lane; actor: Actor; label: string }`; `KIND_META: { readonly [K in StepKind]: KindMeta }` with the lanes UI index §1.4 B-2 pins (instruction, approval, decision → `supervisor`; message, reasoning, tool, lifecycle → `agent`; command → `commands`; edit, read, dependency, revert → `edits`; test, check → `tests`; guardrail, attention → `jev`); `type RowDisposition = "consume" | "hidden"`; `ENVELOPE_RULES: { readonly [K in EventStoreType]: RowDisposition }`; `interface AgentEventRule { kind: StepKind; role: "start" | "complete" | "point" }`; `AGENT_EVENT_RULES: { readonly [K in NormalizedAgentEventType]: AgentEventRule }`; `interface FactRule { kind: StepKind; attach: "call" | "path" | "none" }`; `FACT_RULES: { readonly [K in EvidenceFactType]: FactRule }`; `interface ClampMeta { label: string; severity: Severity }`; `CLAMP_META: Readonly<Record<string, ClampMeta>>`; `clampMeta(id: string): ClampMeta`; additions `severityRank(severity: Severity): number`, `CHECK_COMMAND: RegExp`, `TEST_COMMAND: RegExp`, `commandKind(command: string): "check" | "test" | "command"`, `isLockfilePath(path: string): boolean`, `READ_TOOL: RegExp`.
+  - `registry.ts`: `interface KindMeta { lane: Lane; actor: Actor; label: string }`; `KIND_META: { readonly [K in StepKind]: KindMeta }` with the lanes UI index §1.4 B-2 pins (instruction, approval, decision → `supervisor`; message, reasoning, tool, lifecycle → `agent`; command → `commands`; edit, read, dependency, revert → `edits`; test, check → `tests`; guardrail, attention → `jev`); `type RowDisposition = "consume" | "hidden"`; `ENVELOPE_RULES: { readonly [K in EventStoreType]: RowDisposition }`; `interface AgentEventRule { kind: StepKind; role: "start" | "complete" | "point" }`; `AGENT_EVENT_RULES: { readonly [K in NormalizedAgentEventType]: AgentEventRule }`; `interface FactRule { kind: StepKind; attach: "call" | "path" | "none" }`; `FACT_RULES: { readonly [K in EvidenceFactType]: FactRule }`; `interface ClampMeta { label: string; severity: Severity }`; `CLAMP_META: Readonly<Record<string, ClampMeta>>`; `clampMeta(id: string): ClampMeta`; additions `severityRank(severity: Severity): number`, `CHECK_COMMAND: RegExp` (anchored at the head of a normalized command, spec §6.6), `TEST_COMMAND: RegExp`, `commandKind(command: string): "check" | "test" | "command"` (matches both patterns against `normalizeCommand(command)`), `isLockfilePath(path: string): boolean`, `READ_TOOL: RegExp`.
   - `rows.ts`: `interface PipelineRowOptions { factId?: (fact: EvidenceFact) => string; firstSeq?: number }`; `rowsFromPipelineRecords(records: readonly unknown[], options?: PipelineRowOptions): TraceRow[]`.
   - `test-support/fixture-rows.ts` (test-only): `FIXTURE_NAMES = ["oauth", "rate-limit", "schema-change", "api-break", "dep-change"] as const`; `type FixtureName`; `interface FixtureTrace { meta: TraceSessionSummary; rows: TraceRow[] }`; `loadFixtureTrace(name: FixtureName): FixtureTrace`; additions `fixtureEventsPath(name: FixtureName): string`, `fixtureLines(name: FixtureName): string[]`, `stripCaptureFields(rows: readonly TraceRow[]): TraceRow[]` (a pre-M1 session: no `turnId`, `callId`, `sourceCallId`, `factId`, `agentCallIds`), `addCaptureFields(rows: readonly TraceRow[]): TraceRow[]` (the A1-9 shape; keeps fields already present).
 
@@ -935,8 +942,24 @@ describe("command and path rules", () => {
     ["pnpm typecheck", "check"],
     ["pnpm lint && pnpm test", "check"],
     ["tsc --noEmit", "check"],
+    ["pnpm -r typecheck", "check"],
+    ["pnpm --filter x lint", "check"],
+    ["pnpm --filter=web build", "check"],
+    ["npm run build", "check"],
+    ["yarn lint", "check"],
+    ["npx eslint src", "check"],
+    ["pnpm exec tsc -p tsconfig.json", "check"],
+    ["npx vite build", "check"],
+    ["/bin/zsh -lc 'pnpm -r build'", "check"],
     ["cat tests/users.test.ts", "command"],
     ["pnpm add zod", "command"],
+    // Near misses: a check word that is not the command head (spec §6.6).
+    ["pnpm add eslint", "command"],
+    ["ls build", "command"],
+    ["grep -r build src", "command"],
+    ["git commit -m 'fix lint'", "command"],
+    ["cat tsconfig.json", "command"],
+    ["pnpm test -- --grep build", "test"],
   ])("%s is a %s", (command, kind) => {
     expect(commandKind(command)).toBe(kind);
   });
@@ -1051,6 +1074,7 @@ Create `packages/trace-viewer/src/model/registry.ts`:
 ```ts
 import type { EventStoreType, EvidenceFactType, NormalizedAgentEventType } from "@jevcode/contracts";
 
+import { normalizeCommand } from "./format.js";
 import type { Actor, Lane, Severity, StepKind } from "./types.js";
 
 // Exhaustive rule tables. The mapped types make a new contract variant or step
@@ -1179,16 +1203,29 @@ export function severityRank(severity: Severity): number {
 
 // ------------------------------------------------------------ command and path rules
 
-/** Type checks, linters and builds (R10). Checked before TEST_COMMAND. */
-export const CHECK_COMMAND = /\b(tsc|typecheck|lint|eslint|build)\b/;
+/** Workspace flags a package manager may take before a script or a binary: -r, -w, --filter x,
+ *  --filter=x, -F x, --workspace x. */
+const PM_FLAGS = String.raw`(?:\s+(?:-r|--recursive|-w|--workspace-root|(?:-F|--filter|--workspace)(?:=|\s+)\S+))*`;
+
+/** Type checks, linters and builds (R10, spec §6.6), matched at the head of normalizeCommand(command):
+ *  tsc, eslint or vite build, bare or through npx or pnpm/npm/yarn (optionally with run or exec), or
+ *  a pnpm/npm/yarn typecheck, lint or build script. Anchored, so "ls build", "grep -r build src"
+ *  (exit 1 on no match) and "pnpm add eslint" are not checks: a failed check paints red and can
+ *  contradict a claim. Checked before TEST_COMMAND. */
+export const CHECK_COMMAND = new RegExp(
+  String.raw`^(?:npx\s+|(?:pnpm|npm|yarn)${PM_FLAGS}\s+(?:(?:run|exec)\s+)?)?(?:tsc|eslint|vite build)\b` +
+    String.raw`|^(?:pnpm|npm|yarn)${PM_FLAGS}\s+(?:run\s+)?(?:typecheck|lint|build)\b`,
+);
 
 /** Test runners. A bare word "test" in a path (cat tests/a.test.ts) does not match. */
 export const TEST_COMMAND =
   /\b(?:vitest|jest|pytest|mocha)\b|\b(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?test\b|\b(?:go|cargo|deno)\s+test\b/;
 
+/** Classifies a raw command; both patterns see normalizeCommand(command) (a bash -lc wrapper unwrapped). */
 export function commandKind(command: string): "check" | "test" | "command" {
-  if (CHECK_COMMAND.test(command)) return "check";
-  if (TEST_COMMAND.test(command)) return "test";
+  const normalized = normalizeCommand(command);
+  if (CHECK_COMMAND.test(normalized)) return "check";
+  if (TEST_COMMAND.test(normalized)) return "test";
   return "command";
 }
 
@@ -1459,7 +1496,7 @@ export function addCaptureFields(rows: readonly TraceRow[]): TraceRow[] {
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/registry.test.ts src/model/rows.test.ts`
 
-Expected: `Test Files  2 passed (2)`, `Tests  26 passed (26)` (registry 17, rows 9).
+Expected: `Test Files  2 passed (2)`, `Tests  41 passed (41)` (registry 32, rows 9).
 
 If `rows.test.ts` fails with `Cannot find module '@jevcode/semantic-core'` or reports stale behavior, run `pnpm --filter @jevcode/semantic-core build` and rerun.
 
@@ -2984,14 +3021,14 @@ git commit -m "feat(trace-viewer): fold agent events into turns and paired steps
 - Modify: `packages/trace-viewer/src/model/fold.ts` (imports, `accumulate` switch, `finalize`), `packages/trace-viewer/src/model/fold-state.ts` (evidence state), `packages/trace-viewer/src/model/types.ts` (`TestDetail.resultSeq`, deviation 3)
 
 **Interfaces:**
-- Consumes: B-3 internals from `./fold-state.js`: `FoldState` (fields `steps`, `stepsByCallId`, `turns`, `capabilities`, `clock`), `TurnDraft` (`commands: Map<string, StepDraft>`, `edits: Map<string, StepDraft>`), `StepDraft`, `RowContext`, `createStep(state, turn, ctx, init)`, `addRowToStep(step, ctx, evidence)`, `currentTurn(state, ctx)`, `touchTurn(turn, ctx)`, `setKind(step, kind)`, `advanceClock`, `clockTs(clock, t, fallback)`. B-1 `normalizeCommand`, `truncateMiddle`. B-2 `CHECK_COMMAND`, `commandKind`. From `@jevcode/contracts`: `matchDestructive`, `type EvidenceFact` (`git_hunk.diff?: {hash; bytes; text?; truncated; redactions; withheld?: "secret_path" | "not_captured"}`, `command_executed.sourceCallId?`, `test_result.sourceCallId?`), `type ValidationResult`, `type TraceRow`. From `./types.js`: `fileStableId(path)`, `type DiffState`, `type Entity`, `type FileStableId`, `type Step`.
+- Consumes: B-3 internals from `./fold-state.js`: `FoldState` (fields `steps`, `stepsByCallId`, `turns`, `capabilities`, `clock`), `TurnDraft` (`commands: Map<string, StepDraft>`, `edits: Map<string, StepDraft>`), `StepDraft`, `RowContext`, `createStep(state, turn, ctx, init)`, `addRowToStep(step, ctx, evidence)`, `currentTurn(state, ctx)`, `touchTurn(turn, ctx)`, `setKind(step, kind)`, `advanceClock`, `clockTs(clock, t, fallback)`. B-1 `normalizeCommand`, `truncateMiddle`. B-2 `commandKind`. From `@jevcode/contracts`: `matchDestructive`, `type EvidenceFact` (`git_hunk.diff?: {hash; bytes; text?; truncated; redactions; withheld?: "secret_path" | "not_captured"}`, `command_executed.sourceCallId?`, `test_result.sourceCallId?`), `type ValidationResult`, `type TraceRow`. From `./types.js`: `fileStableId(path)`, `type DiffState`, `type Entity`, `type FileStableId`, `type Step`.
 - Produces:
   - `fold-evidence.ts` (internal): `foldEvidenceFact(state: FoldState, row: TraceRow, fact: EvidenceFact, ctx: RowContext): void`; `foldValidation(state: FoldState, validation: ValidationResult, ctx: RowContext): void`; `buildEntities(steps: readonly Step[], duplicates: ReadonlySet<string>): Entity[]` (also sets each edit step's `entityIds`).
   - `fold-state.ts`: `interface EvidenceState { readonly lastHunkKey: Map<string, string>; readonly hunkKeyByStep: Map<StepId, string>; readonly duplicates: Set<StepId>; readonly factSeqById: Map<string, number>; readonly stepByEvidenceSeq: Map<number, StepDraft>; readonly testRunByKey: Map<string, StepDraft>; readonly validationSeqById: Map<string, number> }` and `FoldState.evidence: EvidenceState`.
   - `types.ts`: `TestDetail.resultSeq?: number`.
   - `finalize` now returns `entities` (files only, in first-touch order); capabilities gain `test_results` and `fact_links`.
 
-Rules (R10): `command_executed` and `test_result` join the step whose `callId` equals `sourceCallId` (provenance unchanged), else the turn's latest step with the same normalized command (provenance `inferred`), else a new repo step. A `test_result` sets `tests` (at most 20 failures, `resultSeq`) and makes the step `test`, or `check` when the command matches `CHECK_COMMAND`; a validation of kind `typecheck`/`lint`/`build` makes it `check`. An agent claim and the repo facts for its path join one edit step; a `git_hunk` with new content (key `diff.hash`, else `added:removed`) after the path's step already holds one starts a new edit step; an identical `git_hunk` is a `duplicate_poll` step of its own. Validations join the step holding their `test_result` (same command and ts), else the latest same-command step in any turn; they only add evidence.
+Rules (R10): `command_executed` and `test_result` join the step whose `callId` equals `sourceCallId` (provenance unchanged), else the turn's latest step with the same normalized command (provenance `inferred`), else a new repo step. A `test_result` sets `tests` (at most 20 failures, `resultSeq`) and makes the step `test`, or `check` when `commandKind(command)` is `check`; a validation of kind `typecheck`/`lint`/`build` makes it `check`. An agent claim and the repo facts for its path join one edit step; a `git_hunk` with new content (key `diff.hash`, else `added:removed`) after the path's step already holds one starts a new edit step; an identical `git_hunk` is a `duplicate_poll` step of its own. Validations join the step holding their `test_result` (same command and ts), else the latest same-command step in any turn; they only add evidence.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3356,7 +3393,7 @@ import {
   type TurnDraft,
 } from "./fold-state.js";
 import { normalizeCommand, truncateMiddle } from "./format.js";
-import { CHECK_COMMAND, commandKind } from "./registry.js";
+import { commandKind } from "./registry.js";
 import { fileStableId, type DiffState, type Entity, type FileStableId, type Step } from "./types.js";
 
 type CallFact = Extract<EvidenceFact, { type: "command_executed" | "test_result" }>;
@@ -3366,7 +3403,7 @@ type HunkFact = Extract<EvidenceFact, { type: "git_hunk" }>;
 const MAX_FAILURES = 20;
 
 function testKind(command: string): "check" | "test" {
-  return CHECK_COMMAND.test(command) ? "check" : "test";
+  return commandKind(command) === "check" ? "check" : "test";
 }
 
 /** The step a command_executed or test_result belongs to: by sourceCallId (observed), else the
@@ -4651,9 +4688,9 @@ git commit -m "feat(trace-viewer): derive chapters, decision and guardrail steps
 
 **Interfaces:**
 - Consumes: B-1 `normalizeCommand`; B-2 `clampMeta`, `READ_TOOL`, `severityRank`; B-4 `FoldState.evidence.duplicates`; B-5 chapters. From `./types.js`: `PROBLEM_KINDS`, `type Chapter`, `type Gap`, `type NoiseReason`, `type ProblemKind`, `type Step`, `type Turn`.
-- Produces (internal): `problemsOf(step: Step): ProblemKind[]`; `applyProblems(steps: readonly Step[]): void`; `isTurnClosed(turn: Turn, lastTurnIndex: number, live: boolean): boolean`; `flagMissingEvidence(steps: readonly Step[], turns: readonly Turn[], live: boolean, gaps: Gap[]): void`; `interface NoiseContext { duplicates: ReadonlySet<string>; chapters: readonly Chapter[] }`; `noiseOf(step, context, lastRuns, superseded): NoiseReason | null`; `applyNoise(steps: readonly Step[], context: NoiseContext): void`.
+- Produces (internal): `hasSevereClamp(step: Step): boolean` (a warning or critical clamp; B-7 uses it); `problemsOf(step: Step): ProblemKind[]`; `applyProblems(steps: readonly Step[]): void`; `isTurnClosed(turn: Turn, lastTurnIndex: number, live: boolean): boolean`; `flagMissingEvidence(steps: readonly Step[], turns: readonly Turn[], live: boolean, gaps: Gap[]): void`; `interface NoiseContext { duplicates: ReadonlySet<string>; chapters: readonly Chapter[] }`; `noiseOf(step, context, lastRuns, superseded): NoiseReason | null`; `applyNoise(steps: readonly Step[], context: NoiseContext): void`.
 
-Rules (R10, R2): problems in `PROBLEM_KINDS` order: `exit_nonzero` (exit > 0 on command, test or check), `tests_failed`, `agent_failed` (failed lifecycle step), `destructive` (`command.destructivePattern`), `guardrail` (a clamp of warning or critical severity); `claim_contradicted` comes from B-7. `missing_evidence` only in closed turns (a terminal event, a later turn, or not live): a finished `test` step with no `test_result`, and an edit claim with no repo fact (that step becomes `unknown`). Noise: `read` (file reads and read-only tools), `lockfile`, `formatting`, `duplicate_poll`, `lifecycle` (lifecycle and attention steps), `superseded` (edits whose chapters are all superseded), `passing_test` (a passing run that is not its command's final run); never on a step with a problem or a finding.
+Rules (R10, R2): problems in `PROBLEM_KINDS` order: `exit_nonzero` (exit > 0 on command, test or check), `tests_failed`, `agent_failed` (failed lifecycle step), `destructive` (`command.destructivePattern`), `guardrail` (a clamp of warning or critical severity); `claim_contradicted` comes from B-7. `missing_evidence` only in closed turns (a terminal event, a later turn, or not live): a finished `test` step with no `test_result`, and an edit claim with no repo fact (that step becomes `unknown`). Noise: `read` (file reads and read-only tools), `lockfile`, `formatting`, `duplicate_poll`, `lifecycle` (lifecycle and attention steps, and guardrail steps whose clamps are all info, unknown ids included), `superseded` (edits whose chapters are all superseded), `passing_test` (a passing run that is not its command's final run); never on a step with a problem or a finding.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4752,6 +4789,18 @@ describe("noise", () => {
     expect(stepAt(session, failed)).toMatchObject({ problems: ["agent_failed"], noise: null });
   });
 
+  it("collapses a guardrail step whose clamps are all info and keeps one with a warning clamp", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const routine = b.jev({ id: "j1", clamps: ["suppress_formatting", "suppress_lockfile"] });
+    const unknown = b.jev({ id: "j2", clamps: ["guardrail.security"] });
+    const warning = b.jev({ id: "j3", clamps: ["suppress_lockfile", "security_path"] });
+    const session = fold(b);
+    expect(stepAt(session, routine)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
+    expect(stepAt(session, unknown)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
+    expect(stepAt(session, warning)).toMatchObject({ kind: "guardrail", problems: ["guardrail"], noise: null });
+  });
+
   it("collapses intermediate passing runs but never the final run or a failing run", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
@@ -4815,7 +4864,7 @@ describe("missing evidence", () => {
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/classify.test.ts`
 
-Expected: `Tests  7 failed (7)`; the first is `derives problems from exits, tests, lifecycle, destructive commands and guardrails` with `expected [] to deeply equal [ 'exit_nonzero' ]`.
+Expected: `Tests  8 failed (8)`; the first is `derives problems from exits, tests, lifecycle, destructive commands and guardrails` with `expected [] to deeply equal [ 'exit_nonzero' ]`.
 
 - [ ] **Step 3: Write the classifier**
 
@@ -4840,6 +4889,12 @@ function isRun(step: Step): boolean {
   return step.kind === "command" || step.kind === "test" || step.kind === "check";
 }
 
+/** A guardrail step with a warning or critical clamp (CLAMP_META; unknown ids are info). Only these
+ *  carry the guardrail problem and a guardrail_clamp finding; an info-only step is lifecycle noise. */
+export function hasSevereClamp(step: Step): boolean {
+  return (step.guardrail?.clampIds ?? []).some((id) => severityRank(clampMeta(id).severity) >= severityRank("warning"));
+}
+
 /** Rule-derived problems of one step. claim_contradicted comes from the claim_contradicted signal. */
 export function problemsOf(step: Step): ProblemKind[] {
   const found = new Set<ProblemKind>();
@@ -4848,12 +4903,7 @@ export function problemsOf(step: Step): ProblemKind[] {
   if (step.tests !== undefined && step.tests.failed > 0) found.add("tests_failed");
   if (step.kind === "lifecycle" && step.status === "failed") found.add("agent_failed");
   if (step.command?.destructivePattern !== undefined) found.add("destructive");
-  if (
-    step.kind === "guardrail" &&
-    (step.guardrail?.clampIds ?? []).some((id) => severityRank(clampMeta(id).severity) >= severityRank("warning"))
-  ) {
-    found.add("guardrail");
-  }
+  if (step.kind === "guardrail" && hasSevereClamp(step)) found.add("guardrail");
   if (step.problems.includes("claim_contradicted")) found.add("claim_contradicted");
   return PROBLEM_KINDS.filter((kind) => found.has(kind));
 }
@@ -4924,6 +4974,9 @@ export function noiseOf(step: Step, context: NoiseContext, lastRuns: ReadonlyMap
     case "lifecycle":
     case "attention":
       return "lifecycle";
+    case "guardrail":
+      // Routine suppress_formatting and suppress_lockfile rows collapse (spec §6.6, §6.7).
+      return hasSevereClamp(step) ? null : "lifecycle";
     case "test":
     case "check": {
       if (step.status !== "ok" || step.target === undefined) return null;
@@ -4986,7 +5039,7 @@ The B-3 `fold.test.ts` cases "maps exit codes" and "interrupted turn leaves the 
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model`
 
-Expected: no failures; `src/model/classify.test.ts (7 tests)` is listed. The lane-B files hold 125 tests at this point; W0's `types.test.ts` adds its own.
+Expected: no failures; `src/model/classify.test.ts (8 tests)` is listed. The lane-B files hold 141 tests at this point; W0's `types.test.ts` adds its own.
 
 Run: `pnpm --filter @jevcode/trace-viewer typecheck`
 
@@ -5022,11 +5075,11 @@ git commit -m "feat(trace-viewer): classify problems, noise and missing evidence
 - Modify: `packages/trace-viewer/src/model/fold.ts` (imports, `coverageOf` removed, end of `finalize`), `packages/trace-viewer/src/model/index.ts` (append one line)
 
 **Interfaces:**
-- Consumes: B-1 `normalizeCommand`; B-2 `clampMeta`, `severityRank`; B-4 `TestDetail.resultSeq`; B-3 to B-6 the public `Step`, `Turn`, `Chapter` built by `finalize` (steps sorted by `firstSeq`; `step.noise` already set). From `./types.js`: `CAPABILITIES`, `SIGNAL_IDS`, `findingStableId(ruleId, ruleVersion, anchorSeq)`, `unitStableId`, and the types `Capability`, `ClaimObservation`, `Coverage`, `Finding`, `Severity`, `SignalCoverage`, `SignalId`, `SignalMeta`, `Step`, `StepId`, `TraceSession`, `UnitStableId`.
+- Consumes: B-1 `normalizeCommand`; B-2 `clampMeta`, `severityRank`; B-4 `TestDetail.resultSeq`; B-6 `hasSevereClamp(step)`; B-3 to B-6 the public `Step`, `Turn`, `Chapter` built by `finalize` (steps sorted by `firstSeq`; `step.noise` already set). From `./types.js`: `CAPABILITIES`, `SIGNAL_IDS`, `findingStableId(ruleId, ruleVersion, anchorSeq)`, `unitStableId`, and the types `Capability`, `ClaimObservation`, `Coverage`, `Finding`, `Severity`, `SignalCoverage`, `SignalId`, `SignalMeta`, `Step`, `StepId`, `TraceSession`, `UnitStableId`.
 - Produces (exported from `@jevcode/trace-viewer/model`, index §2.6): `interface SignalInput { session: Omit<TraceSession, "findings" | "coverage"> }`; `interface FindingDraft { anchorSeq; anchorStepId; severity; headline; reason; stepIds; chapterIds; evidenceSeqs; claim?; claimStepId?; evidenceStepIds?; claimSpan?; matchedPattern?; clampId? }` (R25: every rule sets `anchorStepId`, one of its `stepIds`; B-12 sets the three claim fields); `interface SignalRule extends SignalMeta { evaluate(input: SignalInput): FindingDraft[] }`; `SIGNALS: { readonly [K in SignalId]: SignalRule & { readonly id: K } }`; `signalMeta(id: SignalId): SignalMeta`; additions `isSuccessClaim(text: string): boolean`, `computeCoverage(capabilities: ReadonlySet<Capability>, approximateJoins: boolean, inferredSteps: number): Coverage`, `applySignals(input: SignalInput, coverage: Coverage): Finding[]`; UI index §1.4 B-7: `FINDING_RULE_RANK: { readonly [K in SignalId]: number }` (`claim_contradicted` 0, `destructive_command` 1, `failing_tests` 2, `guardrail_clamp` 3, `recovery_arc` 4) and `compareFindings(a: Finding, b: Finding): number` (severity critical > warning > info, then `FINDING_RULE_RANK`, then `anchorSeq` ascending, then `id`; spec §6.7 `FINDING_ORDER`).
 - `finalize` now returns `findings` sorted by `(anchorSeq, id)` (R8) and real `coverage`; the UI sorts a copy with `compareFindings` for the initial selection and a spine row's finding. Only active signals are evaluated; each finding un-collapses the steps it names, and a contradicted claim step gains the `claim_contradicted` problem. Every finding's `anchorStepId` names the step whose `seqs` hold its `anchorSeq`.
 
-Rules (R11; order per spec §6.7 `FINDING_ORDER` through `compareFindings`): `claim_contradicted` (critical; anchor = the claim step; cites the failed run's `test_result` seq and the claim seq), `failing_tests` (warning, critical when that command's final run failed; anchor = the `test_result` seq), `destructive_command` (critical; `matchDestructive`), `guardrail_clamp` (one finding per clamped Jev row; severity and headline from the most severe clamp; unknown ids are info), `recovery_arc` (info; fail, then an edit that is not a duplicate poll, then the same command passes; anchor = the passing run).
+Rules (R11; order per spec §6.7 `FINDING_ORDER` through `compareFindings`): `claim_contradicted` (critical; the claim is contradicted when any test or check command's latest run before it failed, the adopted per-command rule in "Spec alignment notes"; anchor = the claim step; cites the most recent such failed run's `test_result` seq and the claim seq), `failing_tests` (warning, critical when that command's final run failed; anchor = the `test_result` seq), `destructive_command` (critical; `matchDestructive`), `guardrail_clamp` (one finding per Jev row with a warning or critical clamp; severity and headline from the most severe clamp; a row whose clamps are all info, unknown ids included, raises none, and B-6 makes its step `lifecycle` noise), `recovery_arc` (info; fail, then an edit that is not a duplicate poll, then the same command passes; anchor = the passing run).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -5147,6 +5200,34 @@ describe("claim_contradicted", () => {
     expect(findingsOf(fold(fixed), "claim_contradicted")).toEqual([]);
   });
 
+  it("compares with the latest run of every command, so a later passing check does not hide a failed test run", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const tests = testRun(b, 14, 1);
+    b.agent({ type: "command_started", command: "pnpm lint" });
+    b.agent({ type: "command_completed", command: "pnpm lint", exitCode: 0, stdout: "", stderr: "" });
+    const claim = b.agent({ type: "agent_message", role: "assistant", text: "All checks pass." });
+    const [finding] = findingsOf(fold(b), "claim_contradicted");
+    expect(finding).toMatchObject({
+      anchorSeq: claim,
+      evidenceSeqs: [tests.result, claim],
+      stepIds: [`step:${tests.start}`, `step:${claim}`],
+    });
+    expect(finding?.claim?.observed).toMatchObject({ command: "pnpm test", failed: 1 });
+  });
+
+  it("does not count a failed command that only mentions a check word as a failed check", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    testRun(b, 5, 0);
+    const grep = b.agent({ type: "command_started", command: "grep -r build src" });
+    b.agent({ type: "command_completed", command: "grep -r build src", exitCode: 1, stdout: "", stderr: "" });
+    b.agent({ type: "agent_message", role: "assistant", text: "All checks pass." });
+    const session = fold(b);
+    expect(session.steps.find((step) => step.firstSeq === grep)).toMatchObject({ kind: "command", problems: ["exit_nonzero"] });
+    expect(findingsOf(session, "claim_contradicted")).toEqual([]);
+  });
+
   it("fires on oauth and api-break and not on the green fixtures", () => {
     const fired = (name: "oauth" | "api-break" | "rate-limit" | "schema-change" | "dep-change") => {
       const trace = loadFixtureTrace(name);
@@ -5205,20 +5286,40 @@ describe("destructive_command", () => {
 });
 
 describe("guardrail_clamp", () => {
-  it("takes the most severe clamp and treats an unknown clamp id as info", () => {
+  it("raises one finding per row at its most severe clamp", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     const severe = b.jev({ id: "j1", changeUnitId: "cu_1", clamps: ["suppress_lockfile", "destructive_command"] });
-    const unknown = b.jev({ id: "j2", changeUnitId: "cu_1", clamps: ["guardrail.security"] });
+    const warning = b.jev({ id: "j2", changeUnitId: "cu_1", clamps: ["guardrail.security", "public_api"] });
     b.unit({ id: "cu_1", files: [] });
     const session = fold(b);
     const findings = findingsOf(session, "guardrail_clamp");
     expect(findings.map((finding) => [finding.anchorSeq, finding.severity, finding.clampId, finding.headline])).toEqual([
       [severe, "critical", "destructive_command", "Destructive command"],
-      [unknown, "info", "guardrail.security", "guardrail.security"],
+      [warning, "warning", "public_api", "Public API change kept visible"],
     ]);
     expect(findings[0]?.chapterIds).toEqual(["unit:cu_1"]);
     expect(session.chapters[0]?.findingIds).toEqual(findings.map((finding) => finding.id));
+  });
+
+  it("raises none for a row whose clamps are all info, including an unknown id, and lets its step collapse", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const routine = b.jev({ id: "j1", changeUnitId: "cu_1", clamps: ["suppress_formatting", "suppress_lockfile"] });
+    const unknown = b.jev({ id: "j2", changeUnitId: "cu_1", clamps: ["guardrail.security"] });
+    b.unit({ id: "cu_1", files: [] });
+    const session = fold(b);
+    expect(session.coverage.signals).toContainEqual({ id: "guardrail_clamp", active: true, missing: [] });
+    expect(findingsOf(session, "guardrail_clamp")).toEqual([]);
+    for (const seq of [routine, unknown]) {
+      expect(session.steps.find((step) => step.firstSeq === seq)).toMatchObject({
+        kind: "guardrail",
+        problems: [],
+        findingIds: [],
+        noise: "lifecycle",
+      });
+    }
+    expect(session.chapters[0]?.findingIds).toEqual([]);
   });
 });
 
@@ -5348,6 +5449,7 @@ Expected: FAIL, `Error: Cannot find module './signals.js' imported from '…/src
 Create `packages/trace-viewer/src/model/signals.ts`:
 
 ```ts
+import { hasSevereClamp } from "./classify.js";
 import { normalizeCommand } from "./format.js";
 import { clampMeta, severityRank } from "./registry.js";
 import {
@@ -5592,15 +5694,15 @@ const guardrailClamp: SignalRule & { readonly id: "guardrail_clamp" } = {
   severity: "info",
   title: "Guardrail clamp",
   rationale:
-    "Jev's guardrails overrode a model value for a change unit. Severity follows the clamp (destructive_command critical; security, schema, public API and failed-unit clamps warning; others info).",
+    "Jev's guardrails overrode a model value for a change unit. One finding per guardrail row with a warning or critical clamp, at the most severe clamp's severity (destructive_command critical; security, schema, public API and failed-unit clamps warning). Rows whose clamps are all info, including ids this build does not know, raise none and collapse as lifecycle noise.",
   knownFalsePositives: [
     "Before M1c, suppression rows were logged as clientKind \"degrade\" with confidence 1 (apps/desktop/src/main/pipeline/jev-stage.ts:146-160), so they read as rule-only.",
-    "Clamp ids this build does not know, such as \"guardrail.security\" in old rows, are shown as info.",
+    "The security-path patterns match /token/i in tokenizer.ts and \\.env in .env.example (packages/jev-router/src/patterns.ts:11-19).",
   ],
   requires: ["jev_decisions"],
   evaluate({ session }) {
     return session.steps
-      .filter((step) => step.kind === "guardrail" && step.guardrail !== undefined)
+      .filter((step) => step.kind === "guardrail" && step.guardrail !== undefined && hasSevereClamp(step))
       .map((step) => {
         const clampIds = step.guardrail?.clampIds ?? [];
         let top = clampIds[0] ?? "";
@@ -5869,7 +5971,7 @@ Replace it with:
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model`
 
-Expected: no failures; `src/model/signals.test.ts (28 tests)` is listed, and `fold.test.ts`, `fold-evidence.test.ts`, `fold-chapters.test.ts` and `classify.test.ts` still pass (153 lane-B tests; W0's `types.test.ts` adds its own).
+Expected: no failures; `src/model/signals.test.ts (31 tests)` is listed, and `fold.test.ts`, `fold-evidence.test.ts`, `fold-chapters.test.ts` and `classify.test.ts` still pass (172 lane-B tests; W0's `types.test.ts` adds its own).
 
 - [ ] **Step 6: Export from the model barrel**
 
@@ -7316,7 +7418,7 @@ Expected: exits 0.
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model`
 
-Expected: no failures; 234 tests from this lane plus W0's `types.test.ts`.
+Expected: no failures; 253 tests from this lane plus W0's `types.test.ts`.
 
 - [ ] **Step 8: Root checks**
 
@@ -7548,25 +7650,27 @@ git commit -m "refactor(desktop): use trace-viewer model labels in WorkspaceHost
 
 ---
 
-### Task B-12: UI-required model fields (R25): turn plan and claim, claim fields, decision answers
+### Task B-12: UI-required model fields (R25): turn plan and claim, claim fields, decision answers, instruction dedupe
 
-Decision record R25 lists model fields the M4 UI needs and puts them in "W0 model types and lane B". W0-6 declares all of them in `types.ts`. Lane B derives them where each object is built: `Step.startMs` in B-3 (`createStep`, `toPublicStep`), `Chapter.current`, `Chapter.noise` and `Chapter.validationStepIds` in B-5 (`buildChapters`), `Finding.anchorStepId` in B-7 (every rule), `KIND_META[kind].lane` in B-2, `Chapter.evidenceLinks` in B-5 and `pickGraphic`/`describeGraphic` in `format.ts` in B-10. This task derives the optional rest: `Turn.planStepId`, `Turn.claimStepId`, the `claim_contradicted` fields `claimStepId`, `evidenceStepIds` and `claimSpan`, decision `target` and the absorbed decision answer (`DecisionDetail.answerSeq`). Its test file also pins the fields B-3, B-5 and B-7 derive.
+Decision record R25 lists model fields the M4 UI needs and puts them in "W0 model types and lane B". W0-6 declares all of them in `types.ts`. Lane B derives them where each object is built: `Step.startMs` in B-3 (`createStep`, `toPublicStep`), `Chapter.current`, `Chapter.noise` and `Chapter.validationStepIds` in B-5 (`buildChapters`), `Finding.anchorStepId` in B-7 (every rule), `KIND_META[kind].lane` in B-2, `Chapter.evidenceLinks` in B-5 and `pickGraphic`/`describeGraphic` in `format.ts` in B-10. This task derives the optional rest: `Turn.planStepId`, `Turn.claimStepId`, the `claim_contradicted` fields `claimStepId`, `evidenceStepIds` and `claimSpan`, decision `target` and the absorbed decision answer (`DecisionDetail.answerSeq`). It also builds spec §6.6 "Instruction dedupe" (a §16 plan follow-up), because a relaunch that delivers a decision answer is undone by the same absorption. Its test file also pins the fields B-3, B-5 and B-7 derive.
 
 **Files:**
 - Create: `packages/trace-viewer/src/model/ui-fields.test.ts`
-- Modify: `packages/trace-viewer/src/model/fold-state.ts` (`FoldState.pendingAnswer`, `removeStep`)
-- Modify: `packages/trace-viewer/src/model/fold-agent.ts` (a user message becomes the pending decision answer)
-- Modify: `packages/trace-viewer/src/model/fold-chapters.ts` (answer absorption, decision `target`)
+- Modify: `packages/trace-viewer/src/model/fold-state.ts` (`PendingAnswer`, `FoldState.pendingAnswer`, `FoldState.undelivered`, `FoldState.answeredPrompts`, `TurnDraft.instruction`, `removeStep`)
+- Modify: `packages/trace-viewer/src/model/fold-agent.ts` (a user message becomes the pending decision answer; `deliverInstruction` and the steer echo)
+- Modify: `packages/trace-viewer/src/model/fold-chapters.ts` (answer absorption, including a relaunch's instruction step; decision `target`)
 - Modify: `packages/trace-viewer/src/model/signals.ts` (`matchSuccessClaim`, `isPlanText`, `markTurns`; `claim_contradicted` checks only `Turn.claimStepId` and sets `claimStepId`, `evidenceStepIds`, `claimSpan`)
 - Modify: `packages/trace-viewer/src/model/fold.ts` (`markTurns` call in `finalize`)
 - Modify: `packages/trace-viewer/src/model/fold-chapters.test.ts`, `packages/trace-viewer/src/model/fold.fixtures.test.ts` (two assertions that pinned the pre-R25 decision step; the oauth and api-break claim fields in every fixture variant)
+- Modify: `packages/trace-viewer/src/model/fold.mutations.test.ts` (spec §11's two instruction-dedupe mutations)
 
 **Interfaces:**
-- Consumes: W0-6 `types.ts` R25 fields (`Step.startMs`, `Turn.planStepId?`, `Turn.claimStepId?`, `Chapter.current`, `Chapter.noise`, `Chapter.validationStepIds`, `Finding.anchorStepId`, `Finding.claimStepId?`, `Finding.evidenceStepIds?`, `Finding.claimSpan?: [number, number]`, `DecisionDetail.answerSeq?`); B-3 `fold-state.ts` (`FoldState`, `StepDraft`, `TurnDraft.stepIds: StepId[]`, `createStep(state, turn, ctx, init: StepInit): StepDraft`); B-5 `foldDecision(state, decision: Decision, ctx): void`, `ChapterState.decisionSteps: Map<string, StepDraft>`; B-7 `interface FindingDraft` (already carries `anchorStepId`, `claimStepId?`, `evidenceStepIds?`, `claimSpan?`), `SIGNALS`, `isSuccessClaim(text: string): boolean`; test support `TraceBuilder`, `testMeta()`, `loadFixtureTrace(name)`.
+- Consumes: W0-6 `types.ts` R25 fields (`Step.startMs`, `Turn.planStepId?`, `Turn.claimStepId?`, `Chapter.current`, `Chapter.noise`, `Chapter.validationStepIds`, `Finding.anchorStepId`, `Finding.claimStepId?`, `Finding.evidenceStepIds?`, `Finding.claimSpan?: [number, number]`, `DecisionDetail.answerSeq?`); B-3 `fold-state.ts` (`FoldState`, `StepDraft`, `TurnDraft.stepIds: StepId[]`, `TurnDraft.lastAgentEvent`, `createStep(state, turn, ctx, init: StepInit): StepDraft`, `addRowToStep(step, ctx, evidence)`); B-5 `foldDecision(state, decision: Decision, ctx): void`, `ChapterState.decisionSteps: Map<string, StepDraft>`; B-7 `interface FindingDraft` (already carries `anchorStepId`, `claimStepId?`, `evidenceStepIds?`, `claimSpan?`), `SIGNALS`, `isSuccessClaim(text: string): boolean`; test support `TraceBuilder`, `testMeta()`, `loadFixtureTrace(name)`.
 - Produces (exported from `@jevcode/trace-viewer/model`; index §2.6 carries the same text):
   - `Turn.planStepId`: the first assistant message before the turn's first edit that starts with "Plan" or lists at least two items. `Turn.claimStepId`: the turn's last success claim; `claim_contradicted` checks only this step.
   - `claim_contradicted` findings carry `claimStepId` (the claim step, equal to `anchorStepId`), `evidenceStepIds` (the failed run) and `claimSpan`: `[start, end)` in UTF-16 code units of the first non-negated success phrase ("all checks pass"), else of a clause-final completion word ("complete").
   - Decision steps: `target` = `Decision.id`. A user `agent_message` whose next decision row answers or delegates an already-open decision is absorbed: its instruction step is removed, its seq joins the decision step's `seqs`, and `DecisionDetail.answerSeq` names it. The decision step keeps `step:<firstSeq>`.
+  - Instruction dedupe (spec §6.6): a user message whose trimmed text equals the prompt of the `agent_started` just before it (no other agent event between) joins that instruction step (a steer is one step, `firstSeq` = the relaunch, `seqs` = both rows). An `agent_started` whose trimmed prompt equals an earlier undelivered user message opens no instruction step; its seq joins that message's step. A relaunch that delivers a decision answer ends with no instruction step: when the answer row lands, the relaunch's step (relaunch and echo) is absorbed into the decision step, `answerSeq` is the echo, and `Turn.prompt` is the decision title; a relaunch after the answer row adds its seq to the decision step and takes the title too. A started turn's instruction item is the step whose `seqs` hold `turn.startSeq`.
   - `signals.ts` additions: `matchSuccessClaim(text: string): [number, number] | null`, `isPlanText(text: string): boolean`, `markTurns(turns: readonly Turn[], stepById: ReadonlyMap<StepId, Step>): void`.
 
 - [ ] **Step 1: Write the failing test**
@@ -7577,7 +7681,7 @@ Create `packages/trace-viewer/src/model/ui-fields.test.ts`:
 import { describe, expect, it } from "vitest";
 
 import { loadFixtureTrace } from "../test-support/fixture-rows.js";
-import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
+import { TraceBuilder, testMeta, type DecisionInput } from "../test-support/trace-builder.js";
 import { foldRows } from "./fold.js";
 import { pickGraphic } from "./format.js";
 import { isPlanText, matchSuccessClaim } from "./signals.js";
@@ -7742,6 +7846,72 @@ describe("decision steps", () => {
   });
 });
 
+describe("instruction dedupe (spec §6.6)", () => {
+  const answer = "decision:\n  policy: b\n\ninstruction:\n  Use B.";
+  const answeredRow: DecisionInput = {
+    id: "dec-1",
+    title: "Linking policy",
+    status: "answered",
+    answer: { decisionId: "dec-1", decision: { policy: "b" }, evidence: [] },
+  };
+
+  it("folds a steer's echoed user message into its relaunch's instruction step", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add the route." });
+    b.agent({ type: "agent_message", role: "assistant", text: "Working on it." });
+    b.agent({ type: "agent_interrupted", reason: "steer" });
+    const relaunch = b.agent({ type: "agent_started", prompt: "Use the v2 API instead." });
+    const echo = b.agent({ type: "agent_message", role: "user", text: "Use the v2 API instead.\n" });
+    b.agent({ type: "agent_message", role: "assistant", text: "Switching to v2." });
+    // The same words after the agent has acted are a new instruction.
+    const again = b.agent({ type: "agent_message", role: "user", text: "Use the v2 API instead." });
+    const session = fold(b);
+    expect(session.steps.filter((step) => step.kind === "instruction").map((step) => step.seqs)).toEqual([[1], [relaunch, echo], [again]]);
+    expect(holding(session, echo)).toMatchObject({ id: `step:${relaunch}`, firstSeq: relaunch, lastSeq: echo, turnIndex: 1 });
+    expect(session.turns[1]).toMatchObject({ trigger: "steer", startSeq: relaunch, prompt: "Use the v2 API instead." });
+  });
+
+  it("keeps a queued instruction as the instruction item of the turn that delivers it", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add the route." });
+    const queued = b.agent({ type: "agent_message", role: "user", text: "Then add a test." });
+    b.agent({ type: "agent_completed" });
+    const relaunch = b.agent({ type: "agent_started", prompt: "Then add a test." });
+    const session = fold(b);
+    expect(session.steps.filter((step) => step.kind === "instruction").map((step) => step.seqs)).toEqual([[1], [queued, relaunch]]);
+    // A turn's instruction item is the step holding its startSeq.
+    expect(holding(session, relaunch)).toMatchObject({ id: `step:${queued}`, turnIndex: 0 });
+    expect(session.turns[1]).toMatchObject({ trigger: "resume", startSeq: relaunch, prompt: "Then add a test." });
+  });
+
+  it("opens a decision relaunch's turn without an instruction step, whichever row comes first", () => {
+    // sendDecision relaunches with the answer, echoes it, then the answer row lands.
+    const live = new TraceBuilder();
+    live.agent({ type: "agent_started", prompt: "p" });
+    const open = live.decision({ id: "dec-1", title: "Linking policy" });
+    const relaunch = live.agent({ type: "agent_started", prompt: answer });
+    const echo = live.agent({ type: "agent_message", role: "user", text: answer });
+    const answered = live.decision(answeredRow);
+    const first = fold(live);
+    expect(first.steps.filter((step) => step.kind === "instruction").map((step) => step.firstSeq)).toEqual([1]);
+    expect(holding(first, relaunch)).toMatchObject({ id: `step:${open}`, kind: "decision", seqs: [open, relaunch, echo, answered] });
+    expect(holding(first, relaunch)?.decision?.answerSeq).toBe(echo);
+    expect(first.turns[1]).toMatchObject({ startSeq: relaunch, prompt: "Linking policy" });
+
+    // The answer row lands before a relaunch that delivers the same text.
+    const late = new TraceBuilder();
+    late.agent({ type: "agent_started", prompt: "p" });
+    const open2 = late.decision({ id: "dec-1", title: "Linking policy" });
+    const message = late.agent({ type: "agent_message", role: "user", text: answer });
+    const answered2 = late.decision(answeredRow);
+    const relaunch2 = late.agent({ type: "agent_started", prompt: answer });
+    const second = fold(late);
+    expect(second.steps.filter((step) => step.kind === "instruction").map((step) => step.firstSeq)).toEqual([1]);
+    expect(holding(second, relaunch2)).toMatchObject({ id: `step:${open2}`, seqs: [open2, message, answered2, relaunch2] });
+    expect(second.turns[1]).toMatchObject({ startSeq: relaunch2, prompt: "Linking policy" });
+  });
+});
+
 describe("Finding.anchorStepId and the claim fields", () => {
   it("pins oauth's contradiction to its claim and the failed run, with the claim span", () => {
     const trace = loadFixtureTrace("oauth");
@@ -7785,9 +7955,61 @@ describe("Finding.anchorStepId and the claim fields", () => {
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/ui-fields.test.ts`
 
-Expected: FAIL, `Tests  10 failed | 7 passed (17)`. The failures include `TypeError: matchSuccessClaim is not a function` and `TypeError: isPlanText is not a function`. The seven passing cases pin fields B-3, B-5 and B-7 already derive (`startMs`, `current`, `noise`, `validationStepIds`, `anchorStepId`) and two near misses ("leaves both unset when no message qualifies", "keeps a user message that no answer follows as an instruction"); they must stay green.
+Expected: FAIL, `Tests  13 failed | 7 passed (20)`. The failures include `TypeError: matchSuccessClaim is not a function`, `TypeError: isPlanText is not a function` and the three "instruction dedupe (spec §6.6)" cases. The seven passing cases pin fields B-3, B-5 and B-7 already derive (`startMs`, `current`, `noise`, `validationStepIds`, `anchorStepId`) and two near misses ("leaves both unset when no message qualifies", "keeps a user message that no answer follows as an instruction"); they must stay green.
 
-- [ ] **Step 3: Track the pending decision answer and add `removeStep`**
+- [ ] **Step 3: Track the pending decision answer, undelivered instructions and each turn's instruction item, and add `removeStep`**
+
+In `packages/trace-viewer/src/model/fold-state.ts`, find:
+
+```ts
+export interface QueueEntry {
+```
+
+Replace it with:
+
+```ts
+/** A user message that may answer an open decision: the step holding it and its own seq. The step
+ *  is the relaunch's instruction step when the message echoed its agent_started (spec §6.6). */
+export interface PendingAnswer {
+  step: StepDraft;
+  seq: number;
+}
+
+export interface QueueEntry {
+```
+
+In `packages/trace-viewer/src/model/fold-state.ts`, find:
+
+```ts
+  /** A decision row answered or delegated a decision in this turn. */
+  decisionAnswered: boolean;
+```
+
+Replace it with:
+
+```ts
+  /** A decision row answered or delegated a decision in this turn. */
+  decisionAnswered: boolean;
+  /** The turn's instruction item (spec §6.6 "Instruction dedupe"): the step its agent_started
+   *  opened, or the earlier user message that agent_started delivered; null for an implicit turn
+   *  and for a relaunch that delivered a decision answer. */
+  instruction: StepDraft | null;
+```
+
+In `packages/trace-viewer/src/model/fold-state.ts`, find:
+
+```ts
+    decisionAnswered: false,
+    lastAgentEvent: null,
+```
+
+Replace it with:
+
+```ts
+    decisionAnswered: false,
+    instruction: null,
+    lastAgentEvent: null,
+```
 
 In `packages/trace-viewer/src/model/fold-state.ts`, find:
 
@@ -7802,7 +8024,12 @@ Replace it with:
   /** Every step that carries a callId (open or closed). */
   readonly stepsByCallId = new Map<string, StepDraft>();
   /** The latest user message since the last decision row: a candidate decision answer (R25). */
-  pendingAnswer: StepDraft | null = null;
+  pendingAnswer: PendingAnswer | null = null;
+  /** User instruction steps that no agent_started has delivered yet, oldest first (spec §6.6). */
+  readonly undelivered: StepDraft[] = [];
+  /** Trimmed text of an absorbed decision answer -> its decision step and title, for a relaunch
+   *  that delivers the answer after the answer row (spec §6.6). */
+  readonly answeredPrompts = new Map<string, { step: StepDraft; title: string }>();
 ```
 
 In `packages/trace-viewer/src/model/fold-state.ts`, find:
@@ -7828,13 +8055,15 @@ export function setKind(step: StepDraft, kind: StepKind): void {
 export function removeStep(state: FoldState, step: StepDraft): void {
   const index = state.steps.indexOf(step);
   if (index >= 0) state.steps.splice(index, 1);
+  const queued = state.undelivered.indexOf(step);
+  if (queued >= 0) state.undelivered.splice(queued, 1);
   state.stepById.delete(step.id);
   const turn = state.turns[step.turnIndex];
   if (turn !== undefined) turn.stepIds = turn.stepIds.filter((id) => id !== step.id);
 }
 ```
 
-- [ ] **Step 4: Record a user message as the pending decision answer**
+- [ ] **Step 4: Record a user message as the pending decision answer, fold a steer's echo and deliver instructions**
 
 In `packages/trace-viewer/src/model/fold-agent.ts`, find:
 
@@ -7857,6 +8086,19 @@ Replace it with:
 ```ts
     case "agent_message": {
       if (event.role === "assistant") state.capabilities.add("agent_messages");
+      const opening = turn.instruction;
+      if (
+        event.role === "user" &&
+        opening !== null &&
+        turn.lastAgentEvent === "agent_started" &&
+        event.text.trim() === (opening.text ?? "").trim()
+      ) {
+        // A steer echoes its relaunch's prompt right after the agent_started: one instruction step
+        // holds both rows (spec §6.6 "Instruction dedupe"). It may still be a decision answer.
+        addRowToStep(opening, ctx, false);
+        state.pendingAnswer = { step: opening, seq: ctx.seq };
+        break;
+      }
       const message = createStep(state, turn, ctx, {
         kind: event.role === "user" ? "instruction" : "message",
         source: event.type,
@@ -7865,10 +8107,87 @@ Replace it with:
         text: event.text,
         approxTime: true,
       });
-      // The latest user message may answer an open decision; the next decision row decides (R25).
-      if (event.role === "user") state.pendingAnswer = message;
+      if (event.role === "user") {
+        // The latest user message may answer an open decision; the next decision row decides (R25).
+        // A later relaunch with the same prompt delivers it (spec §6.6).
+        state.pendingAnswer = { step: message, seq: ctx.seq };
+        state.undelivered.push(message);
+      }
       break;
     }
+```
+
+In `packages/trace-viewer/src/model/fold-agent.ts`, find:
+
+```ts
+    touchTurn(turn, ctx);
+    createStep(state, turn, ctx, {
+      kind: "instruction",
+      source: event.type,
+      status: "info",
+      actor: "supervisor",
+      text: event.prompt,
+      approxTime: true,
+    });
+    turn.lastAgentEvent = event.type;
+    return;
+  }
+```
+
+Replace it with:
+
+```ts
+    touchTurn(turn, ctx);
+    deliverInstruction(state, turn, ctx, event.prompt);
+    turn.lastAgentEvent = event.type;
+    return;
+  }
+```
+
+In `packages/trace-viewer/src/model/fold-agent.ts`, find:
+
+```ts
+export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ctx: RowContext): void {
+```
+
+Replace it with:
+
+```ts
+/** Spec §6.6 "Instruction dedupe" for an agent_started. A prompt equal to an absorbed decision
+ *  answer opens the turn without an instruction step and the turn takes the decision title; a
+ *  prompt equal to an earlier undelivered user message delivers that step (the relaunch's seq joins
+ *  it, and it is the turn's instruction item); any other prompt opens an instruction step. */
+function deliverInstruction(state: FoldState, turn: TurnDraft, ctx: RowContext, prompt: string): void {
+  const key = prompt.trim();
+  const answered = state.answeredPrompts.get(key);
+  if (answered !== undefined) {
+    state.answeredPrompts.delete(key);
+    addRowToStep(answered.step, ctx, false);
+    turn.prompt = answered.title;
+    turn.instruction = null;
+    return;
+  }
+  const index = state.undelivered.findIndex((step) => (step.text ?? "").trim() === key);
+  const queued = index >= 0 ? state.undelivered[index] : undefined;
+  if (queued !== undefined) {
+    state.undelivered.splice(index, 1);
+    addRowToStep(queued, ctx, false);
+    // Delivered as an instruction, so no longer a candidate decision answer.
+    if (state.pendingAnswer?.step === queued) state.pendingAnswer = null;
+    turn.instruction = queued;
+    return;
+  }
+  turn.instruction = createStep(state, turn, ctx, {
+    kind: "instruction",
+    source: "agent_started",
+    status: "info",
+    actor: "supervisor",
+    text: prompt,
+    approxTime: true,
+  });
+}
+
+export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ctx: RowContext): void {
 ```
 
 - [ ] **Step 5: Absorb the answer and target the decision id**
@@ -7915,7 +8234,7 @@ Replace it with:
 ```ts
 /** Every row of one decision id folds into one step (step:<firstSeq>, target = the decision id).
  *  A user message whose next decision row answers or delegates an already-open decision is the
- *  supervisor's answer: its instruction step is removed and its seq joins the decision step (R25). */
+ *  supervisor's answer: its instruction step is removed and its seqs join the decision step (R25). */
 export function foldDecision(state: FoldState, decision: Decision, ctx: RowContext): void {
   const turn = currentTurn(state, ctx);
   touchTurn(turn, ctx);
@@ -7931,10 +8250,19 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     existing.decision = decisionDetail(decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
     if (closes && answer !== null) {
-      removeStep(state, answer);
-      existing.seqs.push(answer.firstSeq);
+      removeStep(state, answer.step);
+      existing.seqs.push(...answer.step.seqs);
       existing.seqs.sort((a, b) => a - b);
-      existing.decision.answerSeq = answer.firstSeq;
+      existing.decision.answerSeq = answer.seq;
+      const relaunched = state.turns[answer.step.turnIndex];
+      if (relaunched !== undefined && relaunched.instruction === answer.step) {
+        // The answer was delivered as a steer: its relaunch opens a turn without an instruction
+        // step, and the turn's prompt is the decision title (spec §6.6 "Instruction dedupe").
+        relaunched.instruction = null;
+        relaunched.prompt = decision.title;
+      } else {
+        state.answeredPrompts.set((answer.step.text ?? "").trim(), { step: existing, title: decision.title });
+      }
     }
     existing.status = decisionStatus(decision);
 ```
@@ -8287,11 +8615,117 @@ Replace it with:
   });
 ```
 
-- [ ] **Step 9: Run the tests to verify they pass**
+- [ ] **Step 9: Add the instruction-dedupe mutations (spec §11 M3)**
+
+Two fixture mutations in the live row order `sendInstruction` and `sendDecision` produce (codex-adapter.ts:222-255): a steer's relaunch and echo inserted into rate-limit, and oauth's decision answer delivered by a relaunch before its echo.
+
+In `packages/trace-viewer/src/model/fold.mutations.test.ts`, find:
+
+```ts
+function seqOf(rows: readonly TraceRow[], predicate: (row: TraceRow) => boolean): number {
+  const row = rows.find(predicate);
+  if (row === undefined) throw new Error("row not found");
+  return row.seq;
+}
+```
+
+Replace it with:
+
+```ts
+function seqOf(rows: readonly TraceRow[], predicate: (row: TraceRow) => boolean): number {
+  const row = rows.find(predicate);
+  if (row === undefined) throw new Error("row not found");
+  return row.seq;
+}
+
+/** Inserts agent events before or after the first matching agent row, with that row's times, and
+ *  renumbers every seq in order. */
+function insertAgentRows(
+  rows: readonly TraceRow[],
+  predicate: (row: TraceRow) => boolean,
+  where: "before" | "after",
+  events: Record<string, unknown>[],
+): TraceRow[] {
+  const at = rows.findIndex(predicate);
+  const anchor = rows[at];
+  if (anchor === undefined) throw new Error("row not found");
+  const added = events.map((event) => ({
+    seq: 0,
+    type: "agent_event",
+    ts: anchor.ts,
+    payload: { sessionId: field(anchor, "sessionId"), ts: field(anchor, "ts"), ...event },
+  }));
+  const index = where === "before" ? at : at + 1;
+  return [...rows.slice(0, index), ...added, ...rows.slice(index)].map((row, position) => ({ ...row, seq: position + 1 }));
+}
+```
+
+In `packages/trace-viewer/src/model/fold.mutations.test.ts`, find:
+
+```ts
+  it("an unknown row type from a newer build is a gap, not a crash", () => {
+```
+
+Replace it with:
+
+```ts
+  it("a steer yields one instruction step", () => {
+    const steer = "Use a token bucket, not a fixed window.";
+    const { rows, session } = mutate("rate-limit", (input) =>
+      insertAgentRows(input, (row) => isPayload("agent_message", { role: "assistant" })(row) && String(field(row, "text")).startsWith("Plan:"), "after", [
+        { type: "agent_interrupted", reason: "steer" },
+        { type: "agent_started", prompt: steer },
+        { type: "agent_message", role: "user", text: steer },
+      ]),
+    );
+    const relaunch = seqOf(rows, isPayload("agent_started", { prompt: steer }));
+    const echo = seqOf(rows, isPayload("agent_message", { text: steer }));
+    const instructions = session.steps.filter((step) => step.kind === "instruction");
+    expect(instructions.map((step) => step.text)).toEqual([field(rows[0] as TraceRow, "prompt"), steer]);
+    expect(instructions[1]).toMatchObject({ firstSeq: relaunch, seqs: [relaunch, echo] });
+    expect(session.turns.map((turn) => [turn.trigger, turn.outcome])).toEqual([
+      ["initial", "interrupted"],
+      ["steer", "completed"],
+    ]);
+    expect(session.gaps).toEqual([]);
+  });
+
+  it("a decision answered with an instruction yields no instruction step", () => {
+    const trace = loadFixtureTrace("oauth");
+    const answer = trace.rows.find(isPayload("agent_message", { role: "user" }));
+    if (answer === undefined) throw new Error("no decision answer in oauth");
+    const text = field(answer, "text");
+    // sendDecision with an instruction relaunches Codex with the answer before it echoes it.
+    const { rows, session } = mutate("oauth", (input) =>
+      insertAgentRows(input, isPayload("agent_message", { role: "user" }), "before", [
+        { type: "agent_interrupted", reason: "steer" },
+        { type: "agent_started", prompt: text },
+      ]),
+    );
+    const relaunch = seqOf(rows, isPayload("agent_started", { prompt: text }));
+    const message = seqOf(rows, isPayload("agent_message", { role: "user" }));
+    const title = field(rows.find((row) => row.type === "decision") as TraceRow, "title");
+    expect(session.steps.filter((step) => step.kind === "instruction").map((step) => step.firstSeq)).toEqual([1]);
+    const decision = session.steps.find((step) => step.kind === "decision");
+    expect(decision?.seqs).toEqual(expect.arrayContaining([relaunch, message]));
+    expect(decision?.decision?.answerSeq).toBe(message);
+    expect(session.turns[1]).toMatchObject({ trigger: "steer", startSeq: relaunch, prompt: title });
+    expect(session.findings.map((finding) => finding.ruleId).sort()).toEqual(["claim_contradicted", "failing_tests"]);
+    expect(session.gaps).toEqual([]);
+  });
+
+  it("an unknown row type from a newer build is a gap, not a crash", () => {
+```
+
+- [ ] **Step 10: Run the tests to verify they pass**
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/ui-fields.test.ts`
 
-Expected: `Test Files  1 passed (1)`, `Tests  17 passed (17)`.
+Expected: `Test Files  1 passed (1)`, `Tests  20 passed (20)`.
+
+Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/fold.mutations.test.ts`
+
+Expected: `Test Files  1 passed (1)`, `Tests  7 passed (7)`.
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model/fold.fixtures.test.ts -t "claim is contradicted"`
 
@@ -8303,9 +8737,9 @@ Expected: exits 0.
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/model`
 
-Expected: no failures; 251 tests from this lane (234 before this task plus 17) plus W0's `types.test.ts`. The parity property (B-9) still passes: absorption happens in `accumulate`, so every batch split folds to the same session.
+Expected: no failures; 275 tests from this lane (253 before this task, plus 20 in `ui-fields.test.ts` and 2 new mutations) plus W0's `types.test.ts`. The parity property (B-9) still passes: absorption and instruction dedupe happen in `accumulate`, so every batch split folds to the same session.
 
-- [ ] **Step 10: Root checks**
+- [ ] **Step 11: Root checks**
 
 Run, in order, from `~/Projects/jevcode-tv-b`:
 
@@ -8318,7 +8752,7 @@ pnpm lint
 
 Expected: each command exits 0. `pnpm lint` prints nothing after `> pnpm exec eslint .`.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add packages/trace-viewer/src/model/ui-fields.test.ts \
@@ -8328,13 +8762,14 @@ git add packages/trace-viewer/src/model/ui-fields.test.ts \
   packages/trace-viewer/src/model/signals.ts \
   packages/trace-viewer/src/model/fold.ts \
   packages/trace-viewer/src/model/fold-chapters.test.ts \
-  packages/trace-viewer/src/model/fold.fixtures.test.ts
-git commit -m "feat(trace-viewer): derive turn plan and claim, claim fields and decision answers (R25)"
+  packages/trace-viewer/src/model/fold.fixtures.test.ts \
+  packages/trace-viewer/src/model/fold.mutations.test.ts
+git commit -m "feat(trace-viewer): derive turn plan and claim, claim fields, decision answers and instruction dedupe"
 ```
 
 ## Lane completion
 
-1. **Whole-lane check** on `tv/b-trace-model` after B-12: the root checks pass, and `pnpm --filter @jevcode/trace-viewer exec vitest run src/model` reports no failures (251 lane-B tests plus W0's `types.test.ts`).
+1. **Whole-lane check** on `tv/b-trace-model` after B-12: the root checks pass, and `pnpm --filter @jevcode/trace-viewer exec vitest run src/model` reports no failures (275 lane-B tests plus W0's `types.test.ts`).
 2. **Rebase after A1 and A2 merge** (W1 merge order A1, A2, B). From `~/Projects/jevcode-tv-b`:
 
 ```bash
@@ -8344,4 +8779,4 @@ pnpm -r build
 ```
 
 Then rerun the root checks. A1-9 changes `fixtures/*/events.jsonl` (M1 fields, `git_hunk.diff`, one oauth `agent_reasoning` line, the oauth failure text) and A1-8 fills `ChangeUnit.agentCallIds`. The B-2, B-4, B-5, B-7, B-8, B-10 and B-12 fixture tests select rows by content and derive `observed`/`inferred` from the rows, so they must stay green without edits. A failure there is a bug in this lane's test or fold, never a reason to edit fixtures (index §4).
-3. **Hand-off notes** for the merge PR: the three benchmark means from B-9; the "Interface deviations" and "Spec alignment notes" above; that `@jevcode/trace-viewer/model` now exports the full fold API for the M4a UI lane.
+3. **Hand-off notes** for the merge PR: the three benchmark means from B-9; the "Interface deviations" and "Spec alignment notes" above; that `@jevcode/trace-viewer/model` now exports the full fold API for the M4a UI lane; that a started turn's instruction item is the step whose `seqs` hold `turn.startSeq` (B-12 instruction dedupe), which is not in that turn's `stepIds` when the turn was opened by a queued instruction or a decision relaunch; and that spec §6.6 and §16 still describe the single-latest-run claim rule this lane does not use.

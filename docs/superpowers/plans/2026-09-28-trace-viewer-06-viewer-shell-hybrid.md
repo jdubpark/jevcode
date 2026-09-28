@@ -33,6 +33,7 @@ Each item below differs from the UI index §2.4/§3 text. None renames or remove
 7. **Smoke replay paths are absolute.** UI index §2.5 writes `pnpm --filter jevcode-desktop replay fixtures/oauth <tmp>/oauth`, but pnpm runs the script in `apps/desktop`, where `fixtures/oauth` does not exist; `smoke.mjs` passes `<repo>/fixtures/oauth`.
 8. **Selftest drip start.** `selftest.ts` starts the drip at the seq of oauth's claim row (found by content, "all checks pass"), falling back to `lastSeq − 20`, so the Review defaults on open select the contradiction while later rows still drip in (spec §10 "Anchor drift" wants appends with a finding above the anchored row). This assumes C1-15's `DripOptions.startAtSeq` releases every row with `seq ≤ startAtSeq` on the first `rows()` call; C2-15 Step 1 checks it.
 9. **Dev host drip start and serve alias (C2-15).** `?drip=` takes an optional third part, `startAtSeq`; a negative value counts back from the bundle's last seq (`resolveDrip`, additive), because lane 08 D-8 measures the live tick with `?drip=20,1000,-2000`. The serve-only source alias is a plugin with `apply: "serve"`, not a callback config, so C1-7's `vite.spike.config.ts` can still `mergeConfig` the dev config (Vite 5.4 throws "Cannot merge config in form of callback").
+10. **Spec §1 "found at once" (base index gap G1).** `perf.ts` (C2-3) also exports `INITIAL_SELECTION_PAINTED = "tv:initial-selection-painted"` and `markNextFrame(name)`. The Shell calls `markNextFrame(INITIAL_SELECTION_PAINTED)` right after the `session/applied` dispatch that moves the selection from `null` to the open default, so `performance.mark` runs in the first `requestAnimationFrame` after the commit that applies the initial selection (a store dispatch inside a layout effect re-renders synchronously before that frame). The root barrel re-exports the constant. It is not a `PERF` member: `PERF` names the spec §10 measures that the HUD reads and lane 08 greps. The dev host adds `?selftest=open` (C2-15: `selftest-open.ts` with `OpenProbeResult`, `createOpenProbe` and `claimStepIdOf`; `selftest.ts` exports `claimRowOf`, which `selftestDrip` now calls), and C2-16's smoke asserts its result for Hybrid at 1440 px. It is a separate mode because the drip selftest scrolls the spine to its middle in the first frame after `onReady`, which would move the claim row out of view. Lane 07 C3-12 quotes that `onReady` block verbatim, so the drip selftest stays as it is.
 
 ## Global Constraints
 
@@ -161,8 +162,8 @@ If any expectation fails, stop: this lane does not start (Task C2-0 is the forma
 | `packages/trace-viewer/src/ui/views/hybrid/spine/{Spine.tsx, scroll-sync.ts, rows/*.tsx, Spine.module.css}` | C2-12 | Virtualized feed, anchoring, playhead sync |
 | `packages/trace-viewer/src/ui/views/hybrid/spine/findings/*.tsx` | C2-13 | `FINDING_BODY` per signal |
 | `packages/trace-viewer/src/ui/views/hybrid/{HybridView.tsx, hybrid-port.ts, HybridView.module.css}`; `src/ui/views/registry.ts` | C2-14 | Composition, `ViewPort`, presets, live follow, registry |
-| `apps/trace-viewer-dev/{vite.config.ts, .gitignore, src/main.tsx, src/host.tsx, src/host.module.css, src/selftest.ts, src/perf-hud.tsx}` | C2-15 | Dev host |
-| `apps/trace-viewer-dev/scripts/smoke.mjs` | C2-16 | Hybrid visual smoke |
+| `apps/trace-viewer-dev/{vite.config.ts, .gitignore, src/main.tsx, src/host.tsx, src/host.module.css, src/selftest.ts, src/selftest-open.ts, src/perf-hud.tsx}` | C2-15 | Dev host; `?selftest=open` probe (deviation 10) |
+| `apps/trace-viewer-dev/scripts/smoke.mjs` | C2-16 | Hybrid visual smoke, including the spec §1 open probe |
 
 Every test file named in the tasks sits beside its module.
 
@@ -1162,6 +1163,8 @@ export function ViewSlot(props: ViewSlotProps): React.JSX.Element;
 export const PERF: { bundleParsed: "tv:bundle-parsed"; firstPaint: "tv:first-paint"; fullLoad: "tv:full-load"; keyToPaint: "tv:key-to-paint"; overviewPaint: "tv:overview-paint"; viewSwitch: "tv:view-switch"; liveTick: "tv:live-tick" };
 export function markAfterPaint(name: string, startMark?: string): void;
 export function measureAfterPaint(name: string, startMark: string): void;   // consumes startMark; no-op without one
+export const INITIAL_SELECTION_PAINTED: "tv:initial-selection-painted";   // spec §1; not a PERF member (deviation 10)
+export function markNextFrame(name: string): void;                        // performance.mark(name) in the next requestAnimationFrame callback
 // ui/views/view-port.ts
 export interface ZoomPreset { id: string; label: string }
 export interface ZoomPort { label(): string; presets(): readonly ZoomPreset[]; applyPreset(id: string): void; zoomIn(): void; zoomOut(): void; resetToPreset(): void; fitAll(): void; fitSelection(): void }
@@ -1464,6 +1467,7 @@ import type { ViewerLocation } from "../state/location.js";
 import type { ViewDefinition } from "../views/view-port.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useAnnounce } from "./LiveRegion.js";
+import { INITIAL_SELECTION_PAINTED } from "./perf.js";
 import { TraceViewer } from "./TraceViewer.js";
 import { ViewSlot } from "./ViewSlot.js";
 
@@ -1523,6 +1527,42 @@ describe("Shell", () => {
     const onLocation = vi.fn();
     render(<TraceViewer source={createStaticBundleSource(bundle)} location={location} host={{ onLocation }} />);
     await waitFor(() => expect(onLocation.mock.calls.at(-1)?.[0]?.selected).toBe(decisionStep?.id));
+  });
+
+  it("marks tv:initial-selection-painted in the first frame after the commit that applies the initial selection", async () => {
+    performance.clearMarks(INITIAL_SELECTION_PAINTED);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
+    const runFrame = (): void => {
+      for (const callback of frames.splice(0)) callback(performance.now());
+    };
+    // Spec §1: oauth opens with its claim step selected.
+    const claim = foldFixture("oauth").steps.find((step) => step.text === "OAuth implementation complete; all checks pass.");
+    expect(claim).toBeDefined();
+    const onLocation = vi.fn();
+    render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} host={{ onLocation }} />);
+    await waitFor(() => expect(onLocation.mock.calls.at(-1)?.[0]?.selected).toBe(claim?.id));
+    expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(0);
+    act(runFrame);
+    expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(1);
+    act(runFrame);
+    expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(1);
+  });
+
+  it("sets no initial-selection mark when the session opens in Live", async () => {
+    performance.clearMarks(INITIAL_SELECTION_PAINTED);
+    const source = createStaticBundleSource(fixtureBundle("oauth"), {
+      drip: { rowsPerTick: 5, intervalMs: 50, manual: true, startAtSeq: 30 },
+    });
+    const onReady = vi.fn();
+    const onLocation = vi.fn();
+    render(<TraceViewer source={source} pollMs={50} host={{ onReady, onLocation }} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(onLocation.mock.calls.at(-1)?.[0]?.selected).toBeUndefined();
+    expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(0);
   });
 
   it("an Inspector render error shows the Inspector boundary and keeps the selection", () => {
@@ -1734,6 +1774,21 @@ export function measureAfterPaint(name: string, startMark: string): void {
       performance.measure(name, { start: startTime, end: performance.now() });
     };
     channel.port2.postMessage(null);
+  });
+}
+
+/**
+ * Spec §1 "found at once": the Shell marks this in the first requestAnimationFrame after the commit
+ * that applies the initial selection; smoke.mjs reads getEntriesByName(…)[0].startTime ≤ 5000.
+ * Not a PERF member: PERF names the spec §10 measures (deviation 10).
+ */
+export const INITIAL_SELECTION_PAINTED = "tv:initial-selection-painted";
+
+/** Marks `name` inside the next requestAnimationFrame callback. */
+export function markNextFrame(name: string): void {
+  if (typeof performance === "undefined" || typeof requestAnimationFrame === "undefined") return;
+  requestAnimationFrame(() => {
+    performance.mark(name);
   });
 }
 ```
@@ -2179,7 +2234,7 @@ import {
 import { isLiveState, LIVE_TICK_START, type DataController, type DataSnapshot } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
 import { LiveRegion } from "./LiveRegion.js";
-import { markAfterPaint, measureAfterPaint, PERF } from "./perf.js";
+import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
 import styles from "./Shell.module.css";
 import { ViewSlot } from "./ViewSlot.js";
@@ -2353,6 +2408,7 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
     if (session === null) return;
     const loadComplete = snapshot.loadedFraction >= 1;
     const needsDefaults = loadComplete && !store.get().loaded;
+    const selectedBefore = store.get().selection;
     store.dispatch({
       type: "session/applied",
       loadedThroughSeq: session.loadedThroughSeq,
@@ -2361,6 +2417,12 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
       initialSelection: needsDefaults ? initialSelectionOf(session, location) : null,
       chapterSpineRows: needsDefaults ? chapterSpineRowCount(session, index, scale, snapshot.terminal) : 0,
     });
+    // Spec §1: the dispatch re-renders the store's subscribers synchronously, before the next frame,
+    // so the mark lands in the first rAF after the commit that applies the initial selection. A
+    // session that opens in Live gets no initial selection and no mark.
+    if (needsDefaults && selectedBefore === null && store.get().selection !== null) {
+      markNextFrame(INITIAL_SELECTION_PAINTED);
+    }
     if (!flags.ready) {
       flags.ready = true;
       host.onReady?.({ rows: snapshot.rows, loadedThroughSeq: session.loadedThroughSeq });
@@ -2475,13 +2537,13 @@ Append to `packages/trace-viewer/src/index.ts`, after the line `export { ViewerL
 export { TraceViewer, type TraceViewerProps } from "./ui/shell/TraceViewer.js";
 export type { ViewerHost, RequestChangesRequest, ViewerReadyInfo, ViewerDiagnostics } from "./ui/shell/host.js";
 export type { SelectionId } from "./layout/trace-index.js";
-export { PERF, markAfterPaint } from "./ui/shell/perf.js";
+export { INITIAL_SELECTION_PAINTED, PERF, markAfterPaint } from "./ui/shell/perf.js";
 ```
 
 - [ ] **Step 7: Run the test to see it pass**
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/shell/shell.test.tsx`
-Expected: PASS, 6 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 8: Root checks**
 
@@ -3133,7 +3195,7 @@ and replace the anchor `<header className={styles.title} data-region="title" />`
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/shell/title-bar.test.tsx src/ui/shell/shell.test.tsx`
-Expected: PASS, 8 + 6 tests.
+Expected: PASS, 8 + 8 tests.
 
 - [ ] **Step 6: Root checks**
 
@@ -4269,7 +4331,7 @@ and replace the anchor `<nav className={styles.outline} aria-label="Outline" dat
 - [ ] **Step 9: Run the tests to see them pass**
 
 Run: `pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/shell/Outline src/ui/shell/shell.test.tsx`
-Expected: PASS, 7 + 6 + 6 tests.
+Expected: PASS, 7 + 6 + 8 tests.
 
 - [ ] **Step 10: Root checks**
 
@@ -11585,10 +11647,11 @@ git commit -m "feat(trace-viewer): compose the Hybrid view and register it with 
 - Create: `apps/trace-viewer-dev/src/host.tsx`
 - Create: `apps/trace-viewer-dev/src/host.module.css`
 - Create: `apps/trace-viewer-dev/src/selftest.ts`
+- Create: `apps/trace-viewer-dev/src/selftest-open.ts` (deviation 10)
 - Create: `apps/trace-viewer-dev/src/perf-hud.tsx`
 
 **Interfaces:**
-- Consumes (root barrel `@jevcode/trace-viewer`, dist): `TraceViewer`, `ViewerHost`, `createStaticBundleSource(bundle, { drip? })`, `StaticBundleSource` (`released()`, `tick()`, `dispose()`), `DripOptions { rowsPerTick; intervalMs; manual?; startAtSeq? }`, `parseTraceBundle(json): ParsedBundle` ("Not a jevcode trace", "Trace format v2 is not supported"), `locationFromHash(hash, sessionId)`, `locationToHash(location)`, `PERF`; `TraceBundle` from `@jevcode/contracts`. The dev host's `src/vite-env.d.ts` (C1-7) types CSS Modules.
+- Consumes (root barrel `@jevcode/trace-viewer`, dist): `TraceViewer`, `ViewerHost`, `createStaticBundleSource(bundle, { drip? })`, `StaticBundleSource` (`released()`, `tick()`, `dispose()`), `DripOptions { rowsPerTick; intervalMs; manual?; startAtSeq? }`, `parseTraceBundle(json): ParsedBundle` ("Not a jevcode trace", "Trace format v2 is not supported"), `locationFromHash(hash, sessionId)`, `locationToHash(location)`, `PERF`, `INITIAL_SELECTION_PAINTED` (C2-3); `TraceBundle` from `@jevcode/contracts`. The dev host's `src/vite-env.d.ts` (C1-7) types CSS Modules. The open probe reads these DOM hooks: `[data-view="hybrid"]` (C2-3 `ViewSlot`), `[data-overview-lanes]` and the pin buttons' `data-steps` and `aria-pressed` (C2-11), and `[role="feed"] article[data-key]` (C2-12).
 - Produces (UI index §2.5):
 
 ```ts
@@ -11600,14 +11663,20 @@ export function parseBundleText(text: string): Loaded;                         /
 export function DevHost(props: { search: string; hash: string }): React.JSX.Element;
 // apps/trace-viewer-dev/src/selftest.ts
 export interface SelftestResult { ready: boolean; view: "hybrid" | "canvas"; selectedTitle: string | null; errors: string[]; cspViolations: string[]; maxDriftPx: number; rows: number }
+export function claimRowOf(bundle: TraceBundle): TraceBundle["rows"][number] | undefined;   // oauth's claim row, by content (deviation 10)
 export function selftestDrip(bundle: TraceBundle): DripOptions;
 export interface Selftest { host: Pick<ViewerHost, "onReady" | "onDiagnostics">; start(): void; stop(): void }
 export function createSelftest(options: { source: StaticBundleSource; total: number; view?: "hybrid" | "canvas"; write(result: SelftestResult): void; settleMs?: number; timeoutMs?: number }): Selftest;
+// apps/trace-viewer-dev/src/selftest-open.ts (deviation 10)
+export interface OpenProbeResult { selected: string | null; claimStepId: string | null; claimRowInSpine: boolean; claimPinInOverview: boolean; paintedAtMs: number | null }
+export function claimStepIdOf(bundle: TraceBundle): string | null;   // `step:<seq of the claim row>` (R9)
+export interface OpenProbe { start(): void; stop(): void }
+export function createOpenProbe(options: { sessionId: string; claimStepId: string | null; write(result: OpenProbeResult): void; deadlineMs?: number }): OpenProbe;
 // apps/trace-viewer-dev/src/perf-hud.tsx
 export function PerfHud(props: { autorun: boolean }): React.JSX.Element;
 ```
 
-Query parameters: `?bundle=<name>` (default `oauth`, fetched from `bundles/<name>.json`, same origin under the CSP), `?drip=<rowsPerTick>,<intervalMs>[,<startAtSeq>]` (a negative `startAtSeq` means `lastSeq + startAtSeq`; lane 08 D-8 measures the live tick with `?drip=20,1000,-2000`, spec §10 "starting at `lastSeq − 2000`"), `?perf=1` (HUD), `?perf=1&perfrun=1` (the HUD runs the scripted `j`/`k` presses and the overview sweep, then writes JSON into `<pre id="perf-result">`), `?selftest=drip` (Review drip from oauth's claim row; JSON into `<pre id="selftest">`). The URL hash holds the location (`locationFromHash`; `onLocation` writes it with `history.replaceState`). A dropped `.json` file is validated the same way.
+Query parameters: `?bundle=<name>` (default `oauth`, fetched from `bundles/<name>.json`, same origin under the CSP), `?drip=<rowsPerTick>,<intervalMs>[,<startAtSeq>]` (a negative `startAtSeq` means `lastSeq + startAtSeq`; lane 08 D-8 measures the live tick with `?drip=20,1000,-2000`, spec §10 "starting at `lastSeq − 2000`"), `?perf=1` (HUD), `?perf=1&perfrun=1` (the HUD runs the scripted `j`/`k` presses and the overview sweep, then writes JSON into `<pre id="perf-result">`), `?selftest=drip` (Review drip from oauth's claim row; JSON into `<pre id="selftest">`), `?selftest=open` (spec §1: the whole bundle with no drip and no input; after `tv:initial-selection-painted` and three frames of unchanged geometry, `OpenProbeResult` JSON into `<pre id="selftest">`). The URL hash holds the location (`locationFromHash`; `onLocation` writes it with `history.replaceState`). A dropped `.json` file is validated the same way.
 
 - [ ] **Step 1: Check the drip start semantics**
 
@@ -11791,6 +11860,7 @@ import {
 import styles from "./host.module.css";
 import { PerfHud } from "./perf-hud.js";
 import { createSelftest, selftestDrip, type SelftestResult } from "./selftest.js";
+import { claimStepIdOf, createOpenProbe, type OpenProbeResult } from "./selftest-open.js";
 
 export type Loaded = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; bundle: TraceBundle };
 
@@ -11843,11 +11913,13 @@ function Viewer({
   drip,
   hash,
   selftest,
+  openProbe,
 }: {
   bundle: TraceBundle;
   drip: DripOptions | undefined;
   hash: string;
   selftest: boolean;
+  openProbe: boolean;
 }) {
   const [source] = useState<StaticBundleSource>(() =>
     createStaticBundleSource(
@@ -11864,6 +11936,17 @@ function Viewer({
     test.start();
     return () => test.stop();
   }, [test]);
+  const [opened, setOpened] = useState<OpenProbeResult | null>(null);
+  const [probe] = useState(() =>
+    openProbe
+      ? createOpenProbe({ sessionId: bundle.session.sessionId, claimStepId: claimStepIdOf(bundle), write: setOpened })
+      : null,
+  );
+  useEffect(() => {
+    if (probe === null) return undefined;
+    probe.start();
+    return () => probe.stop();
+  }, [probe]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
   const host = useMemo<ViewerHost>(
     () => ({
@@ -11886,6 +11969,11 @@ function Viewer({
           {result === null ? "" : JSON.stringify(result)}
         </pre>
       ) : null}
+      {openProbe ? (
+        <pre id="selftest" className={styles.result}>
+          {opened === null ? "" : JSON.stringify(opened)}
+        </pre>
+      ) : null}
     </>
   );
 }
@@ -11896,6 +11984,7 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const drip = parseDrip(params.get("drip"));
   const perf = params.get("perf") === "1";
   const selftest = params.get("selftest") === "drip";
+  const openProbe = params.get("selftest") === "open";
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
 
   useEffect(() => {
@@ -11930,6 +12019,7 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
           drip={drip}
           hash={hash}
           selftest={selftest}
+          openProbe={openProbe}
         />
       ) : null}
       {perf ? <PerfHud autorun={params.get("perfrun") === "1"} /> : null}
@@ -11958,7 +12048,7 @@ createRoot(root).render(
 );
 ```
 
-- [ ] **Step 5: Write the selftest**
+- [ ] **Step 5: Write the drip selftest and the open probe**
 
 Create `apps/trace-viewer-dev/src/selftest.ts`:
 
@@ -11982,10 +12072,15 @@ function textOf(payload: unknown): string {
   return typeof text === "string" ? text : "";
 }
 
+/** oauth's claim row, found by content; the drip start (deviation 8) and the open probe (deviation 10) share it. */
+export function claimRowOf(bundle: TraceBundle): TraceBundle["rows"][number] | undefined {
+  return bundle.rows.find((row) => row.type === "agent_event" && /all checks pass/i.test(textOf(row.payload)));
+}
+
 /** Review drip starting at oauth's claim row (found by content), so later rows still arrive (deviation 8). */
 export function selftestDrip(bundle: TraceBundle): DripOptions {
   const lastSeq = bundle.rows.at(-1)?.seq ?? 0;
-  const claim = bundle.rows.find((row) => row.type === "agent_event" && /all checks pass/i.test(textOf(row.payload)));
+  const claim = claimRowOf(bundle);
   return { rowsPerTick: 5, intervalMs: 100, startAtSeq: claim?.seq ?? Math.max(1, lastSeq - 20) };
 }
 
@@ -12080,6 +12175,151 @@ export function createSelftest(options: {
   };
 }
 ```
+
+Create `apps/trace-viewer-dev/src/selftest-open.ts` (deviation 10):
+
+```ts
+// Spec §1 "found at once" (?selftest=open): what a reader sees after opening oauth in Hybrid with no input.
+// Reads only the DOM, the URL hash the viewer writes through onLocation, and the Shell's performance mark.
+import type { TraceBundle } from "@jevcode/contracts";
+import { INITIAL_SELECTION_PAINTED, locationFromHash } from "@jevcode/trace-viewer";
+
+import { claimRowOf } from "./selftest.js";
+
+export interface OpenProbeResult {
+  /** The selection the viewer last reported through ViewerHost.onLocation (read back from the URL hash). */
+  selected: string | null;
+  /** oauth's claim step, `step:<seq of the claim row>` (stable ids, R9). */
+  claimStepId: string | null;
+  /** The claim's spine row lies inside the reading spine's viewport. */
+  claimRowInSpine: boolean;
+  /** The overview pin that holds the selection lies inside the overview's lane viewport. */
+  claimPinInOverview: boolean;
+  /** performance.getEntriesByName("tv:initial-selection-painted")[0].startTime; null when the mark never came. */
+  paintedAtMs: number | null;
+}
+
+export interface OpenProbe {
+  start(): void;
+  stop(): void;
+}
+
+interface Box {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+interface Sample {
+  row: Box | null;
+  feed: Box | null;
+  pin: Box | null;
+  lanes: Box | null;
+}
+
+export function claimStepIdOf(bundle: TraceBundle): string | null {
+  const claim = claimRowOf(bundle);
+  return claim === undefined ? null : `step:${claim.seq}`;
+}
+
+function boxOf(element: Element | null | undefined): Box | null {
+  if (element === null || element === undefined) return null;
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return null;
+  return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+}
+
+/** `inner` lies inside `outer`, allowing 1 px for subpixel rounding. */
+function inside(inner: Box | null, outer: Box | null): boolean {
+  return (
+    inner !== null &&
+    outer !== null &&
+    inner.top >= outer.top - 1 &&
+    inner.bottom <= outer.bottom + 1 &&
+    inner.left >= outer.left - 1 &&
+    inner.right <= outer.right + 1
+  );
+}
+
+function sample(claimStepId: string | null): Sample {
+  const view = document.querySelector('[data-view="hybrid"]');
+  const feed = view?.querySelector('[role="feed"]') ?? null;
+  const row =
+    claimStepId === null || feed === null
+      ? undefined
+      : Array.from(feed.querySelectorAll<HTMLElement>("article[data-key]")).find((node) => node.dataset.key === claimStepId);
+  const lanes = view?.querySelector("[data-overview-lanes]") ?? null;
+  const pin = lanes?.querySelector('button[data-steps][aria-pressed="true"]') ?? null;
+  return { row: boxOf(row), feed: boxOf(feed), pin: boxOf(pin), lanes: boxOf(lanes) };
+}
+
+/**
+ * Waits for the Shell's tv:initial-selection-painted mark, then for three frames with the same
+ * geometry (the spine's reveal and the virtualizer's measurements settle), and writes what it sees.
+ * Writes at `deadlineMs` after navigation start at the latest, with paintedAtMs null when the mark
+ * never came.
+ */
+export function createOpenProbe(options: {
+  sessionId: string;
+  claimStepId: string | null;
+  write(result: OpenProbeResult): void;
+  deadlineMs?: number;
+}): OpenProbe {
+  let frame: number | null = null;
+  let deadline: ReturnType<typeof setTimeout> | null = null;
+  let reported = false;
+  let previous = "";
+  let stillFrames = 0;
+
+  const cancel = (): void => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    if (deadline !== null) clearTimeout(deadline);
+    frame = null;
+    deadline = null;
+  };
+
+  const report = (): void => {
+    if (reported) return;
+    reported = true;
+    cancel();
+    const seen = sample(options.claimStepId);
+    const mark = performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")[0];
+    options.write({
+      selected: locationFromHash(window.location.hash, options.sessionId).selected ?? null,
+      claimStepId: options.claimStepId,
+      claimRowInSpine: inside(seen.row, seen.feed),
+      claimPinInOverview: inside(seen.pin, seen.lanes),
+      paintedAtMs: mark === undefined ? null : mark.startTime,
+    });
+  };
+
+  const onFrame = (): void => {
+    frame = null;
+    if (performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark").length > 0) {
+      const key = JSON.stringify(sample(options.claimStepId));
+      stillFrames = key === previous ? stillFrames + 1 : 0;
+      previous = key;
+      if (stillFrames >= 2) {
+        report();
+        return;
+      }
+    }
+    frame = requestAnimationFrame(onFrame);
+  };
+
+  return {
+    start() {
+      if (reported) return;
+      frame = requestAnimationFrame(onFrame);
+      deadline = setTimeout(report, Math.max(0, (options.deadlineMs ?? 4_800) - performance.now()));
+    },
+    stop: cancel,
+  };
+}
+```
+
+The probe measures after the layout holds still, not in the mark's own frame: the spine's reveal (`scrollToIndex`) and the expanded claim row's measurement can take a frame or two to settle, and nothing moves the view afterwards without input. Only `tv:initial-selection-painted`'s `startTime` is timed (spec §1). The 4,800 ms deadline leaves the dump under the smoke's `--virtual-time-budget=5000` room to include the result.
 
 - [ ] **Step 6: Write the perf HUD**
 
@@ -12279,7 +12519,7 @@ Expected: exit 0 (`git status --short` shows no files under `public/bundles/` or
 ```bash
 git add apps/trace-viewer-dev/vite.config.ts apps/trace-viewer-dev/.gitignore apps/trace-viewer-dev/src/main.tsx \
   apps/trace-viewer-dev/src/host.tsx apps/trace-viewer-dev/src/host.module.css apps/trace-viewer-dev/src/selftest.ts \
-  apps/trace-viewer-dev/src/perf-hud.tsx
+  apps/trace-viewer-dev/src/selftest-open.ts apps/trace-viewer-dev/src/perf-hud.tsx
 git commit -m "feat(trace-viewer-dev): load bundles with drip, selftest and perf HUD"
 ```
 
@@ -12289,11 +12529,11 @@ git commit -m "feat(trace-viewer-dev): load bundles with drip, selftest and perf
 
 **Files:**
 - Create: `apps/trace-viewer-dev/scripts/smoke.mjs`
-- Modify: `docs/spikes/trace-viewer-spike.md` (append the "M4a exit" section)
+- Modify: `docs/spikes/trace-viewer-spike.md` (append the "M4a exit" section, with the spec §1 open probe and the VoiceOver check)
 
 **Interfaces:**
-- Consumes: C2-15's `?selftest=drip` (`<pre id="selftest">` holding `SelftestResult`) and `?perf=1&perfrun=1` (`<pre id="perf-result">`); A2's `pnpm --filter jevcode-desktop replay <fixtureDir> <outDir>` writing `<outDir>/trace.json`; A2-7's `JEVCODE_SOAK_EXPORT=<file> node scripts/soak.mjs`; Google Chrome (gotcha 10).
-- Produces: `node apps/trace-viewer-dev/scripts/smoke.mjs [--views hybrid|hybrid,canvas] [--skip-build]`, printing `SMOKE_OK <n> screenshots` (exit 0) or `SMOKE_FAIL: <reason>` (exit 1); screenshots `apps/trace-viewer-dev/.smoke/<view>-<width>.png` for widths 1440 and 1000. C3-12 extends the same script for Canvas. `scripts/**` is outside ESLint and outside `pnpm -r test`.
+- Consumes: C2-15's `?selftest=drip` (`<pre id="selftest">` holding `SelftestResult`), `?selftest=open` (`<pre id="selftest">` holding `OpenProbeResult`, deviation 10) and `?perf=1&perfrun=1` (`<pre id="perf-result">`); A2's `pnpm --filter jevcode-desktop replay <fixtureDir> <outDir>` writing `<outDir>/trace.json`; A2-7's `JEVCODE_SOAK_EXPORT=<file> node scripts/soak.mjs`; Google Chrome (gotcha 10).
+- Produces: `node apps/trace-viewer-dev/scripts/smoke.mjs [--views hybrid|hybrid,canvas] [--skip-build]`, printing `SMOKE_OK <n> screenshots` (exit 0) or `SMOKE_FAIL: <reason>` (exit 1); screenshots `apps/trace-viewer-dev/.smoke/<view>-<width>.png` for widths 1440 and 1000. For Hybrid it also asserts spec §1 at 1440 px through `?selftest=open` (the selection equals the oauth claim step's id, the claim row lies inside the spine viewport, its pin inside the overview viewport, `tv:initial-selection-painted` `startTime` ≤ 5000) and prints `hybrid: opened with <id> selected and in view, painted at <ms> ms`. C3-12 extends the same script for Canvas. `scripts/**` is outside ESLint and outside `pnpm -r test`.
 
 - [ ] **Step 1: Write the smoke script**
 
@@ -12433,6 +12673,31 @@ async function main() {
         if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
         shots += 1;
       }
+      if (view === "hybrid") {
+        // Spec §1 "found at once": oauth opened in Hybrid at 1440 px with no input (?selftest=open).
+        const opened = readSelftest(
+          chrome(profile, [
+            "--window-size=1440,900",
+            "--dump-dom",
+            "--virtual-time-budget=5000",
+            `${ORIGIN}/?bundle=oauth&selftest=open${locationHash(sessionId, view)}`,
+          ]),
+        );
+        const misses = [];
+        if (opened.claimStepId === null) misses.push("no claim row in the bundle");
+        if (opened.selected !== opened.claimStepId) {
+          misses.push(`selected ${JSON.stringify(opened.selected)}, claim step ${JSON.stringify(opened.claimStepId)}`);
+        }
+        if (opened.claimRowInSpine !== true) misses.push("the claim row lies outside the spine viewport");
+        if (opened.claimPinInOverview !== true) misses.push("the claim pin lies outside the overview viewport");
+        if (typeof opened.paintedAtMs !== "number" || opened.paintedAtMs > 5000) {
+          misses.push(`tv:initial-selection-painted startTime ${JSON.stringify(opened.paintedAtMs)}`);
+        }
+        if (misses.length > 0) throw new Error(`hybrid open: ${misses.join("; ")}`);
+        console.log(
+          `hybrid: opened with ${opened.selected} selected and in view, painted at ${Math.round(opened.paintedAtMs)} ms`,
+        );
+      }
       const html = chrome(profile, [
         "--window-size=1440,900",
         "--dump-dom",
@@ -12471,7 +12736,7 @@ main().catch((error) => {
 - [ ] **Step 2: Run the smoke**
 
 Run: `pnpm --filter jevcode-desktop rebuild:node && lsof -ti tcp:4179 | wc -l && node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid`
-Expected: `0` (port free), then `hybrid: selftest ok (rows 57, max drift 0px)` (the row count is the oauth bundle's, whatever the replay wrote; drift ≤ 1) and `SMOKE_OK 2 screenshots`. If Chrome's virtual time never runs the selftest's timers (`the selftest wrote no result`), rerun once; if it fails again, the fallback in spec §11 applies (read `<pre id="selftest">` over `--remote-debugging-pipe`) and the controller escalates before changing the script.
+Expected: `0` (port free), then `hybrid: opened with step:<n> selected and in view, painted at <ms> ms` (`<n>` is the seq of oauth's "OAuth implementation complete; all checks pass." row in the replayed bundle; `<ms>` ≤ 5000, or the script fails with `hybrid open: …`), then `hybrid: selftest ok (rows 57, max drift 0px)` (the row count is the oauth bundle's, whatever the replay wrote; drift ≤ 1) and `SMOKE_OK 2 screenshots`. If Chrome's virtual time never runs the selftest's timers (`the selftest wrote no result`), rerun once; if it fails again, the fallback in spec §11 applies (read `<pre id="selftest">` over `--remote-debugging-pipe`) and the controller escalates before changing the script. A `hybrid open:` failure names what missed: the selection (the Shell's initial selection, C2-3), the claim row outside the spine viewport (the spine's reveal, C2-12), the pin outside the overview viewport (the overview camera, C2-11), or the mark (C2-3); fix the owning task, never the probe's expectations.
 
 - [ ] **Step 3: Look at the screenshots**
 
@@ -12493,9 +12758,28 @@ Expected: first paint median ≤ 300 ms; full load median ≤ 2,000 ms; `tv:key-
 
 The controller asks the user to review oauth, api-break and the soak bundle in the dev host against spec §1 and §12 M4a (the product review-gate session, docs/IMPLEMENTATION-PLAN.md:153), and records the verdict and the reviewer's notes. A failed gate returns the UI to iteration before W3 starts.
 
-- [ ] **Step 6: Record the M4a exit**
+- [ ] **Step 6: Check VoiceOver on the Hybrid view (HUMAN CHECK: the controller asks the user)**
 
-Append to `docs/spikes/trace-viewer-spike.md`, filling each value from Steps 2–5 (numbers copied from the HUD JSON, never estimated):
+Spec §11 leaves VoiceOver output to a hand check "in the spike and at M4a exit" (base index gap G3); spec §7.13 fixes what it must read. This is the M4a-exit half, run with index H3's procedure on the Hybrid Outline, spine and overview sliders.
+
+Run: `ls apps/trace-viewer-dev/public/bundles/oauth.json && pnpm --filter jevcode-trace-viewer-dev build && pnpm --filter jevcode-trace-viewer-dev exec vite preview --port 4179 --strictPort`
+Expected: the path prints (Step 2's smoke wrote it; if `ls` fails, rerun Step 2), the build exits 0, and the preview serves `http://localhost:4179/`.
+
+The person, in desktop Chrome on macOS with the window at least 1440 px wide:
+
+1. Opens `http://localhost:4179/?bundle=oauth` and waits until the Inspector title reads "Claim contradicts tests".
+2. Turns VoiceOver on (Cmd+F5).
+3. Clicks the address bar, presses Tab until focus leaves the title bar, then keeps pressing Tab. Pass: focus enters the Outline (one stop), then the reading spine in `main` (one stop), then the Inspector, in that order; Shift+Tab walks back Inspector → main → Outline.
+4. On the spine stop, listens. Pass: VoiceOver reads the selected row with "+0:43" (spoken as "plus 0 colon 43") and "Claim contradicts tests".
+5. Opens the rotor (Control+Option+U), picks Form Controls and chooses "Playhead" (or moves the VoiceOver cursor with Control+Option+Right Arrow from the Outline into the overview until it reaches "Playhead"). Pass: VoiceOver reads "Playhead", "slider" and the value "+0:43, Claim contradicts tests, step <n> of <m>".
+6. Presses Escape to close the rotor, clicks the claim row in the spine, presses Option+3 (Step level, which sets a range brush) and opens the rotor's Form Controls again. Pass: it lists "Range start" and "Range end", and each reads a "+m:ss" value such as "+0:39".
+7. Turns VoiceOver off (Cmd+F5) and reports pass or fail for items 3–6, what VoiceOver said for each, and the macOS and Chrome versions.
+
+A fail blocks the M4a exit and C2's merge: item 3 returns C2-8 (regions and roving tab stops) to iteration, item 4 returns C2-12 (spine rows), and items 5 and 6 return C2-11 (sliders). The controller copies the answer into Step 7's record before the commit.
+
+- [ ] **Step 7: Record the M4a exit**
+
+Append to `docs/spikes/trace-viewer-spike.md`, filling each value from Steps 2–6 (numbers copied from the smoke output and the HUD JSON, never estimated):
 
 ```markdown
 ## M4a exit (lane C2, 2026-09-28)
@@ -12513,15 +12797,26 @@ Reference machine: <model, CPU, memory, OS, Node, Chrome version, display refres
 
 Smoke: `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid` printed `SMOKE_OK 2 screenshots`; screenshots `apps/trace-viewer-dev/.smoke/hybrid-1440.png` and `hybrid-1000.png` (git-ignored; regenerate with the command).
 
+Found at once (spec §1; `?selftest=open`, Hybrid, 1440 px): the smoke printed `hybrid: opened with <step id> selected and in view, painted at <ms> ms`. The selection equals oauth's claim step, the claim row lies inside the spine viewport, its pin lies inside the overview viewport, and `tv:initial-selection-painted` `startTime` is <ms> ms (≤ 5000).
+
 Product review gate: <date>, <reviewer role>, <verdict>, <notes>.
+
+VoiceOver (Hybrid, oauth; spec §7.13, §11; C2-16 Step 6): <date>, macOS <version>, Chrome <version>.
+
+| Check | Pass | VoiceOver said |
+|---|---|---|
+| Tab order Outline → main → Inspector, and back with Shift+Tab | <yes/no> | <regions announced> |
+| Selected spine row | <yes/no> | "<text>" |
+| Playhead slider | <yes/no> | "<text>" |
+| Range start and Range end sliders (after Option+3) | <yes/no> | "<text>"; "<text>" |
 ```
 
-- [ ] **Step 7: Root checks**
+- [ ] **Step 8: Root checks**
 
 Run: `pnpm -r build && pnpm -r typecheck && pnpm -r --no-bail --workspace-concurrency=1 test && pnpm lint`
 Expected: exit 0.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add apps/trace-viewer-dev/scripts/smoke.mjs docs/spikes/trace-viewer-spike.md
@@ -12535,16 +12830,17 @@ git commit -m "test(trace-viewer-dev): add the Hybrid visual smoke and record th
 All of these hold on the lane branch before it merges (spec §12 M4a, decision R28):
 
 1. Spike risks 1, 4 and 5 passed or have their ruling applied (C2-0 gate section; C2-11 `PINS_PAINTED_ON_CANVAS` matches the risk 5 ruling).
-2. oauth opens in Hybrid, in Review, with "Claim contradicts tests" selected and expanded at +0:43 (C2-14 test and the smoke's `selectedTitle`).
+2. oauth opens in Hybrid, in Review, with "Claim contradicts tests" selected and expanded at +0:43 (C2-14 test and the smoke's `selectedTitle`), and spec §1 "found at once" holds at 1440 px: the smoke's `?selftest=open` probe finds the selection equal to the claim step's id, the claim row inside the spine viewport, its pin inside the overview viewport and `tv:initial-selection-painted` at ≤ 5,000 ms (C2-3 mark, C2-16).
 3. `pnpm --filter jevcode-trace-viewer-dev build` passes with the Electron CSP injected and no Node built-in in the graph (C2-15).
 4. `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid` prints `SMOKE_OK 2 screenshots` with zero errors, zero CSP violations and drift ≤ 1 px (C2-16).
 5. The M4a budgets in the spike doc's "M4a exit" table all pass.
 6. The product review gate is held and recorded.
+7. The VoiceOver check (C2-16 Step 6) passed on all four rows and is recorded in the spike doc's "M4a exit" section.
 7. `pnpm -r build`, `pnpm -r typecheck`, `pnpm -r --no-bail --workspace-concurrency=1 test` and `pnpm lint` exit 0.
 
 **Merge.** Rebase on `main` (`git rebase main`), rerun `pnpm install --frozen-lockfile && pnpm -r build` and the root checks, then merge C2 first in W2 (C2 → C3a → Da). Never `git stash`.
 
 ## Self-review notes
 
-- **Spec coverage.** §7.1 Shell (C2-3 grid, landmarks, boundaries), title bar (C2-4), Outline (C2-5), Inspector and review note (C2-6, C2-7); §7.2 Hybrid anatomy (C2-10, C2-11, C2-12, C2-14); §7.3 overview rendering (C2-10, C2-11) and lists (C2-5, C2-12); §7.6.1 lanes, density, bands, semantic zoom (C1-13 layout rendered by C2-10/C2-11; presets C2-14); §7.6.2 interactions (C2-11); §7.6.3 spine rows, finding rows, virtualization, scroll sync (C2-12, C2-13); §7.8 store use, defaults on open, regroup note, location (C2-3, C2-6); §7.9 keyboard (C2-8; overview arrows C2-11); §7.10 live follow (C2-2 hold, C2-4 pill, C2-11 camera, C2-12 follow, C2-14 tests); §7.11 states (C2-2, C2-4, C2-5, C2-7, C2-12); §7.12 tokens and graphics use (all CSS Modules; C1-1's scan covers them); §7.13 accessibility (roles and tab stops in C2-5, C2-8, C2-11, C2-12); §8 only `ViewerHost` (C2-3, C2-6); §10 marks and HUD (C2-3, C2-8, C2-11, C2-12, C2-15, C2-16); §11 jsdom and smoke (every task, C2-16); §12 M4a exit (above). Canvas, the `<Activity>` switch tests and M5 are other lanes.
-- **Known limits carried as risks, not gaps.** The overview's sliders and pins are reachable by pointer and by the playhead's own arrow keys once focused, but `main` keeps a single tab stop on the spine, so a keyboard-only reader moves the playhead with `,`/`.` and the brush with `{`/`}`/`b`. The Inspector footer buttons are native tab stops beside the tab list's roving stop.
+- **Spec coverage.** §1 "found at once" (C2-3 `tv:initial-selection-painted` mark and its jsdom test; C2-15 `?selftest=open`; C2-16 smoke assertion; base index gap G1); §7.1 Shell (C2-3 grid, landmarks, boundaries), title bar (C2-4), Outline (C2-5), Inspector and review note (C2-6, C2-7); §7.2 Hybrid anatomy (C2-10, C2-11, C2-12, C2-14); §7.3 overview rendering (C2-10, C2-11) and lists (C2-5, C2-12); §7.6.1 lanes, density, bands, semantic zoom (C1-13 layout rendered by C2-10/C2-11; presets C2-14); §7.6.2 interactions (C2-11); §7.6.3 spine rows, finding rows, virtualization, scroll sync (C2-12, C2-13); §7.8 store use, defaults on open, regroup note, location (C2-3, C2-6); §7.9 keyboard (C2-8; overview arrows C2-11); §7.10 live follow (C2-2 hold, C2-4 pill, C2-11 camera, C2-12 follow, C2-14 tests); §7.11 states (C2-2, C2-4, C2-5, C2-7, C2-12); §7.12 tokens and graphics use (all CSS Modules; C1-1's scan covers them); §7.13 accessibility (roles and tab stops in C2-5, C2-8, C2-11, C2-12; VoiceOver by hand at the M4a exit, C2-16 Step 6, base index gap G3); §8 only `ViewerHost` (C2-3, C2-6); §10 marks and HUD (C2-3, C2-8, C2-11, C2-12, C2-15, C2-16); §11 jsdom and smoke (every task, C2-16); §12 M4a exit (above). Canvas, the `<Activity>` switch tests and M5 are other lanes.
+- **Known limits carried as risks, not gaps.** The overview's sliders and pins are reachable by pointer and by the playhead's own arrow keys once focused, but `main` keeps a single tab stop on the spine, so a keyboard-only reader moves the playhead with `,`/`.` and the brush with `{`/`}`/`b`, and a VoiceOver reader reaches the sliders through the rotor (C2-16 Step 6 checks it). The Inspector footer buttons are native tab stops beside the tab list's roving stop.
