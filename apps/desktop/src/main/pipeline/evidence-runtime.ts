@@ -28,8 +28,9 @@ export interface EvidenceSessionOptions {
 export interface EvidenceSession {
   start(): Promise<void>;
   stop(): Promise<void>;
-  observeCommand(command: string, exitCode: number): void;
-  observeTestOutput(command: string, output: string): void;
+  // sourceCallId: command_completed.callId of the agent call (R2).
+  observeCommand(command: string, exitCode: number, sourceCallId?: string): void;
+  observeTestOutput(command: string, output: string, sourceCallId?: string): void;
   observeReset(files: readonly string[]): void;
   collectGit(): Promise<EvidenceFact[]>;
 }
@@ -139,11 +140,11 @@ export function createEvidenceSession(
       }
       await fileWatcher.stop();
     },
-    observeCommand(command: string, exitCode: number): void {
-      commandCollector.observe(command, exitCode);
+    observeCommand(command: string, exitCode: number, sourceCallId?: string): void {
+      commandCollector.observe(command, exitCode, sourceCallId);
     },
-    observeTestOutput(command: string, output: string): void {
-      testCollector.collect(output, command);
+    observeTestOutput(command: string, output: string, sourceCallId?: string): void {
+      testCollector.collect(output, command, undefined, sourceCallId);
     },
     observeReset(files: readonly string[]): void {
       revertDetector.observeReset(files);
