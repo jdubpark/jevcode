@@ -4,6 +4,7 @@ import { Icon } from "../icons/Icon.js";
 import styles from "./graphics.module.css";
 import { graphicA11y, type GraphicBaseProps } from "./scales.js";
 import { TestDots } from "./TestDots.js";
+import { displayUntrusted } from "./untrusted.js";
 
 export interface ClaimVsObservedProps extends GraphicBaseProps {
   claim: { text: string; span?: readonly [number, number]; tMs: number };
@@ -27,7 +28,7 @@ function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick }: 
     <>
       <TestDots size="xs" passed={observed.passed} failed={observed.failed} skipped={0} />
       <span className={observed.failed > 0 ? styles.observedFail : undefined}>{`${observed.failed} failed`}</span>
-      <span className={styles.mono}>{observed.command}</span>
+      <span className={styles.mono}>{displayUntrusted(observed.command)}</span>
     </>
   );
   // Unlike the other glyphs, this one can hold a real interactive control (the observed

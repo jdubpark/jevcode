@@ -81,6 +81,35 @@ describe("ClaimVsObserved", () => {
     fireEvent.click(screen.getByRole("button", { name: /1 failed/ }));
     expect(onObservedClick).toHaveBeenCalledTimes(1);
   });
+
+});
+
+describe("mono slots (spec §6.8, §9)", () => {
+  it("show bidi and control characters in paths, commands, stems and table names as visible tokens", () => {
+    const specs: GraphicSpec[] = [
+      { kind: "diff", added: 3, removed: 1, files: [{ path: "src/\u202Est.exe", added: 3, removed: 1 }] },
+      {
+        kind: "claim",
+        claim: { text: "all tests pass", tMs: 43_000 },
+        observed: { passed: 14, failed: 1, command: "rm \u202Efdp.exe", tMs: 35_000 },
+      },
+      { kind: "flow", nodes: ["identity", "goo\u2066gle"], focus: 0 },
+      { kind: "table", tables: [{ name: "users\u0007", role: "altered", columns: 1 }] },
+    ];
+    const text = specs.map((spec) => render(<Graphic spec={spec} size="sm" />).container.textContent ?? "").join("\n");
+    expect(text).toContain("src/⟨U+202E⟩st.exe");
+    expect(text).toContain("rm ⟨U+202E⟩fdp.exe");
+    expect(text).toContain("goo⟨U+2066⟩gle");
+    expect(text).toContain("users⟨U+0007⟩");
+    for (const raw of ["\u202E", "\u2066", "\u0007"]) expect(text).not.toContain(raw);
+  });
+
+  it("leave a command the caller already made display-safe unchanged", () => {
+    const { container } = render(
+      <ClaimVsObserved size="sm" claim={{ text: "done", tMs: 1 }} observed={{ passed: 0, failed: 1, command: "rm ⟨U+202E⟩fdp.exe", tMs: 0 }} />,
+    );
+    expect(container.textContent).toContain("rm ⟨U+202E⟩fdp.exe");
+  });
 });
 
 describe("FlowGlyph and TableGlyph", () => {

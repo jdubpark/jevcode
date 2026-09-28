@@ -2,6 +2,7 @@ import { Fragment, memo, type JSX } from "react";
 
 import styles from "./graphics.module.css";
 import { graphicA11y, type GraphicBaseProps } from "./scales.js";
+import { displayUntrusted } from "./untrusted.js";
 
 export interface FlowGlyphProps extends GraphicBaseProps { nodes: readonly string[]; focus: number }
 
@@ -23,7 +24,7 @@ function FlowGlyphImpl({ size, label, nodes, focus }: FlowGlyphProps): JSX.Eleme
         <Fragment key={`${node}:${i}`}>
           {i > 0 ? <Arrow /> : null}
           <span data-node={node} data-focus={i === focus ? "true" : "false"} className={i === focus ? `${styles.node} ${styles.nodeFocus}` : styles.node}>
-            {size === "xs" ? "" : node}
+            {size === "xs" ? "" : displayUntrusted(node)}
           </span>
         </Fragment>
       ))}
