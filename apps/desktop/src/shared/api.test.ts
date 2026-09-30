@@ -215,8 +215,61 @@ describe("createJevcodeApi", () => {
     expect(deps.invoke).not.toHaveBeenCalled();
   });
 
-  it("the trace namespace holds exactly the three reads", () => {
+  it("the trace namespace holds three reads, open and requestChanges", () => {
     const trace = createJevcodeApi(makeDeps()).trace;
-    expect(Object.keys(trace).sort()).toEqual(["listSessions", "payloads", "rows"]);
+    expect(Object.keys(trace).sort()).toEqual([
+      "listSessions",
+      "open",
+      "payloads",
+      "requestChanges",
+      "rows",
+    ]);
+  });
+});
+
+describe("trace window API", () => {
+  it("opens a trace window and hands a review note to main", async () => {
+    const deps = makeDeps();
+    const api = createJevcodeApi(deps);
+    await api.trace.open("sess_1");
+    expect(deps.invoke).toHaveBeenCalledWith("trace:open", { sessionId: "sess_1" });
+    await api.trace.requestChanges({ sessionId: "sess_1", selected: "step:48", text: "Re: trace" });
+    expect(deps.invoke).toHaveBeenCalledWith("trace:requestChanges", {
+      sessionId: "sess_1",
+      selected: "step:48",
+      text: "Re: trace",
+    });
+  });
+
+  it("rejects malformed trace window requests before they reach main", async () => {
+    const deps = makeDeps();
+    const api = createJevcodeApi(deps);
+    await expect(api.trace.open("")).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(
+      api.trace.requestChanges({ sessionId: "sess_1", selected: "file:a.ts", text: "x" }),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(
+      api.trace.requestChanges({ sessionId: "sess_1", selected: "step:1", text: "a".repeat(8_001) }),
+    ).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    expect(deps.invoke).not.toHaveBeenCalled();
+  });
+
+  it("delivers composer:prefill payloads and drops invalid ones", () => {
+    const deps = makeDeps();
+    const captured = new Map<string, (payload: unknown) => void>();
+    deps.on.mockImplementation((channel, listener) => {
+      captured.set(channel, listener);
+      return () => undefined;
+    });
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = vi.fn();
+    createJevcodeApi(deps).onComposerPrefill(listener);
+    const push = captured.get("composer:prefill");
+    expect(push).toBeDefined();
+    push?.({ sessionId: "sess_1", text: "note" });
+    push?.({ sessionId: "", text: "note" });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ sessionId: "sess_1", text: "note" });
+    quiet.mockRestore();
   });
 });

@@ -19,7 +19,7 @@ import {
   validateIncomingSpec,
 } from "@jevcode/ui-catalog";
 import type { SurfaceRecord } from "@jevcode/ui-catalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import type { AgentInstructionStatePayload } from "../../shared/api.js";
 import { getBridge } from "../bridge.js";
@@ -29,6 +29,7 @@ import type {
   UiSpecPatchPayload,
   UiSpecPayload,
 } from "../payload-types.js";
+import { composerReducer, initialComposer } from "./composer-prefill.js";
 import { TaskPrompt } from "./TaskPrompt.js";
 
 interface WorkspaceHostProps {
@@ -335,7 +336,12 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   const [pending, setPending] = useState<AgentInstructionStatePayload["pending"]>([]);
   const [filter, setFilter] = useState<WorkspaceFilter>("overview");
   const [instructionMode, setInstructionMode] = useState<InstructionMode>("steer");
-  const [instruction, setInstruction] = useState("");
+  const [composer, dispatchComposer] = useReducer(composerReducer, sessionId, initialComposer);
+  const instruction = composer.draft;
+  const traceNote = composer.held;
+  const focusPending = composer.focusPending;
+  const setInstruction = (draft: string) => dispatchComposer({ type: "edit", draft });
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const workspaceRef = useCallback((element: HTMLElement | null) => {
@@ -357,9 +363,36 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     setRecordedFiles([]);
     setPending([]);
     setFilter("overview");
-    setInstruction("");
     setActionError(null);
   }, [sessionId]);
+
+  // The draft belongs to a session: a switch resets it, then applies a note
+  // held for the new session (composerReducer, spec §8.5).
+  useEffect(() => {
+    dispatchComposer({ type: "sessionChanged", sessionId });
+  }, [sessionId]);
+
+  // Trace window "Request changes": append to the draft, keep the instruction
+  // mode, focus with the caret at the end, never send.
+  useEffect(() => {
+    return bridge.onComposerPrefill((payload) => {
+      dispatchComposer({ type: "prefill", payload });
+    });
+  }, [bridge]);
+
+  useEffect(() => {
+    // Consumes a pending request once the textarea is enabled: a note that
+    // arrived during a send takes focus when the send settles, and unrelated
+    // renders never do.
+    if (!focusPending) return;
+    const composer = composerRef.current;
+    if (composer === null || composer.disabled) return;
+    composer.focus();
+    const end = composer.value.length;
+    composer.setSelectionRange(end, end);
+    composer.scrollTop = composer.scrollHeight;
+    dispatchComposer({ type: "focusDone" });
+  }, [focusPending, sending, sessionId]);
 
   useEffect(() => {
     const element = workspaceEl;
@@ -600,6 +633,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   const sendInstruction = async () => {
     const text = instruction.trim();
     if (!sessionId || text.length === 0 || sending) return;
+    const sentDraft = instruction;
     setSending(true);
     setActionError(null);
     try {
@@ -610,12 +644,21 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
         shouldResume ? "queue" : instructionMode,
       );
       if (shouldResume) await bridge.agent.resume(sessionId);
-      setInstruction("");
+      dispatchComposer({ type: "sent", text: sentDraft });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
     }
+  };
+
+  const switchToTraceNote = () => {
+    const note = traceNote?.note;
+    if (note === undefined) return;
+    setActionError(null);
+    void bridge.session.switchTo(note.sessionId).catch((error: unknown) => {
+      setActionError(error instanceof Error ? error.message : String(error));
+    });
   };
 
   const toggleAgent = async () => {
@@ -767,7 +810,26 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
         </div>
 
         <div className="session-composer">
+          {traceNote !== null ? (
+            <p className="composer-hint composer-trace-note" role="status">
+              {traceNote.replaced
+                ? "Newer trace note for another session replaced the earlier one"
+                : "Trace note for another session"}{" "}
+              ·{" "}
+              <button type="button" className="link-button" onClick={switchToTraceNote}>
+                Switch
+              </button>{" "}
+              <button
+                type="button"
+                className="link-button link-button-muted"
+                onClick={() => dispatchComposer({ type: "dismiss" })}
+              >
+                Dismiss
+              </button>
+            </p>
+          ) : null}
           <textarea
+            ref={composerRef}
             aria-label="Guide the agent"
             placeholder={
               state === "completed"

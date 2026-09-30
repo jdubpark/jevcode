@@ -7,6 +7,7 @@ import { TraceSourceError } from "../../sources/errors.js";
 import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import {
   BACKOFF_MS,
+  COMMIT_COST_FACTOR,
   createDataController,
   LIVE_TICK_START,
   type DataSnapshot,
@@ -155,21 +156,190 @@ describe("createDataController", () => {
     expect(scheduler.pending()).toBe(0);
   });
 
-  it("yields a macrotask after each page so the first commit can paint before the next page is requested", async () => {
+  it("starts the session summary and the first rows page before either resolves", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: inner, control } = fakeSource(messageRows(4), { state: "completed" });
+    const order: string[] = [];
+    let resolveSummary: (summary: Awaited<ReturnType<TraceSource["summary"]>>) => void = () => undefined;
+    const source: TraceSource = {
+      ...inner,
+      summary: () => {
+        order.push("summary");
+        return new Promise((resolve) => {
+          resolveSummary = resolve;
+        });
+      },
+    };
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    // Serial loading would still be waiting on the summary and have made no rows call.
+    expect(order).toEqual(["summary"]);
+    expect(control.calls).toHaveLength(1);
+    expect(controller.get().session).toBeNull();
+
+    resolveSummary(testMeta({ state: "completed" }));
+    await scheduler.run(100);
+    expect(control.calls).toHaveLength(1);
+    expect(controller.get().session?.loadedThroughSeq).toBe(4);
+    expect(controller.get().terminal).toBe(true);
+  });
+
+  it("a rows failure while the summary is in flight surfaces as before, and a summary failure ignores the rows", async () => {
+    const scheduler = new FakeScheduler();
+    const rowsFail = fakeSource(messageRows(3), { state: "completed" });
+    rowsFail.control.failures = 1;
+    const a = createDataController({ source: rowsFail.source, pollMs: 1_000, scheduler, isHidden: () => false });
+    a.start();
+    await scheduler.run(100);
+    expect(a.get().status.kind).toBe("error");
+    expect(a.get().session).toBeNull();
+
+    const summaryFail = fakeSource(messageRows(3), { state: "completed" });
+    summaryFail.control.summaryError = new TraceSourceError("trace:listSessions", "UNKNOWN_SESSION", "gone");
+    const b = createDataController({ source: summaryFail.source, pollMs: 1_000, scheduler, isHidden: () => false });
+    b.start();
+    await scheduler.run(100);
+    expect(b.get().status.kind).toBe("error");
+    expect(b.get().session).toBeNull();
+    expect(scheduler.pending()).toBe(0);
+  });
+
+  it("a source whose rows() throws synchronously fails the load like a rejection", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(3), { state: "completed" });
+    control.onRows = () => {
+      throw new Error("bridge missing");
+    };
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    expect(controller.get().status.kind).toBe("error");
+    expect(controller.get().session).toBeNull();
+  });
+
+  it("yields a macrotask after each page so the first commit can paint before the next page folds", async () => {
     const scheduler = new FakeScheduler();
     const { source, control } = fakeSource(messageRows(9), { state: "completed" });
     const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
     const seen = record(controller, scheduler);
     controller.start();
-    // Drain microtasks only: no scheduler timer runs, so a page loop that never yields would fetch every page here.
+    // Drain microtasks only: no scheduler timer runs, so a page loop that never yields would fold every page here.
     for (let i = 0; i < 50; i += 1) await Promise.resolve();
-    expect(control.calls.map((call) => call.afterSeq)).toEqual([0]);
-    expect(seen.filter((entry) => entry.snapshot.session !== null)).toHaveLength(1);
+    // The second page is already requested (pipelined), but only the first is folded and committed.
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3]);
+    const commits = seen.filter((entry) => entry.snapshot.session !== null);
+    expect(commits).toHaveLength(1);
+    expect(commits[0]?.snapshot.session?.loadedThroughSeq).toBe(3);
     expect(scheduler.pending()).toBeGreaterThan(0);
 
     await scheduler.run(2_000);
     expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 6, 9]);
     expect(controller.get().loadedFraction).toBe(1);
+    expect(controller.get().terminal).toBe(true);
+    expect(scheduler.pending()).toBe(0);
+  });
+
+  it("requests the next page while the current one folds, one request ahead at most (M5 full load)", async () => {
+    const scheduler = new FakeScheduler();
+    const rows = messageRows(12);
+    const { source, control } = fakeSource(rows, { state: "completed" });
+    control.deferNext = true;
+    const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+    controller.start();
+    await settle();
+    // First page in flight: nothing else is requested before it returns.
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0]);
+    control.deferNext = true;
+    control.deferred.shift()?.resolve({ rows: rows.slice(0, 3), nextAfterSeq: 3, lastSeq: 12, state: "completed" });
+    await settle();
+    // Page 2 is requested as soon as page 1 arrives, before the yield that precedes its fold, and
+    // while page 2 is in flight no third request starts.
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3]);
+    await scheduler.run(10);
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3]);
+    expect(controller.get().session?.loadedThroughSeq).toBe(3);
+
+    control.deferred.shift()?.resolve({ rows: rows.slice(3, 6), nextAfterSeq: 6, lastSeq: 12, state: "completed" });
+    await scheduler.run(2_000);
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 6, 9, 12]);
+    expect(controller.get().session?.loadedThroughSeq).toBe(12);
+    expect(controller.get().loadedFraction).toBe(1);
+    expect(scheduler.pending()).toBe(0);
+  });
+
+  it("a failed pipelined page reconnects and re-requests from the last folded page", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(9), { state: "completed" });
+    let failedOnce = false;
+    control.onRows = (request) => {
+      if (request.afterSeq === 3 && !failedOnce) {
+        failedOnce = true;
+        control.failures = 1;
+      }
+    };
+    const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await scheduler.run(5_000);
+
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 3, 6, 9]);
+    expect(seen.some((entry) => entry.snapshot.status.kind === "reconnecting")).toBe(true);
+    const last = controller.get();
+    expect(last.status.kind).toBe("ready");
+    expect(last.session?.loadedThroughSeq).toBe(9);
+    expect(last.rows).toBe(9);
+    expect(scheduler.pending()).toBe(0);
+  });
+
+  it("spaces progressive commits by COMMIT_COST_FACTOR x the last finalize while catching up", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: inner, control } = fakeSource(messageRows(90), { state: "completed" });
+    control.onRows = () => scheduler.spend(20);
+    // commitNow reads the source clock once per finalize: the fake bills each commit 100 ms there.
+    const source: TraceSource = { ...inner, now: () => (scheduler.spend(100), 0) };
+    const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await scheduler.run(10_000);
+
+    const commits = seen.filter((entry) => entry.snapshot.session !== null);
+    const progressive = commits.filter((entry) => entry.snapshot.loadedFraction < 1);
+    expect(progressive.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < progressive.length; i += 1) {
+      expect((progressive[i]?.t ?? 0) - (progressive[i - 1]?.t ?? 0)).toBeGreaterThanOrEqual(COMMIT_COST_FACTOR * 100);
+    }
+    expect(controller.get().session?.loadedThroughSeq).toBe(90);
+    expect(controller.get().loadedFraction).toBe(1);
+  });
+
+  it("the caught-up commit replaces a pending progressive commit and waits only the 250 ms cap", async () => {
+    const scheduler = new FakeScheduler();
+    const rows = messageRows(9);
+    const { source: inner, control } = fakeSource(rows, { state: "completed" });
+    const source: TraceSource = { ...inner, now: () => (scheduler.spend(100), 0) };
+    control.deferNext = true;
+    const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await settle();
+
+    control.deferNext = true;
+    control.deferred.shift()?.resolve({ rows: rows.slice(0, 3), nextAfterSeq: 3, lastSeq: 9, state: "completed" });
+    await settle(); // first commit at once: finalize 0 -> 100
+    expect(seen.map((entry) => entry.t)).toEqual([0, 100]); // summary, then the first commit
+
+    await scheduler.run(50); // t = 150
+    control.deferNext = true;
+    control.deferred.shift()?.resolve({ rows: rows.slice(3, 6), nextAfterSeq: 6, lastSeq: 9, state: "completed" });
+    await scheduler.run(50); // progressive commit pending until 100 + 4 x 100 = 500; t = 200
+    control.deferred.shift()?.resolve({ rows: rows.slice(6, 9), nextAfterSeq: null, lastSeq: 9, state: "completed" });
+    await scheduler.run(1_000);
+
+    const commits = seen.filter((entry) => entry.snapshot.session !== null);
+    // Caught up at t = 200: the commit starts at 100 + 250 = 350 (not 500) and emits after its 100 ms finalize.
+    expect(commits.map((entry) => entry.t)).toEqual([100, 450]);
+    expect(commits[1]?.snapshot.loadedFraction).toBe(1);
     expect(controller.get().terminal).toBe(true);
     expect(scheduler.pending()).toBe(0);
   });

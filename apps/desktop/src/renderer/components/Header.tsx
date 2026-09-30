@@ -9,6 +9,8 @@ interface HeaderProps {
   onToggleTerminal: () => void;
   onToggleDebug: () => void;
   onCloseRepo: () => void;
+  /** Opens the active session's trace window (trace:open). Never switches sessions. */
+  onOpenTrace: () => void;
 }
 
 function taskStatusLabel(sessionState: SessionStatePayload | null): string {
@@ -78,6 +80,18 @@ export function Header(props: HeaderProps) {
           onClick={props.onToggleDebug}
         >
           Inspect
+        </button>
+        <button
+          type="button"
+          onClick={props.onOpenTrace}
+          disabled={!props.sessionState}
+          title={
+            props.sessionState
+              ? "Open this session's trace in a new window"
+              : "Open a session to see its trace"
+          }
+        >
+          Trace
         </button>
       </div>
     </header>

@@ -9,8 +9,13 @@ export default defineConfig({
   build: {
     outDir: "dist/renderer",
     emptyOutDir: false,
+    // default-src 'self' blocks data: URIs, so no asset may be inlined (spec §8.2).
+    assetsInlineLimit: 0,
     rollupOptions: {
-      input: "src/renderer/index.html",
+      input: {
+        main: "src/renderer/index.html",
+        trace: "src/renderer/trace.html",
+      },
     },
   },
 });
