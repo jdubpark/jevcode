@@ -23,12 +23,11 @@ export function revealAlign(row: Span, win: ScrollWindow): "none" | "auto" | "ce
 }
 
 /**
- * A reveal's scroll offset moved forward onto the next row start (binary search over `count` sorted starts), so the
- * first visible row is never cut in half under the range chip (audit 2-8). Moving forward only lifts the revealed row,
- * so it stays in view; an offset on a start, past the last start, or where the next start lies beyond `maxOffset`
- * stays as it is.
+ * The row a reveal should start-align so its offset lands on a row start: the first row starting at or after `offset`
+ * (binary search over `count` sorted starts), or -1 when none does. Moving forward only lifts the revealed row, so it
+ * stays in view, and the first visible row is never cut in half under the range chip (audit 2-8).
  */
-export function snapToRowStart(offset: number, count: number, startOf: (index: number) => number, maxOffset: number): number {
+export function firstRowAtOrAfter(offset: number, count: number, startOf: (index: number) => number): number {
   let lo = 0;
   let hi = count - 1;
   let next = -1;
@@ -41,9 +40,7 @@ export function snapToRowStart(offset: number, count: number, startOf: (index: n
       lo = mid + 1;
     }
   }
-  if (next < 0) return offset;
-  const start = startOf(next);
-  return start > maxOffset ? offset : start;
+  return next;
 }
 
 export interface PushCandidate {

@@ -27,7 +27,7 @@ import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
 import { rowFindingOf } from "./row-finding.js";
-import { extendRange, pushTarget, revealAlign, snapToRowStart, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
 export interface FindingBodyProps {
@@ -214,6 +214,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     endProgrammatic();
     userScroll.current = true;
     readerMovedSinceSample.current = true;
+    intendedOffset.current = null;
     clearTimer(userTimer);
     userTimer.current = viewOf()?.setTimeout(() => {
       userTimer.current = null;
@@ -222,11 +223,16 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   };
 
   /**
+   * The offset the spine's own last reveal scrolled to, until the frame after it: the virtualizer learns the new
+   * offset only from the scroll event, so a second reveal in the same commit would otherwise decide from the old one.
+   */
+  const intendedOffset = useRef<number | null>(null);
+  /**
    * The viewport in list coordinates, from the virtualizer's own scroll offset and height. Reading element.scrollTop
    * here would force a synchronous layout right after React mutated the DOM (perf investigation fix 6).
    */
   const windowOf = (element: HTMLElement): { offset: number; height: number } => ({
-    offset: virtualizer.scrollOffset ?? element.scrollTop,
+    offset: intendedOffset.current ?? virtualizer.scrollOffset ?? element.scrollTop,
     height: virtualizer.scrollRect?.height || element.clientHeight,
   });
 
@@ -346,10 +352,23 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     if (decided === "none") return;
     const target = virtualizer.getOffsetForIndex(position, decided);
     if (target === undefined) return;
-    // Land on a row start so the first visible row never sits half under the range chip (audit 2-8).
-    const offset = snapToRowStart(target[0], cache.length, (i) => cache[i]?.start ?? 0, Math.max(0, virtualizer.getTotalSize() - win.height));
+    // Start-align the row at or after the wanted offset, so the reveal lands on a row start (audit 2-8). Scrolling by
+    // index keeps the virtualizer re-targeting while expanded rows are measured.
+    const maxOffset = Math.max(0, virtualizer.getTotalSize() - win.height);
+    let snapped = firstRowAtOrAfter(target[0], cache.length, (i) => cache[i]?.start ?? 0);
+    // Near the end of the list the browser clamps the offset; start-align the row before instead, so the top row
+    // stays whole and the cut, if any, falls at the bottom edge.
+    if (snapped > 0 && (cache[snapped]?.start ?? 0) > maxOffset) snapped -= 1;
+    const start = cache[snapped]?.start;
     beginProgrammatic();
-    virtualizer.scrollToOffset(offset, { align: "start", behavior: "auto" });
+    if (snapped < 0 || start === undefined) virtualizer.scrollToIndex(position, { align: decided, behavior: "auto" });
+    else virtualizer.scrollToIndex(snapped, { align: "start", behavior: "auto" });
+    intendedOffset.current = Math.max(0, Math.min(start ?? target[0], maxOffset));
+    const view = viewOf();
+    // The scroll event (which updates the virtualizer) runs before the next frame's callbacks.
+    view?.requestAnimationFrame(() => {
+      intendedOffset.current = null;
+    });
   };
 
   // An external playhead write (overview, keys, search, finding, outline) reveals the playhead row.
@@ -542,6 +561,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
         <span className={styles.chipBar} aria-hidden="true" />
         <span>{`${formatOffset(rangeFrom)} – ${formatOffset(rangeTo)}`}</span>
       </div>
+      <div className={styles.chipFade} aria-hidden="true" />
       {empty === null ? null : <p className={styles.empty}>{empty}</p>}
       <div
         ref={scrollRef}

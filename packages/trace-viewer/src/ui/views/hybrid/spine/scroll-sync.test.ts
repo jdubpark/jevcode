@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { comfortBand, extendRange, pushTarget, revealAlign, snapToRowStart, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { comfortBand, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 
 const win = { offset: 1_000, height: 600 };
 
@@ -47,16 +47,14 @@ describe("scroll-sync", () => {
     expect(extendRange([3, 4, 5], [9, -1, 4, 40], 20)).toEqual([3, 4, 5, 9]);
   });
 
-  it("moves a reveal offset forward onto the next row start, so no row sits half under the range chip", () => {
+  it("finds the row a reveal start-aligns, so no row sits half under the range chip", () => {
     // Rows of 32, 24 (a separator), 124 (an expanded claim) and 32 px.
     const starts = [0, 32, 56, 180, 212];
     const startOf = (i: number): number => starts[i] ?? 0;
-    expect(snapToRowStart(40, starts.length, startOf, 1_000)).toBe(56);
-    expect(snapToRowStart(56, starts.length, startOf, 1_000)).toBe(56);
-    expect(snapToRowStart(0, starts.length, startOf, 1_000)).toBe(0);
-    expect(snapToRowStart(181, starts.length, startOf, 1_000)).toBe(212);
-    // Past the last start, or where the list cannot scroll that far, the offset stays where it was.
-    expect(snapToRowStart(230, starts.length, startOf, 1_000)).toBe(230);
-    expect(snapToRowStart(40, starts.length, startOf, 50)).toBe(40);
+    expect(firstRowAtOrAfter(40, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(56, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(0, starts.length, startOf)).toBe(0);
+    expect(firstRowAtOrAfter(181, starts.length, startOf)).toBe(4);
+    expect(firstRowAtOrAfter(230, starts.length, startOf)).toBe(-1);
   });
 });

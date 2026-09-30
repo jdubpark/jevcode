@@ -9,8 +9,11 @@
 
 .chip {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
+  height: 30px;
   max-width: 820px;
   padding: 10px 24px 4px 16px;
   font-size: 12px;
@@ -41,6 +44,19 @@
 
 .chipBar::before { left: 0; }
 .chipBar::after { right: 0; }
+
+/* A short fade under the range chip, so a row the list cannot align (the clamped end of the list) never reads as
+   sliding under the chip (audit 2-8). */
+.chipFade {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 6px;
+  background: linear-gradient(var(--tv-panel), transparent);
+  pointer-events: none;
+}
 
 .scroll {
   position: relative;
