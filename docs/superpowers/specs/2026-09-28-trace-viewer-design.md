@@ -1001,6 +1001,8 @@ Bounds are 1016 × 658, so Fit in a 1440 × 900 window is width-bound: (1440 −
 - A `contradicts` edge with no free lane gets `shape: "direct"` and its path in the layout, drawn above the frames with the 3 px halo; P9's crossing check exempts it.
 - P4 and P10 hold on fresh layouts (a sticky kind flip keeps its old slot size by design); P3 exempts frames that start before column 0's `t0` and reads `xAt` at a push as the interval [first `xIn`, last `xOut`].
 - Cards fill their card rect (fixed height, content clamped), so every edge port lies on a drawn card edge.
+- `contradicts` uses reserved channel lane 1 and rail lane 0; `decides`/`validates` allocate from channel lanes ≥ 2 and rail lanes ≥ 1 in age order (`max(placementOrder(from), placementOrder(to))`, then kind, then keys), where placement order is the order in which sticky state first placed each slot (append order; a fresh layout places items in `compareItems` order).
+- Route stability: routes are a function of the layout (P5 holds for routes); an appended edge touching a newly placed frame never moves an existing edge (late-arrival frames included, since placement order is append order), while an edge added between two already placed frames may re-lane younger edges.
 
 Complexity: O(S log S) for the scale and O(F log F) for placement; budgets in §10. The layout reruns only when `loadedThroughSeq` changes.
 

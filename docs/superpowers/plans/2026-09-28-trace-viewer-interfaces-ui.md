@@ -762,7 +762,7 @@ export interface CanvasItem {
   anchorSeq: number;
   turn: number;
 }
-export function collectItems(session: TraceSession, index: TraceIndex): CanvasItem[];
+export function collectItems(session: TraceSession, index: TraceIndex, stepOf?: (id: string) => Step | undefined): CanvasItem[];
 export interface CanvasFrame {
   key: string;
   selId: SelectionId;
@@ -772,6 +772,8 @@ export interface CanvasFrame {
   slot: Rect; card: Rect; label: Rect | null;
   /** Noise stack members (keys); [key] otherwise. */
   members: readonly string[];
+  /** Selection ids of `members`, same order (lane 07 deviation 2). */
+  memberSelIds: readonly SelectionId[];
   late: boolean;
 }
 export interface CanvasColumn { key: string; index: number; x: number; t0: number; turn: number }
@@ -789,6 +791,8 @@ export interface CanvasLayout {
   columns: readonly CanvasColumn[];
   separators: readonly CanvasSeparator[];
   edges: readonly CanvasEdge[];
+  /** Trunk junction points from `routeEdges` (lane 07 deviation 3). */
+  junctions: readonly Point[];
   time: { bps: readonly TimeBreakpoint[]; pps: number };
   bounds: Rect;
   /** Columns left → right; story cells, then work rows top → bottom. */
@@ -811,7 +815,7 @@ export interface CanvasEdge {
   to: string;
   shape: EdgeShape;
   lane: number | null;
-  /** SVG path in world px; null when no lane is free (drawn only for the selection via directPath). */
+  /** SVG path in world px; null when a decides/validates edge has no free lane (drawn only for the selection via directPath). A contradicts edge with no free lane is `shape: "direct"` with `d = directPath(...)` (lane 07 deviation 17). */
   d: string | null;
   rest: boolean;
   tone: "bad" | "neutral";
@@ -819,7 +823,11 @@ export interface CanvasEdge {
   badge: Point | null;
   findingId: FindingId | null;
 }
-export interface RouteInput { session: TraceSession; frames: readonly CanvasFrame[]; frameByKey: ReadonlyMap<string, CanvasFrame>; columns: readonly CanvasColumn[]; spec: LevelSpec }
+export interface RouteInput { session: TraceSession; frames: readonly CanvasFrame[]; frameByKey: ReadonlyMap<string, CanvasFrame>; columns: readonly CanvasColumn[]; spec: LevelSpec;
+  /** Frame key → placement order; defaults to (col, row) frame order. layoutCanvas passes sticky slot order (lane review). */
+  order?: ReadonlyMap<string, number>;
+  /** Step lookup shared with the caller; built from session.steps when omitted. */
+  stepOf?: (id: string) => Step | undefined }
 export function routeEdges(input: RouteInput): { edges: CanvasEdge[]; junctions: Point[]; hiddenEdges: number };
 /** Loose frame, else story frame, else tests chapter for a test/check, else lowest-anchor chapter. */
 export function homeFrameKey(stepId: StepId, input: RouteInput): string | undefined;
@@ -831,8 +839,12 @@ export const MINIMAP_W = 140;
 export const MINIMAP_H = 84;
 export const MINIMAP_STRIP_H = 3;
 export const MINIMAP_MIN_SCALE = 0.03;
+/** Lane 07 deviation 5: wider than CanvasLayout, so every CanvasLayout still type-checks. */
+export type MinimapSource = Pick<CanvasLayout, "bounds" | "frames" | "edges" | "separators">;
 export interface MinimapModel {
   scale: number;
+  /** World point shown at the minimap's (0, 0) (lane 07 deviation 4). */
+  origin: Point;
   /** World x-window shown when s · bounds.w > 140; null when the whole session fits. */
   window: { x0: number; x1: number } | null;
   frames: readonly { key: string; rect: Rect; mark: "frame" | "selected" | "critical" | "noise" }[];
@@ -841,7 +853,7 @@ export interface MinimapModel {
   viewport: Rect;
   strip: { bracket: readonly [number, number]; critical: readonly number[] } | null;
 }
-export function buildMinimap(layout: CanvasLayout, input: { viewportWorld: Rect; selectedKey: string | null; criticalKeys: ReadonlySet<string> }): MinimapModel;
+export function buildMinimap(layout: MinimapSource, input: { viewportWorld: Rect; selectedKey: string | null; criticalKeys: ReadonlySet<string> }): MinimapModel;
 export function minimapToWorld(model: MinimapModel, point: Point): Point;
 ```
 
