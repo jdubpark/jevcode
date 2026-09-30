@@ -134,7 +134,7 @@ describe("layoutCanvas on oauth", () => {
       claim: [792, 0],
     });
     const stack = fresh(session).frames.find((frame) => frame.kind === "noise");
-    expect(stack?.memberSelIds.toSorted()).toEqual(noise.toSorted());
+    expect([...(stack?.memberSelIds ?? [])].sort()).toEqual([...noise].sort());
   });
 
   it("fits in two columns at Session level", () => {

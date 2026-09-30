@@ -284,32 +284,32 @@ describe("a shared validation run (replay-shaped oauth, lane review I-1, I-2)", 
   const PACKAGE = "unit:cu_78093dbe9212089d";
 
   function replayFrame(selId: string): CanvasFrame {
-    const found = replayLayout.frames.find((candidate) => candidate.memberSelIds.includes(selId));
+    const found = replayLayout.frames.find((candidate) => candidate.memberSelIds.some((id) => id === selId));
     if (found === undefined) throw new Error(`no frame for ${selId}`);
     return found;
   }
 
   it("is one failed run that every chapter joins", () => {
     expect(shared?.status).toBe("failed");
-    expect(replay.chapters.every((chapter) => shared !== undefined && chapter.stepIds.includes(shared.id))).toBe(true);
+    expect(replay.chapters.every((chapter) => chapter.stepIds.some((id) => id === shared?.id))).toBe(true);
   });
 
   it("belongs to the chapter that owns its outcome only", () => {
     for (const chapter of replay.chapters) {
       const ids = ownSteps(replayFrame(chapter.id), replayCtx).map((step) => step.id);
-      expect(ids.includes(shared?.id ?? ""), chapter.title).toBe(chapter.id === OWNER);
+      expect(ids.some((id) => id === shared?.id), chapter.title).toBe(chapter.id === OWNER);
     }
   });
 
   it("is red only in the owning chapter and the contradicted claim", () => {
     const bad = replayLayout.frames.filter((candidate) => frameTone(candidate, replayCtx) === "bad");
-    expect(bad.map((candidate) => candidate.item === "claim" ? "claim" : candidate.selId).toSorted()).toEqual(["claim", OWNER]);
+    expect(bad.map((candidate) => (candidate.item === "claim" ? "claim" : candidate.selId)).sort()).toEqual(["claim", OWNER]);
   });
 
   it("marks only the owning chapter and the claim critical in the minimap (its strip reads the same set)", () => {
     const critical = criticalFrameKeys(replayLayout, replayCtx);
     const claim = replayLayout.frames.find((candidate) => candidate.item === "claim");
-    expect([...critical].toSorted()).toEqual([claim?.key, replayFrame(OWNER).key].toSorted());
+    expect([...critical].sort()).toEqual([claim?.key ?? "", replayFrame(OWNER).key].sort());
     const minimap = buildMinimap(replayLayout, { viewportWorld: replayLayout.bounds, selectedKey: null, criticalKeys: critical });
     const marks = new Map(minimap.frames.map((mini) => [mini.key, mini.mark]));
     expect(marks.get(replayFrame(PACKAGE).key)).toBe("frame");
