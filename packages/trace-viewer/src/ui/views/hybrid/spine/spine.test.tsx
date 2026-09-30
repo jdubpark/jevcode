@@ -510,6 +510,10 @@ describe("Spine anchor drift (selftest metric)", () => {
   async function driftAfterAppend(readerInput: boolean): Promise<number[]> {
     layout = stubLayout({ height: 200 });
     const unpatch = positionedArticles();
+    // Frames on real timers: the sampler and the window publisher run in requestAnimationFrame, and jsdom's own frame
+    // clock does not survive the fake-timer tests earlier in this file.
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => window.setTimeout(() => callback(performance.now()), 0));
+    const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => window.clearTimeout(id));
     try {
       const drifts: number[] = [];
       const diagnostics = { enabled: true, reportDrift: (px: number) => drifts.push(px), reportError: () => undefined, flush: () => undefined };
@@ -535,6 +539,8 @@ describe("Spine anchor drift (selftest metric)", () => {
       return drifts;
     } finally {
       unpatch();
+      raf.mockRestore();
+      caf.mockRestore();
     }
   }
 
