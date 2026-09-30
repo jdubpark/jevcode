@@ -717,6 +717,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   // camera, moved along during a long pan or zoom). Before the viewport is measured nothing but the selection and the
   // tab stop mounts: at soak scale (thousands of frames) a first render of every frame would block the main thread.
   const mountCamera = mounted ?? cameraStore.get();
+  const mountK = mountCamera.k;
   const cullRange = useMemo<CullRange | null>(() => {
     if (!CULL_FRAMES) return null;
     if (size.w <= 0) return NOTHING;
@@ -773,9 +774,10 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
           onSelect={onSelect}
           cullRange={cullRange}
           rootRef={setOverlayRoot}
+          k={mountK}
         />
       ) : null,
-    [layout, ctx, level, selectedKey, onSelect, cullRange, setOverlayRoot],
+    [layout, ctx, level, selectedKey, onSelect, cullRange, setOverlayRoot, mountK],
   );
 
   // Below this width the centered toolbar would run under the minimap: it moves to the left edge and the minimap
