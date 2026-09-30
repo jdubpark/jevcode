@@ -1,6 +1,6 @@
 import type { CanvasFrame } from "../../../layout/canvas-layout.js";
 import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, LEVEL_SPECS, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
-import { stepTone } from "../../../layout/tone.js";
+import { anchoredFindings, stepTone } from "../../../layout/tone.js";
 import {
   describeGraphic,
   displayUntrusted,
@@ -51,6 +51,26 @@ export function frameSteps(frame: CanvasFrame, ctx: FrameContext): Step[] {
   return out.sort((a, b) => a.firstSeq - b.firstSeq);
 }
 
+/** The members' validation-only steps: shared test or check runs a chapter joins without owning (spec §6.6). */
+function validationOnlyOf(frame: CanvasFrame, ctx: FrameContext): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const selId of frame.memberSelIds) {
+    for (const id of ctx.chapterById.get(selId)?.validationOnlyStepIds ?? []) out.add(id);
+  }
+  return out;
+}
+
+/**
+ * The frame's own steps: frameSteps less the members' validation-only steps, in seq order (lane review I-2). A shared
+ * test run that every unit cites belongs to the chapter that owns its outcome; the others neither list, count, fill,
+ * time nor tone it, as the Hybrid band footprint skips it (spec §6.6, §7.6.1). Every per-frame surface reads this.
+ */
+export function ownSteps(frame: CanvasFrame, ctx: FrameContext): Step[] {
+  const steps = frameSteps(frame, ctx);
+  const validationOnly = validationOnlyOf(frame, ctx);
+  return validationOnly.size === 0 ? steps : steps.filter((step) => !validationOnly.has(step.id));
+}
+
 export function frameStart(frame: CanvasFrame, ctx: FrameContext): number {
   let start = Infinity;
   for (const selId of frame.memberSelIds) {
@@ -60,8 +80,9 @@ export function frameStart(frame: CanvasFrame, ctx: FrameContext): number {
   return Number.isFinite(start) ? start : 0;
 }
 
+/** The later of the members' end and their own steps' ends (the selection chip and the ruler band). */
 export function frameEnd(frame: CanvasFrame, ctx: FrameContext): number {
-  return endOf(frame, ctx, frameStart(frame, ctx), frameSteps(frame, ctx));
+  return endOf(frame, ctx, frameStart(frame, ctx), ownSteps(frame, ctx));
 }
 
 function endOf(frame: CanvasFrame, ctx: FrameContext, start: number, steps: readonly Step[]): number {
@@ -149,23 +170,16 @@ export function frameIcon(frame: CanvasFrame, ctx: FrameContext): IconName {
 }
 
 /**
- * Anchor rule (layout/tone.ts): a frame is bad only through a step of its own whose stepTone is bad, which reads
- * anchored findings only. A finding that merely cites a step or names a chapter does not redden the frame, and neither
- * does a test run the chapter reaches only through a shared validation (Chapter.validationOnlyStepIds).
+ * Anchor rule (layout/tone.ts): a frame is bad only through one of its own steps (ownSteps) whose stepTone is bad,
+ * which reads anchored findings only. A finding that merely cites a step or names a chapter does not redden the frame,
+ * and neither does a test run the chapter reaches only through a shared validation (Chapter.validationOnlyStepIds).
  */
 export function frameTone(frame: CanvasFrame, ctx: FrameContext): "bad" | "neutral" {
-  return toneOf(frame, ctx, frameSteps(frame, ctx));
+  return toneOf(ctx, ownSteps(frame, ctx));
 }
 
-function toneOf(frame: CanvasFrame, ctx: FrameContext, steps: readonly Step[]): "bad" | "neutral" {
-  const validationOnly = new Set<string>();
-  for (const selId of frame.memberSelIds) {
-    for (const id of ctx.chapterById.get(selId)?.validationOnlyStepIds ?? []) validationOnly.add(id);
-  }
-  for (const step of steps) {
-    if (!validationOnly.has(step.id) && stepTone(step, ctx.findingsById) === "bad") return "bad";
-  }
-  return "neutral";
+function toneOf(ctx: FrameContext, own: readonly Step[]): "bad" | "neutral" {
+  return own.some((step) => stepTone(step, ctx.findingsById) === "bad") ? "bad" : "neutral";
 }
 
 /**
@@ -235,23 +249,25 @@ function labelOf(
   return parts.join(", ");
 }
 
-/** True when a member step is still running: only such a frame needs the 1 Hz `nowMs` tick (C3-7, C3-10). */
+/** True when an own step is still running: only such a frame needs the 1 Hz `nowMs` tick (C3-7, C3-10). */
 export function frameRunning(frame: CanvasFrame, ctx: FrameContext): boolean {
-  return frameSteps(frame, ctx).some((step) => step.endTMs === null);
+  return ownSteps(frame, ctx).some((step) => step.endTMs === null);
 }
 
-function isProblem(step: Step): boolean {
-  return step.problems.length > 0 || step.findingIds.length > 0;
+/** A problem by the anchor rule: the step is bad, or anchors a finding. A finding it only cites does not count. */
+function isProblem(step: Step, findingsById: FrameContext["findingsById"]): boolean {
+  return stepTone(step, findingsById) === "bad" || anchoredFindings(step, findingsById).length > 0;
 }
 
 /**
- * Sparse frames (C3-6 ruling): up to n of the frame's steps for the compact rows that fill an otherwise empty card
- * body, problem steps first, newest first within each group.
+ * Sparse frames (C3-6 ruling): up to n of the given steps for the compact rows that fill an otherwise empty card body,
+ * problem steps (anchor rule) first, newest first within each group.
  */
-export function fillSteps(steps: readonly Step[], n: number): Step[] {
+export function fillSteps(steps: readonly Step[], n: number, findingsById: FrameContext["findingsById"]): Step[] {
   if (n <= 0) return [];
   const newest = [...steps].sort((a, b) => b.firstSeq - a.firstSeq);
-  return [...newest.filter(isProblem), ...newest.filter((step) => !isProblem(step))].slice(0, n);
+  const problem = new Set(newest.filter((step) => isProblem(step, findingsById)));
+  return [...problem, ...newest.filter((step) => !problem.has(step))].slice(0, n);
 }
 
 /**
@@ -312,6 +328,7 @@ export function fillRowCount(graphic: GraphicSpec | null, steps: readonly Step[]
 
 /** Everything a frame renders, derived once per (frame, ctx, level) (Frame memoizes it). */
 export interface FrameModel {
+  /** ownSteps: the Step list, the footer count, the edit summary and the fill candidates. */
   steps: Step[];
   tone: "bad" | "neutral";
   flag: FrameFlag;
@@ -327,8 +344,8 @@ export interface FrameModel {
 }
 
 export function frameModel(frame: CanvasFrame, ctx: FrameContext, level: Level): FrameModel {
-  const steps = frameSteps(frame, ctx);
-  const tone = toneOf(frame, ctx, steps);
+  const steps = ownSteps(frame, ctx);
+  const tone = toneOf(ctx, steps);
   const flag = flagOf(frame, ctx, tone);
   const graphic = frameGraphic(frame, ctx);
   const { short, full } = titles(frame, ctx);
@@ -345,8 +362,15 @@ export function frameModel(frame: CanvasFrame, ctx: FrameContext, level: Level):
     label: labelOf(frame, ctx, full, flag, graphic, start),
     start,
     end: endOf(frame, ctx, start, steps),
-    fill: sparse ? fillSteps(steps, fillRowCount(graphic, steps)) : [],
+    fill: sparse ? fillOf(graphic, steps, ctx) : [],
   };
+}
+
+/** Fill candidates are the frame's own work: pipeline and other noise steps stay out, as in the Outline. */
+function fillOf(graphic: GraphicSpec | null, own: readonly Step[], ctx: FrameContext): Step[] {
+  // The room depends on what the card shows (its edit summary reads every own step); the rows come from the work.
+  const candidates = own.filter((step) => step.noise === null);
+  return fillSteps(candidates, fillRowCount(graphic, own), ctx.findingsById);
 }
 
 export function claimSpanFor(step: Step, ctx: FrameContext): readonly [number, number] | undefined {

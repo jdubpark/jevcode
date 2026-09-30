@@ -23,6 +23,7 @@ import {
   CARD_FILE_ROWS,
   claimSpanFor,
   frameStepRows,
+  frameSteps,
   graphicPhrase,
   hiddenFileCount,
   planItems,
@@ -192,12 +193,10 @@ function StepList({ steps }: { steps: readonly Step[] }): React.JSX.Element {
   );
 }
 
-/** The chapter's last owned test or check run: the one its TestDots summarize. */
+/** The chapter's last owned test or check run (the one its TestDots summarize), else the last shared one. */
 function testRunOf({ frame, ctx, model }: BodyProps): Step | undefined {
-  const chapter = ctx.chapterById.get(frame.selId);
-  const shared = new Set(chapter?.validationOnlyStepIds ?? []);
-  const runs = model.steps.filter((step) => step.tests !== undefined);
-  return runs.filter((step) => !shared.has(step.id)).at(-1) ?? runs.at(-1);
+  const own = model.steps.filter((step) => step.tests !== undefined).at(-1);
+  return own ?? frameSteps(frame, ctx).filter((step) => step.tests !== undefined).at(-1);
 }
 
 /** Spec §7.12 DurationBar: a failed test or check ends in a red dot. */

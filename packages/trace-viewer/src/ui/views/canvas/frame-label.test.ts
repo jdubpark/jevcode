@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { layoutCanvas, type CanvasFrame } from "../../../layout/canvas-layout.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { describeGraphic, type Step, type TraceSession } from "../../../model/index.js";
-import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
+import { buildCanvasSession, canvasScale, oauthCanvasSession, oauthReplaySession } from "../../../test-support/canvas-arbitraries.js";
 import {
   buildFrameContext,
   CARD_FILE_ROWS,
@@ -13,12 +13,14 @@ import {
   frameFullTitle,
   frameGraphic,
   frameLabel,
+  frameModel,
   frameStart,
   frameStepRows,
   frameTitle,
   frameTone,
   graphicPhrase,
   fillSteps,
+  ownSteps,
   planItems,
   timeChip,
   zoomBand,
@@ -233,9 +235,20 @@ describe("fillSteps (sparse frames, C3-6 ruling)", () => {
   it("takes up to n steps, problem steps first and newest first", () => {
     const steps = ["step:1", "step:41", "step:43", "step:49"].map(stepOf);
     // step:43 (failed test) and step:49 (contradicted claim) are the problems.
-    expect(fillSteps(steps, 3).map((step) => step.id)).toEqual(["step:49", "step:43", "step:41"]);
-    expect(fillSteps(steps, 0)).toEqual([]);
-    expect(fillSteps(steps.slice(0, 2), 3).map((step) => step.id)).toEqual(["step:41", "step:1"]);
+    expect(fillSteps(steps, 3, ctx.findingsById).map((step) => step.id)).toEqual(["step:49", "step:43", "step:41"]);
+    expect(fillSteps(steps, 0, ctx.findingsById)).toEqual([]);
+    expect(fillSteps(steps.slice(0, 2), 3, ctx.findingsById).map((step) => step.id)).toEqual(["step:41", "step:1"]);
+  });
+
+  it("ranks a step that only cites a finding by age, as any other step (anchor rule)", () => {
+    const session: TraceSession = structuredClone(oauth);
+    const contradiction = session.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const older = session.steps.find((step) => step.id === "step:13");
+    const newer = session.steps.find((step) => step.id === "step:41");
+    if (contradiction === undefined || older === undefined || newer === undefined) throw new Error("fixture changed");
+    older.findingIds.push(contradiction.id);
+    const citing = buildFrameContext(session);
+    expect(fillSteps([older, newer], 2, citing.findingsById).map((step) => step.id)).toEqual(["step:41", "step:13"]);
   });
 });
 
@@ -257,5 +270,64 @@ describe("Chapter card budget (C3-6 re-review N-1)", () => {
     expect(fillRowCount(oneFile, plain)).toBe(2);
     const threeFiles = { ...oneFile, files: ["a.ts", "b.ts", "c.ts", "d.ts"].map((path) => ({ path, added: 1, removed: 0 })) };
     expect(fillRowCount(threeFiles, plain)).toBe(0);
+  });
+});
+
+describe("a shared validation run (replay-shaped oauth, lane review I-1, I-2)", () => {
+  const replay = oauthReplaySession();
+  const replayLayout = layoutCanvas(replay, buildTraceIndex(replay), canvasScale(replay), "chapter");
+  const replayCtx = buildFrameContext(replay);
+  const shared = replay.steps.find((step) => step.kind === "test");
+  const OWNER = "unit:cu_a2589fe62ff19ebf";
+  const PACKAGE = "unit:cu_78093dbe9212089d";
+
+  function replayFrame(selId: string): CanvasFrame {
+    const found = replayLayout.frames.find((candidate) => candidate.memberSelIds.includes(selId));
+    if (found === undefined) throw new Error(`no frame for ${selId}`);
+    return found;
+  }
+
+  it("is one failed run that every chapter joins", () => {
+    expect(shared?.status).toBe("failed");
+    expect(replay.chapters.every((chapter) => shared !== undefined && chapter.stepIds.includes(shared.id))).toBe(true);
+  });
+
+  it("belongs to the chapter that owns its outcome only", () => {
+    for (const chapter of replay.chapters) {
+      const ids = ownSteps(replayFrame(chapter.id), replayCtx).map((step) => step.id);
+      expect(ids.includes(shared?.id ?? ""), chapter.title).toBe(chapter.id === OWNER);
+    }
+  });
+
+  it("is red only in the owning chapter and the contradicted claim", () => {
+    const bad = replayLayout.frames.filter((candidate) => frameTone(candidate, replayCtx) === "bad");
+    expect(bad.map((candidate) => candidate.item === "claim" ? "claim" : candidate.selId).toSorted()).toEqual(["claim", OWNER]);
+  });
+
+  it("stays out of another chapter's fill rows, step count and time span", () => {
+    const pkg = replayFrame(PACKAGE);
+    const model = frameModel(pkg, replayCtx, "chapter");
+    const ids = (steps: readonly Step[]): string[] => steps.map((step) => step.id);
+    expect(ids(model.steps)).not.toContain(shared?.id);
+    expect(ids(model.fill)).not.toContain(shared?.id);
+    expect(model.steps).toHaveLength(3);
+    // Package's own work ends with its package.json edit at +0:20.3; the shared run starts at +0:35.
+    expect(frameEnd(pkg, replayCtx)).toBe(20_300);
+    expect(model.end).toBe(20_300);
+    expect(ids(frameModel(pkg, replayCtx, "step").steps)).not.toContain(shared?.id);
+    expect(ids(frameModel(replayFrame(OWNER), replayCtx, "step").steps)).toContain(shared?.id);
+  });
+
+  it("fills sparse rows with work steps, never pipeline noise", () => {
+    const session: TraceSession = structuredClone(replay);
+    const pkg = replayFrame(PACKAGE);
+    const own = ownSteps(pkg, buildFrameContext(session));
+    const newest = own.at(-1);
+    const target = session.steps.find((step) => step.id === newest?.id);
+    if (target === undefined) throw new Error("no own step");
+    target.noise = "pipeline";
+    const model = frameModel(pkg, buildFrameContext(session), "chapter");
+    expect(model.steps.map((step) => step.id)).toContain(target.id);
+    expect(model.fill.map((step) => step.id)).not.toContain(target.id);
   });
 });
