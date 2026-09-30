@@ -1235,6 +1235,9 @@ export const NOISE_REASONS = [
   "formatting",
   "duplicate_poll",
   "lifecycle",
+  /** Attention rows and info-only clamp rows, labeled "pipeline events" (C2 fix wave). An exhaustive
+   *  Record<NoiseReason, …> must list it. */
+  "pipeline",
   "superseded",
   "passing_test",
 ] as const;
@@ -1426,6 +1429,9 @@ export interface Chapter {
   id: UnitStableId;
   changeUnitId: string;
   title: string;
+  /** chapterShortTitle(latest unit), at most SHORT_TITLE_MAX graphemes; set by the fold, absent on
+   *  hand-built sessions. Labels show `shortTitle ?? title` through displayUntrusted (C2 fix wave, M2). */
+  shortTitle?: string;
   intent?: string;
   category: ChangeCategory;
   status: ChangeUnitStatus;
@@ -1455,6 +1461,10 @@ export interface Chapter {
   validationIds: string[];
   /** Steps that the unit's validation results attached to, in seq order (R25). */
   validationStepIds: StepId[];
+  /** Shared test/check steps (another current chapter joins them) whose outcome this chapter does not
+   *  own (ownsRunOutcome), less the steps of any finding that names the chapter; the overview band
+   *  footprint skips them (spec §6.6, §7.6.1; C2 fix wave, M6). Absent on hand-built sessions. */
+  validationOnlyStepIds?: StepId[];
   clampIds: string[];
   triad: { importance?: number; relevance?: number; interruption?: number; clientKind?: JevClientKind };
   schemaChanges: SchemaChange[];
@@ -1899,7 +1909,18 @@ export function displayUntrusted(text: string, options?: { multiline?: boolean }
 // B-10 appends the mini graphics here (R25: "pickGraphic/describeGraphic in model/format.ts"):
 export function pickGraphic(target: Step | Chapter, session: TraceSession): GraphicSpec | null;
 export function describeGraphic(spec: GraphicSpec): string;
+
+// short-title.ts (C2 fix wave, ruling M2; spec §6.6 "Short titles")
+export const SHORT_TITLE_MAX = 24;
+/** semantic-core's placeholder "Changed N file(s): …". */
+export function isPlaceholderTitle(title: string): boolean;
+/** First clause of agent prose, cut at a word to ≤ SHORT_TITLE_MAX graphemes; controls are kept for displayUntrusted. */
+export function shortenTitle(text: string): string;
+/** Chapter.shortTitle: "Tests · oauth" for a placeholder title, else shortenTitle(title). */
+export function chapterShortTitle(input: { title: string; category: ChangeCategory; files: readonly string[] }): string;
 ```
+
+`model/classify.ts` also exports two predicates the fold and signals share; the barrel does not re-export them. `ownsRunOutcome(chapter: Pick<Chapter, "status" | "files">, run: Step): boolean` is true when the chapter's unit failed or its files hold a failing test's file (spec §6.7 "Finding chapters"). `hasBlockingClamp(step: Step): boolean` is true for a critical clamp; only such a step carries the `guardrail` problem, so a warning clamp keeps its finding but never paints red (spec §7.12).
 
 Pinned behavior: `truncateMiddle` counts graphemes with `Intl.Segmenter`, returns the input when it fits, keeps the whole basename for paths (`head + "…/" + basename`) when the basename fits in `max − 2`, otherwise keeps `ceil((max−1)/2)` head and `floor((max−1)/2)` tail graphemes around `"…"`. `formatOffset`: `0 → "+0:00"`, `39_000 → "+0:39"`, `725_000 → "+12:05"`, `3_723_000 → "+1:02:03"`, negatives clamp to `"+0:00"`. `formatDuration`: `null → ""`, `850 → "850 ms"`, `4_500 → "4.5 s"`, `5_000 → "5.0 s"`, `45_000 → "45 s"`, `125_000 → "2 m 05 s"`, `3_720_000 → "1 h 02 m"`. `formatClock`: `toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })` plus `second: "2-digit"` when asked; invalid ts → `""`. `agentStateLabel` returns exactly the strings of WorkspaceHost `statusLabel` (lines 185-200). `agentEventLabel` keeps `eventSummary`'s strings except `agent_completed → "Turn ended"`, `agent_reasoning → "Thinking"`, `agent_interrupted → "Paused" | "Redirected" | "Stopped"`. `eventKey` and `mergeEvents` are NOT moved (R12). `normalizeCommand("bash -lc 'pnpm  test'")` is `"pnpm test"`. `exitLabel(0)` is `"exit 0"`, `exitLabel(1)` is `"exit 1"`, `exitLabel(-1)` is `"exit unknown"` and `exitLabel(null)` is `""`. `displayUntrusted("rm \u202Efdp.exe")` is `"rm ⟨U+202E⟩fdp.exe"`; it keeps `\t` always and `\n` only with `{ multiline: true }`. `stepHeadline` and `truncateMiddle` pass their output through `displayUntrusted`, so a bidi override never reaches a title, row or mono slot.
 
