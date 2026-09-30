@@ -81,6 +81,17 @@ export function App() {
     };
   }, []);
 
+  const handleOpenTrace = useCallback(() => {
+    const sessionId = sessionState?.sessionId;
+    if (!sessionId) return;
+    // trace:open only opens or focuses a window; it never calls session.switchTo.
+    void bridge.trace.open(sessionId).catch((error: unknown) => {
+      console.warn(
+        `[jevcode] could not open the trace: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }, [bridge, sessionState?.sessionId]);
+
   const handleCloseRepo = useCallback(() => {
     if (repo) {
       void bridge.repo.close(repo.repoId);
@@ -101,6 +112,7 @@ export function App() {
         onToggleTerminal={() => setTerminalOpen((open) => !open)}
         onToggleDebug={() => setDebugOpen((open) => !open)}
         onCloseRepo={handleCloseRepo}
+        onOpenTrace={handleOpenTrace}
       />
       <div className="body">
         <aside className="sidebar">
