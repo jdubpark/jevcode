@@ -5,13 +5,16 @@ import { Activity } from "react";
 import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { layoutCanvas } from "../../layout/canvas-layout.js";
 import { LEVEL_SPECS } from "../../layout/canvas-levels.js";
+import type { Level } from "../../model/index.js";
 import { createStaticBundleSource } from "../../sources/static-bundle.js";
 import { buildCanvasSession, oauthCanvasBundle, oauthCanvasSession } from "../../test-support/canvas-arbitraries.js";
 import {
   cameraVars,
   canvasViewport,
   renderWithViewer,
+  sessionViewOf,
   stubAnimationFrames,
   stubElementBox,
   stubReducedMotion,
@@ -109,6 +112,69 @@ describe("switching views under <Activity>", () => {
     // Spec §7.8 item 3: the brush (whole session, 1016 px) fits horizontally: k = (900 − 2 · 48) / 1016.
     expect(k).toBeCloseTo((900 - 96) / 1016, 6);
     expect(after.ty).toBe("30px");
+  });
+
+  it.each<Level>(["session", "step"])(
+    "level/set %s while hidden: the Canvas returns at the new level with the brush refit",
+    (level) => {
+      stubElementBox(900, 600);
+      stubResizeObserver();
+      const frames = stubAnimationFrames();
+      stubReducedMotion(true);
+      const session = oauthCanvasSession();
+      const harness = renderWithViewer(<Switcher />, {
+        session,
+        state: { view: "canvas", cameras: { canvas: { mode: "uniform", tx: -120, ty: 30, k: 0.8, syncedRev: SYNCED }, hybrid: null } },
+      });
+      act(() => frames.flush());
+      act(() => harness.store.dispatch({ type: "view/switch", view: "hybrid" }));
+      act(() => harness.store.dispatch({ type: "level/set", level, by: "shell" }));
+      act(() => harness.store.dispatch({ type: "view/switch", view: "canvas" }));
+      act(() => frames.flush());
+      // Spec §7.8 item 3 at the new level: the whole-session brush fits horizontally, clamped to [minZoom, 1.5].
+      const view = sessionViewOf(session);
+      const bounds = layoutCanvas(session, view.index, view.scale, level).bounds;
+      const k = Math.min(1.5, Math.max(LEVEL_SPECS[level].minZoom, (900 - 96) / bounds.w));
+      const after = cameraVars(canvasViewport());
+      expect(Number(after.k)).toBeGreaterThanOrEqual(LEVEL_SPECS[level].minZoom);
+      expect(Number(after.k)).toBeLessThanOrEqual(1.5);
+      expect(Number(after.k)).toBeCloseTo(k, 6);
+      expect(Number.parseFloat(after.tx)).toBeCloseTo((900 - bounds.w * k) / 2 - bounds.x * k, 4);
+      expect(after.ty).toBe("30px");
+    },
+  );
+
+  it("a Live append while hidden does not run the follow pan on show; the synced camera is restored exactly", () => {
+    stubElementBox(900, 600);
+    stubResizeObserver();
+    const frames = stubAnimationFrames();
+    stubReducedMotion(true);
+    const early = buildCanvasSession([{ atMs: 8_000, kind: "plan" }, { atMs: 10_000, kind: "chapter" }], { live: true });
+    const later = buildCanvasSession(
+      [
+        { atMs: 8_000, kind: "plan" },
+        { atMs: 10_000, kind: "chapter" },
+        { atMs: 25_000, kind: "decision" },
+        { atMs: 40_000, kind: "chapter" },
+        { atMs: 55_000, kind: "chapter" },
+        { atMs: 70_000, kind: "chapter" },
+      ],
+      { live: true },
+    );
+    const harness = renderWithViewer(<Switcher />, {
+      session: early,
+      state: { view: "canvas", cameras: { canvas: { mode: "uniform", tx: 40, ty: 30, k: 1, syncedRev: SYNCED }, hybrid: null } },
+    });
+    act(() => frames.flush());
+    expect(harness.store.get().follow).toBe(true);
+    const before = cameraVars(canvasViewport());
+    act(() => harness.store.dispatch({ type: "view/switch", view: "hybrid" }));
+    act(() => harness.setSession(later));
+    const rev = harness.store.get().focusRev;
+    act(() => harness.store.dispatch({ type: "view/switch", view: "canvas" }));
+    act(() => frames.flush());
+    expect(harness.store.get().focusRev).toBe(rev);
+    expect(cameraVars(canvasViewport())).toEqual(before);
   });
 
   it("never fits a 0x0 rect", () => {
