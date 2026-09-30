@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { PERF } from "@jevcode/trace-viewer";
+import { markAfterPaint, PERF } from "@jevcode/trace-viewer";
 
 import styles from "./host.module.css";
 
@@ -16,8 +16,19 @@ function quantile(sorted: readonly number[], q: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))] ?? null;
 }
 
+/**
+ * Zero-work floor for "j to painted" (orchestrator ruling, 2026-09-30): a key the viewer ignores, measured the same way
+ * as j (keydown timeStamp to the paint of the next frame). The difference between the two is the viewer's own cost.
+ */
+export const KEY_BASELINE = "tv:key-to-paint-baseline";
+const BASELINE_START = "tv:key-start-baseline";
+/** Unbound in the keymap, so the viewer does no work for it. */
+export const BASELINE_CODE = "KeyQ";
+
+const MEASURES = [...Object.values(PERF), KEY_BASELINE];
+
 function readStats(): Stat[] {
-  return Object.values(PERF).map((name) => {
+  return MEASURES.map((name) => {
     const durations = performance
       .getEntriesByName(name, "measure")
       .map((entry) => entry.duration)
@@ -30,21 +41,63 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function measureCount(name: string): number {
+  return performance.getEntriesByName(name, "measure").length;
+}
+
+/** Resolves once `name` has one more measure than `before` (or after 1 s, so a dropped sample never hangs the run). */
+async function nextMeasure(name: string, before: number): Promise<void> {
+  const deadline = performance.now() + 1_000;
+  while (measureCount(name) <= before && performance.now() < deadline) await sleep(4);
+}
+
+/** Records the zero-work floor for every press of BASELINE_CODE, wherever it comes from (HUD or a CDP driver). */
+function installBaseline(): () => void {
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code !== BASELINE_CODE || event.altKey || event.metaKey || event.ctrlKey) return;
+    try {
+      performance.mark(BASELINE_START, { startTime: event.timeStamp });
+    } catch {
+      return;
+    }
+    markAfterPaint(KEY_BASELINE, BASELINE_START);
+  };
+  window.addEventListener("keydown", onKeyDown);
+  return () => window.removeEventListener("keydown", onKeyDown);
+}
+
 function press(code: string, key: string, init: KeyboardEventInit = {}): void {
   document.body.dispatchEvent(new KeyboardEvent("keydown", { code, key, bubbles: true, cancelable: true, ...init }));
 }
 
-/** Spec §10 "j to painted": 300 presses at Chapter level, alternating runs of j and k. */
+/**
+ * One press the way input arrives (orchestrator ruling): from a macrotask at a random phase of the frame, never inside a
+ * requestAnimationFrame callback, which would make every sample span one whole frame by construction. The measure runs
+ * from the keydown's timeStamp to the paint of the next frame; the next press waits for it.
+ */
+async function pressAndWait(code: string, key: string, measure: string): Promise<void> {
+  await sleep(Math.random() * 17);
+  const before = measureCount(measure);
+  press(code, key);
+  await nextMeasure(measure, before);
+}
+
+/** Spec §10 "j to painted": 300 presses at Chapter level, alternating runs of j and k, then 300 zero-work presses. */
 async function runKeys(): Promise<void> {
   performance.clearMeasures(PERF.keyToPaint);
+  performance.clearMeasures(KEY_BASELINE);
   press("Digit2", "2", { altKey: true });
+  await nextFrame();
   await nextFrame();
   for (let i = 0; i < 300; i += 1) {
     const forward = i % 100 < 50;
-    press(forward ? "KeyJ" : "KeyK", forward ? "j" : "k");
-    await nextFrame();
-    await nextFrame();
+    await pressAndWait(forward ? "KeyJ" : "KeyK", forward ? "j" : "k", PERF.keyToPaint);
   }
+  for (let i = 0; i < 300; i += 1) await pressAndWait(BASELINE_CODE, "q", KEY_BASELINE);
 }
 
 const MISSING_LANES = JSON.stringify({ error: "overview lanes are not mounted; the sweep did not run" });
@@ -88,6 +141,8 @@ export function PerfHud({ autorun }: { autorun: boolean }) {
   const [nodes, setNodes] = useState({ overlay: 0, total: 0, maxOverlay: 0 });
   const [result, setResult] = useState<string>("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => installBaseline(), []);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -158,7 +213,7 @@ export function PerfHud({ autorun }: { autorun: boolean }) {
           type="button"
           className={styles.hudButton}
           onClick={() => {
-            for (const name of Object.values(PERF)) performance.clearMeasures(name);
+            for (const name of MEASURES) performance.clearMeasures(name);
             setStats(readStats());
           }}
         >

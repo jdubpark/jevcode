@@ -22,6 +22,27 @@ export function revealAlign(row: Span, win: ScrollWindow): "none" | "auto" | "ce
   return far ? "center" : "auto";
 }
 
+/**
+ * The row a reveal should start-align so its offset lands on a row start: the first row starting at or after `offset`
+ * (binary search over `count` sorted starts), or -1 when none does. Moving forward only lifts the revealed row, so it
+ * stays in view, and the first visible row is never cut in half under the range chip (audit 2-8).
+ */
+export function firstRowAtOrAfter(offset: number, count: number, startOf: (index: number) => number): number {
+  let lo = 0;
+  let hi = count - 1;
+  let next = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (startOf(mid) >= offset) {
+      next = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return next;
+}
+
 export interface PushCandidate {
   index: number;
   start: number;

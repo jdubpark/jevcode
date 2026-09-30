@@ -97,24 +97,60 @@
   font-size: 12px;
 }
 
+/* ClaimVsObserved (mockup `.xc`): a quote bubble that fills the row, a red ≠ disc, and a bad-soft observed card. */
 .claim {
-  display: inline-flex;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.claimRow {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
 }
 
 .bubble {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
   background: var(--tv-fill);
   color: var(--tv-ink);
   font-size: 13px;
   line-height: 18px;
 }
 
-.sm .bubble {
+/* The speech-bubble tail. */
+.bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 16px;
+  width: 10px;
+  height: 6px;
+  background: var(--tv-fill);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.quote {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--tv-ink-3);
+}
+
+.claimText {
+  min-width: 0;
+}
+
+.sm .claimText {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -122,40 +158,72 @@
 }
 
 .md .bubble { font-size: 15px; line-height: 20px; }
+.md .quote { margin-top: 3px; }
 
 .span {
   text-decoration: underline;
   text-decoration-color: var(--tv-bad);
-  text-decoration-thickness: 2px;
+  text-decoration-thickness: 1.5px;
   text-underline-offset: 3px;
 }
 
 .neq {
-  display: inline-flex;
-  color: var(--tv-bad);
+  display: grid;
   flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--tv-bad);
+  color: var(--tv-panel);
 }
 
 .observed {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: flex;
   flex: none;
-  padding: 6px 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
   border: 0;
-  border-radius: 8px;
-  background: var(--tv-panel);
-  box-shadow: var(--tv-shadow);
+  border-radius: 10px;
+  background: var(--tv-bad-soft);
   color: var(--tv-ink);
   font: inherit;
   font-size: 12px;
+  text-align: left;
   cursor: default;
 }
+
+.observedTop,
+.observedBottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.observedTop { color: var(--tv-ink-2); }
 
 button.observed { cursor: pointer; }
 button.observed:focus-visible { outline: 2px solid var(--tv-accent); outline-offset: 2px; }
 
-.observedFail { color: var(--tv-bad-ink); }
+.observedFail { color: var(--tv-bad-ink); font-weight: 500; }
+
+/* Narrow containers (the Inspector panel, 248–280 px): stack bubble, ≠ and observed card, each full width. */
+@container (max-width: 360px) {
+  .claimRow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .neq { align-self: center; }
+
+  .observed { align-self: stretch; }
+
+  .observedBottom { white-space: normal; flex-wrap: wrap; }
+}
 
 .mono {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;

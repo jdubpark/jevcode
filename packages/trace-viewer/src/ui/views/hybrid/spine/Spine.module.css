@@ -9,19 +9,53 @@
 
 .chip {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
-  padding: 10px 24px 4px;
+  box-sizing: border-box;
+  height: 30px;
+  max-width: 820px;
+  padding: 10px 24px 4px 16px;
   font-size: 12px;
   line-height: 16px;
   color: var(--tv-ink-2);
 }
 
+/* A tiny brush glyph (mockup `.bgl`): the soft range with its two accent edges. */
 .chipBar {
-  width: 24px;
-  height: 4px;
-  border-radius: 2px;
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--tv-accent-soft);
+}
+
+.chipBar::before,
+.chipBar::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  border-radius: 1px;
   background: var(--tv-accent);
+}
+
+.chipBar::before { left: 0; }
+.chipBar::after { right: 0; }
+
+/* A short fade under the range chip, so a row the list cannot align (the clamped end of the list) never reads as
+   sliding under the chip (audit 2-8). */
+.chipFade {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 6px;
+  background: linear-gradient(var(--tv-panel), transparent);
+  pointer-events: none;
 }
 
 .scroll {
@@ -37,12 +71,36 @@
   width: 100%;
 }
 
+/* One continuous spine line through every row and expanded body, centered on the node column (16 + 52 + 12 + 11). */
+.sizer::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 91px;
+  width: 2px;
+  background: var(--tv-fill-2);
+}
+
+/* Rows keep to a 780 px reading column (plus the 16/24 px row padding), as in the mockup. */
+/* Sessions of an hour or more widen the time gutter to 60 px: the line, frames and bodies move with column 3. */
+.sizer[data-hour]::before { left: 99px; }
+.sizer[data-hour] .frame { left: 114px; }
+.sizer[data-hour] .body,
+.sizer[data-hour] .separator { padding-left: 124px; }
+.sizer[data-hour] .group { grid-template-columns: 60px 24px 120px minmax(0, 1fr) fit-content(40%); }
+
 .slot {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
+  max-width: 820px;
   outline: none;
+}
+
+.item {
+  position: relative;
 }
 
 .slot:focus-visible .row,
@@ -52,7 +110,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: 52px 24px 120px minmax(0, 1fr) auto;
+  grid-template-columns: 52px 24px 120px minmax(0, 1fr) fit-content(40%);
   align-items: center;
   column-gap: 12px;
   min-height: 32px;
@@ -64,13 +122,37 @@
 }
 
 .row[data-hour] {
-  grid-template-columns: 60px 24px 120px minmax(0, 1fr) auto;
+  grid-template-columns: 60px 24px 120px minmax(0, 1fr) fit-content(40%);
 }
 
-.row[data-selected],
-.group[data-selected] {
-  background: var(--tv-accent-soft);
+/* Selection: a Figma-style frame over the content columns (mockup `.sel`), never a wash. */
+.frame {
+  position: absolute;
+  top: 2px;
+  right: 14px;
+  bottom: 2px;
+  left: 106px;
+  z-index: 2;
+  box-shadow: 0 0 0 1px var(--tv-accent);
+  pointer-events: none;
 }
+
+.item[data-open] > .frame {
+  bottom: 4px;
+}
+
+.handle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--tv-panel);
+  box-shadow: 0 0 0 1px var(--tv-accent);
+}
+
+.handle:nth-child(1) { top: -3px; left: -3px; }
+.handle:nth-child(2) { top: -3px; right: -3px; }
+.handle:nth-child(3) { bottom: -3px; left: -3px; }
+.handle:nth-child(4) { right: -3px; bottom: -3px; }
 
 .row[data-match] .line {
   text-decoration: underline;
@@ -94,6 +176,7 @@
 
 .node {
   position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   width: 24px;
@@ -101,23 +184,12 @@
   border-radius: 50%;
   background: var(--tv-panel);
   color: var(--tv-ink-2);
-  box-shadow: inset 0 0 0 1px var(--tv-hair);
-}
-
-.node::before {
-  content: "";
-  position: absolute;
-  top: -8px;
-  bottom: -8px;
-  left: 11px;
-  z-index: -1;
-  width: 2px;
-  background: var(--tv-fill-2);
+  box-shadow: inset 0 0 0 24px var(--tv-fill);
 }
 
 .node[data-tone="bad"] {
-  background: var(--tv-bad-soft);
   color: var(--tv-bad);
+  box-shadow: inset 0 0 0 24px var(--tv-bad-soft);
 }
 
 .node[data-tone="critical"] {
@@ -157,10 +229,27 @@
   color: var(--tv-ink-3);
 }
 
+/* A titled finding row: title and header extras (the claim chain) share one line from the graphic column on. */
+.head {
+  display: flex;
+  grid-column: 4 / 5;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.head[data-wide] {
+  grid-column: 3 / 5;
+}
+
 .findingTitle {
+  min-width: 0;
+  overflow: hidden;
   font-size: 15px;
   line-height: 20px;
   font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .mono {
@@ -170,12 +259,25 @@
 
 .metric {
   display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   line-height: 16px;
   color: var(--tv-ink-3);
   white-space: nowrap;
+}
+
+.metricText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric > svg {
+  flex: none;
 }
 
 .metric[data-tone="bad"] {
@@ -195,8 +297,9 @@
   cursor: pointer;
 }
 
+/* An expanded body sits under the graphic column (16 + 52 + 12 + 24 + 12). */
 .body {
-  padding: 4px 24px 12px 164px;
+  padding: 2px 24px 14px 116px;
 }
 
 .separator {
@@ -204,15 +307,16 @@
   align-items: center;
   gap: 8px;
   height: 24px;
-  padding: 0 24px 0 80px;
+  padding: 0 24px 0 116px;
   font-size: 12px;
   line-height: 16px;
   color: var(--tv-ink-3);
 }
 
 .group {
+  position: relative;
   display: grid;
-  grid-template-columns: 52px 24px 120px minmax(0, 1fr) auto;
+  grid-template-columns: 52px 24px 120px minmax(0, 1fr) fit-content(40%);
   align-items: center;
   column-gap: 12px;
   min-height: 32px;
@@ -285,9 +389,11 @@
 
 .chain {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 6px;
   margin: 0;
+  white-space: nowrap;
   font-size: 12px;
   line-height: 16px;
   color: var(--tv-ink-3);
@@ -298,7 +404,7 @@
 }
 
 .chainLine {
-  width: 48px;
+  width: 40px;
   height: 1px;
   background: var(--tv-ink-4);
 }
