@@ -25,6 +25,7 @@ import { useViewStore } from "../state/store.js";
 import { locationOf } from "../state/view-state.js";
 import base from "../tokens/base.module.css";
 import { tokenStyle } from "../tokens/tokens.js";
+import { KEEP_HIDDEN_VIEWS_MOUNTED, VIEWS } from "../views/registry.js";
 import {
   createViewPortRegistry,
   ViewDefinitionsContext,
@@ -53,8 +54,8 @@ export interface ShellProps {
 
 const EMPTY_SCALE_INPUT = { originMs: 0, work: [], awaitingFrom: [] } as const;
 
-const SHELL_VIEWS: readonly ViewDefinition[] = [];
-const KEEP_HIDDEN = true;
+const SHELL_VIEWS: readonly ViewDefinition[] = VIEWS;
+const KEEP_HIDDEN = KEEP_HIDDEN_VIEWS_MOUNTED;
 
 /** Maps a location's stable id to what the store selects: step and unit ids (spec §7.8). */
 export function selectionFromStableId(session: TraceSession, id: StableId): SelectionId | null {

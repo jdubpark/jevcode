@@ -41,7 +41,8 @@ export interface OverviewApi {
   widthPx(): number;
   overview(): OverviewIndex | null;
   limits(): ZoomLimits;
-  moveTo(camera: XOnlyCamera, animate: boolean): void;
+  /** Resolves once the camera has arrived (or been superseded). */
+  moveTo(camera: XOnlyCamera, animate: boolean): Promise<void>;
 }
 
 export interface OverviewProps {
@@ -219,14 +220,14 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
   }, []);
 
   const moveTo = useCallback(
-    (next: XOnlyCamera, animate: boolean): void => {
+    (next: XOnlyCamera, animate: boolean): Promise<void> => {
       const controller = controllerRef.current;
       if (controller === null) {
         cameraRef.current = next;
         setCamera(next);
-        return;
+        return Promise.resolve();
       }
-      void controller.set(next, { animate: animate && !prefersReducedMotion(lanesRef.current) }).then(() => {
+      return controller.set(next, { animate: animate && !prefersReducedMotion(lanesRef.current) }).then(() => {
         const settled = controller.get();
         cameraRef.current = settled;
         setCamera(settled);
