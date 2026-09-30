@@ -76,3 +76,13 @@ Run notes:
 | 5 | Pass (initial redraw only; display-move/DPR-change path untested on a single-display machine). Pin vs mark drift 0 px over 241 frames at both DPRs. | None | C2-11 |
 | 6 | Pass. 10 toggles: store equal, center drift 0 px, 0 hidden rAF callbacks, 0 zero-size fits. | None | C3-5 |
 | 7 | Pass. Edge stroke 1.5 px at k 0.5 to 2; ruler tick drift 0 px. | None | C3-5 |
+
+## M4a gate (lane C2, 2026-09-28)
+
+| Risk | Result (from the rows above) | Ruling applied in M4a | Owning task |
+|---|---|---|---|
+| 1 Gesture feel and Electron input | Provisional pass pending the human check before the M4a exit. Automated part passed at DPR 2 and DPR 1: anchor drift 0 px over 60 events, `visualViewport.scale` 1, scroll offsets 0. | none | C1-7F (W1) |
+| 4 Keyboard and VoiceOver | Provisional pass pending the human check before the M4a exit. Automated part passed at both DPRs: 20 j presses, 0 focus or inset failures, 0 scroll resets. | Outline chapter rows always carry the full frame description in their accessible name | C2-5 |
+| 5 Hybrid DOM/canvas alignment | Pass (initial redraw only; display-move/DPR-change path untested on a single-display machine). Pin vs mark drift 0 px over 241 frames at both DPRs. | none: DOM pins | C2-11 (`PINS_PAINTED_ON_CANVAS`) |
+
+M4a proceeds: risks 1, 4 and 5 passed or have their ruling applied by the owning task.
