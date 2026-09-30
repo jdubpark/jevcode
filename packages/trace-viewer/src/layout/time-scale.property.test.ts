@@ -59,6 +59,22 @@ describe("TimeScale properties (R18)", () => {
     }));
   });
 
+  it("breaks returns exactly the idle segments ≥ minMs that intersect [u0, u1], in u order", () => {
+    // A bound is either any u or exactly a segment edge, where the open/closed ends matter.
+    const bound = fc.oneof(
+      fc.double({ min: -10_000, max: 3_000_000, noNaN: true }).map((u) => ({ u })),
+      fc.nat().map((edge) => ({ edge })),
+    );
+    fc.assert(fc.property(spans(4_000_000), bound, bound, fc.constantFrom(0, 10_000, 60_000, 300_000), (work, a, b, minMs) => {
+      const scale = buildTimeScale({ originMs: 0, work, awaitingFrom: [] });
+      const edges = scale.segments.flatMap((s) => [s.u0, s.u1]);
+      const at = (x: { u: number } | { edge: number }): number => ("u" in x ? x.u : edges[x.edge % Math.max(1, edges.length)] ?? 0);
+      const [u0, u1] = at(a) <= at(b) ? [at(a), at(b)] : [at(b), at(a)];
+      const expected = scale.segments.filter((s) => s.idle !== null && s.idle.ms >= minMs && s.u1 > u0 && s.u0 < u1);
+      expect(scale.breaks(u0, u1, minMs)).toEqual(expected);
+    }));
+  });
+
   it("is the identity when no gap exceeds the knee", () => {
     fc.assert(fc.property(spans(IDLE_KNEE_MS), fc.double({ min: 0, max: 1, noNaN: true }), (work, f) => {
       const scale = buildTimeScale({ originMs: 0, work, awaitingFrom: [] });
