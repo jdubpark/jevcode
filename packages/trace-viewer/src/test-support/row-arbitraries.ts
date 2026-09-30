@@ -212,7 +212,7 @@ const otherOp: fc.Arbitrary<Op> = fc.oneof(
 
 /** Multi-row flows the single rows above rarely line up: a test run with its facts and validation,
  *  a decision answered by a user message (the answer step is absorbed and later relaunched), a
- *  duplicate hunk poll, and a new turn. */
+ *  duplicate hunk poll, an edit that becomes a test run and then gets a hunk, and a new turn. */
 const flowOp: fc.Arbitrary<Op> = fc.oneof(
   fc
     .record({
@@ -268,6 +268,31 @@ const flowOp: fc.Arbitrary<Op> = fc.oneof(
           diff: { hash, bytes: 10, text: "@@", truncated: false, redactions: 0 },
         });
       }
+    }),
+  // An edit that a test_result joins through its call id becomes a test run but keeps its edit, and later hunks on
+  // its path still reach it: the chapters that join it and the turn's plan mark (its first edit) must follow.
+  fc
+    .record({
+      path: pick(FILES),
+      callId: pick(CALL_IDS),
+      unit: pick(UNIT_IDS),
+      formatting: fc.boolean(),
+      planFirst: fc.boolean(),
+      unitBeforeHunk: fc.boolean(),
+    })
+    .map(({ path, callId, unit, formatting, planFirst, unitBeforeHunk }): Op => (b) => {
+      const plan = (): void => void b.agent({ type: "agent_message", role: "assistant", text: "Plan:\n- read\n- fix" });
+      const citing = (): void => void b.unit({ id: unit, files: [path], evidence: [], agentCallIds: [callId], title: `Unit ${unit} work` });
+      if (planFirst) plan();
+      b.agent({ type: "file_changed", path, callId });
+      if (!planFirst) plan();
+      b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 1, failed: 0, skipped: 0, failures: [], sourceCallId: callId });
+      if (unitBeforeHunk) citing();
+      b.fact({
+        type: "git_hunk", file: path, added: 1, removed: 0, isFormattingOnly: formatting, isConfigOnly: false,
+        isLockfile: path === "pnpm-lock.yaml",
+      });
+      if (!unitBeforeHunk) citing();
     }),
   fc
     .record({ prompt: pick(TEXTS), end: pick(["agent_completed", "agent_interrupted", "none"] as const) })

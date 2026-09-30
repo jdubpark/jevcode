@@ -99,7 +99,7 @@ function isPresent<T>(value: T | undefined | null): value is T {
 // and keeps an unchanged step or entity the same object across commits (model/fold-finalize.ts), so
 // a Live tick builds rows only for what changed. A hand-built session gets fresh objects, so it only
 // misses.
-const fileRowCache = new WeakMap<Entity, { titleMax: number; shield: boolean; row: OutlineItemRow }>();
+const fileRowCache = new WeakMap<Entity, { titleMax: number; shield: boolean; tMs: number; row: OutlineItemRow }>();
 const commandRowCache = new WeakMap<Step, OutlineItemRow>();
 const testRowCache = new WeakMap<Step, OutlineItemRow>();
 
@@ -349,13 +349,15 @@ function fileRows(session: TraceSession, titleMax: number): OutlineItemRow[] {
     const latest = entity.stepIds.at(-1);
     if (latest === undefined) continue;
     const shield = entity.chapterIds.some((id) => clamped.has(id));
+    // The row reads its latest step's tMs, which the entity does not hold: part of the key (a binary search).
+    const tMs = stepWithId(session.steps, latest)?.tMs ?? 0;
     const cached = fileRowCache.get(entity);
-    if (cached !== undefined && cached.titleMax === titleMax && cached.shield === shield) {
+    if (cached !== undefined && cached.titleMax === titleMax && cached.shield === shield && cached.tMs === tMs) {
       out.push(cached.row);
       continue;
     }
-    const row = fileRow(entity, latest, stepWithId(session.steps, latest)?.tMs ?? 0, titleMax, shield);
-    fileRowCache.set(entity, { titleMax, shield, row });
+    const row = fileRow(entity, latest, tMs, titleMax, shield);
+    fileRowCache.set(entity, { titleMax, shield, tMs, row });
     out.push(row);
   }
   return out;

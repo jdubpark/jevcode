@@ -5,7 +5,7 @@ import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
 import { FIXTURE_NAMES, loadFixtureTrace, stripCaptureFields } from "../test-support/fixture-rows.js";
 import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
-import { TraceBuilder } from "../test-support/trace-builder.js";
+import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { accumulateAll, createTraceState, finalize, foldRows, type FinalizeOptions, type TraceState } from "./fold.js";
 import { lastFinalizeWork } from "./fold-finalize.js";
 import type { FoldState } from "./fold-state.js";
@@ -107,6 +107,35 @@ describe("incremental finalize", () => {
       fc.property(cutsArb, optionsArb, (cuts, options) => checkIncremental(meta, rows, cuts, optionsOf(options))),
       { numRuns: 15 },
     );
+  });
+});
+
+describe("incremental finalize: edits that become test runs", () => {
+  it("a later hunk on the run's path updates the noise of the chapters it joins", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Fix the bug" });
+    b.agent({ type: "file_changed", path: "src/a.ts", callId: "c1" });
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 1, failed: 0, skipped: 0, failures: [], sourceCallId: "c1" });
+    b.unit({ id: "u1", files: ["src/a.ts"], evidence: [], agentCallIds: ["c1"] });
+    const cut = b.rows.length;
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 1, removed: 0, isFormattingOnly: true, isConfigOnly: false, isLockfile: false });
+    const meta = testMeta({ lastEventSeq: b.rows.length });
+    const fresh = foldRows(meta, b.rows, { live: true, nowMs: NOW });
+    expect(fresh.chapters[0]?.noise).toBe(true);
+    checkIncremental(meta, b.rows, [cut], () => ({ live: true, nowMs: NOW }));
+  });
+
+  it("the turn's plan mark moves when its first edit becomes a test run", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Fix the bug" });
+    b.agent({ type: "file_changed", path: "src/a.ts", callId: "c1" });
+    b.agent({ type: "agent_message", role: "assistant", text: "Plan:\n- read\n- fix" });
+    const cut = b.rows.length;
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 1, failed: 0, skipped: 0, failures: [], sourceCallId: "c1" });
+    const meta = testMeta({ lastEventSeq: b.rows.length });
+    const fresh = foldRows(meta, b.rows, { live: true, nowMs: NOW });
+    expect(fresh.turns[0]?.planStepId).toBeDefined();
+    checkIncremental(meta, b.rows, [cut], () => ({ live: true, nowMs: NOW }));
   });
 });
 
