@@ -198,9 +198,10 @@ describe("Spine", () => {
     const feed = screen.getByRole("feed");
     expect(feed.textContent).toContain("Code · \u27E8U+202E\u27E9txt");
     expect(feed.textContent).not.toContain("\u202E");
-    const line = [...feed.querySelectorAll<HTMLElement>("[aria-label]")].find((el) => (el.textContent ?? "").startsWith("Code · "));
-    expect(line?.getAttribute("aria-label")).toBe("Changed 1 file: src/\u27E8U+202E\u27E9txt.exe");
-    expect(line?.getAttribute("title")).toBe("Changed 1 file: src/\u27E8U+202E\u27E9txt.exe");
+    const full = "Changed 1 file: src/\u27E8U+202E\u27E9txt.exe";
+    expect(screen.getAllByRole("article", { name: full }).length).toBeGreaterThan(0);
+    const line = [...feed.querySelectorAll<HTMLElement>("[title]")].find((el) => (el.textContent ?? "").startsWith("Code · "));
+    expect(line?.getAttribute("title")).toBe(full);
   });
 
   it("shows a chapter group row's short title and names it with the full title", async () => {
@@ -210,11 +211,12 @@ describe("Spine", () => {
     if (chapter === undefined) throw new Error("fixture changed");
     renderSpine(session, { state: { level: "session" } });
     await settle();
-    const line = [...screen.getByRole("feed").querySelectorAll<HTMLElement>("span")].find((el) => el.textContent === "Tests · oauth");
-    expect(line).toBeDefined();
-    expect(line?.getAttribute("aria-label")).toBe(chapter.title);
-    const item = line?.closest("article");
-    expect(item?.getAttribute("aria-labelledby")).toBe(line?.id);
+    // The row is named by the full title; the short title reads in the row, with the full title as its tooltip.
+    const item = screen.getByRole("article", { name: chapter.title });
+    const line = [...item.querySelectorAll<HTMLElement>("[title]")].find((el) => el.getAttribute("title") === chapter.title);
+    expect(line?.textContent).toContain("Tests · oauth");
+    // ARIA 1.2 prohibits aria-label on a generic element: the name comes from real text.
+    expect(item.querySelectorAll("[aria-label]:not([role])")).toHaveLength(0);
   });
 
   it("renders a Chapter-level Jev review group as one shield row that expands on click", async () => {
