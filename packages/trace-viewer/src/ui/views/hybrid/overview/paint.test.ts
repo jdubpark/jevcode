@@ -14,8 +14,14 @@ import { LIGHT_TOKENS } from "../../../tokens/tokens.js";
 import { OverviewCanvas } from "./OverviewCanvas.js";
 import { laneCenter, paintOverview, STRIP_TOP, type PaintInput } from "./paint.js";
 
+const originalDpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+const originalMatchMedia = window.matchMedia;
+
 afterEach(() => {
   cleanup();
+  if (originalDpr === undefined) Reflect.deleteProperty(window, "devicePixelRatio");
+  else Object.defineProperty(window, "devicePixelRatio", originalDpr);
+  window.matchMedia = originalMatchMedia;
 });
 
 function input(layout: OverviewLayout, overrides: Partial<PaintInput> = {}): PaintInput {
@@ -96,7 +102,6 @@ describe("paintOverview", () => {
 
 describe("OverviewCanvas", () => {
   it("sizes the backing store at width × DPR, hides itself from assistive tech and hands out the context", () => {
-    const original = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
     const recording = new RecordingContext();
     const onSurface = vi.fn();
@@ -108,12 +113,24 @@ describe("OverviewCanvas", () => {
     expect(canvas?.getAttribute("width")).toBe("1200");
     expect(canvas?.getAttribute("height")).toBe("576");
     expect(onSurface).toHaveBeenLastCalledWith({ ctx: recording, dpr: 2, widthPx: 600, heightPx: 288 });
-    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: original });
+  });
+
+  it("never publishes a surface at the default DPR before reading the real one", () => {
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 2 });
+    const onSurface = vi.fn();
+    render(
+      createElement(OverviewCanvas, {
+        widthPx: 600,
+        heightPx: 288,
+        onSurface,
+        createContext: () => new RecordingContext(),
+      }),
+    );
+    const published = onSurface.mock.calls.map(([surface]) => surface?.dpr).filter((dpr) => dpr !== undefined);
+    expect(published).toEqual([2]);
   });
 
   it("re-creates the surface when the DPR changes and detaches its listener on unmount", () => {
-    const original = window.devicePixelRatio;
-    const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 1 });
     const listeners = new Set<() => void>();
     window.matchMedia = ((): MediaQueryList =>
@@ -136,7 +153,5 @@ describe("OverviewCanvas", () => {
     unmount();
     expect(listeners.size).toBe(0);
     expect(onSurface).toHaveBeenLastCalledWith(null);
-    Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: original });
-    window.matchMedia = originalMatchMedia;
   });
 });

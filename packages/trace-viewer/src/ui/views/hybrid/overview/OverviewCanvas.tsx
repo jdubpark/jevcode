@@ -26,10 +26,15 @@ function dprOf(view: Window | null): number {
 /**
  * One DPR-scaled, aria-hidden canvas. A DPR change (window dragged between displays) re-creates the
  * surface. DOM globals are reached through the element's own window, never a bare global.
+ *
+ * `onSurface` and `createContext` must be stable (memoized by the caller): a new identity re-runs the
+ * surface effect, which tears the surface down (`onSurface(null)`) and publishes a fresh one.
+ * The surface is first published after the real DPR is read from the element's window, never at a
+ * placeholder DPR of 1.
  */
 export function OverviewCanvas({ widthPx, heightPx, className, onSurface, createContext }: OverviewCanvasProps) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const [dpr, setDpr] = useState(1);
+  const [dpr, setDpr] = useState<number | null>(null);
 
   // Track devicePixelRatio: a resolution media query fires once per change, so re-arm it per value.
   useLayoutEffect(() => {
@@ -45,7 +50,7 @@ export function OverviewCanvas({ widthPx, heightPx, className, onSurface, create
 
   useLayoutEffect(() => {
     const canvas = ref.current;
-    if (canvas === null || widthPx <= 0 || heightPx <= 0) {
+    if (canvas === null || dpr === null || widthPx <= 0 || heightPx <= 0) {
       onSurface(null);
       return undefined;
     }
@@ -59,8 +64,8 @@ export function OverviewCanvas({ widthPx, heightPx, className, onSurface, create
       ref={ref}
       aria-hidden="true"
       className={className}
-      width={Math.max(0, Math.round(widthPx * dpr))}
-      height={Math.max(0, Math.round(heightPx * dpr))}
+      width={Math.max(0, Math.round(widthPx * (dpr ?? 1)))}
+      height={Math.max(0, Math.round(heightPx * (dpr ?? 1)))}
       style={{ width: widthPx, height: heightPx }}
     />
   );
