@@ -71,13 +71,20 @@ function stepTAtSeq(session: TraceSession, index: TraceIndex, seq: number): numb
   return session.steps[Math.max(0, index.stepIndexAtOrBefore(seq))]?.tMs ?? 0;
 }
 
+/** The element's own window clock; null when that window has no Performance API. */
+function elementPerformance(element: Element | null): Performance | null {
+  const perf = element?.ownerDocument.defaultView?.performance;
+  return perf !== undefined && typeof perf.now === "function" ? perf : null;
+}
+
 let paintSamples = 0;
-function measurePaint(started: number): void {
+function measurePaint(perf: Performance | null, started: number): void {
+  if (perf === null) return;
   try {
-    performance.measure(PERF.overviewPaint, { start: started, end: performance.now() });
+    perf.measure(PERF.overviewPaint, { start: started, end: perf.now() });
     paintSamples += 1;
     if (paintSamples > 2_000) {
-      performance.clearMeasures(PERF.overviewPaint);
+      perf.clearMeasures(PERF.overviewPaint);
       paintSamples = 0;
     }
   } catch {
@@ -136,7 +143,9 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
       if (width > 0) setContainerW(Math.round(width));
     };
     apply(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver((entries) => {
+    const Observer = element.ownerDocument.defaultView?.ResizeObserver;
+    if (typeof Observer !== "function") return undefined;
+    const observer = new Observer((entries) => {
       const entry = entries[0];
       apply(entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect.width ?? 0);
     });
@@ -168,7 +177,8 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
     const { overview: model, scale: currentScale, level: currentLevel, brush: currentBrush, playheadSeq: seq, session: s, index: ix } =
       live.current;
     if (surface === null || current === null || model === null || s === null) return;
-    const started = performance.now();
+    const perf = elementPerformance(containerRef.current);
+    const started = perf?.now() ?? 0;
     const frame = layoutOverview({ overview: model, camera: current, widthPx: surface.widthPx, level: currentLevel });
     const ticks = computeTicks(xOnlyXMap(currentScale, current), currentScale, { x0: 0, x1: surface.widthPx }).ticks;
     const toStrip = (u: number): number => (u / Math.max(currentScale.endU, 1)) * surface.widthPx;
@@ -195,7 +205,7 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
       },
       paintPins: PINS_PAINTED_ON_CANVAS,
     });
-    measurePaint(started);
+    measurePaint(perf, started);
   }, [store]);
 
   const moveOverlay = useCallback((next: XOnlyCamera): void => {
@@ -325,6 +335,8 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
     () => (overview === null || camera === null || widthPx <= 0 ? null : layoutOverview({ overview, camera, widthPx, level })),
     [overview, camera, widthPx, level],
   );
+  // `overview` and `widthPx` are not read in the callback body: presetCamera reads them through a ref, so it keeps a
+  // stable identity, and these deps re-run it when the data or the width changes. A react-hooks exhaustive-deps lint would flag them as unnecessary.
   const presetK = useMemo(() => presetCamera(level)?.k ?? null, [presetCamera, level, overview, widthPx]);
   const xMap = useMemo(() => (camera === null ? null : xOnlyXMap(scale, camera)), [scale, camera]);
   const loadedThroughT = loadedFraction < 1 && session !== null ? (session.steps.at(-1)?.tMs ?? 0) : null;
@@ -424,7 +436,6 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
               <Pins
                 pins={renderLayout.pins}
                 session={session}
-                index={index}
                 selection={selection}
                 onSelect={(stepIndex) => {
                   const step = session.steps[stepIndex];

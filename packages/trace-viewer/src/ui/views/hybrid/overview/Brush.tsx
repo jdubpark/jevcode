@@ -19,13 +19,17 @@ function stepEndX(session: TraceSession, scale: TimeScale, camera: XOnlyCamera, 
   return step === undefined ? 0 : uToScreenX(camera, scale.toU(step.tMs + (step.durationMs ?? 0)));
 }
 
-/** Step nearest to screen x ("after": the first step at or after x). Step.tMs never decreases with seq. */
+/**
+ * Step nearest to screen x. "after": the first step at or after x. "before": the last step at or before x, which
+ * keeps a range end inside the step that spans x instead of spilling into a nearer following step.
+ * Step.tMs never decreases with seq.
+ */
 export function stepIndexAtX(
   session: TraceSession,
   scale: TimeScale,
   camera: XOnlyCamera,
   x: number,
-  mode: "nearest" | "after" = "nearest",
+  mode: "nearest" | "after" | "before" = "nearest",
 ): number {
   const steps = session.steps;
   if (steps.length === 0) return -1;
@@ -43,6 +47,7 @@ export function stepIndexAtX(
     }
   }
   if (first >= steps.length) return steps.length - 1;
+  if (mode === "before") return (steps[first]?.tMs ?? 0) === t ? first : Math.max(0, first - 1);
   if (mode === "after" || first === 0) return first;
   const before = first - 1;
   return t - (steps[before]?.tMs ?? 0) <= (steps[first]?.tMs ?? 0) - t ? before : first;
@@ -81,19 +86,26 @@ export function Brush(props: BrushProps) {
   const playStep = steps[playIndex];
   const px = stepX(session, scale, camera, playIndex);
 
-  const seqAt = (x: number): number => steps[Math.max(0, stepIndexAtX(session, scale, camera, x))]?.firstSeq ?? 1;
+  const seqAt = (x: number, mode: "nearest" | "before" = "nearest"): number =>
+    steps[Math.max(0, stepIndexAtX(session, scale, camera, x, mode))]?.firstSeq ?? 1;
 
   const rangeFor = (a: number, b: number, snap: boolean): BrushState => {
     let lo = Math.min(a, b);
     let hi = Math.max(a, b);
+    let snappedEnd = false;
     if (snap && level === "session") {
       const start = bands.find((band) => band.x0 <= lo && lo <= band.x1);
       const end = bands.find((band) => band.x0 <= hi && hi <= band.x1);
       if (start !== undefined) lo = start.x0;
-      if (end !== undefined) hi = end.x1;
+      if (end !== undefined) {
+        hi = end.x1;
+        snappedEnd = true;
+      }
     }
     const from = seqAt(lo);
-    const to = seqAt(hi);
+    // A snapped end sits on a band's right edge. Resolve it at-or-before (half a pixel inside the band) so the
+    // range ends on the band's last step; "nearest" on start times picks the next band's first step after a long step.
+    const to = snappedEnd ? Math.max(from, seqAt(hi - 0.5, "before")) : seqAt(hi);
     return { kind: "range", fromSeq: Math.min(from, to), toSeq: Math.max(from, to) };
   };
 
@@ -108,22 +120,66 @@ export function Brush(props: BrushProps) {
     [],
   );
 
+  // A cancelled gesture puts back what this render showed when the pointer went down.
+  const restoreBrush = (): void => props.onBrush(brush);
+
+  // A body drag stops at the session ends with its width in steps kept: the offset is clamped, and at a bound the
+  // range is placed by step index because mapping each end through time would squeeze it.
+  const moveBody = (startX: number, x: number): void => {
+    const last = steps.length - 1;
+    const minDx = Math.min(0, stepX(session, scale, camera, 0) - x0);
+    const maxDx = Math.max(0, stepEndX(session, scale, camera, last) - x1);
+    const raw = x - startX;
+    const width = toIndex - fromIndex;
+    if (maxDx > 0 && raw >= maxDx) {
+      const from = steps[Math.max(0, last - width)]?.firstSeq ?? 1;
+      props.onBrush({ kind: "range", fromSeq: from, toSeq: steps[last]?.firstSeq ?? from });
+      return;
+    }
+    if (minDx < 0 && raw <= minDx) {
+      const from = steps[0]?.firstSeq ?? 1;
+      props.onBrush({ kind: "range", fromSeq: from, toSeq: steps[Math.min(last, width)]?.firstSeq ?? from });
+      return;
+    }
+    props.onBrush(rangeFor(x0 + raw, x1 + raw, false));
+  };
+
   const beginDrag = (
     event: ReactPointerEvent<HTMLElement>,
     gesture: Gesture,
     onMove: (startX: number, x: number, alt: boolean) => void,
     onClick: ((x: number) => void) | null,
+    restore: () => void,
   ): void => {
     if (event.button !== 0 || tool === "hand") return;
     endDragRef.current?.(false);
     const element = event.currentTarget;
+    const view = element.ownerDocument.defaultView;
     const origin = lanesLeft(element);
     const startX = event.clientX - origin;
     const pointerId = event.pointerId;
     let dragging = false;
+    let wrote = false;
     let lastX = startX;
     let lastAlt = false;
+    let frame: number | null = null;
     if (typeof element.setPointerCapture === "function") element.setPointerCapture(pointerId);
+    const write = (): void => {
+      wrote = true;
+      onMove(startX, lastX, lastAlt);
+    };
+    // One store write per animation frame; the final pointerup position is always committed in `finish`.
+    const schedule = (): void => {
+      if (frame !== null) return;
+      if (view === null || typeof view.requestAnimationFrame !== "function") {
+        write();
+        return;
+      }
+      frame = view.requestAnimationFrame(() => {
+        frame = null;
+        write();
+      });
+    };
     const move = (e: PointerEvent): void => {
       lastX = e.clientX - origin;
       lastAlt = e.altKey;
@@ -131,7 +187,7 @@ export function Brush(props: BrushProps) {
         dragging = true;
         onGestureRef.current(gesture);
       }
-      if (dragging) onMove(startX, lastX, lastAlt);
+      if (dragging) schedule();
     };
     // Idempotent: pointerup, pointercancel, lostpointercapture and unmount all end the drag once.
     const finish = (commit: boolean): void => {
@@ -139,12 +195,17 @@ export function Brush(props: BrushProps) {
       element.removeEventListener("pointerup", up);
       element.removeEventListener("pointercancel", cancel);
       element.removeEventListener("lostpointercapture", cancel);
+      if (frame !== null) {
+        view?.cancelAnimationFrame(frame);
+        frame = null;
+      }
       if (endDragRef.current === finish) endDragRef.current = null;
       if (typeof element.hasPointerCapture === "function" && element.hasPointerCapture(pointerId)) {
         element.releasePointerCapture(pointerId);
       }
       if (dragging) {
-        if (commit) onMove(startX, lastX, lastAlt);
+        if (commit) write();
+        else if (wrote) restore();
         onGestureRef.current(null);
       } else if (commit && onClick !== null) {
         onClick(startX);
@@ -215,6 +276,7 @@ export function Brush(props: BrushProps) {
             "brush",
             (startX, x, alt) => props.onBrush(rangeFor(startX, x, !alt)),
             (x) => props.onPlayhead(seqAt(x)),
+            restoreBrush,
           )
         }
       />
@@ -222,11 +284,10 @@ export function Brush(props: BrushProps) {
         <>
           <div
             className={styles.brushBody}
+            data-testid="overview-brush-body"
             data-overlay-node=""
             style={{ left: x0, width: x1 - x0 }}
-            onPointerDown={(event) =>
-              beginDrag(event, "brush", (startX, x) => props.onBrush(rangeFor(x0 + x - startX, x1 + x - startX, false)), null)
-            }
+            onPointerDown={(event) => beginDrag(event, "brush", moveBody, null, restoreBrush)}
           />
           <div
             role="slider"
@@ -241,7 +302,7 @@ export function Brush(props: BrushProps) {
             style={{ left: x0 - 4 }}
             onKeyDown={onEdgeKeyDown("from")}
             onPointerDown={(event) =>
-              beginDrag(event, "brush", (startX, x) => props.onBrush(rangeFor(x0 + x - startX, x1, false)), null)
+              beginDrag(event, "brush", (startX, x) => props.onBrush(rangeFor(x0 + x - startX, x1, false)), null, restoreBrush)
             }
           />
           <div
@@ -257,7 +318,7 @@ export function Brush(props: BrushProps) {
             style={{ left: x1 - 4 }}
             onKeyDown={onEdgeKeyDown("to")}
             onPointerDown={(event) =>
-              beginDrag(event, "brush", (startX, x) => props.onBrush(rangeFor(x0, x1 + x - startX, false)), null)
+              beginDrag(event, "brush", (startX, x) => props.onBrush(rangeFor(x0, x1 + x - startX, false)), null, restoreBrush)
             }
           />
         </>
@@ -277,7 +338,9 @@ export function Brush(props: BrushProps) {
           className={styles.playheadHandle}
           style={{ left: Math.round(px) - 6 }}
           onKeyDown={onPlayheadKeyDown}
-          onPointerDown={(event) => beginDrag(event, "playhead", (_startX, x) => props.onPlayhead(seqAt(x)), null)}
+          onPointerDown={(event) =>
+            beginDrag(event, "playhead", (_startX, x) => props.onPlayhead(seqAt(x)), null, () => props.onPlayhead(playStep?.firstSeq ?? playheadSeq))
+          }
         />
       )}
     </>
