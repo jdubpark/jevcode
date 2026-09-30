@@ -55,7 +55,12 @@ export interface StepSeed {
   callId?: string;
 }
 export interface ChapterSeed { id: string; title: string; category?: ChangeCategory; status?: ChangeUnitStatus; noise?: boolean; current?: boolean; factSeqs?: number[] }
-export interface FindingSeed { ruleId: SignalId; severity: Severity; step: number; evidence?: number[]; claimSpan?: [number, number]; headline?: string }
+export interface FindingSeed {
+  ruleId: SignalId; severity: Severity; step: number; evidence?: number[]; claimSpan?: [number, number]; headline?: string;
+  /** Which of the step's seqs anchors the finding (default 0, its firstSeq). Lane B anchors failing_tests and
+   *  recovery_arc on the test_result seq inside the test step. */
+  anchorRow?: number;
+}
 export interface TurnSeed { trigger: TurnTrigger; prompt: string; outcome?: TurnOutcome; planStep?: number; claimStep?: number }
 export interface GapSeed { kind: GapKind; beforeStep: number; message?: string }
 export interface SessionSeed {
@@ -188,11 +193,12 @@ export function buildSession(seed: SessionSeed): TraceSession {
   for (const f of seed.findings ?? []) {
     const anchor = steps[f.step];
     if (anchor === undefined) continue;
-    const id = findingStableId(f.ruleId, 1, anchor.firstSeq);
+    const anchorSeq = anchor.seqs[Math.max(0, Math.min(anchor.seqs.length - 1, f.anchorRow ?? 0))] ?? anchor.firstSeq;
+    const id = findingStableId(f.ruleId, 1, anchorSeq);
     if (findings.some((x) => x.id === id)) continue;
     const evidence = (f.evidence ?? []).map((i) => steps[i]).filter((s): s is Step => s !== undefined);
     const finding: Finding = {
-      id, ruleId: f.ruleId, ruleVersion: 1, severity: f.severity, anchorSeq: anchor.firstSeq,
+      id, ruleId: f.ruleId, ruleVersion: 1, severity: f.severity, anchorSeq,
       headline: f.headline ?? f.ruleId, reason: "", stepIds: [anchor.id, ...evidence.map((e) => e.id)],
       chapterIds: [...anchor.chapterIds], evidenceSeqs: evidence.map((e) => e.firstSeq), anchorStepId: anchor.id,
     };

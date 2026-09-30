@@ -365,8 +365,24 @@ function nav(state: ViewState, target: "chapter" | "turn" | "finding", dir: 1 | 
   if (target === "finding") {
     const list = index.findingsBySeq;
     if (list.length === 0) return state;
-    let i = dir > 0 ? list.findIndex((f) => f.anchorSeq > p) : lastIndexWhere(list, (f) => f.anchorSeq < p);
-    if (i < 0) i = dir > 0 ? 0 : list.length - 1;
+    const n = list.length;
+    // On a finding's step, step from that finding: lane B anchors failing_tests and recovery_arc on the
+    // test_result seq, after the step's firstSeq, so comparing anchorSeq with the playhead would reselect it.
+    const sel = state.selection;
+    const entry = sel === null ? undefined : index.entry(sel);
+    const atSelection = entry !== undefined && p >= entry.firstSeq && p <= entry.lastSeq;
+    const at = !atSelection ? -1 : dir > 0 ? lastIndexWhere(list, (f) => f.anchorStepId === sel) : list.findIndex((f) => f.anchorStepId === sel);
+    let i: number;
+    if (at >= 0) {
+      i = at;
+      for (let k = 1; k <= n; k += 1) {
+        i = (((at + dir * k) % n) + n) % n;
+        if (list[i]?.anchorStepId !== sel) break;
+      }
+    } else {
+      i = dir > 0 ? list.findIndex((f) => f.anchorSeq > p) : lastIndexWhere(list, (f) => f.anchorSeq < p);
+      if (i < 0) i = dir > 0 ? 0 : n - 1;
+    }
     const finding = list[i];
     return finding === undefined ? state : selectId(state, finding.anchorStepId, "shell", "finding", index);
   }
