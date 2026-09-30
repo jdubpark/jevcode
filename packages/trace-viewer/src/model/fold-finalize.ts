@@ -683,6 +683,14 @@ class Finalizer {
     this.trackRun(record);
     if (isEditDraft(record.draft)) this.editTouched(record);
     else if (wasEdit) this.leaveEdits(record);
+    else if (record.draft.edit !== undefined) {
+      // An edit that became a test run keeps its edit, and later hunks on its path still change it;
+      // isNoiseChapter reads the edit whatever the step's kind.
+      for (const index of record.chapterIdx) {
+        const chapter = this.d.chapters[index];
+        if (chapter !== undefined) this.dirtyUnits.add(chapter.unitId);
+      }
+    }
   }
 
   /** An edit step that a test_result joined through its call id became a test run: it leaves its
@@ -846,7 +854,8 @@ class Finalizer {
           this.sharedFlip(step, shared);
           continue;
         }
-        if (wasSuperseded !== isSuperseded) this.redo.add(step);
+        // No superseded flip reaches here: current is status !== "superseded", so a flip changes
+        // current and goes through relink, which redoes the steps.
         if (ownershipChanged) this.recheckOwner(step, record);
       }
     } else {
