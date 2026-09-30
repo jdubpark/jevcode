@@ -153,3 +153,21 @@ Method: `SPIKE_ONLY3=1 [SPIKE_ROUNDK=64]` driver runs of `apps/trace-viewer-dev/
 | 1 | 64 | 0.98% | 0% | 1.411% |
 
 Reading: the old 17% to 40% failure was crop misalignment, as suspected. Aligned, k 0.5 and k 1 pass. k 2 fails narrowly (1.5% at DPR 2, 1.4% at DPR 1). At k 2 the transformed title measures 123.05 CSS px against 115.15 for the same text laid out at 26 px (k 0.5: 30.76 against 33.25): text laid out at 13 px and scaled has different advance widths than text laid out at `13 × k`, so the metric measures glyph layout, not blur. The 1/64 grid leaves k = 0.5, 1 and 2 unchanged (they are on the grid), so the `roundK=64` rows equal the null rows; the rounding cannot change these three points and the fallback is applied per the ruling (rounding matters only for off-grid k, which the aligned probe did not sample). Risk 3 stays open for a human look at off-grid zoom (PENDING, revisit before the M4b exit).
+
+### C3-10 camera perf (fix round 1, 2026-10-01)
+
+The first Canvas view wrote the camera as inherited custom properties on the viewport, so every frame restyled the whole world subtree. That was not the C1-7 path that passed risk 2. Fix round 1 restores the spike's approach. Each frame now writes the world's `transform` directly, the dot grid's `background-position` and `background-size` on the viewport, and `--tv-tx`, `--tv-ty` and `--tv-k` on the overlay root only. `--tv-inv-k` goes on the world at settle and at a tween's end (risk 7 ruling), and `will-change: transform` is set only during gestures and tweens. The controller measures its element once per gesture. The minimap and the ruler do no React render on a pan frame. Edges, separators and junction dots are culled with frames (x-extent of each path), and the mounted range follows long pans (throttled to 100 ms).
+
+Probe: headless Chrome 1440×900 (software compositing), Vite dev server, soak bundle at Step level, camera (0, 0, 0.2), 121 frames mounted. One wheel event per animation frame for 180 frames: a pan of 8 px per frame, then a ctrl-wheel zoom of ±4 per frame that reverses every 30 frames. "Flush" is a forced style and layout flush after each camera write. Before: two runs on 3201de4. After: three runs.
+
+| Metric | Before | After |
+|---|---|---|
+| Pan frame interval median / p95 | 16.7 / 33.4 ms | 16.7 / 16.8 ms |
+| Pan frames over 1.5× median | 35–38 of 180 | 1–2 of 180 |
+| Pan flush median | 2.4 ms | 0.9 ms |
+| Zoom frame interval median / p95 | 50.0 / 83.4 ms | 16.7 / 33.4 ms |
+| Zoom frames over 20 ms | 140–142 of 180 | 58–59 of 180 |
+| Zoom flush median | 16.2 ms | 3.3 ms |
+| Elements under the viewport | 11,895 (26 paths, 20 separators) | 11,769 (1 path, 0 separators in range) |
+
+The remaining zoom long frames are mostly Chrome `Layerize` work (about 16 ms per long task in a trace). Hiding the overlay halves them (58 → 30), because its labels re-layout on every change of k (their `max-width` scales with k). This is headless software compositing. C3-12's Electron pinch measurement is the gate (Step pinch ≤ 5% dropped).
