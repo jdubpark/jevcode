@@ -140,6 +140,24 @@ describe("chapters", () => {
   });
 });
 
+describe("validation-only steps", () => {
+  it("lists validation steps that no other join links to the chapter", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    const run = b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "" });
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 0, skipped: 0, failures: [] }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "passed", passed: 3, failed: 0, skipped: 0 });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_t", files: ["tests/a.test.ts"], evidence: ["fact_tr"], validationResults: ["val_1"] });
+    const byUnit = new Map(fold(b).chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    expect(byUnit.get("cu_a")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [`step:${run}`] });
+    // cu_t also cites the run's test_result fact, so the run is part of its own work.
+    expect(byUnit.get("cu_t")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [] });
+  });
+});
+
 describe("decisions and Jev", () => {
   it("folds every row of one decision id into one step", () => {
     const b = new TraceBuilder();

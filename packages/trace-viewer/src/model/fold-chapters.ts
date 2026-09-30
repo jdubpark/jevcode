@@ -264,8 +264,12 @@ export function buildChapters(
     const unit = entry.unit;
     const id = unitStableId(unit.id);
     const linked = new Set<StepId>();
-    const pick = (draft: StepDraft | Step | undefined): void => {
-      if (draft !== undefined) linked.add(draft.id);
+    // Every join but the validation one: a step only a validation links is validation-only.
+    const joined = new Set<StepId>();
+    const pick = (draft: StepDraft | Step | undefined, byValidation = false): void => {
+      if (draft === undefined) return;
+      linked.add(draft.id);
+      if (!byValidation) joined.add(draft.id);
     };
     const factIds = [...new Set(unit.evidence.filter((evidenceId) => evidenceId.startsWith("fact_")))];
     const resolvedSeqs: number[] = [];
@@ -299,7 +303,7 @@ export function buildChapters(
       const seq = evidence.validationSeqById.get(validationId);
       if (seq === undefined) continue;
       const draft = evidence.stepByEvidenceSeq.get(seq);
-      pick(draft);
+      pick(draft, true);
       if (draft !== undefined) validationSteps.add(draft.id);
     }
     const decisionIds: DecisionStableId[] = [];
@@ -323,10 +327,12 @@ export function buildChapters(
         if (linked.has(step.id)) continue;
         approx += 1;
         linked.add(step.id);
+        joined.add(step.id);
         for (const seq of step.evidenceSeqs) factSeqs.add(seq);
       }
     }
-    const stepIds = [...linked].sort((a, b) => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0));
+    const bySeq = (a: StepId, b: StepId): number => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0);
+    const stepIds = [...linked].sort(bySeq);
     for (const stepId of stepIds) stepById.get(stepId)?.chapterIds.push(id);
     const tMs = offset(origin, unit.createdAt);
     result.push({
@@ -352,9 +358,8 @@ export function buildChapters(
       factSeqs: [...factSeqs].sort((a, b) => a - b),
       decisionIds,
       validationIds: [...unit.validationResults],
-      validationStepIds: [...validationSteps].sort(
-        (a, b) => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0),
-      ),
+      validationStepIds: [...validationSteps].sort(bySeq),
+      validationOnlyStepIds: [...validationSteps].filter((stepId) => !joined.has(stepId)).sort(bySeq),
       clampIds,
       triad: triadOf(unit, chapters.attentionByUnit.get(unit.id)),
       schemaChanges: unit.schemaChanges.map((change) => ({ ...change })),

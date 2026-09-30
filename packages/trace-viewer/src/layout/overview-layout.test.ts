@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { TraceSession } from "../model/index.js";
+import { foldRows } from "../model/fold.js";
 import { buildSession, largeSession, OAUTH_CLAIM_TEXT, oauthLikeSession } from "../test-support/session-builder.js";
+import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { buildOverviewIndex } from "./overview-index.js";
 import { K_MAX, layoutOverview, MAX_OVERLAY_NODES, overviewPreset } from "./overview-layout.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
@@ -125,3 +127,25 @@ describe("overview layout edge cases", () => {
 function oauthKind(session: TraceSession, index: number | undefined): string | undefined {
   return index === undefined ? undefined : session.steps[index]?.kind;
 }
+
+describe("chapter band footprints (orchestrator ruling M6)", () => {
+  it("leave out a test step a chapter reaches only through a shared validation", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
+    for (const [file, second] of [["src/a.ts", 2], ["src/b.ts", 4]] as const) {
+      b.fact({ type: "git_hunk", file, added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false, ts: TraceBuilder.at(second) }, `fact_${file}`);
+    }
+    b.agent({ type: "command_started", command: "pnpm test", ts: TraceBuilder.at(30) });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "", ts: TraceBuilder.at(35) });
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "passed", passed: 3, failed: 0, skipped: 0 });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_src/a.ts"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], evidence: ["fact_src/b.ts"], validationResults: ["val_1"] });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    const index = buildTraceIndex(session);
+    const scale = buildTimeScale(timeScaleInputOf(session));
+    const overview = buildOverviewIndex(session, index, scale);
+    const testU = scale.toU(30_000);
+    expect(overview.bands).toHaveLength(2);
+    for (const band of overview.bands) expect(band.u1).toBeLessThan(testU);
+  });
+});
