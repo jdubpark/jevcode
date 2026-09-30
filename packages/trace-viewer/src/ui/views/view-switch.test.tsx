@@ -26,6 +26,12 @@ import { useView } from "../state/store.js";
 import { initialViewState, type ViewState } from "../state/view-state.js";
 import { KEEP_HIDDEN_VIEWS_MOUNTED, VIEWS } from "./registry.js";
 
+// A pass-through spy: every call runs the real layout (lane review I-5 counts them).
+vi.mock("../../layout/canvas-layout.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../layout/canvas-layout.js")>();
+  return { ...actual, layoutCanvas: vi.fn(actual.layoutCanvas) };
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -175,6 +181,50 @@ describe("switching views under <Activity>", () => {
     act(() => frames.flush());
     expect(harness.store.get().focusRev).toBe(rev);
     expect(cameraVars(canvasViewport())).toEqual(before);
+  });
+
+  it("a hidden Canvas does not call layoutCanvas on a data commit, and lays out once on show", () => {
+    stubElementBox(900, 600);
+    stubResizeObserver();
+    const frames = stubAnimationFrames();
+    stubReducedMotion(true);
+    const seeds = [{ atMs: 8_000, kind: "plan" as const }, { atMs: 10_000, kind: "chapter" as const }];
+    const early = buildCanvasSession(seeds, { live: true });
+    const mid = buildCanvasSession([...seeds, { atMs: 25_000, kind: "decision" }], { live: true });
+    const later = buildCanvasSession([...seeds, { atMs: 25_000, kind: "decision" }, { atMs: 40_000, kind: "chapter" }], { live: true });
+    const harness = renderWithViewer(<Switcher />, { session: early, state: { view: "canvas" } });
+    act(() => frames.flush());
+    act(() => harness.store.dispatch({ type: "view/switch", view: "hybrid" }));
+    const layoutSpy = vi.mocked(layoutCanvas);
+    layoutSpy.mockClear();
+    act(() => harness.setSession(mid));
+    act(() => harness.setSession(later));
+    act(() => frames.flush());
+    expect(layoutSpy).not.toHaveBeenCalled();
+    act(() => harness.store.dispatch({ type: "view/switch", view: "canvas" }));
+    act(() => frames.flush());
+    expect(layoutSpy).toHaveBeenCalledTimes(1);
+    // Same level and session: the show layout is sticky, chained through the last committed one (P6 skips appends).
+    expect(layoutSpy.mock.calls[0]?.[0]).toBe(later);
+    expect(layoutSpy.mock.calls[0]?.[4]).toBeDefined();
+    const chapters = later.chapters.length;
+    expect(canvasViewport().querySelectorAll('[role="group"][data-kind="chapter"]')).toHaveLength(chapters);
+  });
+
+  it("a Canvas mounted hidden lays out nothing until it is shown", () => {
+    stubElementBox(900, 600);
+    stubResizeObserver();
+    const frames = stubAnimationFrames();
+    stubReducedMotion(true);
+    const layoutSpy = vi.mocked(layoutCanvas);
+    layoutSpy.mockClear();
+    const harness = renderWithViewer(<Switcher />, { session: oauthCanvasSession(), state: { view: "hybrid" } });
+    act(() => frames.flush());
+    expect(layoutSpy).not.toHaveBeenCalled();
+    act(() => harness.store.dispatch({ type: "view/switch", view: "canvas" }));
+    act(() => frames.flush());
+    expect(layoutSpy).toHaveBeenCalledTimes(1);
+    expect(layoutSpy.mock.calls[0]?.[4]).toBeUndefined();
   });
 
   it("never fits a 0x0 rect", () => {

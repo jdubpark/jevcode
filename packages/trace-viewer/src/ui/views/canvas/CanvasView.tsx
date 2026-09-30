@@ -62,7 +62,15 @@ function prefersReducedMotion(element: Element | null): boolean {
 /** Relayout animation length (CSS --tv-dur is 180 ms; the attribute outlives it by a frame or two). */
 const RELAYOUT_MS = 250;
 
-interface StickyEntry {
+interface LaidOut {
+  layout: CanvasLayout | null;
+  /** The inputs `layout` was laid out from; every render-time derivation reads these, never newer ones. */
+  session: TraceSession | null;
+  index: TraceIndex;
+  scale: TimeScale;
+}
+
+interface StickyEntry extends LaidOut {
   layout: CanvasLayout;
   key: string;
   sessionId: string;
@@ -75,6 +83,11 @@ interface StickyEntry {
  * only when loadedThroughSeq (or Live, level, session or Tidy) changes: the live scale grows with the clock every tick,
  * and a rerun per tick would cost a fresh placement pass for nothing. `prev` is passed only for the same level, session
  * and Tidy generation; a level switch or Tidy lays out fresh (lane deviation 19).
+ *
+ * Hidden (lane review I-5): React still renders an <Activity mode="hidden"> subtree at idle priority on every data
+ * commit, and a soak layout costs about 150 ms. While `!active` the hook returns the last committed layout with the
+ * inputs it came from and lays out nothing; the show lays out once, chained through that layout under the same rule
+ * (P6: an append-only prev lays out as the fresh layout does, so skipped appends change nothing).
  */
 function useStickyLayout(
   session: TraceSession | null,
@@ -82,24 +95,32 @@ function useStickyLayout(
   scale: TimeScale,
   level: Level,
   tidyRev: number,
-): CanvasLayout | null {
+  active: boolean,
+): LaidOut {
   const committed = useRef<StickyEntry | null>(null);
   const sessionId = session?.meta.sessionId ?? null;
   const key = session === null ? null : `${session.loadedThroughSeq}|${session.live ? 1 : 0}|${session.steps.length}`;
   const latest = useRef({ session, index, scale });
   latest.current = { session, index, scale };
   const layout = useMemo(() => {
+    const prev = committed.current;
+    if (!active) return prev?.layout ?? null;
     const { session: current, index: currentIndex, scale: currentScale } = latest.current;
     if (current === null || key === null || sessionId === null) return null;
-    const prev = committed.current;
     const same = prev !== null && prev.sessionId === sessionId && prev.level === level && prev.tidyRev === tidyRev;
     if (same && prev.key === key) return prev.layout;
     return layoutCanvas(current, currentIndex, currentScale, level, same ? prev.layout : undefined);
-  }, [key, sessionId, level, tidyRev]);
+  }, [key, sessionId, level, tidyRev, active]);
   useLayoutEffect(() => {
-    if (layout !== null && key !== null && sessionId !== null) committed.current = { layout, key, sessionId, level, tidyRev };
-  }, [layout, key, sessionId, level, tidyRev]);
-  return layout;
+    // Layout effects run only while shown, so the entry is always a layout of the inputs of its commit.
+    if (!active || layout === null || key === null || sessionId === null) return;
+    committed.current = { layout, key, sessionId, level, tidyRev, session, index, scale };
+  });
+  if (active) return { layout, session, index, scale };
+  const frozen = committed.current;
+  return frozen === null
+    ? { layout: null, session: null, index, scale }
+    : { layout: frozen.layout, session: frozen.session, index: frozen.index, scale: frozen.scale };
 }
 
 /** Frames animate for --tv-dur after a level switch or Tidy; the pinned focus frame does not. */
@@ -167,8 +188,8 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   /** The camera the cull range and the ruler are laid out for: each settle, and a long pan or zoom (throttled). */
   const [mounted, setMounted] = useState<UniformCamera | null>(null);
   const [, bump] = useReducer((n: number) => n + 1, 0);
-  const { session, index, scale } = view;
-  const layout = useStickyLayout(session, index, scale, level, tidyRev);
+  // While hidden, every derivation below reads the last laid-out session, not the newest one (lane review I-5).
+  const { layout, session, index, scale } = useStickyLayout(view.session, view.index, view.scale, level, tidyRev, active);
   const ctx = useMemo(() => (session === null ? null : buildFrameContext(session)), [session]);
   const cameraStore = useMemo(() => createCameraStore(DEFAULT_CAMERA), []);
 
