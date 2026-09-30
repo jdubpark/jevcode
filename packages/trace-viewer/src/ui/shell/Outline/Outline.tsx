@@ -55,7 +55,9 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
   const currentChapter = session === null ? undefined : index.chapterAtSeq(playheadSeq)?.id;
 
-  const selectedKey = rows.find((row) => row.t === "item" && row.selId === selection)?.key;
+  const isSelected = (row: OutlineRow): boolean =>
+    row.t === "item" && selection !== null && (row.selId === selection || row.alsoSelects === selection);
+  const selectedKey = rows.find(isSelected)?.key;
   const tabKey =
     focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
 
@@ -64,7 +66,9 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const pinned = useMemo(() => {
     const positions: number[] = [];
     rows.forEach((row, position) => {
-      if (row.key === tabKey || (row.t === "item" && row.selId === selection)) positions.push(position);
+      if (row.key === tabKey || (row.t === "item" && (row.selId === selection || row.alsoSelects === selection))) {
+        positions.push(position);
+      }
     });
     return positions;
   }, [rows, tabKey, selection]);
@@ -268,7 +272,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   role="treeitem"
                   aria-level={row.depth + 2}
                   aria-label={row.label}
-                  aria-selected={row.selId === selection}
+                  aria-selected={isSelected(row)}
                   aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
                   data-depth={row.depth}
                   data-match={matches.has(row.selId) ? "" : undefined}
@@ -278,7 +282,10 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   <span className={styles.icon}>
                     <Icon name={row.icon} size={14} />
                   </span>
-                  <span className={`${styles.title} ${row.mono ? styles.mono : ""} ${row.muted ? styles.muted : ""}`}>
+                  <span
+                    className={`${styles.title} ${row.mono ? styles.mono : ""} ${row.muted ? styles.muted : ""}`}
+                    title={row.hint}
+                  >
                     {row.title}
                   </span>
                   {row.flag === "x" ? (
@@ -297,7 +304,11 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                       <Icon name="shield" size={12} />
                     </span>
                   ) : null}
-                  {row.graphic === null ? null : <Graphic spec={row.graphic} size="xs" />}
+                  {row.graphic === null ? null : (
+                    <span className={row.section === "files" ? styles.slot : styles.graphic}>
+                      <Graphic spec={row.graphic} size="xs" />
+                    </span>
+                  )}
                   {row.section === "story" ? <span className={styles.offset}>{formatOffset(row.tMs)}</span> : null}
                 </div>
               );

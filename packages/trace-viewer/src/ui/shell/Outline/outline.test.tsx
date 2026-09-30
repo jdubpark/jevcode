@@ -59,6 +59,29 @@ describe("Outline", () => {
     expect(h.store.get().inspectorTab).toBe("evidence");
   });
 
+  it("keeps a Files row's full path in its tooltip and accessible name", async () => {
+    const session = foldFixture("oauth");
+    renderHarness(<Outline hiddenRows={0} />, session);
+    await act(async () => undefined);
+    const entity = session.entities.find((item) => item.path === "migrations/001_create_identities.sql");
+    const row = document.querySelector<HTMLElement>(`[data-key="${entity?.id ?? ""}"]`);
+    expect(row?.getAttribute("aria-label")?.startsWith("migrations/001_create_identities.sql")).toBe(true);
+    expect(row?.querySelector("[title]")?.getAttribute("title")).toBe("migrations/001_create_identities.sql");
+  });
+
+  it("marks the decision row selected when its folded chapter is selected elsewhere", async () => {
+    const session = foldFixture("oauth");
+    const decision = session.steps.find((step) => step.kind === "decision");
+    const born = session.chapters.find((chapter) => chapter.decisionIds.length > 0);
+    const h = renderHarness(<Outline hiddenRows={0} />, session);
+    await act(async () => undefined);
+    act(() => {
+      h.store.dispatch({ type: "select", id: born?.id ?? null, by: "hybrid" });
+    });
+    const row = document.querySelector(`[data-key="story:${decision?.id ?? ""}"]`);
+    expect(row?.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("shows ✕ and the word failed on a failed command row", async () => {
     const session = foldFixture("oauth");
     renderHarness(<Outline hiddenRows={0} />, session);

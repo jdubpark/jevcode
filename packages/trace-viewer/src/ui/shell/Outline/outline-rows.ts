@@ -7,6 +7,7 @@ import {
   normalizeCommand,
   pickGraphic,
   searchSteps,
+  truncateMiddle,
   type Chapter,
   type Finding,
   type FindingId,
@@ -31,6 +32,10 @@ export const SECTION_LABEL: Record<OutlineSection, string> = {
 
 export const FILES_COLLAPSE_ABOVE = 12;
 
+/** Graphemes of a Files row basename before it is cut in the middle: what fits the 216 px column in 12 px mono
+ *  beside the icon, the shield and the 44 px DiffBar slot (§7.1). CSS still ellipsizes a narrower column. */
+export const FILE_TITLE_MAX = 14;
+
 export const DEFAULT_OPEN_SECTIONS: ReadonlySet<OutlineSection> = new Set<OutlineSection>(["story", "files", "commands"]);
 
 export type OutlineFlag = "shield" | "neq" | "x" | null;
@@ -52,6 +57,10 @@ export interface OutlineItemRow {
   chapterId: UnitStableId | null;
   /** Accessible name. */
   label: string;
+  /** Tooltip, when the title shortens what it names (a Files row's full path). */
+  hint?: string;
+  /** A folded row also counts as selected when this id is (a decision row that absorbed its chapter). */
+  alsoSelects?: SelectionId;
   /** Files rows open the Inspector's Evidence tab at the diff. */
   openEvidence: boolean;
 }
@@ -75,20 +84,21 @@ function joinLabel(parts: ReadonlyArray<string | null | undefined | false>): str
   return parts.filter((part): part is string => typeof part === "string" && part.length > 0).join(", ");
 }
 
+/** ≠ only on a chapter that carries the claim finding (the data decides which: branch M scopes it), else ✕ or shield. */
+function chapterFlag(chapter: Chapter, findingById: ReadonlyMap<FindingId, Finding>): OutlineFlag {
+  const findings = chapter.findingIds.map((id) => findingById.get(id)).filter(isPresent);
+  if (findings.some((finding) => finding.ruleId === "claim_contradicted")) return "neq";
+  if (chapter.status === "failed") return "x";
+  return chapter.clampIds.length > 0 ? "shield" : null;
+}
+
 function chapterItem(
   chapter: Chapter,
   session: TraceSession,
   depth: 0 | 1,
   findingById: ReadonlyMap<FindingId, Finding>,
 ): OutlineItemRow {
-  const findings = chapter.findingIds.map((id) => findingById.get(id)).filter(isPresent);
-  const flag: OutlineFlag = findings.some((finding) => finding.ruleId === "claim_contradicted")
-    ? "neq"
-    : chapter.status === "failed"
-      ? "x"
-      : chapter.clampIds.length > 0
-        ? "shield"
-        : null;
+  const flag = chapterFlag(chapter, findingById);
   const graphic = pickGraphic(chapter, session);
   const title = displayUntrusted(chapter.title);
   return {
@@ -118,7 +128,6 @@ function stepItem(
   icon: IconName,
   flag: OutlineFlag,
   extra?: string,
-  mono = false,
 ): OutlineItemRow {
   return {
     t: "item",
@@ -128,7 +137,7 @@ function stepItem(
     selId: step.id,
     icon,
     title,
-    mono,
+    mono: false,
     tMs: step.tMs,
     flag,
     failed: false,
@@ -137,6 +146,39 @@ function stepItem(
     chapterId: null,
     label: joinLabel([title, extra, formatOffset(step.tMs)]),
     openEvidence: false,
+  };
+}
+
+/** The chapter a decision gave birth to: the first one at or after the decision that links it (§7.1 one row). */
+function decisionBornChapter(step: Step, chapters: readonly Chapter[], taken: ReadonlySet<UnitStableId>): Chapter | undefined {
+  const id = `decision:${step.decision?.decisionId ?? ""}`;
+  let born: Chapter | undefined;
+  for (const chapter of chapters) {
+    if (taken.has(chapter.id) || chapter.tMs < step.tMs || !chapter.decisionIds.some((linked) => linked === id)) continue;
+    if (born === undefined || chapter.tMs < born.tMs) born = chapter;
+  }
+  return born;
+}
+
+/** One row for a decision and its decision-born chapter: the decision's title and ForkGlyph, the chapter's flag. */
+function decisionRow(
+  step: Step,
+  chapter: Chapter,
+  session: TraceSession,
+  depth: 0 | 1,
+  title: string,
+  flag: OutlineFlag,
+): OutlineItemRow {
+  const graphic = pickGraphic(step, session);
+  const tMs = Math.min(step.tMs, chapter.tMs);
+  return {
+    ...stepItem(step, depth, title, "fork", flag),
+    tMs,
+    failed: flag === "x",
+    graphic,
+    chapterId: chapter.id,
+    alsoSelects: chapter.id,
+    label: joinLabel([title, graphic === null ? null : describeGraphic(graphic), formatOffset(tMs)]),
   };
 }
 
@@ -156,14 +198,22 @@ function storyRows(session: TraceSession): OutlineRow[] {
     const steps = turn.stepIds.map((id) => stepById.get(id)).filter(isPresent);
     const intent = steps.find((step) => step.kind === "instruction");
     if (intent !== undefined) items.push(stepItem(intent, depth, "Intent", "person", null));
-    for (const chapter of session.chapters) {
-      if (chapter.current && !chapter.noise && inTurn(chapter.tMs)) items.push(chapterItem(chapter, session, depth, findingById));
-    }
+    const chapters = session.chapters.filter((chapter) => chapter.current && !chapter.noise && inTurn(chapter.tMs));
+    const folded = new Set<UnitStableId>();
     for (const step of steps) {
-      // Decision titles are agent text: sanitized and kept in a mono slot.
-      if (step.kind === "decision") {
-        items.push(stepItem(step, depth, displayUntrusted(step.decision?.title ?? step.headline), "fork", null, undefined, true));
+      if (step.kind !== "decision") continue;
+      // Decision titles are agent prose: neutralised, in the sans face (§7.12 keeps mono for paths and commands).
+      const title = displayUntrusted(step.decision?.title ?? step.headline);
+      const born = step.decision === undefined ? undefined : decisionBornChapter(step, chapters, folded);
+      if (born === undefined) {
+        items.push(stepItem(step, depth, title, "fork", null));
+        continue;
       }
+      folded.add(born.id);
+      items.push(decisionRow(step, born, session, depth, title, chapterFlag(born, findingById)));
+    }
+    for (const chapter of chapters) {
+      if (!folded.has(chapter.id)) items.push(chapterItem(chapter, session, depth, findingById));
     }
     items.sort((a, b) => a.tMs - b.tMs || a.key.localeCompare(b.key));
     const noise = session.chapters.filter((chapter) => chapter.current && chapter.noise && inTurn(chapter.tMs));
@@ -198,6 +248,12 @@ function storyRows(session: TraceSession): OutlineRow[] {
   return out;
 }
 
+function basename(path: string): string {
+  const trimmed = path.replace(/\/+$/u, "");
+  const slash = trimmed.lastIndexOf("/");
+  return slash < 0 ? trimmed : trimmed.slice(slash + 1);
+}
+
 function fileRows(session: TraceSession): OutlineItemRow[] {
   const clamped = new Set(session.chapters.filter((chapter) => chapter.clampIds.length > 0).map((chapter) => chapter.id));
   const stepById = new Map<StepId, Step>(session.steps.map((step) => [step.id, step]));
@@ -206,6 +262,7 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
     const latest = entity.stepIds.at(-1);
     if (latest === undefined) continue;
     const graphic: GraphicSpec = { kind: "diff", added: entity.added, removed: entity.removed };
+    const path = displayUntrusted(entity.path);
     out.push({
       t: "item",
       key: entity.id,
@@ -213,7 +270,7 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
       depth: 0,
       selId: latest,
       icon: "file",
-      title: displayUntrusted(entity.label),
+      title: truncateMiddle(basename(entity.label), FILE_TITLE_MAX),
       mono: true,
       tMs: stepById.get(latest)?.tMs ?? 0,
       flag: entity.chapterIds.some((id) => clamped.has(id)) ? "shield" : null,
@@ -221,7 +278,8 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
       muted: false,
       graphic,
       chapterId: null,
-      label: joinLabel([displayUntrusted(entity.path), describeGraphic(graphic)]),
+      label: joinLabel([path, describeGraphic(graphic)]),
+      hint: path,
       openEvidence: true,
     });
   }
