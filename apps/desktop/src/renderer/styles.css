@@ -1070,6 +1070,25 @@ button[aria-pressed="true"] {
   font-size: 10px;
 }
 
+.composer-hint .link-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.composer-hint .link-button:hover {
+  text-decoration: underline;
+}
+
+.composer-hint .link-button-muted {
+  color: var(--muted);
+}
+
 .composer-submit {
   display: flex;
   align-items: center;
