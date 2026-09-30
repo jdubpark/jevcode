@@ -79,14 +79,19 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   const existing = state.chapters.decisionSteps.get(decision.id);
   if (existing !== undefined) {
     const answerSeq = existing.decision?.answerSeq;
+    // Only the row that closes the decision ends its wait; the Jev projection pass re-emits
+    // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
+    const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(existing, ctx, false);
     existing.decision = decisionDetail(decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    let end: { t: number; sourceTs: string } = ctx;
     if (closes && answer !== null) {
       removeStep(state, answer.step);
       existing.seqs.push(...answer.step.seqs);
       existing.seqs.sort((a, b) => a - b);
       existing.decision.answerSeq = answer.seq;
+      end = answer;
       const relaunched = state.turns[answer.step.turnIndex];
       if (relaunched !== undefined && relaunched.instruction === answer.step) {
         // The answer was delivered as a steer: its relaunch opens a turn without an instruction
@@ -98,9 +103,11 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
       }
     }
     existing.status = decisionStatus(decision);
-    existing.endTs = ctx.sourceTs;
-    existing.endTMs = ctx.t;
-    existing.durationMs = ctx.t - existing.tMs;
+    if (closing) {
+      existing.endTs = end.sourceTs;
+      existing.endTMs = Math.max(existing.tMs, end.t);
+      existing.durationMs = existing.endTMs - existing.tMs;
+    }
     return;
   }
   const step = createStep(state, turn, ctx, {
