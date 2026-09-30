@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { LEVELS } from "../model/index.js";
-import { LEVEL_SPECS, frameSize } from "./canvas-levels.js";
+import type { Step } from "../model/index.js";
+import { LEVEL_SPECS, frameSize, stepFinder } from "./canvas-levels.js";
 
 // Expected values: spec §7.5 level table and its band formulas.
 
@@ -36,5 +37,24 @@ describe("frameSize", () => {
     expect(frameSize("chapter", "loose")).toEqual({ w: 224, h: 66 });
     expect(frameSize("step", "chapter")).toEqual({ w: 320, h: 294 });
     expect(frameSize("session", "claim")).toEqual({ w: 168, h: 28 });
+  });
+});
+
+describe("stepFinder", () => {
+  const at = (firstSeq: number): Step => ({ id: `step:${firstSeq}`, firstSeq }) as Step;
+
+  it("finds steps by firstSeq even when the list is out of order, and leaves the input alone", () => {
+    const steps = [at(7), at(2), at(5)];
+    const find = stepFinder(steps);
+    expect(find("step:5")?.firstSeq).toBe(5);
+    expect(find("step:2")?.firstSeq).toBe(2);
+    expect(steps.map((step) => step.firstSeq)).toEqual([7, 2, 5]);
+  });
+
+  it("returns undefined for a non-step id or a missing seq", () => {
+    const find = stepFinder([at(1), at(4)]);
+    expect(find("unit:c1")).toBeUndefined();
+    expect(find("step:3")).toBeUndefined();
+    expect(find("step:x")).toBeUndefined();
   });
 });
