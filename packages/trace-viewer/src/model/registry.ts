@@ -143,9 +143,18 @@ export const CHECK_COMMAND = new RegExp(
     String.raw`|^(?:pnpm|npm|yarn)${PM_FLAGS}\s+(?:run\s+)?(?:typecheck|lint|build)\b`,
 );
 
-/** Test runners. A bare word "test" in a path (cat tests/a.test.ts) does not match. */
-export const TEST_COMMAND =
-  /\b(?:vitest|jest|pytest|mocha)\b|\b(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?test\b|\b(?:go|cargo|deno)\s+test\b/;
+/** Test runners (spec §16 risk 15), matched at the head of normalizeCommand(command) like
+ *  CHECK_COMMAND: vitest, jest, pytest or mocha, bare or through npx, python -m (pytest) or
+ *  pnpm/npm/yarn/bun (optionally with run or exec); a pnpm/npm/yarn/bun test script after the
+ *  workspace flags; or go, cargo or deno test. Anchored, so "grep -rn vitest src" (exit 1 on no
+ *  match), "cat vitest.config.ts" and "ls tests" are not test runs: commandKind makes a match a test
+ *  step even without a test_result, and a failed test paints red and can contradict a claim. */
+export const TEST_COMMAND = new RegExp(
+  String.raw`^(?:npx\s+|(?:pnpm|npm|yarn|bun)${PM_FLAGS}\s+(?:(?:run|exec)\s+)?)?(?:vitest|jest|mocha|pytest)\b` +
+    String.raw`|^python3?\s+-m\s+pytest\b` +
+    String.raw`|^(?:pnpm|npm|yarn|bun)${PM_FLAGS}\s+(?:run\s+)?test\b` +
+    String.raw`|^(?:go|cargo|deno)\s+test\b`,
+);
 
 /** Classifies a raw command; both patterns see normalizeCommand(command) (a bash -lc wrapper unwrapped). */
 export function commandKind(command: string): "check" | "test" | "command" {

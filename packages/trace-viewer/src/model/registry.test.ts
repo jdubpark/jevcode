@@ -132,6 +132,18 @@ describe("command and path rules", () => {
     ["git commit -m 'fix lint'", "command"],
     ["cat tsconfig.json", "command"],
     ["pnpm test -- --grep build", "test"],
+    // Test runners are anchored too (spec §16 risk 15): a runner name that is not the head is not a test run.
+    ["vitest run src/model", "test"],
+    ["pnpm --filter @jevcode/trace-viewer exec vitest run", "test"],
+    ["python -m pytest -q", "test"],
+    ["bun test", "test"],
+    ["go test ./...", "test"],
+    ["grep -r vitest src", "command"],
+    ["grep -rn vitest src", "command"],
+    ["rg jest", "command"],
+    ["cat vitest.config.ts", "command"],
+    ["ls tests", "command"],
+    ["git commit -m 'add vitest'", "command"],
   ])("%s is a %s", (command, kind) => {
     expect(commandKind(command)).toBe(kind);
   });

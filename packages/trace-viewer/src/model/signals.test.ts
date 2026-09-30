@@ -140,6 +140,23 @@ describe("claim_contradicted", () => {
     expect(findingsOf(session, "claim_contradicted")).toEqual([]);
   });
 
+  it("does not count a command that only mentions a test runner as a test run (spec §16 risk 15)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    testRun(b, 5, 0);
+    const grep = b.agent({ type: "command_started", command: "grep -rn vitest src" });
+    b.agent({ type: "command_completed", command: "grep -rn vitest src", exitCode: 1, stdout: "", stderr: "" });
+    const cat = b.agent({ type: "command_started", command: "cat vitest.config.ts" });
+    b.agent({ type: "command_completed", command: "cat vitest.config.ts", exitCode: 0, stdout: "", stderr: "" });
+    b.agent({ type: "agent_message", role: "assistant", text: "All tests pass." });
+    b.agent({ type: "agent_completed" });
+    const session = fold(b);
+    expect(session.steps.find((step) => step.firstSeq === grep)).toMatchObject({ kind: "command", problems: ["exit_nonzero"] });
+    expect(session.steps.find((step) => step.firstSeq === cat)).toMatchObject({ kind: "command", status: "ok" });
+    expect(findingsOf(session, "claim_contradicted")).toEqual([]);
+    expect(session.gaps.filter((gap) => gap.kind === "missing_evidence")).toEqual([]);
+  });
+
   it("fires on oauth and api-break and not on the green fixtures", () => {
     const fired = (name: "oauth" | "api-break" | "rate-limit" | "schema-change" | "dep-change") => {
       const trace = loadFixtureTrace(name);
