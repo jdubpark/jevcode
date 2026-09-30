@@ -1,0 +1,94 @@
+.ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16px;
+  pointer-events: none;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding-left: 3px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.break {
+  position: absolute;
+  top: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.hatch {
+  position: absolute;
+  top: 0;
+  /* 22px is the brief's value and is deliberately taller than the 16px ruler: the band overhangs the ruler's bottom edge (neither brief nor spec gives a reason). */
+  height: 22px;
+  background: repeating-linear-gradient(135deg, var(--tv-fill-2) 0 2px, transparent 2px 6px);
+}
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--tv-fill);
+}
+
+.segment {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.segment[aria-checked="true"] {
+  background: var(--tv-panel);
+  color: var(--tv-ink);
+  box-shadow: var(--tv-shadow);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.newBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--tv-panel);
+  color: var(--tv-accent-ink);
+  box-shadow: var(--tv-shadow);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.badDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tv-bad);
+}

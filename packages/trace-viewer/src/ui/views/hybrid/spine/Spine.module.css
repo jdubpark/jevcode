@@ -1,0 +1,468 @@
+.spine {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--tv-panel);
+}
+
+.chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 30px;
+  max-width: 820px;
+  padding: 10px 24px 4px 16px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+/* A tiny brush glyph (mockup `.bgl`): the soft range with its two accent edges. */
+.chipBar {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--tv-accent-soft);
+}
+
+.chipBar::before,
+.chipBar::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--tv-accent);
+}
+
+.chipBar::before { left: 0; }
+.chipBar::after { right: 0; }
+
+/* A short fade under the range chip, so a row the list cannot align (the clamped end of the list) never reads as
+   sliding under the chip (audit 2-8). */
+.chipFade {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 6px;
+  background: linear-gradient(var(--tv-panel), transparent);
+  pointer-events: none;
+}
+
+.scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.sizer {
+  position: relative;
+  width: 100%;
+}
+
+/* One continuous spine line through every row and expanded body, centered on the node column (16 + 52 + 12 + 11). */
+.sizer::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 91px;
+  width: 2px;
+  background: var(--tv-fill-2);
+}
+
+/* Rows keep to a 780 px reading column (plus the 16/24 px row padding), as in the mockup. */
+/* Sessions of an hour or more widen the time gutter to 60 px: the line, frames and bodies move with column 3. */
+.sizer[data-hour]::before { left: 99px; }
+.sizer[data-hour] .frame { left: 114px; }
+.sizer[data-hour] .body,
+.sizer[data-hour] .separator { padding-left: 124px; }
+.sizer[data-hour] .group { grid-template-columns: 60px 24px 120px minmax(0, 1fr) fit-content(40%); }
+
+.slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-width: 820px;
+  outline: none;
+}
+
+.item {
+  position: relative;
+}
+
+.slot:focus-visible .row,
+.slot:focus-visible .group {
+  box-shadow: inset 0 0 0 2px var(--tv-accent);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 52px 24px 120px minmax(0, 1fr) fit-content(40%);
+  align-items: center;
+  column-gap: 12px;
+  min-height: 32px;
+  padding: 0 24px 0 16px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink);
+  cursor: default;
+}
+
+.row[data-hour] {
+  grid-template-columns: 60px 24px 120px minmax(0, 1fr) fit-content(40%);
+}
+
+/* Selection: a Figma-style frame over the content columns (mockup `.sel`), never a wash. */
+.frame {
+  position: absolute;
+  top: 2px;
+  right: 14px;
+  bottom: 2px;
+  left: 106px;
+  z-index: 2;
+  box-shadow: 0 0 0 1px var(--tv-accent);
+  pointer-events: none;
+}
+
+.item[data-open] > .frame {
+  bottom: 4px;
+}
+
+.handle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--tv-panel);
+  box-shadow: 0 0 0 1px var(--tv-accent);
+}
+
+.handle:nth-child(1) { top: -3px; left: -3px; }
+.handle:nth-child(2) { top: -3px; right: -3px; }
+.handle:nth-child(3) { bottom: -3px; left: -3px; }
+.handle:nth-child(4) { right: -3px; bottom: -3px; }
+
+.row[data-match] .line {
+  text-decoration: underline;
+  text-decoration-color: var(--tv-accent);
+  text-underline-offset: 3px;
+}
+
+.time {
+  justify-self: end;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.time[data-playhead] {
+  background: var(--tv-accent-ink);
+  color: var(--tv-panel);
+}
+
+.node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--tv-panel);
+  color: var(--tv-ink-2);
+  box-shadow: inset 0 0 0 24px var(--tv-fill);
+}
+
+.node[data-tone="bad"] {
+  color: var(--tv-bad);
+  box-shadow: inset 0 0 0 24px var(--tv-bad-soft);
+}
+
+.node[data-tone="critical"] {
+  background: var(--tv-bad);
+  color: var(--tv-panel);
+  box-shadow: none;
+}
+
+.nodeX {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  font-size: 12px;
+  line-height: 12px;
+  color: var(--tv-ink);
+}
+
+.graphic {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.line {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.message {
+  color: var(--tv-ink-2);
+}
+
+.thinking {
+  color: var(--tv-ink-3);
+}
+
+/* A titled finding row: title and header extras (the claim chain) share one line from the graphic column on. */
+.head {
+  display: flex;
+  grid-column: 4 / 5;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.head[data-wide] {
+  grid-column: 3 / 5;
+}
+
+.findingTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.metric {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.metricText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric > svg {
+  flex: none;
+}
+
+.metric[data-tone="bad"] {
+  color: var(--tv-bad-ink);
+}
+
+.chevron {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  cursor: pointer;
+}
+
+/* An expanded body sits under the graphic column (16 + 52 + 12 + 24 + 12). */
+.body {
+  padding: 2px 24px 14px 116px;
+}
+
+.separator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 24px 0 116px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.group {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px 24px 120px minmax(0, 1fr) fit-content(40%);
+  align-items: center;
+  column-gap: 12px;
+  min-height: 32px;
+  padding: 0 24px 0 16px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+  cursor: pointer;
+}
+
+.laneBar {
+  display: flex;
+  width: 120px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--tv-fill);
+}
+
+.laneSegment {
+  height: 6px;
+  background: var(--tv-mark);
+  box-shadow: inset -1px 0 0 var(--tv-panel);
+}
+
+.empty {
+  margin: 0;
+  padding: 24px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+}
+
+.placeholder {
+  height: 12px;
+  margin: 10px 24px 10px 92px;
+  border-radius: 4px;
+  background: var(--tv-fill-2);
+}
+
+.badge {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+}
+
+.footer {
+  margin: 0;
+  padding: 8px 24px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  box-shadow: inset 0 1px 0 var(--tv-hair);
+}
+
+.findingBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.findingText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink);
+}
+
+.chain {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.chainIconBad {
+  color: var(--tv-bad);
+}
+
+.chainLine {
+  width: 40px;
+  height: 1px;
+  background: var(--tv-ink-4);
+}
+
+.failures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.failure {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--tv-fill);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink);
+}
+
+.why {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.recoveryStep {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  cursor: pointer;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { foldRows } from "../model/fold.js";
 import type { TraceSession } from "../model/index.js";
+import { loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { buildSession, OAUTH_CLAIM_TEXT, oauthLikeSession, type StepSeed } from "../test-support/session-builder.js";
 import { buildSpineRows, estimateSpineRowSize, spineRowIndexForSeq, type SpineRow, type SpineRowsInput } from "./spine-rows.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
@@ -44,6 +46,46 @@ describe("spine rows on the oauth-like session", () => {
     expect(labels.slice(0, 2)).toEqual(["3 reads", "2 lockfile and formatting edits"]);
   });
 
+  it("labels Jev pipeline noise as pipeline events, apart from agent lifecycle events", () => {
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "guardrail", tMs: 1_000, noise: "pipeline" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "command", tMs: 2_000, target: "ls" },
+        { kind: "attention", tMs: 3_000, noise: "pipeline" },
+        { kind: "lifecycle", tMs: 3_000, noise: "lifecycle" },
+      ],
+    });
+    const labels = rowsOf(session).filter((r): r is Extract<SpineRow, { t: "noise" }> => r.t === "noise").map((r) => r.label);
+    // An info-only clamp is pipeline noise, not a guardrail hit: no Jev review group forms (visual audit 1-1).
+    expect(labels).toEqual(["3 pipeline events", "2 noise steps: pipeline events, lifecycle events"]);
+    const attentionOnly = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+      ],
+    });
+    expect(rowsOf(attentionOnly).flatMap((r) => (r.t === "noise" ? [[r.label, r.jev]] : []))).toEqual([["2 pipeline events", undefined]]);
+  });
+
+  it("labels a 5,000-step noise run once, with its reasons in first-appearance order", () => {
+    const reasons = ["lifecycle", "read", "pipeline"] as const;
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        ...Array.from({ length: 5_000 }, (_, j): StepSeed => {
+          const reason = j < 4_000 ? "lifecycle" : reasons[j % 3] ?? "read";
+          return { kind: reason === "read" ? "read" : reason === "pipeline" ? "attention" : "lifecycle", tMs: 1_000 + j, noise: reason };
+        }),
+      ],
+    });
+    const noise = rowsOf(session).filter((r): r is Extract<SpineRow, { t: "noise" }> => r.t === "noise");
+    expect(noise.map((r) => [r.steps.length, r.label])).toEqual([[5_000, "5000 noise steps: lifecycle events, reads, pipeline events"]]);
+  });
+
   it("Session level shows chapter rows interleaved with beats", () => {
     const rows = rowsOf(oauth, { level: "session" });
     expect(rows.filter((r) => r.t === "chapter")).toHaveLength(7);
@@ -55,13 +97,81 @@ describe("spine rows on the oauth-like session", () => {
   it("estimates expanded finding rows per signal and finds the row holding a seq", () => {
     const rows = rowsOf(oauth);
     const claimRow = rows.find((r) => r.key === claim?.id);
-    expect(claimRow === undefined ? 0 : estimateSpineRowSize(claimRow, oauth)).toBe(124);
+    // Measured in Chrome on oauth (integration, 2026-09-30): the claim card is 104 px at 1440, 1180 and 1000.
+    expect(claimRow === undefined ? 0 : estimateSpineRowSize(claimRow, oauth)).toBe(104);
     expect(estimateSpineRowSize({ t: "turn", key: "turn:1", turn: 1 }, oauth)).toBe(24);
     expect(spineRowIndexForSeq(rows, oauth, claim?.firstSeq ?? 0)).toBe(rows.indexOf(claimRow as SpineRow));
     const read = oauth.steps.find((s) => s.kind === "read");
     const readRow = spineRowIndexForSeq(rows, oauth, read?.firstSeq ?? 0);
     expect(rows[readRow]?.t).toBe("noise");
     expect(spineRowIndexForSeq(rows, oauth, 0)).toBe(-1);
+  });
+});
+
+describe("expanded row size estimate follows the anchor rule", () => {
+  it("sizes an expanded evidence row by its own finding, not by the claim that cites it", () => {
+    const session = oauthLikeSession();
+    const claimFinding = session.findings.find((f) => f.ruleId === "claim_contradicted");
+    const run = session.steps.findIndex((s) => s.kind === "test");
+    const runStep = session.steps[run];
+    if (claimFinding === undefined || runStep === undefined) throw new Error("fixture changed");
+    const row: SpineRow = { t: "step", key: runStep.id, step: run, expanded: true };
+    const own = estimateSpineRowSize(row, session);
+    // The fold attaches the claim to its evidence step too (signals.ts); the builder attaches anchors only.
+    runStep.findingIds.push(claimFinding.id);
+    expect(estimateSpineRowSize(row, session)).toBe(own);
+  });
+});
+
+describe("Jev review groups at Chapter level (visual audit 1-1)", () => {
+  // The oauth tail: warning clamps with findings interleaved with attention and info-only clamps.
+  const tail: StepSeed[] = [
+    { kind: "instruction", tMs: 0, text: "go" },
+    { kind: "command", tMs: 1_000, durationMs: 500, target: "pnpm test" },
+    { kind: "guardrail", tMs: 45_000, guardrail: { clampIds: ["security_path"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+    { kind: "guardrail", tMs: 45_000, noise: "pipeline", guardrail: { clampIds: ["suppress_formatting"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+    { kind: "guardrail", tMs: 45_000, guardrail: { clampIds: ["schema_floor"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+  ];
+  const warnings = [{ ruleId: "guardrail_clamp" as const, severity: "warning" as const, step: 2 }, { ruleId: "guardrail_clamp" as const, severity: "warning" as const, step: 6 }];
+
+  it("fold consecutive Jev rows into one group row with a count and the worst tone", () => {
+    const session = buildSession({ steps: tail, findings: warnings });
+    const rows = rowsOf(session);
+    expect(rows.map((r) => r.t)).toEqual(["step", "step", "noise"]);
+    expect(rows[2]).toEqual({
+      t: "noise", key: `noise:${session.steps[2]?.firstSeq}`, steps: [2, 3, 4, 5, 6, 7], label: "Jev review · 2 guardrails",
+      jev: { guardrails: 2, tone: "neutral", severity: "warning" },
+    });
+    // Expanding the group lists its steps, as for a noise run.
+    expect(rowsOf(session, { expanded: new Set([rows[2]?.key ?? ""]) }).filter((r) => r.t === "step")).toHaveLength(8);
+  });
+
+  it("keep critical findings, the playhead and the selection as their own rows; Step level never groups", () => {
+    const critical = buildSession({ steps: tail, findings: [...warnings, { ruleId: "guardrail_clamp", severity: "critical", step: 4 }] });
+    expect(rowsOf(critical).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3], 4, [5, 6, 7]]);
+    const session = buildSession({ steps: tail, findings: warnings });
+    const selected = session.steps[5];
+    expect(rowsOf(session, { selection: selected?.id ?? null }).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t)))
+      .toEqual([0, 1, [2, 3, 4], 5, [6, 7]]);
+    expect(rowsOf(session, { level: "step" }).some((r) => r.t === "noise")).toBe(false);
+  });
+});
+
+describe("Session-level beats on the folded oauth fixture (visual audit 1-14)", () => {
+  const trace = loadFixtureTrace("oauth");
+  const session = foldRows(trace.meta, trace.rows, { live: false });
+
+  it("read in gutter-time order: the decision at +0:25 comes before the chapter it opens at +0:26", () => {
+    const rows = rowsOf(session, { level: "session" });
+    const times = rows.flatMap((r) => (r.t === "chapter" ? [session.chapters[r.chapter]?.tMs ?? -1] : r.t === "step" ? [session.steps[r.step]?.tMs ?? -1] : []));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    const decision = rows.findIndex((r) => r.t === "step" && session.steps[r.step]?.kind === "decision");
+    const opened = rows.findIndex((r) => r.t === "chapter" && session.chapters[r.chapter]?.decisionIds.length !== 0 && session.chapters[r.chapter]?.tMs === 26_000);
+    expect(decision).toBeGreaterThanOrEqual(0);
+    expect(opened).toBe(decision + 1);
   });
 });
 

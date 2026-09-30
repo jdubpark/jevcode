@@ -32,11 +32,25 @@ describe("spine row properties (spec §7.6.3)", () => {
       const beats = rows(session, playhead?.firstSeq ?? 1, selected, matches, false, "session");
       expect(new Set(beats.map((r) => r.key)).size).toBe(beats.length);
       const shown = new Set(out.flatMap((r) => (r.t === "step" ? [r.step] : [])));
+      const reviewed = new Set(out.flatMap((r) => (r.t === "noise" && r.jev !== undefined ? r.steps : [])));
+      const findingsById = new Map(session.findings.map((f) => [f.id, f]));
       session.steps.forEach((step, i) => {
         const pinned = PINNED_KINDS.has(step.kind) || step.findingIds.length > 0 || step.status === "failed"
           || step === playhead || step === selected || matches.has(step.id);
-        if (pinned) expect(shown.has(i), step.id).toBe(true);
+        // A Jev review group (audit 1-1) may hold a pinned Jev row, never one with a critical finding,
+        // a failure, the playhead, the selection or a match.
+        const critical = step.findingIds.some((id) => findingsById.get(id)?.severity === "critical");
+        const mayFold = step.lane === "jev" && !critical && step.status !== "failed" && step !== playhead && step !== selected && !matches.has(step.id);
+        if (pinned) expect(shown.has(i) || (mayFold && reviewed.has(i)), step.id).toBe(true);
+        if (reviewed.has(i)) expect(mayFold, step.id).toBe(true);
       });
+      for (const r of out) {
+        if (r.t === "noise" && r.jev !== undefined) {
+          expect(r.steps.length).toBeGreaterThanOrEqual(2);
+          expect(r.steps.filter((i) => session.steps[i]?.kind === "guardrail" && (session.steps[i]?.findingIds.length ?? 0) > 0)).toHaveLength(r.jev.guardrails);
+          expect(r.jev.guardrails).toBeGreaterThan(0);
+        }
+      }
     }), { numRuns: 150 });
   });
 
@@ -59,7 +73,9 @@ describe("spine row properties (spec §7.6.3)", () => {
         if (row.t === "turn" || row.t === "idle" || row.t === "gap") lastClosed = j;
         if (row.t === "step") {
           const step = prefix.steps[row.step];
-          if (step !== undefined && (PINNED_KINDS.has(step.kind) || step.findingIds.length > 0 || step.status === "failed" || step.firstSeq === 1)) lastClosed = j;
+          // A pinned Jev-lane row at the tail may still join a Jev review group as rows arrive (audit 1-1).
+          const closes = PINNED_KINDS.has(step?.kind ?? "") || (step !== undefined && step.lane !== "jev" && (step.findingIds.length > 0 || step.status === "failed")) || step?.firstSeq === 1;
+          if (step !== undefined && closes) lastClosed = j;
         }
       });
       for (const row of prefixRows.slice(0, lastClosed + 1)) expect(fullKeys.has(row.key), row.key).toBe(true);

@@ -1,0 +1,81 @@
+import { describe, expect, it } from "vitest";
+
+import { comfortBand, endClampedTopRow, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+
+const win = { offset: 1_000, height: 600 };
+
+function rows(from: number, to: number, nonTargets: readonly number[] = []): PushCandidate[] {
+  const out: PushCandidate[] = [];
+  for (let index = from; index <= to; index += 1) {
+    const start = 1_000 + (index - from) * 32;
+    out.push({ index, start, end: start + 32, target: !nonTargets.includes(index) });
+  }
+  return out;
+}
+
+describe("scroll-sync", () => {
+  it("insets the comfort band by 32 px", () => {
+    expect(comfortBand(win)).toEqual({ start: 1_032, end: 1_568 });
+  });
+
+  it("leaves a row inside the band, scrolls the minimum just outside, centers a far row", () => {
+    expect(revealAlign({ start: 1_100, end: 1_132 }, win)).toBe("none");
+    expect(revealAlign({ start: 1_590, end: 1_622 }, win)).toBe("auto");
+    expect(revealAlign({ start: 1_010, end: 1_042 }, win)).toBe("auto");
+    expect(revealAlign({ start: 2_700, end: 2_732 }, win)).toBe("center");
+    expect(revealAlign({ start: 100, end: 132 }, win)).toBe("center");
+  });
+
+  it("moves the playhead the minimum distance into the comfort band", () => {
+    const candidates = rows(10, 28);
+    expect(pushTarget({ start: 900, end: 932 }, candidates, win)).toBe(11);
+    expect(pushTarget({ start: 1_700, end: 1_732 }, candidates, win)).toBe(26);
+    expect(pushTarget({ start: 1_200, end: 1_232 }, candidates, win)).toBeNull();
+    expect(pushTarget(null, candidates, win)).toBeNull();
+  });
+
+  it("skips separator rows when pushing", () => {
+    expect(pushTarget({ start: 900, end: 932 }, rows(10, 28, [11, 12]), win)).toBe(13);
+  });
+
+  it("anchors to the end and follows appends only while following", () => {
+    expect(spineVirtualOptions(true)).toEqual({ anchorTo: "end", followOnAppend: "auto", scrollEndThreshold: 24, overscan: 10 });
+    expect(spineVirtualOptions(false)).toEqual({ anchorTo: "end", followOnAppend: false, scrollEndThreshold: 24, overscan: 10 });
+  });
+
+  it("keeps the playhead and focused rows mounted", () => {
+    expect(extendRange([3, 4, 5], [9, -1, 4, 40], 20)).toEqual([3, 4, 5, 9]);
+  });
+
+  it("finds the row a reveal start-aligns, so no row sits half under the range chip", () => {
+    // Rows of 32, 24 (a separator), 124 (an expanded claim) and 32 px.
+    const starts = [0, 32, 56, 180, 212];
+    const startOf = (i: number): number => starts[i] ?? 0;
+    expect(firstRowAtOrAfter(40, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(56, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(0, starts.length, startOf)).toBe(0);
+    expect(firstRowAtOrAfter(181, starts.length, startOf)).toBe(4);
+    expect(firstRowAtOrAfter(230, starts.length, startOf)).toBe(-1);
+  });
+
+  it("start-aligns the top row the list end cut, when the revealed row stays whole (integration item 5)", () => {
+    // oauth at 1440 px, Chapter level: the list ends at 808 px in a 542 px window, so the end clamps at 266 and cuts
+    // the row starting at 256 under the range chip.
+    const items = [
+      { index: 8, start: 256, end: 288 },
+      { index: 9, start: 288, end: 320 },
+      { index: 20, start: 640, end: 744 },
+      { index: 21, start: 744, end: 776 },
+      { index: 22, start: 776, end: 808 },
+    ];
+    const clamped = { offset: 266, height: 542 };
+    expect(endClampedTopRow(items, clamped, 266, { start: 640, end: 744 })).toBe(8);
+    // Not at the list end: a reveal already lands on row starts.
+    expect(endClampedTopRow(items, { offset: 200, height: 542 }, 266, { start: 640, end: 744 })).toBeNull();
+    // On a row start: nothing to do.
+    expect(endClampedTopRow(items, { offset: 256, height: 542 }, 256, { start: 640, end: 744 })).toBeNull();
+    // Moving up would push the revealed row past the bottom edge: keep the clamp.
+    expect(endClampedTopRow(items, clamped, 266, { start: 700, end: 800 })).toBeNull();
+  });
+});
+

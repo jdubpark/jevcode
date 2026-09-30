@@ -1,0 +1,164 @@
+.root {
+  container-type: inline-size;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr) 280px;
+  grid-template-rows: 40px minmax(0, 1fr);
+  grid-template-areas:
+    "title title title"
+    "outline main inspector";
+  height: 100%;
+  min-height: 0;
+  background: var(--tv-panel);
+}
+
+@container (max-width: 1179px) {
+  .grid {
+    grid-template-columns: 200px minmax(0, 1fr) 248px;
+  }
+}
+
+.title {
+  grid-area: title;
+  min-width: 0;
+  box-shadow: inset 0 -1px 0 var(--tv-hair);
+}
+
+.outline {
+  grid-area: outline;
+  min-height: 0;
+  overflow: hidden;
+  box-shadow: inset -1px 0 0 var(--tv-hair);
+}
+
+.main {
+  grid-area: main;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--tv-canvas);
+  outline: none;
+}
+
+.inspector {
+  grid-area: inspector;
+  min-height: 0;
+  overflow: hidden;
+  box-shadow: inset 1px 0 0 var(--tv-hair);
+}
+
+.view {
+  position: absolute;
+  inset: 0;
+}
+
+.emptyView {
+  height: 100%;
+}
+
+.boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+}
+
+.boundaryText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink-2);
+}
+
+.boundaryActions {
+  display: flex;
+  gap: 8px;
+}
+
+.button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sheet {
+  position: absolute;
+  top: 48px;
+  right: 296px;
+  z-index: 20;
+  width: 360px;
+  max-height: calc(100% - 64px);
+  overflow: auto;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+}
+
+.sheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.sheetTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--tv-ink);
+}
+
+.sheetList {
+  margin: 0;
+}
+
+.sheetRow {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.sheetKeys {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--tv-ink);
+}
+
+.sheetAction {
+  margin: 0;
+  color: var(--tv-ink-2);
+}

@@ -88,6 +88,9 @@ export interface StepDraft extends Step {
 export interface PendingAnswer {
   step: StepDraft;
   seq: number;
+  /** The answer row's display clock and source time: the decision's wait ends here (spec §6.6). */
+  t: number;
+  sourceTs: string;
 }
 
 export interface QueueEntry {
