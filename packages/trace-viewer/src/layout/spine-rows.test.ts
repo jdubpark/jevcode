@@ -97,7 +97,8 @@ describe("spine rows on the oauth-like session", () => {
   it("estimates expanded finding rows per signal and finds the row holding a seq", () => {
     const rows = rowsOf(oauth);
     const claimRow = rows.find((r) => r.key === claim?.id);
-    expect(claimRow === undefined ? 0 : estimateSpineRowSize(claimRow, oauth)).toBe(124);
+    // Measured in Chrome on oauth (integration, 2026-09-30): the claim card is 104 px at 1440, 1180 and 1000.
+    expect(claimRow === undefined ? 0 : estimateSpineRowSize(claimRow, oauth)).toBe(104);
     expect(estimateSpineRowSize({ t: "turn", key: "turn:1", turn: 1 }, oauth)).toBe(24);
     expect(spineRowIndexForSeq(rows, oauth, claim?.firstSeq ?? 0)).toBe(rows.indexOf(claimRow as SpineRow));
     const read = oauth.steps.find((s) => s.kind === "read");

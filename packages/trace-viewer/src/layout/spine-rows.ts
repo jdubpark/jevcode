@@ -51,7 +51,7 @@ export interface SpineRowsInput {
 
 const PINNED_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(["instruction", "decision", "approval"]);
 const FINDING_ROW_PX: { readonly [K in SignalId]: number } = {
-  claim_contradicted: 124, failing_tests: 112, destructive_command: 96, guardrail_clamp: 88, recovery_arc: 96,
+  claim_contradicted: 104, failing_tests: 134, destructive_command: 96, guardrail_clamp: 88, recovery_arc: 96,
 };
 const EXPANDED_ROW_PX = 96;
 const SEVERITY_RANK: { readonly [S in Severity]: number } = { info: 0, warning: 1, critical: 2 };
@@ -389,7 +389,7 @@ function firstFinding(step: Step, session: TraceSession): Finding | undefined {
   return anchoredFindings(step, byId)[0];
 }
 
-/** 32 for step/chapter/noise/elided, 24 for separators, per signal for expanded finding rows (124 for claim_contradicted). */
+/** 32 for step/chapter/noise/elided, 24 for separators, per signal for expanded finding rows (104 for claim_contradicted, measured). */
 export function estimateSpineRowSize(row: SpineRow, session: TraceSession): number {
   if (row.t === "turn" || row.t === "idle" || row.t === "gap") return SPINE_SEPARATOR_PX;
   if (row.t !== "step" || !row.expanded) return SPINE_ROW_PX;
