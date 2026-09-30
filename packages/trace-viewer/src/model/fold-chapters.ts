@@ -259,12 +259,20 @@ export function buildChapters(
       resolvedSeqs.push(seq);
       pick(evidence.stepByEvidenceSeq.get(seq));
     }
+    // spec §6.6 join: every step whose callId the unit cites. One Codex file_change item gives its
+    // callId to one edit per path and A1-8 cites it from every unit owning one of those paths, so an
+    // edit step joins only the unit whose files hold its path. A call id counts toward the link only
+    // when it joins at least one step.
+    const unitFiles = new Set(unit.files);
     let callLinks = 0;
-    for (const callId of unit.agentCallIds ?? []) {
-      const step = state.stepsByCallId.get(callId);
-      if (step === undefined) continue;
-      callLinks += 1;
-      pick(step);
+    for (const callId of new Set(unit.agentCallIds ?? [])) {
+      let joined = false;
+      for (const draft of state.allStepsByCallId.get(callId) ?? []) {
+        if (draft.edit !== undefined && !unitFiles.has(draft.edit.path)) continue;
+        joined = true;
+        pick(draft);
+      }
+      if (joined) callLinks += 1;
     }
     // Content-hash and call-id joins decide the link. A unit that cites neither (a failure-only
     // unit) is joined by plain ids below and stays observed.

@@ -72,6 +72,29 @@ describe("chapters", () => {
     expect(chapter).toMatchObject({ link: "observed", stepIds: ["step:2"], evidenceLinks: { cited: 1, resolved: 0, approx: 0 } });
   });
 
+  it("joins each edit of a multi-file call only to the unit that owns its path", () => {
+    // A Codex file_change item: one file_changed per path, all with the item's callId (A1-2), and
+    // A1-8 cites that callId from every unit owning one of the paths.
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const a = b.agent({ type: "file_changed", path: "src/a.ts", callId: "t:item_1" });
+    const bFile = b.agent({ type: "file_changed", path: "src/b.ts", callId: "t:item_1" });
+    const hunk = { added: 1, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false };
+    b.fact({ type: "git_hunk", file: "src/a.ts", ...hunk });
+    b.fact({ type: "git_hunk", file: "src/b.ts", ...hunk });
+    b.unit({ id: "U1", files: ["src/a.ts"], agentCallIds: ["t:item_1"] });
+    b.unit({ id: "U2", files: ["src/b.ts"], agentCallIds: ["t:item_1"] });
+    // A unit that cites the call but owns none of its paths joins no step through it.
+    b.unit({ id: "U3", files: ["src/c.ts"], agentCallIds: ["t:item_1"] });
+    const session = fold(b);
+    const byUnit = new Map(session.chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    expect(byUnit.get("U1")).toMatchObject({ link: "observed", stepIds: [`step:${a}`] });
+    expect(byUnit.get("U2")).toMatchObject({ link: "observed", stepIds: [`step:${bFile}`] });
+    expect(byUnit.get("U3")).toMatchObject({ link: "inferred", stepIds: [] });
+    expect(stepAt(session, a).chapterIds).toEqual(["unit:U1"]);
+    expect(stepAt(session, bFile).chapterIds).toEqual(["unit:U2"]);
+  });
+
   it("legacy session joins by time window", () => {
     const trace = loadFixtureTrace("oauth");
     const session = foldRows(trace.meta, stripCaptureFields(trace.rows), { live: false });
