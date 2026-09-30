@@ -58,20 +58,22 @@ const NOUN: { readonly [R in NoiseReason]: [string, string] } = {
   passing_test: ["passing test run", "passing test runs"],
 };
 
-/** "3 reads", "2 lockfile and formatting edits", "4 noise steps: reads, lifecycle events". */
-function noiseLabel(steps: readonly number[], session: TraceSession): string {
-  const reasons: NoiseReason[] = [];
-  for (const i of steps) {
-    const reason = session.steps[i]?.noise;
-    if (reason !== null && reason !== undefined && !reasons.includes(reason)) reasons.push(reason);
-  }
-  const n = steps.length;
+/** "3 reads", "2 lockfile and formatting edits", "4 noise steps: reads, lifecycle events".
+ *  Reasons are in first-appearance order. */
+function noiseLabel(n: number, reasons: readonly NoiseReason[]): string {
   const only = reasons[0];
   if (reasons.length === 1 && only !== undefined) return `${n} ${NOUN[only][n === 1 ? 0 : 1]}`;
   if (reasons.length > 1 && reasons.every((r) => EDIT_ADJECTIVE[r] !== undefined)) {
     return `${n} ${reasons.map((r) => EDIT_ADJECTIVE[r]).join(" and ")} ${n === 1 ? "edit" : "edits"}`;
   }
   return `${n} noise steps: ${reasons.map((r) => NOUN[r][1]).join(", ")}`;
+}
+
+/** An open noise row's distinct reasons, kept while steps append so each label is built once. */
+interface NoiseRun { row: Extract<SpineRow, { t: "noise" }>; reasons: NoiseReason[] }
+
+function addReason(run: NoiseRun, reason: NoiseReason | null): void {
+  if (reason !== null && !run.reasons.includes(reason)) run.reasons.push(reason);
 }
 
 interface Segment { rows: SpineRow[]; parent: string | null; turn: number }
@@ -175,6 +177,9 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
   const out: SpineRow[] = [];
   let segment: Segment | null = null;
   let prev: Step | null = null;
+  // At most one noise row is open (the segment's last row); labels are written once per run.
+  const runs: NoiseRun[] = [];
+  let openRun: NoiseRun | null = null;
 
   for (let i = i0; i <= i1; i += 1) {
     const step = steps[i];
@@ -216,9 +221,9 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
     }
     const isNoise = step.noise !== null && input.level !== "step";
     const last = segment === null ? undefined : segment.rows[segment.rows.length - 1];
-    if (isNoise && last !== undefined && last.t === "noise") {
+    if (isNoise && last !== undefined && last.t === "noise" && openRun?.row === last) {
       last.steps.push(i);
-      last.label = noiseLabel(last.steps, session);
+      addReason(openRun, step.noise);
       prev = step;
       continue;
     }
@@ -227,9 +232,19 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
       segment = null;
     }
     segment ??= { rows: [], parent, turn: step.turnIndex };
-    segment.rows.push(isNoise ? { t: "noise", key: `noise:${step.firstSeq}`, steps: [i], label: noiseLabel([i], session) } : row);
+    if (isNoise) {
+      const noise: NoiseRun = { row: { t: "noise", key: `noise:${step.firstSeq}`, steps: [i], label: "" }, reasons: [] };
+      addReason(noise, step.noise);
+      runs.push(noise);
+      openRun = noise;
+      segment.rows.push(noise.row);
+    } else {
+      segment.rows.push(row);
+    }
     prev = step;
   }
+  // Rows are shared with emitted segments (and elided bands drop theirs), so labelling here reaches every kept row.
+  for (const run of runs) run.row.label = noiseLabel(run.row.steps.length, run.reasons);
   if (segment !== null) emitSegment(out, segment, input, input.live && i1 === steps.length - 1, session);
   for (let next = gaps[gapCursor]; next !== undefined; next = gaps[gapCursor]) {
     out.push({ t: "gap", key: `gap:${next.gap.atSeq}`, gap: next.gi });
