@@ -285,6 +285,25 @@ describe("Overview", () => {
     fireEvent.pointerMove(body(), { clientX: -9000, pointerId: 3 });
     fireEvent.pointerUp(body(), { clientX: -9000, pointerId: 3 });
     expect(h.store.get().brush).toEqual({ kind: "range", fromSeq: seqOf(0), toSeq: seqOf(width) });
+
+    // Already at the start: pushing further left keeps the width.
+    fireEvent.pointerDown(body(), { clientX: 400, button: 0, pointerId: 3 });
+    fireEvent.pointerMove(body(), { clientX: -9000, pointerId: 3 });
+    fireEvent.pointerUp(body(), { clientX: -9000, pointerId: 3 });
+    expect(h.store.get().brush).toEqual({ kind: "range", fromSeq: seqOf(0), toSeq: seqOf(width) });
+
+    // Already at the end: pushing further right keeps the width.
+    act(() =>
+      h.store.dispatch({
+        type: "brush/set",
+        brush: { kind: "range", fromSeq: seqOf(last - width), toSeq: seqOf(last) },
+        by: "hybrid",
+      }),
+    );
+    fireEvent.pointerDown(body(), { clientX: 400, button: 0, pointerId: 3 });
+    fireEvent.pointerMove(body(), { clientX: 9000, pointerId: 3 });
+    fireEvent.pointerUp(body(), { clientX: 9000, pointerId: 3 });
+    expect(h.store.get().brush).toEqual({ kind: "range", fromSeq: seqOf(last - width), toSeq: seqOf(last) });
   });
 
   it("keeps a session-level snapped end inside a band whose last step is long", async () => {
