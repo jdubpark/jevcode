@@ -1,29 +1,74 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { openDb } from "../packages/storage/dist/index.js";
+import { openDb, openTraceReader } from "../packages/storage/dist/index.js";
 import {
   EvidenceFactSchema,
   NormalizedAgentEventSchema,
   DecisionSchema,
+  TRACE_ROWS_PAGE_DEFAULT,
 } from "../packages/contracts/dist/index.js";
 import { DegradeClient } from "../packages/jev-router/dist/index.js";
 import { parseReplayLine } from "../packages/semantic-core/dist/index.js";
 import { SurfaceManager } from "../packages/ui-catalog/dist/surface/SurfaceManager.js";
 import { compileSkeleton } from "../packages/ui-compiler/dist/index.js";
 import { PipelineRuntime } from "../apps/desktop/dist/main/pipeline/pipeline-runtime.js";
+import { buildTraceBundle, writeTraceBundle } from "../apps/desktop/dist/main/trace-bundle.js";
+import { createTraceService, readAllRows } from "../apps/desktop/dist/main/trace-service.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = path.join(root, "fixtures", "oauth");
 
 const TARGET_EVENTS = Number(process.env["JEVCODE_SOAK_EVENTS"] ?? 10_000);
+// JEVCODE_SOAK_PROFILE=trace is the trace viewer's reference input (spec §5.6,
+// §10): agent rows with realistic payload sizes, callId pairs, agent
+// file_changed claims and steers. "default" keeps the 2026-09-19 stream.
+const PROFILE = process.env["JEVCODE_SOAK_PROFILE"] || "default";
+if (PROFILE !== "default" && PROFILE !== "trace") {
+  console.error(`SOAK_FAIL: unknown JEVCODE_SOAK_PROFILE ${PROFILE} (expected default or trace)`);
+  process.exit(1);
+}
+const TRACE_STDOUT_KIB = [0.2, 2, 8, 32, 64];
+const TRACE_TEXT_MIN = Math.round(0.2 * 1024);
+const TRACE_TEXT_MAX = 4 * 1024;
+const TRACE_STEER_EVERY = 500;
+// Trace viewer budgets (spec §10, R26). A single-run budget reports the median
+// of 5 runs after 1 discarded warm-up; a p95 budget uses at least 300 samples.
+const TRACE_READ_BUDGET_MS = 1_500;
+const TRACE_PAGE_BUDGET_MS = 50;
+const TRACE_READ_RUNS = 5;
+const TRACE_PAGE_SAMPLES = 300;
 const SESSION_ID = "sess-soak-0001";
 const REPO_ID = "repo-soak";
 
 function nowIso(offsetMs) {
   return new Date(Date.UTC(2026, 8, 19, 9, 0, 0) + offsetMs).toISOString();
+}
+
+/** mulberry32: a seeded PRNG, so every trace-profile run generates the same records. */
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let x = state;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/** ASCII text of exactly `length` characters, built from numbered copies of `line`. */
+function fillerText(length, line) {
+  const parts = [];
+  let size = 0;
+  for (let i = 1; size < length; i += 1) {
+    const next = `${line} ${i}\n`;
+    parts.push(next);
+    size += next.length;
+  }
+  return parts.join("").slice(0, length);
 }
 
 function assert(condition, message) {
@@ -69,6 +114,15 @@ function buildStream() {
   let feature = 0;
   let noise = 0;
   let burst = 0;
+  // Trace-profile state. Soak agent events carry no turnId, like a pre-M1a
+  // recording, so the fold reads each relaunch below as a steer (spec §6.6
+  // "Turns"); callIds keep the `${turnId}:${item.id}` shape.
+  const traceProfile = PROFILE === "trace";
+  const random = seededRandom(0x50a4);
+  let turn = 1;
+  let item = 0;
+  let nextSteerAt = TRACE_STEER_EVERY;
+  const nextCallId = () => `soak-turn-${turn}:item_${(item += 1)}`;
   while (records.length < TARGET_EVENTS - 40) {
     for (let i = 0; i < 20; i += 1) {
       noise += 1;
@@ -100,6 +154,17 @@ function buildStream() {
     if (burst % 4 === 0) {
       feature += 1;
       const file = `src/feature-${feature}.ts`;
+      if (traceProfile) {
+        // The agent's claim; the git_hunk, symbol_delta and file_changed
+        // facts below are the repo's observation of the same edit.
+        push({
+          type: "file_changed",
+          sessionId: SESSION_ID,
+          callId: nextCallId(),
+          path: file,
+          ts: nowIso((t += 100)),
+        });
+      }
       push({
         type: "git_hunk",
         repoId: REPO_ID,
@@ -141,9 +206,14 @@ function buildStream() {
     }
 
     if (burst % 8 === 0) {
+      // Trace profile: one callId pairs the start and the completion, the
+      // test_result cites it as sourceCallId (R2), and stdout is 0.2-64 KiB.
+      const callId = traceProfile ? nextCallId() : undefined;
+      const call = callId === undefined ? {} : { callId };
       push({
         type: "command_started",
         sessionId: SESSION_ID,
+        ...call,
         command: `pnpm test ${burst}`,
         ts: nowIso((t += 100)),
       });
@@ -151,6 +221,7 @@ function buildStream() {
         type: "test_result",
         repoId: REPO_ID,
         sessionId: SESSION_ID,
+        ...(callId === undefined ? {} : { sourceCallId: callId }),
         runner: "vitest",
         command: `pnpm test ${burst}`,
         passed: 42,
@@ -159,12 +230,16 @@ function buildStream() {
         failures: [],
         ts: nowIso((t += 100)),
       });
+      const stdoutKib = traceProfile
+        ? TRACE_STDOUT_KIB[Math.floor(random() * TRACE_STDOUT_KIB.length)]
+        : 0;
       push({
         type: "command_completed",
         sessionId: SESSION_ID,
+        ...call,
         command: `pnpm test ${burst}`,
         exitCode: 0,
-        stdout: "",
+        stdout: fillerText(Math.round(stdoutKib * 1024), `PASS src/feature-${feature}.test.ts > case`),
         stderr: "",
         ts: nowIso((t += 100)),
       });
@@ -188,11 +263,31 @@ function buildStream() {
     }
 
     if (burst % 10 === 0) {
+      const note = `Progress note ${burst}.`;
       push({
         type: "agent_message",
         sessionId: SESSION_ID,
         role: "assistant",
-        text: `Progress note ${burst}.`,
+        text: traceProfile
+          ? fillerText(TRACE_TEXT_MIN + Math.floor(random() * (TRACE_TEXT_MAX - TRACE_TEXT_MIN + 1)), note)
+          : note,
+        ts: nowIso((t += 100)),
+      });
+    }
+
+    if (traceProfile && records.length >= nextSteerAt) {
+      // A steer relaunches the agent: the relaunch's agent_started carries the
+      // steer as its prompt, then the supervisor's message repeats it (spec
+      // §6.6 "Instruction dedupe").
+      nextSteerAt += TRACE_STEER_EVERY;
+      const steer = `Steer ${turn}: keep feature files small and rerun the tests.`;
+      turn += 1;
+      push({ type: "agent_started", sessionId: SESSION_ID, prompt: steer, ts: nowIso((t += 100)) });
+      push({
+        type: "agent_message",
+        sessionId: SESSION_ID,
+        role: "user",
+        text: steer,
         ts: nowIso((t += 100)),
       });
     }
@@ -440,6 +535,48 @@ async function main() {
   }
   const skeletonAvgMs = (Date.now() - skeletonStarted) / 1000;
 
+  // Trace viewer budgets through the viewer's own read path: a second,
+  // query_only connection, factId + clipping. Full reads page by
+  // TRACE_ROWS_PAGE_MAX (readAllRows' default) or 2 MiB of stored payload,
+  // whichever ends a page first; the first read is a discarded warm-up and
+  // traceReadMs is the median of the next five. Then single
+  // trace:rows calls are timed at TRACE_ROWS_PAGE_DEFAULT, the page size the
+  // viewer requests, over repeated full reads until 300 calls are timed.
+  const traceReader = openTraceReader(db.dbPath);
+  const traceService = createTraceService(traceReader);
+  let trace = readAllRows(traceService, SESSION_ID);
+  const traceReadRunsMs = [];
+  for (let run = 0; run < TRACE_READ_RUNS; run += 1) {
+    const started = performance.now();
+    trace = readAllRows(traceService, SESSION_ID);
+    traceReadRunsMs.push(Math.round(performance.now() - started));
+  }
+  const traceReadMs = percentile(traceReadRunsMs, 50);
+  const tracePageMs = [];
+  const timedTraceService = {
+    ...traceService,
+    rows(request) {
+      const started = performance.now();
+      const page = traceService.rows(request);
+      tracePageMs.push(performance.now() - started);
+      return page;
+    },
+  };
+  while (tracePageMs.length < TRACE_PAGE_SAMPLES) {
+    readAllRows(timedTraceService, SESSION_ID, TRACE_ROWS_PAGE_DEFAULT);
+  }
+  const tracePageP95Ms = Number(percentile(tracePageMs, 95).toFixed(1));
+  if (traceReadMs > TRACE_READ_BUDGET_MS) {
+    console.warn(
+      `soak: WARN trace read ${traceReadMs} ms exceeds the ${TRACE_READ_BUDGET_MS} ms budget`,
+    );
+  }
+  if (tracePageP95Ms > TRACE_PAGE_BUDGET_MS) {
+    console.warn(
+      `soak: WARN trace:rows p95 ${tracePageP95Ms} ms exceeds the ${TRACE_PAGE_BUDGET_MS} ms budget`,
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -468,6 +605,19 @@ async function main() {
         failures: db.listFailures(SESSION_ID).length,
         units: db.listChangeUnits(SESSION_ID).length,
         jevDecisions: db.listJevDecisions(SESSION_ID).length,
+        profile: PROFILE,
+        traceReadMs,
+        traceReadRunsMs,
+        traceRows: trace.rows.length,
+        storedRows: trace.lastSeq,
+        consumedRows: trace.rows.length,
+        tracePageMs: {
+          p50: Number(percentile(tracePageMs, 50).toFixed(1)),
+          p95: tracePageP95Ms,
+          max: Number(Math.max(...tracePageMs).toFixed(1)),
+          samples: tracePageMs.length,
+          pageSize: TRACE_ROWS_PAGE_DEFAULT,
+        },
       },
       null,
       2,
@@ -475,7 +625,31 @@ async function main() {
   );
 
   await runtime.stopSession(SESSION_ID);
+  // Export after stopSession so the bundle carries the terminal session state.
+  const exportPath = process.env["JEVCODE_SOAK_EXPORT"];
+  if (exportPath !== undefined && exportPath.length > 0) {
+    const bundle = buildTraceBundle(traceService, SESSION_ID);
+    writeTraceBundle(path.resolve(exportPath), bundle);
+    console.log(`soak: wrote ${bundle.rows.length} trace rows to ${path.resolve(exportPath)}`);
+  }
+  traceReader.close();
+  const dbPath = db.dbPath;
   db.close();
+  // JEVCODE_SOAK_KEEP_DB (spec §5.6): copy the database before the rmSync.
+  // Closing the last connection checkpoints the WAL into soak.db, so that one
+  // file holds every row; stale -wal/-shm files beside the target would be
+  // replayed over the copy, so they are removed first.
+  const keepPath = process.env["JEVCODE_SOAK_KEEP_DB"];
+  if (keepPath !== undefined && keepPath.length > 0) {
+    assert(!existsSync(`${dbPath}-wal`), `${dbPath}-wal outlived the close; a copy would miss rows`);
+    const target = path.resolve(keepPath);
+    mkdirSync(path.dirname(target), { recursive: true });
+    rmSync(`${target}-wal`, { force: true });
+    rmSync(`${target}-shm`, { force: true });
+    copyFileSync(dbPath, target);
+    chmodSync(target, 0o600);
+    console.log(`soak: kept the database at ${target}`);
+  }
   rmSync(outDir, { recursive: true, force: true });
 }
 
