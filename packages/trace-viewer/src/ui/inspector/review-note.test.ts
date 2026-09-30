@@ -79,4 +79,23 @@ describe("buildReviewNote", () => {
     expect(note.markdown).toContain("⟨U+202E⟩");
     expect(note.markdown).not.toContain("\u202E");
   });
+
+  it("keeps the Session line and claim on visible tokens and single lines", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = {
+      ...base,
+      meta: { ...base.meta, repoName: "repo\u202Ex\u2028y", prompt: "Do it\u2029## Injected\nsecond" },
+      findings: base.findings.map((finding) =>
+        finding.ruleId === "claim_contradicted" && finding.claim !== undefined
+          ? { ...finding, claim: { ...finding.claim, claim: { ...finding.claim.claim, text: "ok\u202Efdp" } } }
+          : finding,
+      ),
+    };
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const note = buildReviewNote(session, buildTraceIndex(session), claim?.anchorStepId ?? "step:1");
+    const lines = note.markdown.split(/\n/);
+    expect(lines[1]).toBe("Session: repo⟨U+202E⟩x⏎y / Do it");
+    expect(note.markdown).not.toMatch(/[\u202E\u2028\u2029]/);
+    expect(note.markdown).toContain("ok⟨U+202E⟩fdp");
+  });
 });

@@ -19,7 +19,7 @@ export function fenceFor(text: string): string {
 }
 
 function oneLine(text: string): string {
-  return text.replace(/\r\n|\r|\n/g, "⏎");
+  return text.replace(/\r\n|[\r\n\u2028\u2029]/g, "⏎");
 }
 
 /** Inline code delimited by a run longer than any inside; \r and \n show as ⏎. */
@@ -31,7 +31,7 @@ export function inlineCode(text: string): string {
 }
 
 function firstLineOf(text: string): string {
-  const end = text.search(/\r?\n/);
+  const end = text.search(/[\r\n\u2028\u2029]/);
   return end < 0 ? text : text.slice(0, end);
 }
 
@@ -56,13 +56,13 @@ export function buildReviewNote(session: TraceSession, index: TraceIndex, select
   const firstLine = `Re: trace ${session.meta.sessionId} ${formatOffset(tMs)} "${title}" (seq ${firstSeq}${
     evidenceSeqs.length > 0 ? `; evidence seq ${evidenceSeqs.join(", ")}` : ""
   })`;
-  const lines = [firstLine, `Session: ${oneLine(session.meta.repoName)} / ${firstLineOf(session.meta.prompt)}`];
+  const lines = [firstLine, `Session: ${oneLine(displayUntrusted(session.meta.repoName))} / ${displayUntrusted(firstLineOf(session.meta.prompt))}`];
 
   const isClaimStep = step !== undefined && session.turns.some((turn) => turn.claimStepId === step.id);
   const claimText = finding?.claim?.claim.text ?? (isClaimStep ? step?.text : undefined);
   if (claimText !== undefined && claimText.length > 0) {
     const fence = fenceFor(claimText);
-    lines.push("Claim:", fence, claimText, fence);
+    lines.push("Claim:", fence, displayUntrusted(claimText, { multiline: true }), fence);
   }
 
   const evidenceSteps = (finding?.evidenceStepIds ?? [])

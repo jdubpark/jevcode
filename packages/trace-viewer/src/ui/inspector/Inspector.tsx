@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
@@ -110,13 +110,17 @@ function TabBody({
   session,
   index,
   selection,
+  onRelatedSelect,
 }: {
   tab: InspectorTab;
   session: TraceSession | null;
   index: TraceIndex;
   selection: SelectionId | null;
+  onRelatedSelect(): void;
 }) {
-  if (tab === "summary") return <Summary session={session} index={index} selection={selection} />;
+  if (tab === "summary") {
+    return <Summary session={session} index={index} selection={selection} onRelatedSelect={onRelatedSelect} />;
+  }
   return <p className={styles.muted}>No evidence for this item</p>;
 }
 
@@ -134,22 +138,49 @@ function InspectorBody({ host }: InspectorProps) {
   const hasDiff = step?.edit?.diffSeq !== undefined || (chapter !== undefined && chapter.files.length > 0);
   const canRequest = host.requestChanges !== undefined;
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  const focusPanelNext = useRef(false);
+  const sending = useRef(false);
+  const [, setSendingTick] = useState(false);
+
+  // After a Related click remounts the keyed panel, keep keyboard focus in the inspector (never on Live rebuilds).
+  useEffect(() => {
+    if (!focusPanelNext.current) return;
+    focusPanelNext.current = false;
+    panelRef.current?.focus();
+  }, [selection]);
+
   const onPrimary = async (): Promise<void> => {
-    if (session === null || selection === null) return;
+    if (session === null || selection === null || sending.current) return;
     const note = buildReviewNote(session, index, selection);
     if (host.requestChanges !== undefined) {
-      await host.requestChanges({ sessionId: session.meta.sessionId, selected: selection, text: note.firstLine });
-      announce("Sent to the composer");
+      sending.current = true;
+      setSendingTick(true);
+      try {
+        await host.requestChanges({ sessionId: session.meta.sessionId, selected: selection, text: note.firstLine });
+        announce("Sent to the composer");
+      } catch {
+        announce("Could not send to the composer");
+      } finally {
+        sending.current = false;
+        setSendingTick(false);
+      }
       return;
     }
     announce((await copyText(note.markdown)) ? "Review note copied" : "Could not copy the review note");
   };
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const position = TABS.findIndex((item) => item.id === tab);
-    const next = TABS[(position + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+    const target =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? TABS.length - 1
+          : (position + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+    const next = TABS[target];
     if (next === undefined) return;
     dispatch({ type: "inspector/tab", tab: next.id });
     event.currentTarget.querySelector<HTMLElement>(`#tv-tab-${next.id}`)?.focus();
@@ -181,18 +212,29 @@ function InspectorBody({ host }: InspectorProps) {
       </div>
       <div
         key={selection ?? "none"}
+        ref={panelRef}
         id="tv-inspector-panel"
+        tabIndex={tab === "summary" ? -1 : 0}
         role="tabpanel"
         aria-labelledby={`tv-tab-${tab}`}
         className={styles.body}
       >
-        <TabBody tab={tab} session={session} index={index} selection={selection} />
+        <TabBody
+          tab={tab}
+          session={session}
+          index={index}
+          selection={selection}
+          onRelatedSelect={() => {
+            focusPanelNext.current = true;
+          }}
+        />
       </div>
       <div className={styles.footer}>
         <button
           type="button"
           className={styles.primary}
-          disabled={selection === null || session === null}
+          disabled={selection === null || session === null || sending.current}
+          aria-busy={sending.current}
           onClick={() => void onPrimary()}
         >
           <Icon name={canRequest ? "reply" : "copy"} size={14} />
@@ -202,11 +244,12 @@ function InspectorBody({ host }: InspectorProps) {
           <button
             type="button"
             className={styles.secondary}
+            aria-label="Diff"
+            title="Diff"
             disabled={selection === null}
             onClick={() => dispatch({ type: "inspector/tab", tab: "evidence" })}
           >
             <Icon name="diff" size={14} />
-            <span>Diff</span>
           </button>
         ) : null}
       </div>
