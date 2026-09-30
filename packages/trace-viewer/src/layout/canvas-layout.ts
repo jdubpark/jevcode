@@ -70,6 +70,19 @@ export function collectItems(session: TraceSession, index: TraceIndex): CanvasIt
     session.chapters.filter((chapter) => chapter.current).map((chapter) => chapter.id),
   );
   const turnAt = turnLocator(session.turns);
+  const stepContaining = (seq: number): Step | undefined => {
+    const at = index.stepIndexAtOrBefore(seq);
+    const step = session.steps[at];
+    if (step !== undefined && step.seqs.includes(seq)) return step;
+    return session.steps.find((candidate) => candidate.seqs.includes(seq));
+  };
+  const firstStepOf = (turn: Turn): Step | undefined => {
+    for (const id of turn.stepIds) {
+      const step = stepOf(id);
+      if (step !== undefined) return step;
+    }
+    return undefined;
+  };
   const items: CanvasItem[] = [];
   const storySteps = new Set<string>();
 
@@ -89,20 +102,12 @@ export function collectItems(session: TraceSession, index: TraceIndex): CanvasIt
 
   for (const turn of session.turns) {
     const resumeDefault = turn.trigger === "resume" && turn.prompt.trim() === RESUME_DEFAULT_PROMPT;
-    let prompt: Step | undefined;
-    let first: Step | undefined;
-    for (const id of turn.stepIds) {
-      const step = stepOf(id);
-      if (step === undefined) continue;
-      first ??= step;
-      if (step.kind === "instruction") {
-        prompt = step;
-        break;
-      }
-    }
-    prompt ??= first;
-    if (!resumeDefault && prompt !== undefined) {
-      story(turn.index === 0 ? "intent" : "instruction", `turn:${turn.startSeq}`, prompt, turn.tMs, turn.startSeq);
+    // Spec §7.5: the opener is the step whose seqs include turn.startSeq. A queued instruction or a
+    // decision relaunch opens a turn without being in turn.stepIds. A decision opener adds no instruction
+    // item (the decision item covers it). Fallback when no step holds startSeq: the turn's first step.
+    const opener = stepContaining(turn.startSeq) ?? firstStepOf(turn);
+    if (!resumeDefault && opener !== undefined && opener.kind !== "decision") {
+      story(turn.index === 0 ? "intent" : "instruction", `turn:${turn.startSeq}`, opener, opener.tMs, turn.startSeq);
     }
     const plan = turn.planStepId === undefined ? undefined : stepOf(turn.planStepId);
     if (plan !== undefined) story("plan", `plan:${plan.firstSeq}`, plan, plan.tMs, plan.firstSeq);
@@ -119,6 +124,10 @@ export function collectItems(session: TraceSession, index: TraceIndex): CanvasIt
     if (!chapter.current) continue;
     const key = index.chapterKey(chapter.id);
     if (key === undefined) continue;
+    const own = chapter.stepIds.flatMap((id) => stepOf(id)?.firstSeq ?? []);
+    const seqs = [...chapter.factSeqs, ...own];
+    // Same rule as trace-index: min over factSeqs and step firstSeqs (spec §7.5).
+    const anchorSeq = seqs.length > 0 ? Math.min(...seqs) : chapter.firstSeq;
     const flagged =
       chapter.findingIds.length > 0 ||
       chapter.stepIds.some((id) => (stepOf(id)?.findingIds.length ?? 0) > 0);
@@ -129,7 +138,7 @@ export function collectItems(session: TraceSession, index: TraceIndex): CanvasIt
       band: "work",
       start: chapter.tMs,
       end: Math.max(chapter.tMs, chapter.endTMs),
-      anchorSeq: Number(key.slice(3)),
+      anchorSeq,
       turn: turnAt(chapter.tMs),
     });
   }

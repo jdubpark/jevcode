@@ -88,6 +88,41 @@ describe("collectItems", () => {
     ]);
   });
 
+  it("reads a decision-opened turn as one decision item and no instruction item", () => {
+    const base = buildCanvasSession([
+      { atMs: 0, kind: "prompt" },
+      { atMs: 5_000, kind: "prompt", trigger: "steer" },
+      { atMs: 6_000, kind: "decision" },
+    ]);
+    // The decision step (seq 3) opened turn 1; the instruction step (seq 2) is only listed in stepIds.
+    const session: TraceSession = {
+      ...base,
+      turns: base.turns.map((turn) => (turn.index === 1 ? { ...turn, startSeq: 3, tMs: 6_000 } : turn)),
+    };
+    expect(items(session).map((item) => [item.kind, item.selId])).toEqual([
+      ["intent", "step:1"],
+      ["decision", "step:3"],
+    ]);
+  });
+
+  it("takes a turn's instruction from the step holding startSeq, at that step's time", () => {
+    const base = buildCanvasSession([
+      { atMs: 0, kind: "prompt" },
+      { atMs: 1_000, kind: "work" },
+      { atMs: 5_000, kind: "prompt", trigger: "steer", prompt: "Queued steer" },
+      { atMs: 6_000, kind: "work" },
+    ]);
+    // Turn 1 starts at seq 3 (the queued instruction) but lists only step 4 and a turn tMs before it.
+    const session: TraceSession = {
+      ...base,
+      turns: base.turns.map((turn) =>
+        turn.index === 1 ? { ...turn, tMs: 4_000, stepIds: ["step:4" as const] } : turn,
+      ),
+    };
+    const found = items(session).find((item) => item.kind === "instruction");
+    expect(found).toMatchObject({ key: "turn:3", selId: "step:3", start: 5_000, anchorSeq: 3, turn: 1 });
+  });
+
   it("does not depend on the order of chapters, steps and findings", () => {
     const session = buildCanvasSession([
       { atMs: 1_000, kind: "chapter" },
