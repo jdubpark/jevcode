@@ -74,10 +74,34 @@ describe("overview layout on the oauth-like session", () => {
     expect(c.camera.k).toBeCloseTo(WIDTH / (20_000 * 1.16), 9);
     const st = overviewPreset({ ...base, level: "step" });
     expect(st.camera.k).toBeLessThanOrEqual(K_MAX);
-    expect((o.scale.toU(test?.tMs ?? 0) - st.camera.u0) * st.camera.k).toBeCloseTo(WIDTH / 2, 6);
+    // Centered on the playhead, except that a finished session keeps ≤ 8% of the view past its end (2-7).
+    expect((o.scale.toU(test?.tMs ?? 0) - overviewPreset({ ...base, level: "step", live: true }).camera.u0) * st.camera.k).toBeCloseTo(WIDTH / 2, 6);
+    expect(st.camera.u0 + WIDTH / st.camera.k).toBeLessThanOrEqual(o.overview.endU + (0.08 * WIDTH) / st.camera.k + 1e-6);
     expect(st.brush.kind).toBe("range");
     const live = overviewPreset({ ...base, level: "session", live: true });
     expect(live.camera.k).toBeLessThan(s.camera.k);
+  });
+});
+
+describe("Step preset near the end of a finished session (visual audit 2-7)", () => {
+  const session = buildSession({ steps: Array.from({ length: 101 }, (_, i) => ({ kind: "command" as const, tMs: i * 1_000, target: `c${i}` })) });
+  const p = prepare(session);
+  const last = session.steps[session.steps.length - 1];
+  const base = { level: "step" as const, overview: p.overview, index: p.index, scale: p.scale, widthPx: WIDTH, playheadSeq: last?.firstSeq ?? 1 };
+
+  it("keeps the view's right edge within 8% of the session end", () => {
+    const { camera } = overviewPreset({ ...base, live: false });
+    const span = WIDTH / camera.k;
+    expect(camera.u0 + span).toBeLessThanOrEqual(p.overview.endU + 0.08 * span + 1e-6);
+    expect(camera.u0 + span).toBeGreaterThanOrEqual(p.overview.endU);
+    const x = (p.scale.toU(last?.tMs ?? 0) - camera.u0) * camera.k;
+    expect(x).toBeGreaterThan(WIDTH / 2);
+    expect(x).toBeLessThanOrEqual(WIDTH);
+  });
+
+  it("stays centered on the playhead while live", () => {
+    const { camera } = overviewPreset({ ...base, live: true });
+    expect((p.scale.toU(last?.tMs ?? 0) - camera.u0) * camera.k).toBeCloseTo(WIDTH / 2, 6);
   });
 });
 
