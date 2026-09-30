@@ -1,7 +1,8 @@
 # Performance vs SPEC §13 SLOs
 
 Measured 2026-09-19 (macOS dev machine, storage-backed SQLite) with `scripts/perf.mjs`
-(fixture replays) and `scripts/soak.mjs` (10k-event soak).
+(fixture replays) and `scripts/soak.mjs` (10k-event soak). The soak figures
+are from a 2026-09-30 rerun.
 
 ## SLO table
 
@@ -16,22 +17,23 @@ Measured 2026-09-19 (macOS dev machine, storage-backed SQLite) with `scripts/per
 | Initial repo index (10k files) | ≤60s background | not applicable in replay mode (evidence disabled). The tree-sitter index path is not exercised by the soak | NOT MEASURED |
 | Per-file incremental parse | ≤300ms | not measured in this pass (worker tests cover correctness, not latency) | NOT MEASURED |
 | Renderer main-thread blocked | never (analysis in worker) | parsing runs in `worker_threads` (`evidence-engine/src/worker`) | PASS by construction |
-| Event store growth cap | 1M events/session, then archive | soak stored 75,181 events for 9,993 records (7.5x amplification: facts + projections + jev logs + snapshots). The cap is enforced by schema/bound checks | PASS |
+| Event store growth cap | 1M events/session, then archive | soak stored 454,874 events for 9,993 records on 2026-09-30 (45.5x amplification: facts + projections + jev logs + snapshots; the 2026-09-19 build stored 75,181). The cap is enforced by schema/bound checks | PASS |
 
 ## Soak (SPEC §16 acceptance criterion, T9-2)
 
 `node scripts/soak.mjs` replays 9,993 generated records (formatting/file-noise
 bursts + periodic real changes + tests + decisions) through the real pipeline
-(degrade router, storage-backed, SQLite in tmpdir):
+(degrade router, storage-backed, SQLite in tmpdir). The 2026-09-30 run:
 
 - No crash. The session reached `completed` and emitted the completion surface.
-- Event store: 75,181 events < 1M cap.
+- Event store: 454,874 events < 1M cap. The 2026-09-19 build stored 75,181
+  events for the same records.
 - SurfaceManager (headless, real API): no full swaps under the interaction lock
   (0 violations), pinned surface never replaced, generative surfaces bounded.
-- Timings: total 165s, ingest 127s, final projection flush 38s, coordinator
-  throughput ~455 events/s end-to-end (ingest includes per-record zod
-  validation and SQLite appends).
-- `compileSkeleton` 0.001ms average.
+- Timings: total 638s, ingest 611s, final projection flush 27s, coordinator
+  throughput ~712 events/s end-to-end (ingest includes per-record zod
+  validation and SQLite appends). The 2026-09-19 run took 165s in total.
+- `compileSkeleton` under 0.001ms average (1,000 calls in under 1 ms).
 
 The soak exposed and fixed two quadratic paths:
 
@@ -74,13 +76,16 @@ Full incremental clustering is out of scope (documented in SPEC §19).
 
 ## Trace read (trace viewer, spec §10 M2 budgets)
 
-Measured 2026-09-30 with `JEVCODE_SOAK_PROFILE=trace node scripts/soak.mjs`, the
-full soak on the spec §10 reference input: command stdout of 0.2 to 64 KiB,
-assistant notes of 0.2 to 4 KiB, `callId` pairs, agent `file_changed` claims
-and a steer every 500 records. Before it stops the session, the soak reads the
-whole session through the viewer's own path: a second `query_only` connection
-(`openTraceReader`), `createTraceService` (fact ids, and strings over 16 KiB
-clipped to a 4 KiB head and a 12 KiB tail) and `readAllRows`. Only the six
+Measured 2026-09-30 on both soak profiles.
+`JEVCODE_SOAK_PROFILE=trace node scripts/soak.mjs` is the full soak on the
+spec §10 reference input: command stdout of 0.2 to 64 KiB, assistant notes of
+0.2 to 4 KiB, `callId` pairs, agent `file_changed` claims and a steer every 500
+records. `node scripts/soak.mjs` is the default profile, the 2026-09-19 stream:
+empty command stdout and one-line assistant notes. Before it stops the session,
+the soak reads the whole session through the viewer's own path: a second
+`query_only` connection (`openTraceReader`), `createTraceService` (fact ids,
+and strings over 16 KiB clipped to a 4 KiB head and a 12 KiB tail) and
+`readAllRows`. Only the six
 `TRACE_ROW_TYPES` are read; graph, telemetry, snapshot and failure rows are
 skipped. The full read runs 6 times in pages of up to 5,000 rows, and a page
 also ends after the row that takes its stored payload past 2 MiB; the first
@@ -90,11 +95,13 @@ read is a discarded warm-up and the budget uses the median of the other 5. The
 
 | Budget | Target | Measured | Status |
 |---|---|---|---|
-| Full soak-session trace read in main | ≤1.5s | 998 ms, median of 5 (917, 994, 1300, 1824, 998 ms), for 110,957 trace rows of 452,361 stored | PASS |
+| Full soak-session trace read in main (trace profile) | ≤1.5s | 998 ms, median of 5 (917, 994, 1300, 1824, 998 ms), for 110,957 trace rows of 452,361 stored | PASS |
 | `trace:rows` call in main (trace profile) | p95 ≤50ms | 13.7 ms p95 over 340 calls (p50 9.1 ms, max 27.8 ms) | PASS |
+| Full soak-session trace read in main (default profile) | ≤1.5s | 761 ms, median of 5 (661, 926, 692, 761, 772 ms), for 110,917 trace rows of 454,874 stored | PASS |
+| `trace:rows` call in main (default profile) | p95 ≤50ms | 12.5 ms p95 over 340 calls (p50 7.7 ms, max 156.6 ms) | PASS |
 
-This soak stored 452,361 events for 10,013 records in 687,528 ms;
-the 2026-09-19 soak above stored 75,181.
+The trace-profile soak stored 452,361 events for 10,013 records in 687,528 ms.
+The default-profile soak stored 454,874 events for 9,993 records in 638,439 ms.
 
 ## How to reproduce
 
