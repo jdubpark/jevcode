@@ -60,6 +60,21 @@ describe("spine rows on the oauth-like session", () => {
     expect(labels).toEqual(["3 pipeline events", "2 noise steps: pipeline events, lifecycle events"]);
   });
 
+  it("labels a 5,000-step noise run once, with its reasons in first-appearance order", () => {
+    const reasons = ["lifecycle", "read", "pipeline"] as const;
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        ...Array.from({ length: 5_000 }, (_, j): StepSeed => {
+          const reason = j < 4_000 ? "lifecycle" : reasons[j % 3] ?? "read";
+          return { kind: reason === "read" ? "read" : reason === "pipeline" ? "attention" : "lifecycle", tMs: 1_000 + j, noise: reason };
+        }),
+      ],
+    });
+    const noise = rowsOf(session).filter((r): r is Extract<SpineRow, { t: "noise" }> => r.t === "noise");
+    expect(noise.map((r) => [r.steps.length, r.label])).toEqual([[5_000, "5000 noise steps: lifecycle events, reads, pipeline events"]]);
+  });
+
   it("Session level shows chapter rows interleaved with beats", () => {
     const rows = rowsOf(oauth, { level: "session" });
     expect(rows.filter((r) => r.t === "chapter")).toHaveLength(7);
