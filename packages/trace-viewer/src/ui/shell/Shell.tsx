@@ -107,8 +107,19 @@ function selectedTitleFor(
 }
 /* eslint-enable @typescript-eslint/no-unused-vars */
 
+export const MAX_REPORTED_ERRORS = 50;
+
+/** Appends `item`, dropping the oldest entries beyond `cap`. */
+export function appendCapped<T>(list: readonly T[], item: T, cap: number): T[] {
+  const next = [...list, item];
+  return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
 export function Shell({ sessionId, host, controller, location, initialFollow }: ShellProps) {
   const store = useViewStore();
+  // The open location and follow override apply once, at open; a parent passing a fresh
+  // equal `location` object each render must not re-run the open logic.
+  const openOptions = useRef({ location, initialFollow });
   const [snapshot, setSnapshot] = useState<DataSnapshot>(() => controller.get());
 
   useEffect(() => {
@@ -188,7 +199,11 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
         flush();
       },
       reportError(message) {
-        diagnosticsState.current.errors.push(message);
+        diagnosticsState.current.errors = appendCapped(
+          diagnosticsState.current.errors,
+          message,
+          MAX_REPORTED_ERRORS,
+        );
         flush();
       },
       flush,
@@ -202,7 +217,7 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
     const flags = opened.current;
     if (!flags.follow && snapshot.summary !== null) {
       flags.follow = true;
-      store.dispatch({ type: "follow/set", follow: initialFollow ?? isLiveState(snapshot.summary.state) });
+      store.dispatch({ type: "follow/set", follow: openOptions.current.initialFollow ?? isLiveState(snapshot.summary.state) });
     }
     store.setIndex(index);
     if (session === null) return;
@@ -214,7 +229,7 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
       loadedThroughSeq: session.loadedThroughSeq,
       terminal: snapshot.terminal,
       loadComplete,
-      initialSelection: needsDefaults ? initialSelectionOf(session, location) : null,
+      initialSelection: needsDefaults ? initialSelectionOf(session, openOptions.current.location) : null,
       chapterSpineRows: needsDefaults ? chapterSpineRowCount(session, index, scale, snapshot.terminal) : 0,
     });
     // Spec §1: the dispatch re-renders the store's subscribers synchronously, before the next frame,
@@ -236,7 +251,7 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
       measureAfterPaint(PERF.liveTick, LIVE_TICK_START);
     }
     diagnostics.flush();
-  }, [snapshot, session, index, scale, store, host, location, initialFollow, diagnostics]);
+  }, [snapshot, session, index, scale, store, host, diagnostics]);
 
   useEffect(() => {
     if (host.onLocation === undefined) return undefined;
