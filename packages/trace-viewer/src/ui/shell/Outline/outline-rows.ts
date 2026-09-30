@@ -7,6 +7,7 @@ import {
   normalizeCommand,
   pickGraphic,
   searchSteps,
+  shortenTitle,
   truncateMiddle,
   type Chapter,
   type Finding,
@@ -113,7 +114,9 @@ function chapterItem(
 ): OutlineItemRow {
   const flag = chapterFlag(chapter, findingById);
   const graphic = pickGraphic(chapter, session);
-  const title = displayUntrusted(chapter.title);
+  // The row reads the short title (M2); the tooltip and the accessible name carry the full one.
+  const full = displayUntrusted(chapter.title);
+  const title = displayUntrusted(chapter.shortTitle ?? chapter.title);
   return {
     t: "item",
     key: chapter.id,
@@ -129,7 +132,8 @@ function chapterItem(
     muted: false,
     graphic: null,
     chapterId: chapter.id,
-    label: joinLabel([title, graphic === null ? null : describeGraphic(graphic), formatOffset(chapter.tMs)]),
+    label: joinLabel([full, graphic === null ? null : describeGraphic(graphic), formatOffset(chapter.tMs)]),
+    ...(title === full ? {} : { hint: full }),
     openEvidence: false,
   };
 }
@@ -179,17 +183,35 @@ function decisionRow(
   chapter: Chapter,
   session: TraceSession,
   depth: 0 | 1,
-  title: string,
+  title: DecisionTitle,
   flag: OutlineFlag,
 ): OutlineItemRow {
   const graphic = pickGraphic(step, session);
   return {
-    ...stepItem(step, depth, title, "fork", flag),
+    ...decisionItem(step, depth, title, flag),
     failed: flag === "x",
     graphic,
     chapterId: chapter.id,
     alsoSelects: chapter.id,
-    label: joinLabel([title, graphic === null ? null : describeGraphic(graphic), formatOffset(step.tMs)]),
+    label: joinLabel([title.full, graphic === null ? null : describeGraphic(graphic), formatOffset(step.tMs)]),
+  };
+}
+
+interface DecisionTitle { short: string; full: string }
+
+/** Decision titles are agent prose: neutralised, in the sans face (§7.12 keeps mono for paths and commands), and
+ *  shortened like a chapter title for the 216 px column; the full title is the tooltip and the accessible name. */
+function decisionTitle(step: Step): DecisionTitle {
+  const raw = step.decision?.title ?? step.headline;
+  return { short: displayUntrusted(shortenTitle(raw)), full: displayUntrusted(raw) };
+}
+
+function decisionItem(step: Step, depth: 0 | 1, title: DecisionTitle, flag: OutlineFlag): OutlineItemRow {
+  const item = stepItem(step, depth, title.short, "fork", flag);
+  return {
+    ...item,
+    label: joinLabel([title.full, formatOffset(step.tMs)]),
+    ...(title.short === title.full ? {} : { hint: title.full }),
   };
 }
 
@@ -213,11 +235,10 @@ function storyRows(session: TraceSession): OutlineRow[] {
     const folded = new Set<UnitStableId>();
     for (const step of steps) {
       if (step.kind !== "decision") continue;
-      // Decision titles are agent prose: neutralised, in the sans face (§7.12 keeps mono for paths and commands).
-      const title = displayUntrusted(step.decision?.title ?? step.headline);
+      const title = decisionTitle(step);
       const born = step.decision === undefined ? undefined : decisionBornChapter(step, chapters, folded);
       if (born === undefined) {
-        items.push(stepItem(step, depth, title, "fork", null));
+        items.push(decisionItem(step, depth, title, null));
         continue;
       }
       folded.add(born.id);

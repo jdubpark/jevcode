@@ -238,6 +238,22 @@ describe("Inspector", () => {
     expect([...related.querySelectorAll("button")].some((row) => row.textContent?.includes(FINDING_TITLE.claim_contradicted))).toBe(true);
   });
 
+  it("lists Related chapters and decisions by their short titles, with the full title as tooltip and name", () => {
+    const session = foldFixture("oauth");
+    const tests = session.chapters.find((chapter) => chapter.shortTitle === "Tests · oauth");
+    const decision = session.steps.find((step) => step.decision !== undefined)?.decision;
+    if (tests === undefined || decision === undefined) throw new Error("fixture changed");
+    renderHarness(<Inspector host={{}} />, session, { state: { selection: claimStepId() } });
+    const rows = [...section("Related").querySelectorAll("button")];
+    const chapterRow = rows.find((row) => row.textContent?.startsWith("Tests · oauth"));
+    expect(chapterRow?.getAttribute("aria-label")?.startsWith(tests.title)).toBe(true);
+    expect(chapterRow?.querySelector("[title]")?.getAttribute("title")).toBe(tests.title);
+    const decisionRow = rows.find((row) => row.textContent?.startsWith("Account-linking policy…"));
+    expect(decisionRow?.getAttribute("aria-label")?.startsWith(decision.title)).toBe(true);
+    // The header keeps the finding-first title; nothing here shortens it.
+    expect(titleSlot()).toBe(FINDING_TITLE.claim_contradicted);
+  });
+
   it("caps Related at four rows plus a count, even for a step in thousands of chapters", () => {
     const base = foldFixture("oauth");
     const template = base.chapters[0];

@@ -60,6 +60,16 @@ function focusStem(path: string): string {
 }
 
 /**
+ * A short label for agent prose (a real chapter title, a decision title): its first clause, cut at a word to at most
+ * SHORT_TITLE_MAX graphemes. Control characters are kept for displayUntrusted to show; they never end a clause.
+ */
+export function shortenTitle(text: string): string {
+  const title = text.replace(EDGE_SPACES, "").replace(SPACES, " ");
+  const clause = /^(.{8,}?)(?:[:;.] | [—–-] |, | \(|\.$)/u.exec(title)?.[1] ?? title;
+  return clipTitle(clause, SHORT_TITLE_MAX);
+}
+
+/**
  * Chapter.shortTitle (spec §6.6 "Short titles"), at most SHORT_TITLE_MAX graphemes. A placeholder
  * title becomes the category noun and the focus file's stem ("Tests · oauth", "Migration ·
  * identities"): the focus file is the first file that is not a lockfile; a chapter of lockfiles
@@ -69,10 +79,7 @@ function focusStem(path: string): string {
 export function chapterShortTitle(input: { title: string; category: ChangeCategory; files: readonly string[] }): string {
   // Graphemes are cut whole and control characters are kept, so a later displayUntrusted token is never split.
   const title = input.title.replace(EDGE_SPACES, "").replace(SPACES, " ");
-  if (!isPlaceholderTitle(title)) {
-    const clause = /^(.{8,}?)(?:[:;.] | [—–-] |, | \(|\.$)/u.exec(title)?.[1] ?? title;
-    return clipTitle(clause, SHORT_TITLE_MAX);
-  }
+  if (!isPlaceholderTitle(title)) return shortenTitle(title);
   const focus = input.files.find((file) => !isLockfilePath(file));
   if (focus === undefined && input.files.length > 0) return "Lockfile";
   const noun = CATEGORY_NOUN[input.category];
