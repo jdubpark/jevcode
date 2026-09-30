@@ -568,6 +568,7 @@ export function traceIndexChanges(index: TraceIndex): TraceIndexChanges | undefi
 function indexOf(state: IndexState): TraceIndex {
   const { session, entries, anchorOf, byAnchor, currentByAnchor, stepFirstSeqs, turns, findingsBySeq, findingsById } = state;
   const steps = session.steps;
+  const atSeq = new Map<number, Chapter | undefined>();
   return {
     sessionId: session.meta.sessionId,
     session,
@@ -584,6 +585,9 @@ function indexOf(state: IndexState): TraceIndex {
     chapterByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq)?.[0] ?? byAnchor.get(anchorSeq),
     chaptersByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq) ?? NO_CHAPTERS,
     chapterAtSeq: (seq) => {
+      // O(chapters), and several selectors ask each commit for the same seq (the live playhead).
+      if (atSeq.has(seq)) return atSeq.get(seq);
+      if (atSeq.size >= 64) atSeq.clear();
       let found: Chapter | undefined;
       let bestAnchor = Number.NEGATIVE_INFINITY;
       for (const chapter of session.chapters) {
@@ -595,6 +599,7 @@ function indexOf(state: IndexState): TraceIndex {
           found = chapter;
         }
       }
+      atSeq.set(seq, found);
       return found;
     },
     turnAtSeq: (seq) => {
