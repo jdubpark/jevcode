@@ -58,15 +58,17 @@ export function Minimap(props: MinimapProps): React.JSX.Element {
         width={MINIMAP_W}
         height={MINIMAP_H}
         data-minimap=""
-        onPointerDown={(event) => props.onCenter(minimapToWorld(model, local(event)))}
+        onPointerDown={(event) => {
+          if (event.button === 0) props.onCenter(minimapToWorld(model, local(event)));
+        }}
       >
         <g transform={`scale(${model.scale}) translate(${-model.origin.x} ${-model.origin.y})`}>
           {model.edges.map((edge, index) => (
             <path key={index} className={styles.miniEdge} d={edge.d} />
           ))}
         </g>
-        {model.separators.map((sep) => (
-          <line key={sep.x} className={styles.miniSep} x1={sep.x} x2={sep.x} y1={0} y2={MINIMAP_H} />
+        {model.separators.map((sep, index) => (
+          <line key={index} className={styles.miniSep} x1={sep.x} x2={sep.x} y1={0} y2={MINIMAP_H} />
         ))}
         {model.frames.map((frame) => (
           <rect
@@ -89,12 +91,18 @@ export function Minimap(props: MinimapProps): React.JSX.Element {
           height={Math.max(2, model.viewport.h)}
           onPointerDown={(event) => {
             event.stopPropagation();
+            if (event.button !== 0) return;
             drag.current = { x: event.clientX, y: event.clientY };
             event.currentTarget.setPointerCapture?.(event.pointerId);
           }}
           onPointerMove={(event) => {
             const from = drag.current;
             if (from === null) return;
+            // A release the element never saw (capture lost, button let go outside): stop instead of hover-panning.
+            if (event.buttons === 0) {
+              drag.current = null;
+              return;
+            }
             drag.current = { x: event.clientX, y: event.clientY };
             props.onPan((event.clientX - from.x) / model.scale, (event.clientY - from.y) / model.scale);
           }}
@@ -102,6 +110,9 @@ export function Minimap(props: MinimapProps): React.JSX.Element {
             drag.current = null;
           }}
           onPointerCancel={() => {
+            drag.current = null;
+          }}
+          onLostPointerCapture={() => {
             drag.current = null;
           }}
         />
@@ -115,8 +126,8 @@ export function Minimap(props: MinimapProps): React.JSX.Element {
             width={Math.max(1, model.strip.bracket[1] - model.strip.bracket[0])}
             height={MINIMAP_STRIP_H}
           />
-          {model.strip.critical.map((x) => (
-            <rect key={x} className={styles.stripCritical} x={x - 0.5} y={0} width={1} height={MINIMAP_STRIP_H} />
+          {model.strip.critical.map((x, index) => (
+            <rect key={index} className={styles.stripCritical} x={x - 0.5} y={0} width={1} height={MINIMAP_STRIP_H} />
           ))}
         </svg>
       )}
