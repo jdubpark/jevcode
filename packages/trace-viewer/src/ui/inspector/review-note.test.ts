@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildTraceIndex } from "../../layout/trace-index.js";
 import type { TraceSession } from "../../model/index.js";
 import { fixtureTrace, foldFixture, payloadOf } from "../../test-support/ui-harness.js";
+import { FINDING_TITLE, selectionTitle } from "./finding-copy.js";
 import { buildReviewNote, fenceFor, inlineCode } from "./review-note.js";
 
 describe("fenceFor and inlineCode", () => {
@@ -17,6 +18,46 @@ describe("fenceFor and inlineCode", () => {
     expect(inlineCode("a`b")).toBe("``a`b``");
     expect(inlineCode("`x")).toBe("`` `x ``");
     expect(inlineCode("a\nb\r\nc")).toBe("`a⏎b⏎c`");
+  });
+});
+
+describe("selectionTitle", () => {
+  it("titles a step only by findings anchored at it, never by a finding that merely cites it", () => {
+    const session = foldFixture("oauth");
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const evidenceId = claim?.evidenceStepIds?.[0];
+    expect(evidenceId).toBeDefined();
+    expect(evidenceId).not.toBe(claim?.anchorStepId);
+    const index = buildTraceIndex(session);
+    expect(selectionTitle(session, index, claim?.anchorStepId ?? "step:1")).toBe(FINDING_TITLE.claim_contradicted);
+    expect(selectionTitle(session, index, evidenceId ?? "step:1")).toBe(FINDING_TITLE.failing_tests);
+  });
+
+  it("shows a bidi override in a chapter or decision title as a visible token, in the title and the note", () => {
+    const base = foldFixture("oauth");
+    const chapter = base.chapters[0];
+    const decision = base.steps.find((step) => step.decision !== undefined);
+    expect(chapter).toBeDefined();
+    expect(decision?.decision).toBeDefined();
+    const session: TraceSession = {
+      ...base,
+      chapters: base.chapters.map((item) => (item.id === chapter?.id ? { ...item, title: "Changed 1 file: src/\u202Etxt.exe" } : item)),
+      steps: base.steps.map((step) =>
+        step.id === decision?.id && step.decision !== undefined
+          ? { ...step, findingIds: [], decision: { ...step.decision, title: "Pick\u202Eone" } }
+          : step,
+      ),
+    };
+    const index = buildTraceIndex(session);
+    for (const [id, token] of [
+      [chapter?.id ?? "unit:x", "src/⟨U+202E⟩txt.exe"],
+      [decision?.id ?? "step:1", "Pick⟨U+202E⟩one"],
+    ] as const) {
+      expect(selectionTitle(session, index, id)).toContain(token);
+      const note = buildReviewNote(session, index, id);
+      expect(note.firstLine).toContain(token);
+      expect(note.firstLine).not.toContain("\u202E");
+    }
   });
 });
 

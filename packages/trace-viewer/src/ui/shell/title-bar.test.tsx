@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceSession } from "../../model/index.js";
-import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
+import type { TraceSource } from "../../source.js";
+import { createStaticBundleSource } from "../../sources/static-bundle.js";
+import { fixtureBundle, foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
 import type { ViewDefinition, ViewPort } from "../views/view-port.js";
 import { TitleBar } from "./TitleBar.js";
+import { TraceViewer } from "./TraceViewer.js";
 
 let layout: LayoutStub;
 beforeEach(() => {
@@ -57,6 +60,42 @@ describe("TitleBar", () => {
     const live = screen.getByRole("button", { name: /Completed/ });
     expect(live.hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: /Review/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("says Completed once: on the disabled Live segment, with only the duration in the meta", () => {
+    renderHarness(<TitleBar onRetry={noop} />, foldFixture("oauth"));
+    const completed = [...document.querySelectorAll("span")].filter((node) => node.textContent === "Completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.closest("button")?.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("45 s")).toBeTruthy();
+  });
+
+  it("keeps the loading progress in the meta", () => {
+    renderHarness(<TitleBar onRetry={noop} />, foldFixture("oauth"), { status: { kind: "loading" }, loadedFraction: 0.41, terminal: false });
+    expect(screen.getByText("Loading 41%")).toBeTruthy();
+  });
+
+  it("reads the live agent state, so a session that ends while open shows Completed", async () => {
+    const inner = createStaticBundleSource(fixtureBundle("oauth"));
+    let ended = false;
+    const source: TraceSource = {
+      sessionId: inner.sessionId,
+      summary: async () => ({ ...(await inner.summary()), state: "running" }),
+      rows: async (request) => {
+        const page = await inner.rows(request);
+        return ended ? page : { ...page, state: "running" };
+      },
+      payloads: (seqs) => inner.payloads(seqs),
+      now: () => inner.now(),
+    };
+    render(<TraceViewer source={source} pollMs={20} />);
+    const follow = await screen.findByRole("group", { name: "Follow" });
+    await waitFor(() => expect(follow.querySelectorAll("button")[1]?.hasAttribute("disabled")).toBe(false));
+    expect(follow.querySelectorAll("button")[1]?.textContent).toBe("Live");
+
+    ended = true;
+    await waitFor(() => expect(follow.querySelectorAll("button")[1]?.textContent).toBe("Completed"));
+    expect(follow.querySelectorAll("button")[1]?.hasAttribute("disabled")).toBe(true);
   });
 
   it("shows the N new pill with a red dot only when a new critical finding arrived", () => {

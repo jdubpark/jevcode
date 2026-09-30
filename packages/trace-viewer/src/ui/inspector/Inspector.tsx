@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
+  agentStateLabel,
   displayUntrusted,
   formatDuration,
   formatOffset,
-  normalizeCommand,
-  truncateMiddle,
   type Chapter,
+  type Finding,
+  type Severity,
   type Step,
   type TraceSession,
 } from "../../model/index.js";
@@ -16,6 +17,7 @@ import { Icon } from "../icons/Icon.js";
 import { CATEGORY_ICON, KIND_ICON, SIGNAL_ICON } from "../icons/kind-icons.js";
 import type { ViewerHost } from "../shell/host.js";
 import { ErrorBoundary } from "../shell/ErrorBoundary.js";
+import { displaySpanMs } from "../shell/TitleBar.js";
 import { useAnnounce } from "../shell/LiveRegion.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../state/store.js";
@@ -46,14 +48,27 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-function metaLine(step: Step | undefined, chapter: Chapter | undefined): string {
-  if (chapter !== undefined) return `${formatOffset(chapter.tMs)} · ${chapter.stepIds.length} steps`;
-  if (step === undefined) return "";
-  const parts = [formatOffset(step.tMs)];
-  if (step.durationMs !== null) parts.push(formatDuration(step.durationMs));
-  if (step.command !== undefined) parts.push(truncateMiddle(displayUntrusted(normalizeCommand(step.command.command)), 40));
-  else if (step.edit !== undefined) parts.push(truncateMiddle(displayUntrusted(step.edit.path), 40));
-  return parts.join(" · ");
+const SEVERITY_WORD: Record<Severity, string> = { critical: "Critical", warning: "Warning", info: "Info" };
+
+/** Offset (with a clock), duration, then the severity of the finding the title names; the command or path is in Summary. */
+function MetaLine({ step, chapter, finding }: { step: Step | undefined; chapter: Chapter | undefined; finding: Finding | null }) {
+  const tMs = chapter?.tMs ?? step?.tMs;
+  if (tMs === undefined) return null;
+  const parts: string[] = [];
+  if (chapter !== undefined) parts.push(`${chapter.stepIds.length} steps`);
+  else if (step !== undefined && step.durationMs !== null) parts.push(formatDuration(step.durationMs));
+  return (
+    <p className={styles.metaLine}>
+      <Icon name="clock" size={12} className={styles.icon} />
+      <span>{formatOffset(tMs)}</span>
+      {parts.map((part) => (
+        <span key={part}>{`· ${part}`}</span>
+      ))}
+      {finding === null ? null : (
+        <span className={finding.severity === "critical" ? styles.badWord : undefined}>{`· ${SEVERITY_WORD[finding.severity]}`}</span>
+      )}
+    </p>
+  );
 }
 
 function Header({
@@ -79,6 +94,13 @@ function Header({
           <h2 className={styles.title} data-slot="title">
             Session
           </h2>
+          {session === null ? null : (
+            <p className={styles.metaLine}>
+              <Icon name="clock" size={12} className={styles.icon} />
+              <span>{formatDuration(displaySpanMs(session))}</span>
+              <span>{`· ${agentStateLabel(session.meta.state)}`}</span>
+            </p>
+          )}
         </div>
       </div>
     );
@@ -101,7 +123,7 @@ function Header({
         <h2 className={styles.title} data-slot="title">
           {selectionTitle(session, index, selection)}
         </h2>
-        <p className={styles.meta}>{metaLine(step, chapter)}</p>
+        <MetaLine step={step} chapter={chapter} finding={finding} />
       </div>
     </div>
   );
@@ -191,8 +213,9 @@ function InspectorBody({ host }: InspectorProps) {
     event.currentTarget.querySelector<HTMLElement>(`#tv-tab-${next.id}`)?.focus();
   };
 
-  const regroupedTitle =
-    regrouped === null || session === null ? null : (session.chapters.find((item) => item.id === regrouped.to)?.title ?? null);
+  const regroupedEntry = regrouped === null ? undefined : index.entry(regrouped.to);
+  const regroupedChapter = session !== null && regroupedEntry?.kind === "chapter" ? session.chapters[regroupedEntry.position] : undefined;
+  const regroupedTitle = regroupedChapter === undefined ? null : displayUntrusted(regroupedChapter.title);
 
   return (
     <div className={styles.inspector}>
@@ -252,12 +275,11 @@ function InspectorBody({ host }: InspectorProps) {
           <button
             type="button"
             className={styles.secondary}
-            aria-label="Diff"
-            title="Diff"
             disabled={selection === null}
             onClick={() => dispatch({ type: "inspector/tab", tab: "evidence" })}
           >
             <Icon name="diff" size={14} />
+            <span>Diff</span>
           </button>
         ) : null}
       </div>
