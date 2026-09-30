@@ -72,7 +72,7 @@ describe("stopSession terminal-state preservation", () => {
     db.close();
   });
 
-  it("pauses a running session on stop and leaves it resumable", () => {
+  it("pauses a running session on stop and keeps its execution claim", () => {
     const db = createDb();
     db.setSessionState("sess_a", "running");
     db.setExecutionClaim("sess_a", "2026-09-28T10:00:00.000Z");

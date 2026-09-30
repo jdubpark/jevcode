@@ -17,7 +17,7 @@ import { parseReplayLine } from "@jevcode/semantic-core";
 import type { PipelineRecord } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
@@ -1147,7 +1147,7 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
     return { db, runtime, sessionId, terminal };
   }
 
-  it("stopping a running session records one agent_interrupted and leaves it paused and resumable", async () => {
+  it("stopping a running session records one agent_interrupted, leaves it paused and releases it by default", async () => {
     const { db, runtime, sessionId, terminal } = await startScripted("stop-pauses", []);
     try {
       await waitFor(
@@ -1169,7 +1169,80 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       expect(stored?.endedAt).toBeNull();
       expect(stored?.executionClaimTs).not.toBeNull();
       expect(terminal).toContain("[agent] stopped");
+      // teardown defaults to true (repo close, replay CLI, soak).
+      expect(runtime.hasSession(sessionId)).toBe(false);
     } finally {
+      db.close();
+    }
+  }, 30_000);
+
+  function userMessage(sessionId: string, text: string): NormalizedAgentEvent {
+    return { type: "agent_message", sessionId, role: "user", text, ts: new Date().toISOString() };
+  }
+
+  function messageTexts(db: JevcodeDb, sessionId: string): string[] {
+    return db
+      .listAgentEvents(sessionId)
+      .flatMap((event) => (event.type === "agent_message" ? [event.text] : []));
+  }
+
+  it("a stop without teardown keeps the session registered, and resume relaunches the agent", async () => {
+    const { db, runtime, sessionId } = await startScripted("stop-resume", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId, { teardown: false });
+
+      expect(runtime.hasSession(sessionId)).toBe(true);
+      expect(db.getSession(sessionId)?.state).toBe("paused");
+      expect(db.getSession(sessionId)?.endedAt).toBeNull();
+      // Stopped: nothing is recorded until the session is resumed.
+      runtime.ingestPipelineRecord(sessionId, userMessage(sessionId, "while stopped"));
+
+      const adapter = runtime.getAdapter(sessionId);
+      if (adapter === null) throw new Error("mock adapter missing");
+      const resume = vi.spyOn(adapter, "resume");
+      await runtime.resume(sessionId);
+
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(db.getSession(sessionId)?.state).toBe("running");
+      runtime.ingestPipelineRecord(sessionId, userMessage(sessionId, "after resume"));
+      expect(messageTexts(db, sessionId)).toEqual(["after resume"]);
+      expect(
+        db.listAgentEvents(sessionId).filter((event) => event.type === "agent_interrupted"),
+      ).toHaveLength(1);
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+
+  it("an instruction to a session stopped without teardown is recorded", async () => {
+    const { db, runtime, sessionId } = await startScripted("stop-instruct", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId, { teardown: false });
+
+      await runtime.sendInstruction(sessionId, {
+        id: "instr-after-stop",
+        sessionId,
+        mode: "queue",
+        text: "add the missing test",
+      });
+      expect(messageTexts(db, sessionId)).toEqual(["add the missing test"]);
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
       db.close();
     }
   }, 30_000);
