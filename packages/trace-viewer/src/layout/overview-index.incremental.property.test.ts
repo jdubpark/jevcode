@@ -116,14 +116,19 @@ describe("stableBeforeT", () => {
     fc.assert(
       fc.property(
         fc.array(fc.tuple(fc.nat({ max: 600_000 }), fc.nat({ max: 60_000 })), { maxLength: 12 }),
-        fc.nat({ max: 900_000 }),
-        fc.nat({ max: 900_000 }),
-        (spans, liveA, liveB) => {
+        fc.option(fc.nat({ max: 900_000 }), { nil: undefined }),
+        fc.option(fc.nat({ max: 900_000 }), { nil: undefined }),
+        fc.boolean(),
+        fc.array(fc.nat({ max: 900_000 }), { maxLength: 3 }),
+        (spans, liveA, liveB, dropLast, awaiting) => {
           const work = spans.map(([t, d]): readonly [number, number] => [t, t + d]);
-          const a = buildTimeScale({ originMs: 0, work, awaitingFrom: [], liveTMs: liveA });
-          const b = buildTimeScale({ originMs: 0, work: work.slice(0, -1), awaitingFrom: [], liveTMs: liveB });
+          const a = buildTimeScale({ originMs: 0, work, awaitingFrom: [], ...(liveA === undefined ? {} : { liveTMs: liveA }) });
+          const b = buildTimeScale({
+            originMs: 0, work: dropLast ? work.slice(0, -1) : work, awaitingFrom: awaiting, ...(liveB === undefined ? {} : { liveTMs: liveB }),
+          });
           const bound = stableBeforeT(a, b);
-          for (let t = -10; t < Math.min(bound, 1_000_000); t += 997) expect(a.toU(t)).toBe(b.toU(t));
+          for (let t = -10; t < Math.min(bound, 2_000_000); t += 997) expect(a.toU(t)).toBe(b.toU(t));
+          if (bound === Number.POSITIVE_INFINITY) expect(a.endU).toBe(b.endU);
         },
       ),
       { numRuns: 200 },
@@ -159,6 +164,18 @@ describe("buildOverviewIndex from the previous overview: identity and work", () 
     expect(overviewIndexWork(large.next)).toMatchObject({ full: false });
     expect(overviewIndexWork(large.next)?.steps).toBeLessThan(10);
     expect(overviewIndexWork(large.next)?.chapters).toBeLessThan(5);
+  });
+
+  it("keeps every mark and band when the scale maps alike, even for steps at its end", () => {
+    const { meta, rows } = soakShapedRows({ units: 30, runs: 4, reemits: 1 });
+    const state = accumulateAll(createTraceState(meta), rows);
+    const first = finalize(state, { live: true, nowMs: NOW });
+    const index = buildTraceIndex(first);
+    const overview = buildOverviewIndex(first, index, buildTimeScale(timeScaleInputOf(first)));
+    // A commit whose scale is a new object with the same segments: nothing is re-derived.
+    const again = buildOverviewIndex(first, index, buildTimeScale(timeScaleInputOf(first)), overview);
+    expect(overviewIndexWork(again)).toEqual({ steps: 0, chapters: 0, lanes: 0, full: false });
+    expect(again.bands).toStrictEqual(overview.bands);
   });
 
   it("keeps the marks of every lane no changed step is on", () => {
