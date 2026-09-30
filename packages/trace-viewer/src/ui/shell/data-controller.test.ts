@@ -217,6 +217,54 @@ describe("createDataController", () => {
     expect(BACKOFF_MS).toEqual([1_000, 2_000, 4_000, 10_000]);
   });
 
+  it("restarts the backoff at 1 s after a success followed by a new failure", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(3), { state: "running" });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await scheduler.run(100);
+
+    // fail (retry in 1 s), fail (retry in 2 s), then the third poll succeeds.
+    control.failures = 2;
+    await scheduler.run(3_950);
+    expect(controller.get().status.kind).toBe("ready");
+
+    control.failures = 1;
+    await scheduler.run(1_500);
+    const delays = seen
+      .map((entry) => entry.snapshot.status)
+      .flatMap((status) => (status.kind === "reconnecting" ? [status.retryInMs] : []));
+    expect(delays).toEqual([1_000, 2_000, 1_000]);
+    const last = seen.at(-1)?.snapshot.status;
+    expect(last?.kind === "reconnecting" ? last.attempt : 0).toBe(1);
+  });
+
+  it("stop() during an in-flight poll clears every timer and drops the late response", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await scheduler.run(100);
+
+    control.deferNext = true;
+    await scheduler.run(1_000);
+    expect(control.deferred).toHaveLength(1);
+    const before = controller.get();
+    const count = seen.length;
+
+    controller.stop();
+    expect(scheduler.pending()).toBe(0);
+
+    control.deferred[0]?.resolve({ rows: messageRows(5).slice(3), nextAfterSeq: null, lastSeq: 5, state: "completed" });
+    await scheduler.run(10_000);
+    expect(scheduler.pending()).toBe(0);
+    expect(seen.length).toBe(count);
+    expect(controller.get()).toBe(before);
+    expect(controller.get().session?.loadedThroughSeq).toBe(3);
+  });
+
   it("drops a response that a retry superseded", async () => {
     const scheduler = new FakeScheduler();
     const rows = messageRows(5);
