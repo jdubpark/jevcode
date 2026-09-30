@@ -21,9 +21,9 @@
 .break {
   position: absolute;
   top: 0;
-  font-variant-numeric: tabular-nums;
   overflow: hidden;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   line-height: 16px;
   color: var(--tv-ink-3);
   text-align: center;
@@ -33,6 +33,7 @@
 .hatch {
   position: absolute;
   top: 0;
+  /* 22px is the brief's value and is deliberately taller than the 16px ruler: the band overhangs the ruler's bottom edge (neither brief nor spec gives a reason). */
   height: 22px;
   background: repeating-linear-gradient(135deg, var(--tv-fill-2) 0 2px, transparent 2px 6px);
 }
@@ -52,6 +53,7 @@
   color: var(--tv-ink-2);
   font: inherit;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   line-height: 16px;
   cursor: pointer;
 }
@@ -68,7 +70,6 @@
 }
 
 .newBadge {
-  font-variant-numeric: tabular-nums;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -80,6 +81,7 @@
   box-shadow: var(--tv-shadow);
   font: inherit;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   line-height: 16px;
   cursor: pointer;
 }

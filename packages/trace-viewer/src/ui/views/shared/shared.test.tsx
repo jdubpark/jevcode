@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildTimeScale, type XMap } from "../../../layout/time-scale.js";
@@ -50,19 +50,30 @@ describe("LevelControl", () => {
 });
 
 describe("NewBadge", () => {
-  it("announces through the live region at most once per 10 s", () => {
+  it("announces only growth in problems, never plain step counts, throttled to one per 10 s", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-28T10:00:00.000Z"));
     const onActivate = vi.fn();
-    const h = renderHarness(<NewBadge count={3} problems={0} afterRange={false} onActivate={onActivate} />, null);
-    h.result.rerender(h.wrap(<NewBadge count={5} problems={0} afterRange={false} onActivate={onActivate} />));
-    expect(h.announcements).toEqual(["3 new steps"]);
-    vi.setSystemTime(new Date("2026-09-28T10:00:11.000Z"));
-    h.result.rerender(h.wrap(<NewBadge count={6} problems={1} afterRange={false} onActivate={onActivate} />));
-    expect(h.announcements).toEqual(["3 new steps", "6 new steps, 1 problem"]);
-    expect(screen.getByRole("button", { name: /↓ 6 new/ })).toBeTruthy();
+    const badge = (count: number, problems: number) => (
+      <NewBadge count={count} problems={problems} afterRange={false} onActivate={onActivate} />
+    );
+    const h = renderHarness(badge(3, 0), null);
+    h.result.rerender(h.wrap(badge(5, 0)));
+    expect(h.announcements).toEqual([]);
+    h.result.rerender(h.wrap(badge(6, 1)));
+    expect(h.announcements).toEqual(["6 new steps, 1 problem"]);
+    h.result.rerender(h.wrap(badge(7, 1)));
+    expect(h.announcements).toEqual(["6 new steps, 1 problem"]);
+    vi.advanceTimersByTime(2_000);
+    h.result.rerender(h.wrap(badge(9, 2)));
+    expect(h.announcements).toEqual(["6 new steps, 1 problem"]);
+    act(() => {
+      vi.advanceTimersByTime(8_000);
+    });
+    expect(h.announcements).toEqual(["6 new steps, 1 problem", "9 new steps, 2 problems"]);
+    expect(screen.getByRole("button", { name: /↓ 9 new/ })).toBeTruthy();
     expect(screen.getByTestId("new-badge-dot")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /↓ 6 new/ }));
+    fireEvent.click(screen.getByRole("button", { name: /↓ 9 new/ }));
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 

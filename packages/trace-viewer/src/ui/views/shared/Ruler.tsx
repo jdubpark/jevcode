@@ -6,6 +6,7 @@ import { formatOffset } from "../../../model/index.js";
 import styles from "./shared.module.css";
 
 export interface RulerProps {
+  /** Pass a stable (memoized) map: ticks recompute whenever its identity changes. */
   map: XMap;
   scale: TimeScale;
   widthPx: number;
