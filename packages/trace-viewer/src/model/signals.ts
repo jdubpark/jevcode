@@ -17,6 +17,7 @@ import {
   type Step,
   type StepId,
   type TraceSession,
+  type Turn,
   type UnitStableId,
 } from "./types.js";
 
@@ -88,18 +89,68 @@ const NEGATION_BEFORE = /\b(?:not|never|no|none|cannot|without)\b|n't\b/i;
 
 const NEGATION_AFTER = /^\W*(?:except|but|apart from|other than)\b/i;
 
-/** True when some clause of text claims success without a negation (R10). */
-export function isSuccessClaim(text: string): boolean {
-  for (const clause of text.split(/[.;!?\n]+/)) {
-    for (const pattern of [SUCCESS_PHRASE, SUCCESS_STATE]) {
+/** A clause: text between . ; ! ? and line breaks. */
+const CLAUSE = /[^.;!?\n]+/g;
+
+/** [start, end) in UTF-16 code units of the first non-negated success phrase, else of the first
+ *  non-negated clause-final completion word (Finding.claimSpan, R25); null when text claims no
+ *  success. */
+export function matchSuccessClaim(text: string): [number, number] | null {
+  // Success phrases ("all checks pass") win over a clause-final completion word ("complete").
+  for (const pattern of [SUCCESS_PHRASE, SUCCESS_STATE]) {
+    for (const clauseMatch of text.matchAll(CLAUSE)) {
+      const clause = clauseMatch[0];
+      const base = clauseMatch.index;
       for (const match of clause.matchAll(pattern)) {
         const before = clause.slice(0, match.index);
         const after = clause.slice(match.index + match[0].length);
-        if (!NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after)) return true;
+        if (!NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after)) {
+          return [base + match.index, base + match.index + match[0].length];
+        }
       }
     }
   }
-  return false;
+  return null;
+}
+
+/** True when some clause of text claims success without a negation (R10). */
+export function isSuccessClaim(text: string): boolean {
+  return matchSuccessClaim(text) !== null;
+}
+
+const PLAN_LEAD = /^\s*plan\b/i;
+
+const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+\S/gm;
+
+/** A plan message starts with "Plan" or lists at least two items (R25). */
+export function isPlanText(text: string): boolean {
+  return PLAN_LEAD.test(text) || (text.match(LIST_ITEM) ?? []).length >= 2;
+}
+
+/** Sets Turn.planStepId (the first plan message before the turn's first edit) and
+ *  Turn.claimStepId (the turn's last success claim) (R25). finalize calls it before signals, and
+ *  claim_contradicted checks only claimStepId. */
+export function markTurns(turns: readonly Turn[], stepById: ReadonlyMap<StepId, Step>): void {
+  for (const turn of turns) {
+    const steps = turn.stepIds
+      .map((id) => stepById.get(id))
+      .filter((step): step is Step => step !== undefined);
+    const firstEdit = steps.find((step) => step.kind === "edit");
+    const plan = steps.find(
+      (step) =>
+        step.kind === "message" &&
+        (firstEdit === undefined || step.firstSeq < firstEdit.firstSeq) &&
+        isPlanText(step.text ?? ""),
+    );
+    if (plan !== undefined) turn.planStepId = plan.id;
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index];
+      if (step !== undefined && step.kind === "message" && isSuccessClaim(step.text ?? "")) {
+        turn.claimStepId = step.id;
+        break;
+      }
+    }
+  }
 }
 
 // ------------------------------------------------------------ the five v1 signals (R11)
@@ -118,17 +169,9 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
   requires: ["agent_messages", "test_results"],
   evaluate({ session }) {
     const stepById = new Map(session.steps.map((step) => [step.id, step]));
-    // The last success claim of each turn.
+    // Only each turn's claimStepId (its last success claim, set by markTurns) is checked (R25).
     const claimIds = new Set<StepId>();
-    for (const turn of session.turns) {
-      for (let index = turn.stepIds.length - 1; index >= 0; index -= 1) {
-        const step = stepById.get(turn.stepIds[index] as StepId);
-        if (step !== undefined && step.kind === "message" && isSuccessClaim(step.text ?? "")) {
-          claimIds.add(step.id);
-          break;
-        }
-      }
-    }
+    for (const turn of session.turns) if (turn.claimStepId !== undefined) claimIds.add(turn.claimStepId);
     // One pass in seq order: the latest run of each command seen so far.
     const latestByTarget = new Map<string, Step>();
     const drafts: FindingDraft[] = [];
@@ -142,6 +185,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
       if (failed === undefined) continue;
       const tests = failed.tests ?? { passed: 0, failed: 0, skipped: 0 };
       const text = step.text ?? "";
+      const span = matchSuccessClaim(text);
       drafts.push({
         anchorSeq: step.firstSeq,
         anchorStepId: step.id,
@@ -165,6 +209,9 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
             stepId: failed.id,
           },
         },
+        claimStepId: step.id,
+        evidenceStepIds: [failed.id],
+        ...(span !== null ? { claimSpan: span } : {}),
       });
     }
     return drafts;

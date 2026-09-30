@@ -34,6 +34,27 @@ function seqOf(rows: readonly TraceRow[], predicate: (row: TraceRow) => boolean)
   return row.seq;
 }
 
+/** Inserts agent events before or after the first matching agent row, with that row's times, and
+ *  renumbers every seq in order. */
+function insertAgentRows(
+  rows: readonly TraceRow[],
+  predicate: (row: TraceRow) => boolean,
+  where: "before" | "after",
+  events: Record<string, unknown>[],
+): TraceRow[] {
+  const at = rows.findIndex(predicate);
+  const anchor = rows[at];
+  if (anchor === undefined) throw new Error("row not found");
+  const added = events.map((event) => ({
+    seq: 0,
+    type: "agent_event",
+    ts: anchor.ts,
+    payload: { sessionId: field(anchor, "sessionId"), ts: field(anchor, "ts"), ...event },
+  }));
+  const index = where === "before" ? at : at + 1;
+  return [...rows.slice(0, index), ...added, ...rows.slice(index)].map((row, position) => ({ ...row, seq: position + 1 }));
+}
+
 describe("fold mutations", () => {
   it("dropping oauth's test_result adds missing_evidence and silences the test signals", () => {
     const trace = loadFixtureTrace("oauth");
@@ -93,6 +114,51 @@ describe("fold mutations", () => {
     expect(session.gaps).toEqual([expect.objectContaining({ kind: "invalid_row", atSeq: target })]);
     expect(session.steps.length).toBe(intact.steps.length);
     expect(session.findings).toEqual(intact.findings);
+  });
+
+  it("a steer yields one instruction step", () => {
+    const steer = "Use a token bucket, not a fixed window.";
+    const { rows, session } = mutate("rate-limit", (input) =>
+      insertAgentRows(input, (row) => isPayload("agent_message", { role: "assistant" })(row) && String(field(row, "text")).startsWith("Plan:"), "after", [
+        { type: "agent_interrupted", reason: "steer" },
+        { type: "agent_started", prompt: steer },
+        { type: "agent_message", role: "user", text: steer },
+      ]),
+    );
+    const relaunch = seqOf(rows, isPayload("agent_started", { prompt: steer }));
+    const echo = seqOf(rows, isPayload("agent_message", { text: steer }));
+    const instructions = session.steps.filter((step) => step.kind === "instruction");
+    expect(instructions.map((step) => step.text)).toEqual([field(rows[0] as TraceRow, "prompt"), steer]);
+    expect(instructions[1]).toMatchObject({ firstSeq: relaunch, seqs: [relaunch, echo] });
+    expect(session.turns.map((turn) => [turn.trigger, turn.outcome])).toEqual([
+      ["initial", "interrupted"],
+      ["steer", "completed"],
+    ]);
+    expect(session.gaps).toEqual([]);
+  });
+
+  it("a decision answered with an instruction yields no instruction step", () => {
+    const trace = loadFixtureTrace("oauth");
+    const answer = trace.rows.find(isPayload("agent_message", { role: "user" }));
+    if (answer === undefined) throw new Error("no decision answer in oauth");
+    const text = field(answer, "text");
+    // sendDecision with an instruction relaunches Codex with the answer before it echoes it.
+    const { rows, session } = mutate("oauth", (input) =>
+      insertAgentRows(input, isPayload("agent_message", { role: "user" }), "before", [
+        { type: "agent_interrupted", reason: "steer" },
+        { type: "agent_started", prompt: text },
+      ]),
+    );
+    const relaunch = seqOf(rows, isPayload("agent_started", { prompt: text }));
+    const message = seqOf(rows, isPayload("agent_message", { role: "user" }));
+    const title = field(rows.find((row) => row.type === "decision") as TraceRow, "title");
+    expect(session.steps.filter((step) => step.kind === "instruction").map((step) => step.firstSeq)).toEqual([1]);
+    const decision = session.steps.find((step) => step.kind === "decision");
+    expect(decision?.seqs).toEqual(expect.arrayContaining([relaunch, message]));
+    expect(decision?.decision?.answerSeq).toBe(message);
+    expect(session.turns[1]).toMatchObject({ trigger: "steer", startSeq: relaunch, prompt: title });
+    expect(session.findings.map((finding) => finding.ruleId).sort()).toEqual(["claim_contradicted", "failing_tests"]);
+    expect(session.gaps).toEqual([]);
   });
 
   it("an unknown row type from a newer build is a gap, not a crash", () => {

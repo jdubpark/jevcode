@@ -122,7 +122,7 @@ describe("decisions and Jev", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     const first = b.decision({ id: "dec-oauth-0001", title: "Linking policy" });
-    b.agent({ type: "agent_message", role: "user", text: "decision:\n  policy: b\n\ninstruction:\n  Use B." });
+    const message = b.agent({ type: "agent_message", role: "user", text: "decision:\n  policy: b\n\ninstruction:\n  Use B." });
     const answer = b.decision({
       id: "dec-oauth-0001",
       title: "Linking policy",
@@ -133,7 +133,14 @@ describe("decisions and Jev", () => {
     const session = fold(b);
     const step = stepAt(session, first);
     expect(session.steps.filter((candidate) => candidate.kind === "decision")).toHaveLength(1);
-    expect(step).toMatchObject({ id: `step:${first}`, kind: "decision", lane: "supervisor", status: "ok", seqs: [first, answer] });
+    expect(step).toMatchObject({
+      id: `step:${first}`,
+      kind: "decision",
+      lane: "supervisor",
+      status: "ok",
+      target: "dec-oauth-0001",
+      seqs: [first, message, answer],
+    });
     expect(step.decision).toEqual({
       decisionId: "dec-oauth-0001",
       title: "Linking policy",
@@ -144,9 +151,11 @@ describe("decisions and Jev", () => {
         { id: "b", label: "Option B", chosen: true },
       ],
       decidedBy: "supervisor",
+      answerSeq: message,
     });
     expect(session.chapters[0]?.decisionIds).toEqual(["decision:dec-oauth-0001"]);
-    expect(stepAt(session, 3).headline).toBe("Use B.");
+    // The answer is absorbed into the decision step (R25): no instruction step of its own.
+    expect(session.steps.some((candidate) => candidate.kind === "instruction" && candidate.firstSeq === message)).toBe(false);
   });
 
   it("keeps pipeline rows on the inherited clock", () => {

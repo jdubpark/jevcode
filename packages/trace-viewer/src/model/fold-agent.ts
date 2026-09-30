@@ -232,6 +232,40 @@ function foldClaim(
   turn.edits.set(event.path, step);
 }
 
+/** Spec §6.6 "Instruction dedupe" for an agent_started. A prompt equal to an absorbed decision
+ *  answer opens the turn without an instruction step and the turn takes the decision title; a
+ *  prompt equal to an earlier undelivered user message delivers that step (the relaunch's seq joins
+ *  it, and it is the turn's instruction item); any other prompt opens an instruction step. */
+function deliverInstruction(state: FoldState, turn: TurnDraft, ctx: RowContext, prompt: string): void {
+  const key = prompt.trim();
+  const answered = state.answeredPrompts.get(key);
+  if (answered !== undefined) {
+    state.answeredPrompts.delete(key);
+    addRowToStep(answered.step, ctx, false);
+    turn.prompt = answered.title;
+    turn.instruction = null;
+    return;
+  }
+  const index = state.undelivered.findIndex((step) => (step.text ?? "").trim() === key);
+  const queued = index >= 0 ? state.undelivered[index] : undefined;
+  if (queued !== undefined) {
+    state.undelivered.splice(index, 1);
+    addRowToStep(queued, ctx, false);
+    // Delivered as an instruction, so no longer a candidate decision answer.
+    if (state.pendingAnswer?.step === queued) state.pendingAnswer = null;
+    turn.instruction = queued;
+    return;
+  }
+  turn.instruction = createStep(state, turn, ctx, {
+    kind: "instruction",
+    source: "agent_started",
+    status: "info",
+    actor: "supervisor",
+    text: prompt,
+    approxTime: true,
+  });
+}
+
 export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ctx: RowContext): void {
   if ("callId" in event && event.callId !== undefined) state.capabilities.add("call_ids");
   if (event.type === "agent_started") {
@@ -247,14 +281,7 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
       turn = openTurn(state, ctx, { started: true, prompt: event.prompt, turnId: event.turnId });
     }
     touchTurn(turn, ctx);
-    createStep(state, turn, ctx, {
-      kind: "instruction",
-      source: event.type,
-      status: "info",
-      actor: "supervisor",
-      text: event.prompt,
-      approxTime: true,
-    });
+    deliverInstruction(state, turn, ctx, event.prompt);
     turn.lastAgentEvent = event.type;
     return;
   }
@@ -262,9 +289,22 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
   touchTurn(turn, ctx);
   if (turn.turnId === undefined && event.turnId !== undefined) turn.turnId = event.turnId;
   switch (event.type) {
-    case "agent_message":
+    case "agent_message": {
       if (event.role === "assistant") state.capabilities.add("agent_messages");
-      createStep(state, turn, ctx, {
+      const opening = turn.instruction;
+      if (
+        event.role === "user" &&
+        opening !== null &&
+        turn.lastAgentEvent === "agent_started" &&
+        event.text.trim() === (opening.text ?? "").trim()
+      ) {
+        // A steer echoes its relaunch's prompt right after the agent_started: one instruction step
+        // holds both rows (spec §6.6 "Instruction dedupe"). It may still be a decision answer.
+        addRowToStep(opening, ctx, false);
+        state.pendingAnswer = { step: opening, seq: ctx.seq };
+        break;
+      }
+      const message = createStep(state, turn, ctx, {
         kind: event.role === "user" ? "instruction" : "message",
         source: event.type,
         status: "info",
@@ -272,7 +312,14 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
         text: event.text,
         approxTime: true,
       });
+      if (event.role === "user") {
+        // The latest user message may answer an open decision; the next decision row decides (R25).
+        // A later relaunch with the same prompt delivers it (spec §6.6).
+        state.pendingAnswer = { step: message, seq: ctx.seq };
+        state.undelivered.push(message);
+      }
       break;
+    }
     case "agent_reasoning":
       createStep(state, turn, ctx, {
         kind: "reasoning",

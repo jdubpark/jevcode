@@ -4,6 +4,7 @@ import {
   addRowToStep,
   createStep,
   currentTurn,
+  removeStep,
   touchTurn,
   type FoldState,
   type RowContext,
@@ -55,16 +56,38 @@ function decisionStatus(decision: Decision): StepStatus {
   return decision.status === "answered" || decision.status === "delegated" ? "ok" : "info";
 }
 
-/** Every row of one decision id folds into one step (step:<firstSeq>). */
+/** Every row of one decision id folds into one step (step:<firstSeq>, target = the decision id).
+ *  A user message whose next decision row answers or delegates an already-open decision is the
+ *  supervisor's answer: its instruction step is removed and its seqs join the decision step (R25). */
 export function foldDecision(state: FoldState, decision: Decision, ctx: RowContext): void {
   const turn = currentTurn(state, ctx);
   touchTurn(turn, ctx);
+  const answer = state.pendingAnswer;
+  state.pendingAnswer = null;
   state.chapters.decisionUnits.set(decision.id, [...decision.affectedChangeUnits]);
-  if (decision.status === "answered" || decision.status === "delegated") turn.decisionAnswered = true;
+  const closes = decision.status === "answered" || decision.status === "delegated";
+  if (closes) turn.decisionAnswered = true;
   const existing = state.chapters.decisionSteps.get(decision.id);
   if (existing !== undefined) {
+    const answerSeq = existing.decision?.answerSeq;
     addRowToStep(existing, ctx, false);
     existing.decision = decisionDetail(decision);
+    if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    if (closes && answer !== null) {
+      removeStep(state, answer.step);
+      existing.seqs.push(...answer.step.seqs);
+      existing.seqs.sort((a, b) => a - b);
+      existing.decision.answerSeq = answer.seq;
+      const relaunched = state.turns[answer.step.turnIndex];
+      if (relaunched !== undefined && relaunched.instruction === answer.step) {
+        // The answer was delivered as a steer: its relaunch opens a turn without an instruction
+        // step, and the turn's prompt is the decision title (spec §6.6 "Instruction dedupe").
+        relaunched.instruction = null;
+        relaunched.prompt = decision.title;
+      } else {
+        state.answeredPrompts.set((answer.step.text ?? "").trim(), { step: existing, title: decision.title });
+      }
+    }
     existing.status = decisionStatus(decision);
     existing.endTs = ctx.sourceTs;
     existing.endTMs = ctx.t;
@@ -75,6 +98,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     kind: "decision",
     source: "decision",
     status: decisionStatus(decision),
+    target: decision.id,
   });
   step.decision = decisionDetail(decision);
   state.chapters.decisionSteps.set(decision.id, step);

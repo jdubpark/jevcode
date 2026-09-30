@@ -85,9 +85,9 @@ describe.each(Object.keys(VARIANTS) as Variant[])("fixtures (%s)", (variant) => 
   });
 
   it.each([
-    ["oauth", "OAuth implementation complete; all checks pass."],
-    ["api-break", "The endpoint change is complete and all tests pass."],
-  ] as const)("%s: the claim is contradicted by the failed run's test_result", (name, text) => {
+    ["oauth", "OAuth implementation complete; all checks pass.", "all checks pass"],
+    ["api-break", "The endpoint change is complete and all tests pass.", "all tests pass"],
+  ] as const)("%s: the claim is contradicted by the failed run's test_result", (name, text, phrase) => {
     const { rows, session } = load(name, variant);
     const claim = findRow(rows, (row) => isAgent("agent_message")(row) && field(row, "text") === text, "claim");
     const result = findRow(rows, isFact("test_result"), "test_result");
@@ -105,6 +105,13 @@ describe.each(Object.keys(VARIANTS) as Variant[])("fixtures (%s)", (variant) => 
     expect(failing.map((finding) => [finding.anchorSeq, finding.severity])).toEqual([[result.seq, "critical"]]);
     // failing_tests is critical too and anchors earlier; the rule rank puts the contradiction first (spec §6.7).
     expect([...session.findings].sort(compareFindings)[0]?.ruleId).toBe("claim_contradicted");
+    // R25 claim fields: the turn's claim step, the failed run and the claimed phrase.
+    const claimStep = stepContaining(session, claim.seq);
+    expect(session.turns[0]?.claimStepId).toBe(claimStep.id);
+    expect(contradictions[0]?.claimStepId).toBe(claimStep.id);
+    expect(contradictions[0]?.evidenceStepIds).toEqual([stepContaining(session, result.seq).id]);
+    const [start, end] = contradictions[0]?.claimSpan ?? [0, 0];
+    expect(text.slice(start, end)).toBe(phrase);
   });
 
   it.each(["rate-limit", "schema-change", "dep-change"] as const)("%s raises no finding", (name) => {
@@ -121,7 +128,18 @@ describe.each(Object.keys(VARIANTS) as Variant[])("fixtures (%s)", (variant) => 
     expect(decisionRows.length).toBeGreaterThanOrEqual(2);
     const step = stepContaining(session, decisionRows[0]?.seq ?? 0);
     expect(step.id).toBe(`step:${decisionRows[0]?.seq}`);
-    expect(step.seqs).toEqual(decisionRows.map((row) => row.seq));
+    // The supervisor's answer (the user message between the first and last decision rows) joins
+    // the decision step (R25).
+    const firstDecision = decisionRows[0]?.seq ?? 0;
+    const lastDecision = decisionRows[decisionRows.length - 1]?.seq ?? 0;
+    const answer = findRow(
+      rows,
+      (row) => isAgent("agent_message")(row) && field(row, "role") === "user" && row.seq > firstDecision && row.seq < lastDecision,
+      "decision answer",
+    );
+    expect(step.seqs).toEqual([...decisionRows.map((row) => row.seq), answer.seq].sort((a, b) => a - b));
+    expect(step.decision?.answerSeq).toBe(answer.seq);
+    expect(session.steps.some((candidate) => candidate.firstSeq === answer.seq)).toBe(false);
     expect(step.decision).toMatchObject({ status: "answered", decidedBy: "supervisor" });
     expect(step.decision?.options.filter((option) => option.chosen).map((option) => option.id)).toEqual(["explicit_link"]);
   });
