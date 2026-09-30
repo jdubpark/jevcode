@@ -124,9 +124,12 @@ fact carries `sourceCallId`, the `callId` of the command that produced it. Every
 carries `diff` (`{hash, bytes, text, truncated, redactions}`): the unified diff of
 `repo/<file>` → `changes/<file>` after the desktop redaction policy, so the text shows
 `[REDACTED:<kind>]` where a rule matched (for example `token: string` parameters in oauth).
-`added`/`removed` equal that diff's `+`/`-` lines. oauth has one `agent_reasoning` line
-before the final "all checks pass" claim. All of these fields are optional in the
-contracts; streams without them still validate.
+A file the policy withholds would carry `withheld: "secret_path"` and no `text`; no
+fixture has one. `added`/`removed` equal that diff's `+`/`-` lines. Each decision row
+carries `ts`, the source time of its status: the open row takes the time of the record
+before it, and the answered row the time of the user's decision message. oauth has one
+`agent_reasoning` line before the final "all checks pass" claim. All of these fields are
+optional in the contracts; streams without them still validate.
 
 After editing `repo/`, `changes/` or a stream, rebuild
 (`pnpm --filter "jevcode-desktop^..." build && pnpm --filter jevcode-desktop build`), run

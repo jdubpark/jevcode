@@ -10,7 +10,10 @@
 //   4. recomputes every git_hunk from `git diff --no-index repo/<file> changes/<file>`:
 //      added/removed from the raw diff, diff from prepareDiffForStorage;
 //   5. oauth only: inserts one agent_reasoning line before the final claim and
-//      fixes the failure text to what vitest prints for toBe(7) on null.
+//      fixes the failure text to what vitest prints for toBe(7) on null;
+//   6. stamps Decision.ts (the source time of the row's status) on each decision
+//      row without one: the ts of the nearest earlier record that has one. For an
+//      answered row that is the user's decision message.
 // Unchanged lines stay byte-identical; changed lines keep the file's JSON style.
 //
 // Needs built output: pnpm --filter "jevcode-desktop^..." build && pnpm --filter jevcode-desktop build
@@ -48,6 +51,10 @@ function spacedJson(value) {
 
 function isAgentEvent(record) {
   return !("repoId" in record) && !("severity" in record) && !("kind" in record);
+}
+
+function isDecision(record) {
+  return "severity" in record && "status" in record && !("kind" in record);
 }
 
 // Pinned flags keep the text independent of the user's git config and of the
@@ -112,6 +119,7 @@ function processScenario(scenario) {
   }
 
   let nextItem = 1;
+  let lastTs;
   const openCalls = new Map();
   const lastClosed = new Map();
   const mint = () => `${turnId}:item_${nextItem++}`;
@@ -150,7 +158,10 @@ function processScenario(scenario) {
       next.added = counts.added;
       next.removed = counts.removed;
       next.diff = prepareDiffForStorage(next.file, raw);
+    } else if (isDecision(next) && next.ts === undefined && lastTs !== undefined) {
+      next.ts = lastTs;
     }
+    if (typeof next.ts === "string") lastTs = next.ts;
     const changed = line === null || JSON.stringify(next) !== JSON.stringify(record);
     return changed ? serialize(next) : line;
   });
