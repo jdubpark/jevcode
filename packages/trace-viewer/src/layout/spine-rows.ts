@@ -115,36 +115,50 @@ function emitSegment(out: SpineRow[], segment: Segment, input: SpineRowsInput, o
   out.push(...rows.slice(0, ELIDE_HEAD), { t: "elided", key, steps, byLane, spanMs: end - first.tMs }, ...rows.slice(rows.length - ELIDE_TAIL));
 }
 
-/** ch:<anchor> for the first current chapter at an anchor (by id) and ch:<anchor>.<n> for the rest, as Canvas keys them (spec §7.5). */
-function chapterRowKey(id: UnitStableId, index: TraceIndex): `ch:${number}` | undefined {
+/** ch:<anchor> for the first current chapter at an anchor (by id) and ch:<anchor>.<n> for the rest, as Canvas keys them (spec §7.5).
+ *  `order` caches each anchor's id → n, so a session whose chapters share one anchor stays linear. */
+function chapterRowKey(id: UnitStableId, index: TraceIndex, order: Map<number, Map<UnitStableId, number>>): `ch:${number}` | undefined {
   const key = index.chapterKey(id);
   if (key === undefined) return undefined;
-  const n = index.chaptersByAnchor(Number(key.slice(3))).indexOf(id);
+  const anchor = Number(key.slice(3));
+  let positions = order.get(anchor);
+  if (positions === undefined) {
+    positions = new Map(index.chaptersByAnchor(anchor).map((chapterId, n) => [chapterId, n]));
+    order.set(anchor, positions);
+  }
+  const n = positions.get(id) ?? -1;
   return n > 0 ? (`${key}.${n}` as `ch:${number}`) : key;
 }
 
 function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsInput, range: { fromSeq: number; toSeq: number }, i0: number, i1: number): SpineRow[] {
-  const items: { seq: number; turn: number; id: string; row: SpineRow }[] = [];
+  const items: { seq: number; t: number; turn: number; id: string; row: SpineRow }[] = [];
   const current = session.chapters.filter((c) => c.current);
+  const order = new Map<number, Map<UnitStableId, number>>();
   session.chapters.forEach((chapter, position) => {
     if (!chapter.current) return;
     const entry = index.entry(chapter.id);
-    const key = chapterRowKey(chapter.id, index);
+    const key = chapterRowKey(chapter.id, index, order);
     if (entry === undefined || key === undefined || entry.firstSeq < range.fromSeq || entry.firstSeq > range.toSeq) return;
-    items.push({ seq: entry.firstSeq, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, id: chapter.id, row: { t: "chapter", key, chapter: position } });
+    items.push({
+      seq: entry.firstSeq, t: chapter.tMs, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, id: chapter.id,
+      row: { t: "chapter", key, chapter: position },
+    });
   });
   for (let i = i0; i <= i1; i += 1) {
     const step = session.steps[i];
     if (step === undefined) continue;
     if (!PINNED_KINDS.has(step.kind) && worstSeverity(step, index.findingsById) !== "critical") continue;
     items.push({
-      seq: step.firstSeq, turn: step.turnIndex, id: step.id,
+      seq: step.firstSeq, t: step.tMs, turn: step.turnIndex, id: step.id,
       row: { t: "step", key: step.id, step: i, expanded: isStepExpanded(step, index.findingsById, input.expanded, input.collapsed) },
     });
   }
-  // Chapter rows lead the step at their seq; chapters that start together order by id, independent of chapter order.
+  // Beats read in gutter-time order within a turn (a chapter shows its unit's start, which can
+  // follow its first step: a decision-born chapter starts after the decision; visual audit 1-14).
+  // Steps keep seq order (their times never decrease with seq); a chapter row leads a step at the
+  // same time and seq; chapters that tie order by id, independent of chapter order.
   const rank = (row: SpineRow): number => (row.t === "chapter" ? 0 : 1);
-  items.sort((a, b) => a.seq - b.seq || rank(a.row) - rank(b.row) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  items.sort((a, b) => a.turn - b.turn || a.t - b.t || a.seq - b.seq || rank(a.row) - rank(b.row) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const showTurns = session.turns.length > 1 || current.length === 0;
   const out: SpineRow[] = [];
   let turn = -1;

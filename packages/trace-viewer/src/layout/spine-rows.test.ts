@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { foldRows } from "../model/fold.js";
 import type { TraceSession } from "../model/index.js";
+import { loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { buildSession, OAUTH_CLAIM_TEXT, oauthLikeSession, type StepSeed } from "../test-support/session-builder.js";
 import { buildSpineRows, estimateSpineRowSize, spineRowIndexForSeq, type SpineRow, type SpineRowsInput } from "./spine-rows.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
@@ -93,6 +95,21 @@ describe("spine rows on the oauth-like session", () => {
     const readRow = spineRowIndexForSeq(rows, oauth, read?.firstSeq ?? 0);
     expect(rows[readRow]?.t).toBe("noise");
     expect(spineRowIndexForSeq(rows, oauth, 0)).toBe(-1);
+  });
+});
+
+describe("Session-level beats on the folded oauth fixture (visual audit 1-14)", () => {
+  const trace = loadFixtureTrace("oauth");
+  const session = foldRows(trace.meta, trace.rows, { live: false });
+
+  it("read in gutter-time order: the decision at +0:25 comes before the chapter it opens at +0:26", () => {
+    const rows = rowsOf(session, { level: "session" });
+    const times = rows.flatMap((r) => (r.t === "chapter" ? [session.chapters[r.chapter]?.tMs ?? -1] : r.t === "step" ? [session.steps[r.step]?.tMs ?? -1] : []));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    const decision = rows.findIndex((r) => r.t === "step" && session.steps[r.step]?.kind === "decision");
+    const opened = rows.findIndex((r) => r.t === "chapter" && session.chapters[r.chapter]?.decisionIds.length !== 0 && session.chapters[r.chapter]?.tMs === 26_000);
+    expect(decision).toBeGreaterThanOrEqual(0);
+    expect(opened).toBe(decision + 1);
   });
 });
 
