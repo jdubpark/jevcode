@@ -69,10 +69,11 @@ export function measureAfterPaint(name: string, startMark: string): void {
  */
 export const INITIAL_SELECTION_PAINTED = "tv:initial-selection-painted";
 
-/** Marks `name` inside the next requestAnimationFrame callback. */
-export function markNextFrame(name: string): void {
-  if (typeof performance === "undefined" || typeof requestAnimationFrame === "undefined") return;
-  requestAnimationFrame(() => {
+/** Marks `name` inside the next requestAnimationFrame callback; the returned function cancels it. */
+export function markNextFrame(name: string): () => void {
+  if (typeof performance === "undefined" || typeof requestAnimationFrame === "undefined") return () => undefined;
+  const frame = requestAnimationFrame(() => {
     performance.mark(name);
   });
+  return () => cancelAnimationFrame(frame);
 }

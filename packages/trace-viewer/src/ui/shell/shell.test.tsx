@@ -78,8 +78,6 @@ describe("Shell", () => {
   });
 
   it("marks tv:initial-selection-painted in the first frame after the commit that applies the initial selection", async () => {
-    // Let frames scheduled by earlier tests' viewers drain so their marks do not land in this test.
-    await new Promise((resolve) => setTimeout(resolve, 100));
     performance.clearMarks(INITIAL_SELECTION_PAINTED);
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
@@ -112,6 +110,27 @@ describe("Shell", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     });
     expect(onLocation.mock.calls.at(-1)?.[0]?.selected).toBeUndefined();
+    expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(0);
+  });
+
+  it("cancels the pending initial-selection frame when the viewer unmounts", async () => {
+    performance.clearMarks(INITIAL_SELECTION_PAINTED);
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(nextId, callback);
+      return nextId++;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames.delete(id);
+    });
+    const onLocation = vi.fn();
+    const view = render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} host={{ onLocation }} />);
+    await waitFor(() => expect(onLocation.mock.calls.at(-1)?.[0]?.selected).toBeDefined());
+    view.unmount();
+    act(() => {
+      for (const callback of [...frames.values()]) callback(performance.now());
+    });
     expect(performance.getEntriesByName(INITIAL_SELECTION_PAINTED, "mark")).toHaveLength(0);
   });
 

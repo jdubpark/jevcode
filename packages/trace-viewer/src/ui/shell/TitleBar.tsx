@@ -2,7 +2,7 @@ import { useContext, useEffect, useState } from "react";
 
 import type { TraceSessionSummary } from "@jevcode/contracts";
 
-import { agentStateLabel, formatDuration, type GapKind, type TraceSession } from "../../model/index.js";
+import { agentStateLabel, displayUntrusted, formatDuration, type GapKind, type TraceSession } from "../../model/index.js";
 import { Icon } from "../icons/Icon.js";
 import { useDispatch, useView } from "../state/store.js";
 import { selectNewCount } from "../state/view-state.js";
@@ -11,6 +11,7 @@ import type { DataStatus } from "./data-controller.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useSessionView } from "./session-context.js";
 import styles from "./TitleBar.module.css";
+import { usePopoverDismissal } from "./use-popover.js";
 
 export interface TitleBarProps {
   onRetry(): void;
@@ -61,6 +62,10 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
   const port = useActiveViewPort();
   const [gapsOpen, setGapsOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [approxOpen, setApproxOpen] = useState(false);
+  const gapsPopover = usePopoverDismissal(gapsOpen, setGapsOpen);
+  const zoomPopover = usePopoverDismissal(zoomOpen, setZoomOpen);
+  const approxPopover = usePopoverDismissal(approxOpen, setApproxOpen);
   const running = summary !== null && !terminal;
   const [, setTick] = useState(0);
 
@@ -92,30 +97,43 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
 
   return (
     <div className={styles.bar}>
-      <p className={styles.title} title={summary?.prompt ?? ""}>
+      <p className={styles.title} title={displayUntrusted(summary?.prompt ?? "")}>
         {summary === null ? null : (
           <>
-            <span className={styles.repo}>{summary.repoName}</span>
+            <span className={styles.repo}>{displayUntrusted(summary.repoName)}</span>
             <span className={styles.sep}> / </span>
-            <span className={styles.prompt}>{firstLine(summary.prompt)}</span>
+            <span className={styles.prompt}>{displayUntrusted(firstLine(summary.prompt))}</span>
           </>
         )}
       </p>
 
       {approximate ? (
-        <span
-          className={styles.chip}
-          data-tone="neutral"
-          title="Some chapters were joined to steps by time window (session recorded before M1)"
-        >
-          ≈ Approximate joins
+        <span className={styles.anchor} ref={approxPopover.anchorRef}>
+          <button
+            type="button"
+            ref={approxPopover.triggerRef}
+            className={styles.chip}
+            data-tone="neutral"
+            aria-expanded={approxOpen}
+            aria-haspopup="dialog"
+            onClick={() => setApproxOpen((open) => !open)}
+          >
+            ≈ Approximate joins
+          </button>
+          {approxOpen ? (
+            <div role="dialog" aria-label="Approximate joins" className={styles.note}>
+              Some chapters were joined to steps by time window, because this session was recorded before the
+              exact step links existed. Their step lists can be slightly off.
+            </div>
+          ) : null}
         </span>
       ) : null}
 
       {gaps.length > 0 ? (
-        <span className={styles.anchor}>
+        <span className={styles.anchor} ref={gapsPopover.anchorRef}>
           <button
             type="button"
+            ref={gapsPopover.triggerRef}
             className={styles.chip}
             data-tone="neutral"
             aria-expanded={gapsOpen}
@@ -125,14 +143,14 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
           </button>
           {gapsOpen ? (
             <ul className={styles.popover} aria-label="Gaps">
-              {gaps.map((gap) => (
-                <li key={`${gap.kind}:${gap.atSeq}`}>
+              {gaps.map((gap, position) => (
+                <li key={`${gap.kind}:${gap.atSeq}:${position}`}>
                   <button
                     type="button"
                     className={styles.popoverItem}
                     onClick={() => {
                       jumpToSeq(gap.atSeq);
-                      setGapsOpen(false);
+                      gapsPopover.close();
                     }}
                   >
                     {`seq ${gap.atSeq} · ${GAP_LABEL[gap.kind]}`}
@@ -212,11 +230,12 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
       ) : null}
 
       {port === undefined ? null : (
-        <span className={styles.anchor}>
+        <span className={styles.anchor} ref={zoomPopover.anchorRef}>
           <button
             type="button"
+            ref={zoomPopover.triggerRef}
             className={styles.zoom}
-            aria-haspopup="menu"
+            aria-haspopup="true"
             aria-expanded={zoomOpen}
             onClick={() => setZoomOpen((open) => !open)}
           >
@@ -224,28 +243,28 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
             <Icon name="chev-d" size={12} />
           </button>
           {zoomOpen ? (
-            <div role="menu" className={styles.menu}>
+            <div className={styles.menu}>
               {port.zoom.presets().map((preset) => (
                 <button
                   key={preset.id}
                   type="button"
-                  role="menuitem"
+                 
                   className={styles.popoverItem}
                   onClick={() => {
                     port.zoom.applyPreset(preset.id);
-                    setZoomOpen(false);
+                    zoomPopover.close();
                   }}
                 >
                   {preset.label}
                 </button>
               ))}
-              <button type="button" role="menuitem" className={styles.popoverItem} onClick={() => port.zoom.zoomIn()}>
+              <button type="button" className={styles.popoverItem} onClick={() => port.zoom.zoomIn()}>
                 Zoom in
               </button>
-              <button type="button" role="menuitem" className={styles.popoverItem} onClick={() => port.zoom.zoomOut()}>
+              <button type="button" className={styles.popoverItem} onClick={() => port.zoom.zoomOut()}>
                 Zoom out
               </button>
-              <button type="button" role="menuitem" className={styles.popoverItem} onClick={() => port.zoom.fitAll()}>
+              <button type="button" className={styles.popoverItem} onClick={() => port.zoom.fitAll()}>
                 Fit all
               </button>
             </div>

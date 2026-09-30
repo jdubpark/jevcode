@@ -214,6 +214,8 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
   useEffect(() => (diagnostics.enabled ? store.subscribe(diagnostics.flush) : undefined), [diagnostics, store]);
 
   const opened = useRef({ follow: false, ready: false, fullLoad: false });
+  const cancelSelectionMark = useRef<() => void>(() => undefined);
+  useEffect(() => () => cancelSelectionMark.current(), []);
   useLayoutEffect(() => {
     const flags = opened.current;
     if (!flags.follow && snapshot.summary !== null) {
@@ -237,7 +239,8 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
     // so the mark lands in the first rAF after the commit that applies the initial selection. A
     // session that opens in Live gets no initial selection and no mark.
     if (needsDefaults && selectedBefore === null && store.get().selection !== null) {
-      markNextFrame(INITIAL_SELECTION_PAINTED);
+      cancelSelectionMark.current();
+      cancelSelectionMark.current = markNextFrame(INITIAL_SELECTION_PAINTED);
     }
     if (!flags.ready) {
       flags.ready = true;
