@@ -133,6 +133,16 @@ export function formatOffset(ms: number): string {
   return `+${minutes}:${pad2(seconds)}`;
 }
 
+/**
+ * A span of display-clock offsets, "+0:33 – +0:40", or one offset when both ends read the same at display precision
+ * (a point frame reads "+0:43", never "+0:43 – +0:43"). An end before the start reads as the start.
+ */
+export function formatOffsetRange(startMs: number, endMs: number): string {
+  const start = formatOffset(startMs);
+  const end = formatOffset(Math.max(startMs, endMs));
+  return start === end ? start : `${start} – ${end}`;
+}
+
 /** Wall-clock time of an ISO timestamp in the viewer's locale; "" when invalid. */
 export function formatClock(ts: string, options: { seconds?: boolean } = {}): string {
   const date = new Date(ts);

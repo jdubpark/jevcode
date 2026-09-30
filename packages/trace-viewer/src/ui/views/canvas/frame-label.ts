@@ -5,6 +5,7 @@ import {
   describeGraphic,
   displayUntrusted,
   formatOffset,
+  formatOffsetRange,
   pickGraphic,
   shortenTitle,
   type Chapter,
@@ -422,8 +423,9 @@ export function zoomBand(k: number): ZoomBand {
   return k < ICON_ONLY_K ? "icon" : k < GRAPHIC_MIN_K ? "nographic" : "full";
 }
 
+/** The selection's time chip: the shared range format (Hybrid's spine chip uses it too). */
 export function timeChip(start: number, end: number): string {
-  return `${formatOffset(start)} – ${formatOffset(Math.max(start, end)).replace(/^\+/, "")}`;
+  return formatOffsetRange(start, end);
 }
 
 export type StepListRow = { t: "step"; step: Step } | { t: "band"; key: string; count: number };
