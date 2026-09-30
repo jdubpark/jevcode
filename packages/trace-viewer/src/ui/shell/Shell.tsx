@@ -37,6 +37,7 @@ import { LiveRegion } from "./LiveRegion.js";
 import { Outline } from "./Outline/Outline.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
+import { KeyboardLayer } from "./KeyboardLayer.js";
 import styles from "./Shell.module.css";
 import { TitleBar } from "./TitleBar.js";
 import { ViewSlot } from "./ViewSlot.js";
@@ -119,6 +120,7 @@ export function appendCapped<T>(list: readonly T[], item: T, cap: number): T[] {
 
 export function Shell({ sessionId, host, controller, location, initialFollow }: ShellProps) {
   const store = useViewStore();
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
   // The open location and follow override apply once, at open; a parent passing a fresh
   // equal `location` object each render must not re-run the open logic.
   const openOptions = useRef({ location, initialFollow });
@@ -278,7 +280,12 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
       : Object.values(session.hidden.byType).reduce<number>((sum, count) => sum + (count ?? 0), 0) +
         session.hidden.unreceived;
   return (
-    <div className={`${base.root} ${styles.root}`} style={tokenStyle() as CSSProperties} data-trace-viewer="">
+    <div
+      ref={setRoot}
+      className={`${base.root} ${styles.root}`}
+      style={tokenStyle() as CSSProperties}
+      data-trace-viewer=""
+    >
       <IconSprite />
       <SessionContext.Provider value={sessionView}>
         <DiagnosticsContext.Provider value={diagnostics}>
@@ -299,6 +306,7 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
                     <Inspector host={host} />
                   </aside>
                 </div>
+                <KeyboardLayer root={root} />
               </LiveRegion>
             </ViewDefinitionsContext.Provider>
           </ViewPortRegistryContext.Provider>
