@@ -32,9 +32,20 @@ export const SECTION_LABEL: Record<OutlineSection, string> = {
 
 export const FILES_COLLAPSE_ABOVE = 12;
 
-/** Graphemes of a Files row basename before it is cut in the middle: what fits the 216 px column in 12 px mono
- *  beside the icon, the shield and the 44 px DiffBar slot (§7.1). CSS still ellipsizes a narrower column. */
-export const FILE_TITLE_MAX = 14;
+/** Graphemes of a Files row basename before it is cut in the middle, until the Outline has measured its column. */
+export const FILE_TITLE_MAX = 13;
+/** A Files row's fixed parts: 12 px padding each side, icon 14 + gap, shield 12 + gap, the 44 px DiffBar slot + gap. */
+const FILES_ROW_CHROME_PX = 24 + 22 + 20 + 52;
+/** Advance of one 12 px monospace glyph (SF Mono, Menlo). */
+const MONO_GLYPH_PX = 7.3;
+/** Glyphs a row without the shield gains (12 px icon + 8 px gap). */
+const NO_SHIELD_GLYPHS = 2;
+
+/** How many basename graphemes fit a Files row in a column `widthPx` wide (§7.1 "middle-truncated"). */
+export function fileTitleBudget(widthPx: number): number {
+  if (!(widthPx > 0)) return FILE_TITLE_MAX;
+  return Math.max(6, Math.floor((widthPx - FILES_ROW_CHROME_PX) / MONO_GLYPH_PX));
+}
 
 export const DEFAULT_OPEN_SECTIONS: ReadonlySet<OutlineSection> = new Set<OutlineSection>(["story", "files", "commands"]);
 
@@ -74,6 +85,8 @@ export type OutlineRow =
 export interface OutlineInput {
   open: ReadonlySet<OutlineSection>;
   showAll: ReadonlySet<OutlineSection>;
+  /** Basename budget of Files rows (fileTitleBudget of the measured column); FILE_TITLE_MAX when absent. */
+  fileTitleMax?: number;
 }
 
 function isPresent<T>(value: T | undefined | null): value is T {
@@ -254,7 +267,7 @@ function basename(path: string): string {
   return slash < 0 ? trimmed : trimmed.slice(slash + 1);
 }
 
-function fileRows(session: TraceSession): OutlineItemRow[] {
+function fileRows(session: TraceSession, titleMax: number): OutlineItemRow[] {
   const clamped = new Set(session.chapters.filter((chapter) => chapter.clampIds.length > 0).map((chapter) => chapter.id));
   const stepById = new Map<StepId, Step>(session.steps.map((step) => [step.id, step]));
   const out: OutlineItemRow[] = [];
@@ -263,6 +276,7 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
     if (latest === undefined) continue;
     const graphic: GraphicSpec = { kind: "diff", added: entity.added, removed: entity.removed };
     const path = displayUntrusted(entity.path);
+    const shield = entity.chapterIds.some((id) => clamped.has(id));
     out.push({
       t: "item",
       key: entity.id,
@@ -270,10 +284,10 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
       depth: 0,
       selId: latest,
       icon: "file",
-      title: truncateMiddle(basename(entity.label), FILE_TITLE_MAX),
+      title: truncateMiddle(basename(entity.label), titleMax + (shield ? 0 : NO_SHIELD_GLYPHS)),
       mono: true,
       tMs: stepById.get(latest)?.tMs ?? 0,
-      flag: entity.chapterIds.some((id) => clamped.has(id)) ? "shield" : null,
+      flag: shield ? "shield" : null,
       failed: false,
       muted: false,
       graphic,
@@ -373,7 +387,7 @@ function pushSection(
 export function buildOutlineRows(session: TraceSession, input: OutlineInput): OutlineRow[] {
   const rows: OutlineRow[] = [];
   pushSection(rows, "story", storyRows(session), input);
-  pushSection(rows, "files", fileRows(session), input, FILES_COLLAPSE_ABOVE);
+  pushSection(rows, "files", fileRows(session, input.fileTitleMax ?? FILE_TITLE_MAX), input, FILES_COLLAPSE_ABOVE);
   pushSection(rows, "commands", commandRows(session), input);
   pushSection(rows, "tests", testRows(session), input);
   return rows;
