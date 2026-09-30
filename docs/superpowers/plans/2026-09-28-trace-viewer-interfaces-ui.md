@@ -1438,6 +1438,8 @@ export interface TraceWindowRegistry {
   /** Focuses the existing window for sessionId; else creates one, records webContents.id before loadFile(traceHtmlPath, {query: {session}}), blocks will-navigate and denies window.open. */
   openTraceWindow(sessionId: string): TraceWindowHandle;
   isTraceSender(webContentsId: number): boolean;
+  /** The session the trace window with this webContents.id shows; undefined for any other sender (lane Da review). */
+  sessionForSender(webContentsId: number): string | undefined;
   closeAll(): void;
   count(): number;
 }
@@ -1457,7 +1459,7 @@ export interface TraceWindowIpcDeps {
   focusMainWindow(): void;
   sendToRenderer: typeof import("./ipc.js").sendToRenderer;
 }
-/** trace:open → openTraceWindow (UNKNOWN_SESSION when absent); trace:requestChanges → focusMainWindow + composer:prefill. Never sends an instruction. */
+/** trace:open → openTraceWindow (UNKNOWN_SESSION when absent); trace:requestChanges → UNTRUSTED_SENDER unless windows.sessionForSender(context.senderId) === sessionId, then focusMainWindow + composer:prefill. Never sends an instruction. */
 export function registerTraceWindowHandlers(handle: IpcHandle, deps: TraceWindowIpcDeps): void;
 
 // apps/desktop/src/shared/api.ts (D-3) — JevcodeApi additions
