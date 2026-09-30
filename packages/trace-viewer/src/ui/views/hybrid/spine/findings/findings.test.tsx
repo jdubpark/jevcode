@@ -46,7 +46,12 @@ describe("FINDING_BODY", () => {
     expect(finding).toBeDefined();
     if (finding === undefined) return;
     const onJump = vi.fn();
-    render(<FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={onJump} />);
+    render(
+      <>
+        <FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={onJump} part="header" />
+        <FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={onJump} />
+      </>,
+    );
     expect(screen.getByText("3.0 s")).toBeTruthy();
     expect(screen.getAllByText("all checks pass").length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByText(/1 failed/)[0] as HTMLElement);
@@ -152,7 +157,7 @@ describe("FINDING_BODY", () => {
     const session = foldFixture("oauth");
     const finding = session.findings.find((item) => item.ruleId === "claim_contradicted");
     if (finding === undefined) throw new Error("no claim finding");
-    render(<FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={() => undefined} />);
+    render(<FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={() => undefined} part="header" />);
     expect(screen.getByText("Claim made 3.0 s after the failing run")).toBeTruthy();
   });
 

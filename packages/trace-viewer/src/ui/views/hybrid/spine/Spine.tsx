@@ -18,7 +18,6 @@ import {
   type StepId,
   type TraceSession,
 } from "../../../../model/index.js";
-import { topFindingOf } from "../../../inspector/finding-copy.js";
 import { markAfterPaint, PERF } from "../../../shell/perf.js";
 import { useDiagnostics, useSessionView } from "../../../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../../../state/store.js";
@@ -27,6 +26,7 @@ import { NewBadge } from "../../shared/NewBadge.js";
 import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
+import { rowFindingOf } from "./row-finding.js";
 import { extendRange, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
@@ -35,6 +35,8 @@ export interface FindingBodyProps {
   step: Step;
   session: TraceSession;
   onJump(stepId: StepId): void;
+  /** "header" renders the signal's inline header extras (next to the row title), if it has any; default "body". */
+  part?: "header" | "body";
 }
 
 export const FindingBodyContext = createContext<ComponentType<FindingBodyProps> | null>(null);
@@ -456,7 +458,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
 
   const toggleFinding = (step: Step, isExpanded: boolean): void => {
     if (session === null) return;
-    const finding = topFindingOf(session, step);
+    const finding = rowFindingOf(session, step, findingsById)?.finding ?? null;
     if (isExpanded) {
       dispatch({ type: "expand/set", key: step.id, expanded: false });
       if (finding !== null) dispatch({ type: "expand/set", key: finding.id, expanded: false });
