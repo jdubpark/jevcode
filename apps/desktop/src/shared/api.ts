@@ -24,6 +24,7 @@ import {
   MainToRendererLocalChannels,
 } from "./local-channels.js";
 import type {
+  ComposerPrefillPayload,
   DebugEventsPayload,
   DebugJevDecisionsPayload,
   DebugTelemetryPayload,
@@ -149,6 +150,10 @@ export interface JevcodeApi {
     }): Promise<TraceSessionSummary[]>;
     rows(request: { sessionId: string; afterSeq?: number; limit?: number }): Promise<TraceRowsPage>;
     payloads(request: { sessionId: string; seqs: readonly number[] }): Promise<TraceRow[]>;
+    /** Opens (or focuses) the session's trace window. Main window only (main/trace-allowlist.ts). */
+    open(sessionId: string): Promise<void>;
+    /** Hands a review note to the main window's composer. Trace windows only; never sends an instruction. */
+    requestChanges(request: { sessionId: string; selected: string; text: string }): Promise<void>;
   };
   on<C extends FromMainChannelName>(
     channel: C,
@@ -158,6 +163,8 @@ export interface JevcodeApi {
     listener: (payload: AgentInstructionStatePayload) => void,
   ): () => void;
   onPrefsUpdated(listener: (payload: AgentPreferences) => void): () => void;
+  /** A trace window's "Request changes" note for the composer (spec §8.5). */
+  onComposerPrefill(listener: (payload: ComposerPrefillPayload) => void): () => void;
 }
 
 export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
@@ -325,11 +332,23 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
         })) as { rows: TraceRow[] };
         return result.rows;
       },
+      open: async (sessionId) => {
+        await invoke("trace:open", { sessionId });
+      },
+      requestChanges: async (request) => {
+        await invoke("trace:requestChanges", {
+          sessionId: request.sessionId,
+          selected: request.selected,
+          text: request.text,
+        });
+      },
     },
     on,
     onInstructionState: (listener) =>
       on(MainToRendererChannels.agentInstructionState, listener),
     onPrefsUpdated: (listener) =>
       on(MainToRendererLocalChannels.preferencesUpdated, listener),
+    onComposerPrefill: (listener) =>
+      on(MainToRendererLocalChannels.composerPrefill, listener),
   };
 }
