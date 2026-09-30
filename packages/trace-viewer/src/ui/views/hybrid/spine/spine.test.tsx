@@ -64,6 +64,11 @@ function stepKeys(session: TraceSession, from: number, to: number): string[] {
   return session.steps.slice(from, to).map((step) => step.id);
 }
 
+/** The row's own headline (what a reader clicks). */
+function headline(key: string): HTMLElement {
+  return document.getElementById(article(key)?.getAttribute("aria-labelledby") ?? "") as HTMLElement;
+}
+
 function scroller(): HTMLElement {
   return document.querySelector<HTMLElement>("[data-scroll-root]") as HTMLElement;
 }
@@ -104,6 +109,96 @@ describe("Spine", () => {
     expect(row?.textContent).toContain("finding body");
   });
 
+  it("titles a row only from findings anchored on it: the evidence test row keeps its command and a badge", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const session = foldFixture("oauth");
+    const { h } = renderSpine(session);
+    act(() => applyOpenDefaults(h, session));
+    await settle();
+    const test = session.steps.find((step) => step.command?.command === "pnpm test");
+    const row = article(test?.id ?? "");
+    const line = document.getElementById(row?.getAttribute("aria-labelledby") ?? "");
+    expect(line?.textContent).toBe("pnpm test");
+    expect(row?.textContent).not.toContain("Claim contradicts tests");
+    expect(row?.querySelector('[role="img"][aria-label="Tests failed"]')).not.toBeNull();
+    // The claim that cites the test is expanded, so the test's own critical finding stays collapsed.
+    expect(row?.querySelector("[data-expanded]")).toBeNull();
+    expect(row?.textContent).not.toContain("finding body");
+    expect(row?.querySelector('[data-tone="critical"]')).toBeNull();
+    expect(row?.querySelector('[data-tone="bad"]')).not.toBeNull();
+    const titles = Array.from(document.querySelectorAll('[role="feed"] article')).filter((node) =>
+      node.textContent?.includes("Claim contradicts tests"),
+    );
+    expect(titles).toHaveLength(1);
+  });
+
+  it("shows the finding's icon in a critical finding row's node", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const session = foldFixture("oauth");
+    const { h } = renderSpine(session);
+    act(() => applyOpenDefaults(h, session));
+    await settle();
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const node = article(claim?.anchorStepId ?? "")?.querySelector('[data-tone="critical"]');
+    expect(node?.querySelector("use")?.getAttribute("href")).toBe("#tv-i-neq");
+  });
+
+  it("collapsing an explicitly expanded evidence row leaves the claim that cites it expanded", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const session = foldFixture("oauth");
+    const { h } = renderSpine(session);
+    act(() => applyOpenDefaults(h, session));
+    await settle();
+    const test = session.steps.find((step) => step.command?.command === "pnpm test");
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const chevron = () => article(test?.id ?? "")?.querySelector<HTMLElement>('button[aria-label$="finding"]');
+    fireEvent.click(chevron() as HTMLElement);
+    await settle();
+    expect(article(test?.id ?? "")?.querySelector("[data-expanded]")).not.toBeNull();
+    fireEvent.click(chevron() as HTMLElement);
+    await settle();
+    expect(article(test?.id ?? "")?.querySelector("[data-expanded]")).toBeNull();
+    expect(article(claim?.anchorStepId ?? "")?.querySelector("[data-expanded]")).not.toBeNull();
+  });
+
+  it("gives a guardrail row its clamp headline and a short clamp metric", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Guard" });
+    b.jev({ id: "jev_1", clamps: ["security_path", "schema_floor", "decision_presence_floor"] });
+    b.jev({ id: "jev_2", clamps: ["security_path"] });
+    b.agent({ type: "agent_completed" });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    renderSpine(session, { state: { level: "step" } });
+    await settle();
+    const guards = session.steps.filter((step) => step.guardrail !== undefined);
+    const many = guards.find((step) => (step.guardrail?.clampIds.length ?? 0) > 1);
+    const one = guards.find((step) => step.guardrail?.clampIds.length === 1);
+    expect(many).toBeDefined();
+    expect(one).toBeDefined();
+    const lineOf = (id: string) => document.getElementById(article(id)?.getAttribute("aria-labelledby") ?? "");
+    expect(lineOf(many?.id ?? "")?.textContent).toBe(many?.headline);
+    expect(article(many?.id ?? "")?.textContent).toContain(`${many?.guardrail?.clampIds.length} clamps`);
+    expect(article(many?.id ?? "")?.textContent).not.toContain("schema_floor");
+    expect(lineOf(one?.id ?? "")?.textContent).toBe(one?.headline);
+    expect(article(one?.id ?? "")?.textContent).toContain("1 clamp");
+    expect(article(one?.id ?? "")?.textContent).not.toContain("Guardrail clamp");
+  });
+
+  it("renders a bidi override in a chapter title as the escape token", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const base = foldFixture("oauth");
+    const session: TraceSession = {
+      ...base,
+      chapters: base.chapters.map((chapter) => ({ ...chapter, title: `Changed 1 file: src/‮txt.exe` })),
+    };
+    renderSpine(session, { state: { level: "session" } });
+    await settle();
+    const feed = screen.getByRole("feed");
+    expect(feed.textContent).toContain("src/⟨U+202E⟩txt.exe");
+    expect(feed.textContent).not.toContain("‮");
+  });
+
   it("never scrolls for a spine-origin playhead write and reveals for an overview write", async () => {
     const stub = stubLayout({ height: 200 });
     layout = stub;
@@ -128,7 +223,7 @@ describe("Spine", () => {
     await settle();
     stub.scrollCalls.length = 0;
     const target = session.steps.find((step) => step.kind === "edit");
-    fireEvent.click(article(target?.id ?? "")?.firstElementChild as HTMLElement);
+    fireEvent.click(headline(target?.id ?? ""));
     await settle();
     expect(h.store.get().selection).toBe(target?.id);
     expect(stub.scrollCalls).toHaveLength(0);
@@ -275,7 +370,7 @@ describe("Spine", () => {
       const h = renderHarness(spineNode(apiRef), session, { state: { level: "step" } });
       await settle();
       const [clicked] = stepKeys(session, 1, 2);
-      fireEvent.click(article(clicked ?? "")?.firstElementChild as HTMLElement);
+      fireEvent.click(headline(clicked ?? ""));
       await settle();
       stub.scrollCalls.length = 0;
       const far = session.steps.at(-1)?.firstSeq ?? 1;
