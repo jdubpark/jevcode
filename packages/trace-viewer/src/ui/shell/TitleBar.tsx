@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 
-import type { TraceSessionSummary } from "@jevcode/contracts";
+import type { AgentState, TraceSessionSummary } from "@jevcode/contracts";
 
 import { agentStateLabel, displayUntrusted, formatDuration, type GapKind, type TraceSession } from "../../model/index.js";
 import { Icon } from "../icons/Icon.js";
@@ -37,7 +37,14 @@ function firstLine(text: string): string {
   return end < 0 ? text : text.slice(0, end);
 }
 
-function statusText(status: DataStatus, loadedFraction: number, summary: TraceSessionSummary | null): string {
+/** The meta's status; empty once terminal, because the disabled Live segment already names the final state (spec §7.1). */
+function statusText(
+  status: DataStatus,
+  loadedFraction: number,
+  summary: TraceSessionSummary | null,
+  state: AgentState | undefined,
+  terminal: boolean,
+): string {
   switch (status.kind) {
     case "loading":
       return summary === null ? "Loading" : `Loading ${Math.floor(loadedFraction * 100)}%`;
@@ -47,7 +54,7 @@ function statusText(status: DataStatus, loadedFraction: number, summary: TraceSe
       return `${status.channel}: ${status.message}`;
     case "ready":
       if (loadedFraction < 1) return `Loading ${Math.floor(loadedFraction * 100)}%`;
-      return summary === null ? "" : agentStateLabel(summary.state);
+      return state === undefined || terminal ? "" : agentStateLabel(state);
   }
 }
 
@@ -67,6 +74,9 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
   const zoomPopover = usePopoverDismissal(zoomOpen, setZoomOpen);
   const approxPopover = usePopoverDismissal(approxOpen, setApproxOpen);
   const running = summary !== null && !terminal;
+  // The fold keeps meta.state current; the summary is fetched once at open (lane review I-2).
+  const state = session?.meta.state ?? summary?.state;
+  const statusLine = statusText(status, loadedFraction, summary, state, terminal);
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -200,7 +210,7 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
           onClick={goLive}
         >
           <Icon name="live" size={14} />
-          <span>{terminal && summary !== null ? agentStateLabel(summary.state) : "Live"}</span>
+          <span>{terminal && state !== undefined ? agentStateLabel(state) : "Live"}</span>
         </button>
       </div>
 
@@ -220,8 +230,12 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
 
       <span className={styles.meta}>
         <span className={styles.duration}>{formatDuration(durationMs)}</span>
-        <span aria-hidden="true"> · </span>
-        <span>{statusText(status, loadedFraction, summary)}</span>
+        {statusLine === "" ? null : (
+          <>
+            <span aria-hidden="true"> · </span>
+            <span>{statusLine}</span>
+          </>
+        )}
       </span>
 
       {status.kind === "error" ? (
