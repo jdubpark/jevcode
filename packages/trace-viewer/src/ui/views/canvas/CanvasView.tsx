@@ -180,6 +180,8 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   const mountTimerRef = useRef<number | null>(null);
   /** A programmatic move (moveTo) is in flight: its camera does not agree with focus yet. */
   const movingRef = useRef(false);
+  /** Where the in-flight programmatic move ends; a reveal asked meanwhile starts from there (C3-12 smoke). */
+  const moveTargetRef = useRef<UniformCamera | null>(null);
   const controllerRef = useRef<ViewportController<UniformCamera> | null>(null);
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const latest = useRef<Latest>({ layout, session, index, scale, level, active });
@@ -303,10 +305,12 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       if (controller === null) return;
       const token = (moveTokenRef.current += 1);
       movingRef.current = true;
+      moveTargetRef.current = camera;
       void controller.set(camera, { animate: animate && !prefersReducedMotion(viewportRef.current) }).then(() => {
         // A superseded move (a newer one started) or a destroyed controller never stamps the camera.
         if (token !== moveTokenRef.current || controllerRef.current !== controller) return;
         movingRef.current = false;
+        moveTargetRef.current = null;
         rest();
         sync();
       });
@@ -418,9 +422,11 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       if (current === null || s === null || controller === null) return null;
       const frame = frameForSelection(current, s, id);
       if (frame === undefined) return null;
-      const target = revealCamera(controller.get(), frame.card, sizeRef.current);
-      if (target === null) sync();
-      else moveTo(target, animate);
+      // Mid-move (the open show tween), reveal against where the move ends, and let that move stamp the camera.
+      const moving = movingRef.current ? moveTargetRef.current : null;
+      const target = revealCamera(moving ?? controller.get(), frame.card, sizeRef.current);
+      if (target !== null) moveTo(target, animate);
+      else if (moving === null) sync();
       return frame.key;
     },
     [moveTo, sync],
@@ -513,6 +519,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       controllerRef.current = null;
       moveTokenRef.current += 1;
       movingRef.current = false;
+      moveTargetRef.current = null;
       // A view hidden or unmounted mid-gesture releases it; the Shell holds data applies while a gesture is set.
       if (interrupted) {
         userGestureRef.current = false;

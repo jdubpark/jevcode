@@ -500,6 +500,23 @@ describe("CanvasView camera writes", () => {
     expect(numericCamera().k).toBeCloseTo((900 - 96) / 1016, 6);
   });
 
+  it("a selection made while the open show tween runs is revealed from the tween's target, keeping the fit", () => {
+    const { frames } = setup(900, 600);
+    stubReducedMotion(false);
+    const harness = renderWithViewer(<CanvasView active />, { session: null, state: { follow: false } });
+    act(() => frames.flush());
+    const session = oauthCanvasSession();
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted")?.anchorStepId;
+    if (claim === undefined) throw new Error("oauth has no claim_contradicted finding");
+    // The data land first and start the show tween; the initial selection lands in a later commit, mid-tween.
+    act(() => harness.setSession(session));
+    act(() => frames.step());
+    act(() => harness.store.dispatch({ type: "select", id: claim, by: "shell" }));
+    act(() => frames.flush());
+    // The claim lies inside the fit's 48 px inset, so the reveal adds no move: the fit stands (spec §7.8 item 3).
+    expect(numericCamera().k).toBeCloseTo((900 - 96) / 1016, 6);
+  });
+
   it("releases the gesture when the view is hidden mid-gesture", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { frames } = setup();
