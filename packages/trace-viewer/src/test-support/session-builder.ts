@@ -221,7 +221,8 @@ export function buildSession(seed: SessionSeed): TraceSession {
       }
     }
     anchor.findingIds.push(id);
-    const problem = PROBLEM_OF_RULE[f.ruleId] ?? (f.ruleId === "guardrail_clamp" && f.severity !== "info" ? "guardrail" : undefined);
+    // As the fold does since ruling M3: only a critical (blocking) clamp is the guardrail problem.
+    const problem = PROBLEM_OF_RULE[f.ruleId] ?? (f.ruleId === "guardrail_clamp" && f.severity === "critical" ? "guardrail" : undefined);
     if (problem !== undefined && !anchor.problems.includes(problem)) anchor.problems.push(problem);
     findings.push(finding);
   }

@@ -59,7 +59,16 @@ describe("spine rows on the oauth-like session", () => {
       ],
     });
     const labels = rowsOf(session).filter((r): r is Extract<SpineRow, { t: "noise" }> => r.t === "noise").map((r) => r.label);
+    // An info-only clamp is pipeline noise, not a guardrail hit: no Jev review group forms (visual audit 1-1).
     expect(labels).toEqual(["3 pipeline events", "2 noise steps: pipeline events, lifecycle events"]);
+    const attentionOnly = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+      ],
+    });
+    expect(rowsOf(attentionOnly).flatMap((r) => (r.t === "noise" ? [[r.label, r.jev]] : []))).toEqual([["2 pipeline events", undefined]]);
   });
 
   it("labels a 5,000-step noise run once, with its reasons in first-appearance order", () => {
@@ -95,6 +104,43 @@ describe("spine rows on the oauth-like session", () => {
     const readRow = spineRowIndexForSeq(rows, oauth, read?.firstSeq ?? 0);
     expect(rows[readRow]?.t).toBe("noise");
     expect(spineRowIndexForSeq(rows, oauth, 0)).toBe(-1);
+  });
+});
+
+describe("Jev review groups at Chapter level (visual audit 1-1)", () => {
+  // The oauth tail: warning clamps with findings interleaved with attention and info-only clamps.
+  const tail: StepSeed[] = [
+    { kind: "instruction", tMs: 0, text: "go" },
+    { kind: "command", tMs: 1_000, durationMs: 500, target: "pnpm test" },
+    { kind: "guardrail", tMs: 45_000, guardrail: { clampIds: ["security_path"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+    { kind: "guardrail", tMs: 45_000, noise: "pipeline", guardrail: { clampIds: ["suppress_formatting"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+    { kind: "guardrail", tMs: 45_000, guardrail: { clampIds: ["schema_floor"] } },
+    { kind: "attention", tMs: 45_000, noise: "pipeline" },
+  ];
+  const warnings = [{ ruleId: "guardrail_clamp" as const, severity: "warning" as const, step: 2 }, { ruleId: "guardrail_clamp" as const, severity: "warning" as const, step: 6 }];
+
+  it("fold consecutive Jev rows into one group row with a count and the worst tone", () => {
+    const session = buildSession({ steps: tail, findings: warnings });
+    const rows = rowsOf(session);
+    expect(rows.map((r) => r.t)).toEqual(["step", "step", "noise"]);
+    expect(rows[2]).toEqual({
+      t: "noise", key: `noise:${session.steps[2]?.firstSeq}`, steps: [2, 3, 4, 5, 6, 7], label: "Jev review · 2 guardrails",
+      jev: { guardrails: 2, tone: "neutral", severity: "warning" },
+    });
+    // Expanding the group lists its steps, as for a noise run.
+    expect(rowsOf(session, { expanded: new Set([rows[2]?.key ?? ""]) }).filter((r) => r.t === "step")).toHaveLength(8);
+  });
+
+  it("keep critical findings, the playhead and the selection as their own rows; Step level never groups", () => {
+    const critical = buildSession({ steps: tail, findings: [...warnings, { ruleId: "guardrail_clamp", severity: "critical", step: 4 }] });
+    expect(rowsOf(critical).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3], 4, [5, 6, 7]]);
+    const session = buildSession({ steps: tail, findings: warnings });
+    const selected = session.steps[5];
+    expect(rowsOf(session, { selection: selected?.id ?? null }).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t)))
+      .toEqual([0, 1, [2, 3, 4], 5, [6, 7]]);
+    expect(rowsOf(session, { level: "step" }).some((r) => r.t === "noise")).toBe(false);
   });
 });
 
