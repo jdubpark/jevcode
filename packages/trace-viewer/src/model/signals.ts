@@ -26,6 +26,104 @@ export interface SignalInput {
   session: Omit<TraceSession, "findings" | "coverage">;
   /** Lookups the finalize already maintains (fold-finalize.ts); built from session when absent. */
   index?: SignalIndex;
+  /**
+   * The positions of the steps each rule reads (buildSignalScan of session.steps). Rules then visit only those steps,
+   * in list order, instead of every step; the findings are the same. Ignored unless built from this session.steps.
+   */
+  scan?: SignalScan;
+}
+
+// ------------------------------------------------------------ scan
+
+const RUN = 1;
+const TARGET = 2;
+const EDIT = 4;
+const DESTRUCTIVE = 8;
+const GUARD = 16;
+
+/**
+ * Per step position, what the rules test it for: a run (test or check) and whether it has a target, a non-duplicate
+ * edit, a destructive command, a severe guardrail clamp. Built from the previous scan: a position holding the same
+ * Step object keeps its category (a finalized Step never changes, spec §6.4), so a Live commit categorizes only the
+ * steps it changed. Step ids are assumed unique (a finalize's steps are).
+ */
+export interface SignalScan {
+  readonly steps: readonly Step[];
+  readonly cats: Uint8Array;
+  /** Positions, ascending, of runs (any target), non-duplicate edits, destructive commands and severe guardrails. */
+  readonly runs: readonly number[];
+  readonly edits: readonly number[];
+  readonly destructive: readonly number[];
+  readonly guards: readonly number[];
+  /** Steps categorized by this build (not kept): a regression gauge for tests. */
+  readonly categorized: number;
+}
+
+function categoryOf(step: Step): number {
+  let cat = 0;
+  if (isRun(step)) cat |= RUN;
+  if (step.target !== undefined) cat |= TARGET;
+  if (step.kind === "edit" && step.noise !== "duplicate_poll") cat |= EDIT;
+  if (step.command?.destructivePattern !== undefined) cat |= DESTRUCTIVE;
+  if (step.kind === "guardrail" && step.guardrail !== undefined && hasSevereClamp(step)) cat |= GUARD;
+  return cat;
+}
+
+export function buildSignalScan(steps: readonly Step[], previous?: SignalScan): SignalScan {
+  const before = previous?.steps;
+  const cats = new Uint8Array(steps.length);
+  const runs: number[] = [];
+  const edits: number[] = [];
+  const destructive: number[] = [];
+  const guards: number[] = [];
+  let categorized = 0;
+  for (let position = 0; position < steps.length; position += 1) {
+    const step = steps[position] as Step;
+    let cat: number;
+    if (before !== undefined && before[position] === step) {
+      cat = previous?.cats[position] ?? 0;
+    } else {
+      cat = categoryOf(step);
+      categorized += 1;
+    }
+    cats[position] = cat;
+    if (cat === 0) continue;
+    if ((cat & RUN) !== 0) runs.push(position);
+    if ((cat & EDIT) !== 0) edits.push(position);
+    if ((cat & DESTRUCTIVE) !== 0) destructive.push(position);
+    if ((cat & GUARD) !== 0) guards.push(position);
+  }
+  return { steps, cats, runs, edits, destructive, guards, categorized };
+}
+
+function scanOf(input: SignalInput): SignalScan | undefined {
+  const scan = input.scan;
+  return scan !== undefined && scan.steps === input.session.steps ? scan : undefined;
+}
+
+/** The steps at `positions`, in order. */
+function at(scan: SignalScan, positions: readonly number[]): Step[] {
+  return positions.map((position) => scan.steps[position] as Step);
+}
+
+/** Two ascending position lists merged, ascending. */
+function merged(a: readonly number[], b: readonly number[]): number[] {
+  const out: number[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    const x = a[i];
+    const y = b[j];
+    if (y === undefined || (x !== undefined && x <= y)) {
+      if (x !== undefined) out.push(x);
+      if (x === y) j += 1;
+      i += 1;
+    } else {
+      out.push(y);
+      j += 1;
+    }
+  }
+  return out;
 }
 
 export interface SignalIndex {
@@ -218,10 +316,23 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
     // Only each turn's claimStepId (its last success claim, set by markTurns) is checked (R25).
     const claimIds = new Set<StepId>();
     for (const turn of session.turns) if (turn.claimStepId !== undefined) claimIds.add(turn.claimStepId);
-    // One pass in seq order: the latest run of each command seen so far.
+    // One pass in seq order: the latest run of each command seen so far. With a scan, only the runs with a target and
+    // the claim steps are visited.
+    const scan = scanOf(input);
+    let visit: readonly Step[] = session.steps;
+    if (scan !== undefined) {
+      const claimPositions: number[] = [];
+      for (const id of claimIds) {
+        const claim = stepById.get(id);
+        const position = claim === undefined ? -1 : scan.steps.indexOf(claim);
+        if (position >= 0) claimPositions.push(position);
+      }
+      const targeted = scan.runs.filter((position) => ((scan.cats[position] ?? 0) & TARGET) !== 0);
+      visit = at(scan, merged(targeted, claimPositions.sort((a, b) => a - b)));
+    }
     const latestByTarget = new Map<string, Step>();
     const drafts: FindingDraft[] = [];
-    for (const step of session.steps) {
+    for (const step of visit) {
       if (isRun(step) && step.target !== undefined) {
         latestByTarget.set(commandKey(step.target), step);
         continue;
@@ -278,11 +389,13 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
   evaluate(input) {
     const session = input.session;
     const chaptersOfRun = chaptersOf(input);
+    const scan = scanOf(input);
+    const runs = scan === undefined ? session.steps : at(scan, scan.runs);
     const finalRun = new Map<string, Step>();
-    for (const step of session.steps) {
+    for (const step of runs) {
       if (isRun(step) && step.target !== undefined) finalRun.set(commandKey(step.target), step);
     }
-    return session.steps
+    return runs
       .filter((step) => isRun(step) && step.tests !== undefined && step.tests.failed > 0)
       .map((step) => {
         const tests = step.tests ?? { passed: 0, failed: 0, skipped: 0 };
@@ -315,8 +428,9 @@ const destructiveCommand: SignalRule & { readonly id: "destructive_command" } = 
     "Any rm -rf matches whatever its target, including build output such as dist/.",
   ],
   requires: ["agent_commands"],
-  evaluate({ session }) {
-    return session.steps
+  evaluate(input) {
+    const scan = scanOf(input);
+    return (scan === undefined ? input.session.steps : at(scan, scan.destructive))
       .filter((step) => step.command?.destructivePattern !== undefined)
       .map((step) => ({
         anchorSeq: step.firstSeq,
@@ -344,8 +458,9 @@ const guardrailClamp: SignalRule & { readonly id: "guardrail_clamp" } = {
     "The security-path patterns match /token/i in tokenizer.ts and \\.env in .env.example (packages/jev-router/src/patterns.ts:11-19).",
   ],
   requires: ["jev_decisions"],
-  evaluate({ session }) {
-    return session.steps
+  evaluate(input) {
+    const scan = scanOf(input);
+    return (scan === undefined ? input.session.steps : at(scan, scan.guards))
       .filter((step) => step.kind === "guardrail" && step.guardrail !== undefined && hasSevereClamp(step))
       .map((step) => {
         const clampIds = step.guardrail?.clampIds ?? [];
@@ -382,7 +497,13 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
     const chaptersOfRun = chaptersOf(input);
     const drafts: FindingDraft[] = [];
     const openFailure = new Map<string, { failed: Step; edits: StepId[] }>();
-    for (const step of session.steps) {
+    // With a scan, only the non-duplicate edits and the runs with a target are visited, in list order.
+    const scan = scanOf(input);
+    const visit =
+      scan === undefined
+        ? session.steps
+        : at(scan, merged(scan.edits, scan.runs.filter((position) => ((scan.cats[position] ?? 0) & TARGET) !== 0)));
+    for (const step of visit) {
       if (step.kind === "edit") {
         if (step.noise !== "duplicate_poll") for (const pending of openFailure.values()) pending.edits.push(step.id);
         continue;
