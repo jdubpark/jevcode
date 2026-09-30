@@ -229,7 +229,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   /**
    * One camera write per animation frame (spec §7.5 "Controller"), all compositor-friendly (C3-10 review I-1): the
    * world layer's transform, the dot grid's background on the viewport (non-inherited), and the three camera variables
-   * on the overlay root, whose subtree is the culled labels, handles, chip and badges. Nothing inherited is written
+   * on the overlay root (--tv-kw, the label width scale, only at settle), whose subtree is the culled labels, handles, chip and badges. Nothing inherited is written
    * above the world, so a frame restyles no card or edge. Spike risk 7 ruling (INV_K_EVERY_FRAME = false): --tv-inv-k
    * re-scales hairlines and junction dots at settle and at a tween's end only. will-change holds only while a gesture
    * or a tween runs.
@@ -256,6 +256,8 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
         overlay.style.setProperty("--tv-tx", `${camera.tx}px`);
         overlay.style.setProperty("--tv-ty", `${camera.ty}px`);
         overlay.style.setProperty("--tv-k", String(camera.k));
+        // Label widths re-lay out, so they follow the camera at rest only (positions are compositor-only).
+        if (phase === "settle") overlay.style.setProperty("--tv-kw", String(camera.k));
       }
       cameraStore.set(camera);
       if (phase !== "settle") followMount(camera);
@@ -272,6 +274,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       element.style.setProperty("--tv-tx", `${camera.tx}px`);
       element.style.setProperty("--tv-ty", `${camera.ty}px`);
       element.style.setProperty("--tv-k", String(camera.k));
+      element.style.setProperty("--tv-kw", String(camera.k));
     },
     [cameraStore],
   );

@@ -171,6 +171,16 @@ describe("World", () => {
     expect(css).toContain("r: calc(2.5px * var(--tv-inv-k, 1))");
   });
 
+  it("keeps label relayout out of zoom frames: width from --tv-kw, layout containment on overlay items", () => {
+    const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
+    expect(css).toContain("max-width: calc(var(--w) * var(--tv-kw, 1) * 1px)");
+    expect(css).not.toMatch(/max-width:[^;]*--tv-k,/);
+    for (const item of ["label", "handle", "timeChip", "sepLabel", "badge"]) {
+      const block = new RegExp(`^\\.${item} \\{[^}]*\\}`, "m").exec(css)?.[0] ?? "";
+      expect(block, item).toContain("contain: layout style");
+    }
+  });
+
   it("keeps edge strokes at 1.5 CSS px through --tv-inv-k and never colors text with ink-4", () => {
     const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
     expect(css).toContain("stroke-width: calc(1.5px * var(--tv-inv-k, 1))");

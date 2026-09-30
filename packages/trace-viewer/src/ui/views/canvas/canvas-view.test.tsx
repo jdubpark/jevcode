@@ -347,6 +347,43 @@ describe("CanvasView camera writes", () => {
     expect(canvasWorld().style.getPropertyValue("--tv-inv-k")).toBe("2");
   });
 
+  it("drives label widths from --tv-kw, written at first paint, settle and a tween's end, never on gesture frames", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { frames } = setup();
+    stubReducedMotion(false);
+    const harness = renderWithViewer(<CanvasView active />, { session: s2, state: { follow: false, cameras: saved(0, 0, 1) } });
+    act(() => frames.flush());
+    const overlay = (): HTMLElement => {
+      const element = canvasViewport().querySelector<HTMLElement>("[data-tv-overlay]");
+      if (element === null) throw new Error("no overlay");
+      return element;
+    };
+    const kw = (): string => overlay().style.getPropertyValue("--tv-kw");
+    expect(kw()).toBe("1");
+    act(() => {
+      fireEvent.wheel(canvasViewport(), { deltaY: -100, ctrlKey: true, clientX: 300, clientY: 300 });
+      frames.flush();
+    });
+    expect(numericCamera().k).toBeGreaterThan(1);
+    expect(overlay().style.getPropertyValue("--tv-k")).toBe(String(numericCamera().k));
+    expect(kw()).toBe("1");
+    act(() => {
+      vi.advanceTimersByTime(200);
+      frames.flush();
+    });
+    expect(Number(kw())).toBeCloseTo(numericCamera().k, 9);
+    const settled = kw();
+    act(() => harness.registry.get("canvas")?.zoom.fitAll());
+    act(() => frames.step());
+    act(() => frames.step());
+    expect(kw()).toBe(settled);
+    await act(async () => {
+      frames.flush();
+      await Promise.resolve();
+    });
+    expect(Number(kw())).toBeCloseTo(numericCamera().k, 9);
+  });
+
   it("writes --tv-inv-k at settle and at a tween's end, never on gesture or tween frames", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { frames } = setup();
