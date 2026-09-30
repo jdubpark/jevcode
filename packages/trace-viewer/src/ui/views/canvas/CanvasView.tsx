@@ -429,6 +429,11 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     const element = viewportRef.current;
     const win = domView(element);
     if (!active || element === null || win === null) return undefined;
+    // Layout effects do not run while hidden, so a level change or a Live append made meanwhile would reach the
+    // relayout effect below as a pin or a follow pan against a stale layout (C3-11 review I-1). A show is not a
+    // relayout: the show rule (exact restore, else runPendingShow's refit) owns the camera.
+    prevLayoutRef.current = latest.current.layout;
+    relayoutRef.current = false;
     const box = element.getBoundingClientRect();
     sizeRef.current = box.width > 0 && box.height > 0 ? { w: box.width, h: box.height } : { w: 0, h: 0 };
     const state = store.get();
@@ -491,6 +496,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     observer?.observe(element);
     setSize(sizeRef.current);
     runPendingShow();
+    markSeen();
     return () => {
       observer?.disconnect();
       if (mountTimerRef.current !== null) win.clearTimeout(mountTimerRef.current);
