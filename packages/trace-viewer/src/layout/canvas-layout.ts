@@ -739,7 +739,8 @@ export function layoutCanvas(
   const stepOf = stepFinder(session.steps);
   const collected = collect(session, index, stepOf, memo?.items);
   const items = collected.items;
-  const itemByKey = new Map(items.map((item) => [item.key, item]));
+  const itemByKey = new Map<string, CanvasItem>();
+  for (const item of items) itemByKey.set(item.key, item);
   for (const item of items) {
     const slotId = st.memberSlot[item.key];
     const slot = slotId === undefined ? undefined : run.slotById.get(slotId);

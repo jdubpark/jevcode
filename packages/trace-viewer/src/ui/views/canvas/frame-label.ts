@@ -28,13 +28,15 @@ export interface FrameContext {
   findingsById: ReadonlyMap<FindingId, Finding>;
 }
 
+/** Built per commit: plain loops, so the maps cost no [id, object] pair per step and chapter. */
 export function buildFrameContext(session: TraceSession): FrameContext {
-  return {
-    session,
-    stepById: new Map(session.steps.map((step) => [step.id, step])),
-    chapterById: new Map(session.chapters.map((chapter) => [chapter.id, chapter])),
-    findingsById: new Map(session.findings.map((finding) => [finding.id, finding])),
-  };
+  const stepById = new Map<string, Step>();
+  for (const step of session.steps) stepById.set(step.id, step);
+  const chapterById = new Map<string, Chapter>();
+  for (const chapter of session.chapters) chapterById.set(chapter.id, chapter);
+  const findingsById = new Map<FindingId, Finding>();
+  for (const finding of session.findings) findingsById.set(finding.id, finding);
+  return { session, stepById, chapterById, findingsById };
 }
 
 /** Every step of the frame's members (a chapter's steps, or the story or loose step itself), in seq order. */
