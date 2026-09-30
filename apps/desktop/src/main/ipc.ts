@@ -259,7 +259,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   handle(RendererToMainChannels.sessionStop, async ({ sessionId }) => {
     assertSessionInOpenRepo(deps.db, sessionId, deps.state.repo?.id);
-    await deps.runtime.stopSession(sessionId);
+    await deps.runtime.stopSession(sessionId, { teardown: false });
     const payload = stopSession(deps.db, sessionId);
     sendToRenderer(MainToRendererChannels.sessionState, payload);
     return null;
