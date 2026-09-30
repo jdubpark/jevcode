@@ -551,7 +551,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
         aria-label="Reading spine"
         aria-busy={loadedFraction < 1}
       >
-        <div className={styles.sizer} style={{ height: virtualizer.getTotalSize() }}>
+        <div className={styles.sizer} data-hour={hourGutter ? "" : undefined} style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((item) => {
             const row = rows[item.index];
             if (row === undefined) return null;
