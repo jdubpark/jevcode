@@ -73,7 +73,7 @@ function compareItems(a: CanvasItem, b: CanvasItem): number {
   return a.start - b.start || a.anchorSeq - b.anchorSeq || compareText(a.key, b.key);
 }
 
-const NO_STEP_IDS: readonly string[] = [];
+const NO_STEP_IDS: ReadonlySet<string> = new Set();
 
 /** Spec §7.5 "Items": story items per turn, decisions, current chapters and loose finding steps. */
 export function collectItems(
@@ -160,11 +160,14 @@ export function collectItems(
     // Spec §7.5: a noise chapter stays in its stack unless a finding names it or one of its own steps anchors one. A
     // shared test run it reaches only through a validation (validationOnlyStepIds) is not its own (lane review I-3), and
     // a finding that merely cites a step does not count (anchor rule).
-    const validationOnly = chapter.validationOnlyStepIds ?? NO_STEP_IDS;
+    const validationOnly: ReadonlySet<string> =
+      chapter.validationOnlyStepIds === undefined || chapter.validationOnlyStepIds.length === 0
+        ? NO_STEP_IDS
+        : new Set(chapter.validationOnlyStepIds);
     const flagged =
       chapter.findingIds.length > 0 ||
       (anchoring.size > 0 &&
-        chapter.stepIds.some((id) => anchoring.has(id) && !validationOnly.includes(id) && stepOf(id)?.id === id));
+        chapter.stepIds.some((id) => anchoring.has(id) && !validationOnly.has(id) && stepOf(id)?.id === id));
     items.push({
       key,
       selId: chapter.id,
