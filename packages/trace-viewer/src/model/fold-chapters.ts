@@ -52,8 +52,17 @@ function decisionDetail(decision: Decision): DecisionDetail {
   };
 }
 
+/** spec §6.6 Status: running while open, ok when answered or delegated, unknown when expired. */
 function decisionStatus(decision: Decision): StepStatus {
-  return decision.status === "answered" || decision.status === "delegated" ? "ok" : "info";
+  switch (decision.status) {
+    case "open":
+      return "running";
+    case "answered":
+    case "delegated":
+      return "ok";
+    case "expired":
+      return "unknown";
+  }
 }
 
 /** Every row of one decision id folds into one step (step:<firstSeq>, target = the decision id).

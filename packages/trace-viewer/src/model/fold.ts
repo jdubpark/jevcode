@@ -196,13 +196,16 @@ function headlineOf(draft: StepDraft): string {
 
 /** A deep copy with the private draft fields dropped: later rows never change a returned session. */
 function toPublicStep(draft: StepDraft, openStatus: "running" | "unknown"): Step {
+  const status = draft.open ? openStatus : settledStatus(draft);
+  // An unpaired start, or a decision still open (spec §6.6 Status), has no end yet.
+  const unfinished = draft.open || status === "running";
   const step: Step = {
     id: draft.id,
     kind: draft.kind,
     lane: draft.lane,
     actor: draft.actor,
     provenance: draft.provenance,
-    status: draft.open ? openStatus : settledStatus(draft),
+    status,
     headline: headlineOf(draft),
     ...(draft.target !== undefined ? { target: draft.target } : {}),
     ...(draft.text !== undefined ? { text: draft.text } : {}),
@@ -212,11 +215,11 @@ function toPublicStep(draft: StepDraft, openStatus: "running" | "unknown"): Step
     firstSeq: draft.firstSeq,
     lastSeq: draft.lastSeq,
     startTs: draft.startTs,
-    endTs: draft.open ? null : draft.endTs,
+    endTs: unfinished ? null : draft.endTs,
     tMs: draft.tMs,
     startMs: draft.startMs,
-    endTMs: draft.open ? null : draft.endTMs,
-    durationMs: draft.open ? null : draft.durationMs,
+    endTMs: unfinished ? null : draft.endTMs,
+    durationMs: unfinished ? null : draft.durationMs,
     approxTime: draft.approxTime,
     evidenceSeqs: [...draft.evidenceSeqs],
     chapterIds: [],
