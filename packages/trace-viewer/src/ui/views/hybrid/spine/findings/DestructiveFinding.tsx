@@ -10,7 +10,7 @@ export function DestructiveFinding({ finding, step }: FindingBodyProps) {
       <p className={`${styles.findingText} ${styles.mono}`}>{command}</p>
       {finding.matchedPattern === undefined ? null : <p className={styles.why}>{`Matched rule: ${finding.matchedPattern}`}</p>}
       <details className={styles.why}>
-        <summary>Why flagged?</summary>
+        <summary tabIndex={-1}>Why flagged?</summary>
         <p>{meta.rationale}</p>
         {meta.knownFalsePositives.length > 0 ? (
           <ul>

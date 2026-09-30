@@ -96,4 +96,73 @@ describe("FINDING_BODY", () => {
     render(<FindingBody finding={recovery} step={session.steps[0]!} session={session} onJump={() => undefined} />);
     expect(document.querySelectorAll("[data-recovery-step]")).toHaveLength(3);
   });
+
+  it("marks bidi characters in a failing test's name", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = {
+      ...base,
+      steps: base.steps.map((step) =>
+        step.tests === undefined
+          ? step
+          : { ...step, tests: { ...step.tests, failures: step.tests.failures.map((failure) => ({ ...failure, testName: "spoof‮name" })) } },
+      ),
+    };
+    const finding = session.findings.find((item) => item.ruleId === "failing_tests");
+    if (finding === undefined) throw new Error("no failing_tests finding");
+    render(<FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={() => undefined} />);
+    expect(screen.getByText("spoof⟨U+202E⟩name")).toBeTruthy();
+  });
+
+  it("keeps every control inside a finding body out of the tab order", () => {
+    const session = foldFixture("oauth");
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Clean" });
+    b.agent({ type: "command_started", command: "rm -rf build" });
+    b.agent({ type: "command_completed", command: "rm -rf build", exitCode: 0, stdout: "", stderr: "" });
+    const destructiveSession = foldRows(testMeta(), b.rows, { live: false });
+    const command = destructiveSession.steps.find((item) => item.kind === "command");
+    const bodies = [
+      ...session.findings.map((finding) => ({ finding, step: stepOf(session, finding), session })),
+      {
+        finding: synthetic(destructiveSession, {
+          ruleId: "destructive_command",
+          matchedPattern: "rm_rf",
+          anchorStepId: command?.id ?? "step:1",
+          stepIds: [command?.id ?? "step:1"],
+        }),
+        step: command ?? destructiveSession.steps[0]!,
+        session: destructiveSession,
+      },
+      {
+        finding: synthetic(session, { ruleId: "recovery_arc", severity: "info", stepIds: session.steps.slice(0, 3).map((step) => step.id) }),
+        step: session.steps[0]!,
+        session,
+      },
+    ];
+    for (const props of bodies) {
+      const { container } = render(<FindingBody {...props} onJump={() => undefined} />);
+      for (const node of container.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, summary, [tabindex]")) {
+        expect(node.getAttribute("tabindex"), `${props.finding.ruleId} ${node.tagName}`).toBe("-1");
+      }
+      cleanup();
+    }
+  });
+
+  it("states the claim gap as text a screen reader reads", () => {
+    const session = foldFixture("oauth");
+    const finding = session.findings.find((item) => item.ruleId === "claim_contradicted");
+    if (finding === undefined) throw new Error("no claim finding");
+    render(<FindingBody finding={finding} step={stepOf(session, finding)} session={session} onJump={() => undefined} />);
+    expect(screen.getByText("Claim made 3.0 s after the failing run")).toBeTruthy();
+  });
+
+  it("labels recovery buttons with the step outcome and offset", () => {
+    const session = foldFixture("oauth");
+    const ids = session.steps.slice(0, 3).map((step) => step.id);
+    const recovery = synthetic(session, { ruleId: "recovery_arc", severity: "info", stepIds: ids });
+    render(<FindingBody finding={recovery} step={session.steps[0]!} session={session} onJump={() => undefined} />);
+    const labels = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+    expect(labels).toHaveLength(3);
+    for (const label of labels) expect(label).toMatch(/^Go to (fail|edit|pass) step at \+\d+:\d\d/);
+  });
 });

@@ -11,7 +11,7 @@ export function TestsFinding({ finding, session }: FindingBodyProps) {
       <ul className={styles.failures}>
         {failures.slice(0, 3).map((failure, position) => (
           <li key={`${failure.file}:${position}`} className={styles.failure}>
-            <div>{failure.testName}</div>
+            <div>{displayUntrusted(failure.testName)}</div>
             <div className={styles.mono}>{displayUntrusted(failure.message.split("\n")[0] ?? "")}</div>
             <div className={styles.mono}>{displayUntrusted(failure.file)}</div>
           </li>
