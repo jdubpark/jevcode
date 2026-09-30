@@ -1,7 +1,8 @@
 import type { AgentState, ChangeCategory, ChangeUnitStatus } from "@jevcode/contracts";
 
+import type { BandSpan, LaneMarks, OverviewIndex } from "../layout/overview-index.js";
 import {
-  CAPABILITIES, decisionStableId, fileStableId, findingStableId, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
+  CAPABILITIES, decisionStableId, fileStableId, findingStableId, LANES, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
   type Actor, type Chapter, type ClaimObservation, type CommandDetail, type DecisionDetail, type EditDetail, type Entity,
   type Finding, type Gap, type GapKind, type GuardrailDetail, type Lane, type NoiseReason, type ProblemKind, type Severity,
   type SignalId, type Step, type StepKind, type StepStatus, type TestDetail, type TraceSession, type Turn, type TurnOutcome,
@@ -442,4 +443,15 @@ export function largeSession(options: { chapters?: number; steps?: number; seed?
     chapters: Array.from({ length: chapterCount }, (_, c) => ({ id: `c${c}`, title: `Chapter ${c + 1}` })),
     findings,
   });
+}
+
+/** An OverviewIndex with bands only (no marks, pins, turns or links), sorted as buildOverviewIndex sorts them. */
+export function bandsOverview(bands: readonly BandSpan[], endU: number): OverviewIndex {
+  const empty: LaneMarks = {
+    count: 0, u0: new Float64Array(0), u1: new Float64Array(0), step: new Int32Array(0), glyph: new Uint8Array(0), tone: new Uint8Array(0),
+    added: new Float64Array(0), removed: new Float64Array(0), problem: new Uint8Array(0), noise: new Uint8Array(0), maxSpan: 0,
+  };
+  const lanes = Object.fromEntries(LANES.map((lane) => [lane, empty])) as OverviewIndex["lanes"];
+  const sorted = [...bands].sort((a, b) => a.u0 - b.u0 || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { endU, lanes, pins: [], bands: sorted, turns: [], links: [] };
 }
