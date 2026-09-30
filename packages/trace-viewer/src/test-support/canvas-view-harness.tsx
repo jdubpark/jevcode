@@ -36,6 +36,8 @@ export interface ViewerHarness {
   registry: ViewPortRegistry;
   result: RenderResult;
   setSession(session: TraceSession | null): void;
+  /** Re-renders a different element (for example the same view with another `active`) under the same providers. */
+  setUi(ui: ReactElement): void;
 }
 
 export function renderWithViewer(
@@ -48,10 +50,11 @@ export function renderWithViewer(
     view.index,
   );
   const registry = createViewPortRegistry();
+  let current = ui;
   const tree = (value: SessionView): ReactElement => (
     <ViewStoreContext.Provider value={store}>
       <ViewPortRegistryContext.Provider value={registry}>
-        <SessionContext.Provider value={value}>{ui}</SessionContext.Provider>
+        <SessionContext.Provider value={value}>{current}</SessionContext.Provider>
       </ViewPortRegistryContext.Provider>
     </ViewStoreContext.Provider>
   );
@@ -63,6 +66,10 @@ export function renderWithViewer(
     setSession(session) {
       view = sessionViewOf(session);
       store.setIndex(view.index);
+      result.rerender(tree(view));
+    },
+    setUi(next) {
+      current = next;
       result.rerender(tree(view));
     },
   };
@@ -133,6 +140,8 @@ export function stubResizeObserver(): ResizeObserverStub {
 export interface FrameStub {
   /** Runs queued animation frames (and the frames they queue) until none remain. */
   flush(): void;
+  /** Runs the animation frames queued so far (one frame); frames they queue wait for the next call. */
+  step(): void;
   /** requestAnimationFrame calls since the stub was installed. */
   calls(): number;
 }
@@ -152,15 +161,17 @@ export function stubAnimationFrames(): FrameStub {
   vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
     queue.delete(id);
   });
+  const runOne = (): void => {
+    now += 16;
+    const batch = [...queue.values()];
+    queue.clear();
+    for (const callback of batch) callback(now);
+  };
   return {
     flush() {
-      for (let round = 0; round < 60 && queue.size > 0; round += 1) {
-        now += 16;
-        const batch = [...queue.values()];
-        queue.clear();
-        for (const callback of batch) callback(now);
-      }
+      for (let round = 0; round < 60 && queue.size > 0; round += 1) runOne();
     },
+    step: runOne,
     calls: () => calls,
   };
 }
@@ -184,10 +195,22 @@ export function canvasViewport(): HTMLElement {
   return element;
 }
 
+/**
+ * The camera as the screen-space overlay reads it. The camera variables live on the overlay root only (the world
+ * gets a direct transform), so this reads the overlay under `element` (the canvas viewport).
+ */
 export function cameraVars(element: HTMLElement): { tx: string; ty: string; k: string } {
+  const overlay = element.querySelector<HTMLElement>("[data-tv-overlay]");
+  if (overlay === null) throw new Error("no canvas overlay under the element");
   return {
-    tx: element.style.getPropertyValue("--tv-tx"),
-    ty: element.style.getPropertyValue("--tv-ty"),
-    k: element.style.getPropertyValue("--tv-k"),
+    tx: overlay.style.getPropertyValue("--tv-tx"),
+    ty: overlay.style.getPropertyValue("--tv-ty"),
+    k: overlay.style.getPropertyValue("--tv-k"),
   };
+}
+
+export function canvasWorld(): HTMLElement {
+  const element = document.querySelector<HTMLElement>("[data-tv-world]");
+  if (element === null) throw new Error("no canvas world in the document");
+  return element;
 }

@@ -25,6 +25,14 @@
   pointer-events: none;
 }
 
+/* The shared Ruler lays labels out over three viewport widths (one either side), so a pan at the same zoom only
+   translates .rulerInner (CanvasRuler). */
+.rulerSpan {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
 .rulerLabels {
   top: 2px;
   font-variant-numeric: tabular-nums;

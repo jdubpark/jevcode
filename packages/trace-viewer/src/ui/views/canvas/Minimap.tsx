@@ -1,4 +1,4 @@
-import { useMemo, useRef, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 
 import type { CanvasLayout } from "../../../layout/canvas-layout.js";
@@ -10,7 +10,7 @@ import {
   minimapToWorld,
   type MinimapModel,
 } from "../../../layout/canvas-minimap.js";
-import { screenToWorld, type Point, type Size } from "../../../layout/viewport.js";
+import { screenToWorld, type Point, type Rect, type Size, type UniformCamera } from "../../../layout/viewport.js";
 import type { CameraStore } from "./canvas-camera.js";
 import styles from "./chrome.module.css";
 
@@ -31,21 +31,70 @@ const MARK_CLASS: { readonly [K in MinimapModel["frames"][number]["mark"]]: stri
   noise: styles.miniNoise,
 };
 
-/** A 140 × 84 SVG derived from the layout (spec §7.5 "Minimap"); pointer-only, so it is aria-hidden. */
+function viewportWorld(camera: UniformCamera, viewport: Size): Rect {
+  const topLeft = screenToWorld(camera, { x: 0, y: 0 });
+  const bottomRight = screenToWorld(camera, { x: viewport.w, y: viewport.h });
+  return { x: topLeft.x, y: topLeft.y, w: bottomRight.x - topLeft.x, h: bottomRight.y - topLeft.y };
+}
+
+/** The viewport outline in minimap px under a (static) model's scale and origin. */
+function outlineRect(model: MinimapModel, world: Rect): Rect {
+  return {
+    x: (world.x - model.origin.x) * model.scale,
+    y: (world.y - model.origin.y) * model.scale,
+    w: Math.max(2, world.w * model.scale),
+    h: Math.max(2, world.h * model.scale),
+  };
+}
+
+function writeOutline(element: SVGRectElement | null, rect: Rect): void {
+  if (element === null) return;
+  element.setAttribute("x", String(rect.x));
+  element.setAttribute("y", String(rect.y));
+  element.setAttribute("width", String(rect.w));
+  element.setAttribute("height", String(rect.h));
+}
+
+/**
+ * A 140 × 84 SVG derived from the layout (spec §7.5 "Minimap"); pointer-only, so it is aria-hidden. The frames, edges
+ * and separators are a static model per (layout, selection, critical frames, window); a camera frame only moves the
+ * viewport outline through a ref, with no React render (spec §7.5: per-frame writes hit only the minimap rectangle).
+ * A windowed minimap (session wider than 140 / s) re-windows only when the view's center leaves the window's center
+ * by a quarter span.
+ */
 export function Minimap(props: MinimapProps): React.JSX.Element {
-  const camera = useSyncExternalStore(props.cameraStore.subscribe, props.cameraStore.get);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const outlineRef = useRef<SVGRectElement | null>(null);
   const drag = useRef<Point | null>(null);
-  const { layout, viewport, selectedKey, criticalKeys } = props;
-  const model = useMemo(() => {
-    const topLeft = screenToWorld(camera, { x: 0, y: 0 });
-    const bottomRight = screenToWorld(camera, { x: viewport.w, y: viewport.h });
-    return buildMinimap(layout, {
-      viewportWorld: { x: topLeft.x, y: topLeft.y, w: bottomRight.x - topLeft.x, h: bottomRight.y - topLeft.y },
-      selectedKey,
-      criticalKeys,
-    });
-  }, [camera, layout, viewport.w, viewport.h, selectedKey, criticalKeys]);
+  const { layout, viewport, selectedKey, criticalKeys, cameraStore } = props;
+  const centerOf = (camera: UniformCamera): number => {
+    const world = viewportWorld(camera, viewport);
+    return world.x + world.w / 2;
+  };
+  const [windowCenter, setWindowCenter] = useState(() => centerOf(cameraStore.get()));
+  const model = useMemo(
+    // Only the window placement reads the viewport rect here; the outline is written from the live camera below.
+    () => buildMinimap(layout, { viewportWorld: { x: windowCenter, y: 0, w: 0, h: 0 }, selectedKey, criticalKeys }),
+    [layout, windowCenter, selectedKey, criticalKeys],
+  );
+  const modelRef = useRef(model);
+  useLayoutEffect(() => {
+    modelRef.current = model;
+    const apply = (): void => {
+      const camera = cameraStore.get();
+      const current = modelRef.current;
+      const world = viewportWorld(camera, viewport);
+      if (current.window !== null) {
+        const span = current.window.x1 - current.window.x0;
+        const center = world.x + world.w / 2;
+        if (Math.abs(center - windowCenter) >= span / 4) setWindowCenter(center);
+      }
+      writeOutline(outlineRef.current, outlineRect(current, world));
+    };
+    apply();
+    return cameraStore.subscribe(apply);
+  }, [cameraStore, model, viewport, windowCenter]);
+  const initial = outlineRect(model, viewportWorld(cameraStore.get(), viewport));
   const local = (event: React.PointerEvent): Point => {
     const box = svgRef.current?.getBoundingClientRect();
     return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) };
@@ -83,12 +132,13 @@ export function Minimap(props: MinimapProps): React.JSX.Element {
           />
         ))}
         <rect
+          ref={outlineRef}
           data-viewport=""
           className={styles.miniViewport}
-          x={model.viewport.x}
-          y={model.viewport.y}
-          width={Math.max(2, model.viewport.w)}
-          height={Math.max(2, model.viewport.h)}
+          x={initial.x}
+          y={initial.y}
+          width={initial.w}
+          height={initial.h}
           onPointerDown={(event) => {
             event.stopPropagation();
             if (event.button !== 0) return;
