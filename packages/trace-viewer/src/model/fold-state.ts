@@ -83,6 +83,13 @@ export interface StepDraft extends Step {
   label: string | null;
 }
 
+/** A user message that may answer an open decision: the step holding it and its own seq. The step
+ *  is the relaunch's instruction step when the message echoed its agent_started (spec §6.6). */
+export interface PendingAnswer {
+  step: StepDraft;
+  seq: number;
+}
+
 export interface QueueEntry {
   step: StepDraft;
   /** A test_started folded into an enclosing command: its completion must not close the command. */
@@ -111,6 +118,10 @@ export interface TurnDraft {
   terminal: TerminalEvent | null;
   /** A decision row answered or delegated a decision in this turn. */
   decisionAnswered: boolean;
+  /** The turn's instruction item (spec §6.6 "Instruction dedupe"): the step its agent_started
+   *  opened, or the earlier user message that agent_started delivered; null for an implicit turn
+   *  and for a relaunch that delivered a decision answer. */
+  instruction: StepDraft | null;
   lastAgentEvent: NormalizedAgentEventType | null;
   /** Open starts, FIFO per `${family}\u0000${target}`. */
   readonly queues: Map<string, QueueEntry[]>;
@@ -182,6 +193,13 @@ export class FoldState {
   readonly stepById = new Map<StepId, StepDraft>();
   /** Every step that carries a callId (open or closed). */
   readonly stepsByCallId = new Map<string, StepDraft>();
+  /** The latest user message since the last decision row: a candidate decision answer (R25). */
+  pendingAnswer: PendingAnswer | null = null;
+  /** User instruction steps that no agent_started has delivered yet, oldest first (spec §6.6). */
+  readonly undelivered: StepDraft[] = [];
+  /** Trimmed text of an absorbed decision answer -> its decision step and title, for a relaunch
+   *  that delivers the answer after the answer row (spec §6.6). */
+  readonly answeredPrompts = new Map<string, { step: StepDraft; title: string }>();
   readonly turns: TurnDraft[] = [];
   readonly evidence: EvidenceState = {
     lastHunkKey: new Map(),
@@ -239,6 +257,7 @@ export function openTurn(
     stepIds: [],
     terminal: null,
     decisionAnswered: false,
+    instruction: null,
     lastAgentEvent: null,
     queues: new Map(),
     commands: new Map(),
@@ -326,4 +345,15 @@ export function addRowToStep(step: StepDraft, ctx: RowContext, evidence: boolean
 export function setKind(step: StepDraft, kind: StepKind): void {
   step.kind = kind;
   step.lane = KIND_META[kind].lane;
+}
+
+/** Drops a step from the fold: a user message absorbed into a decision step (R25). */
+export function removeStep(state: FoldState, step: StepDraft): void {
+  const index = state.steps.indexOf(step);
+  if (index >= 0) state.steps.splice(index, 1);
+  const queued = state.undelivered.indexOf(step);
+  if (queued >= 0) state.undelivered.splice(queued, 1);
+  state.stepById.delete(step.id);
+  const turn = state.turns[step.turnIndex];
+  if (turn !== undefined) turn.stepIds = turn.stepIds.filter((id) => id !== step.id);
 }

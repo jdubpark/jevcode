@@ -29,7 +29,7 @@ import {
 } from "./fold-state.js";
 import { stepHeadline } from "./format.js";
 import { ENVELOPE_RULES } from "./registry.js";
-import { applySignals, computeCoverage } from "./signals.js";
+import { applySignals, computeCoverage, markTurns } from "./signals.js";
 import {
   TRACE_SCHEMA_VERSION,
   type Gap,
@@ -307,6 +307,7 @@ export function finalize(state: TraceState, options: FinalizeOptions): TraceSess
   }
   steps.sort((a, b) => a.firstSeq - b.firstSeq);
   const stepById = new Map<StepId, Step>(steps.map((step) => [step.id, step]));
+  markTurns(turns, stepById);
 
   const entities = buildEntities(steps, s.evidence.duplicates);
   const chapters = buildChapters(s, steps, stepById, entities);
