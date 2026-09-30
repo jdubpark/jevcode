@@ -1,10 +1,10 @@
 import {
   LANES,
-  type Finding, type FindingId, type Lane, type Severity, type SignalId, type Step, type StepKind, type TraceSession,
+  type Finding, type FindingId, type Lane, type Step, type StepKind, type TraceSession,
   type TurnTrigger, type UnitStableId,
 } from "../model/index.js";
 import type { TimeScale } from "./time-scale.js";
-import { stepTone, worstSeverity, type Tone } from "./tone.js";
+import { anchoredFindings, stepTone, worstSeverity, type Tone } from "./tone.js";
 import type { TraceIndex } from "./trace-index.js";
 
 export type Glyph = "dot" | "ring" | "bar" | "hist" | "wait";
@@ -72,20 +72,10 @@ export interface OverviewIndex {
 
 interface Row { u0: number; u1: number; step: number; glyph: number; tone: number; added: number; removed: number; problem: number; noise: number }
 
-const SEVERITY_RANK: { readonly [S in Severity]: number } = { info: 0, warning: 1, critical: 2 };
-const RULE_RANK: { readonly [K in SignalId]: number } = {
-  claim_contradicted: 0, destructive_command: 1, failing_tests: 2, guardrail_clamp: 3, recovery_arc: 4,
-};
 
+/** The pin's own finding: the first anchored finding in FINDING_ORDER; one that only cites the step never names it. */
 function mostSevere(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): FindingId | null {
-  let best: Finding | null = null;
-  for (const id of step.findingIds) {
-    const f = findingsById.get(id);
-    if (f === undefined) continue;
-    if (best === null || SEVERITY_RANK[f.severity] > SEVERITY_RANK[best.severity]
-      || (f.severity === best.severity && RULE_RANK[f.ruleId] < RULE_RANK[best.ruleId])) best = f;
-  }
-  return best?.id ?? null;
+  return anchoredFindings(step, findingsById)[0]?.id ?? null;
 }
 
 function toMarks(rows: Row[]): LaneMarks {

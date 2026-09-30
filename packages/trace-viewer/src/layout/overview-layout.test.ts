@@ -45,6 +45,19 @@ describe("overview layout on the oauth-like session", () => {
     expect(layout.links[0]).toMatchObject({ fromPin: claimPin?.key, toPin: testPin?.key });
   });
 
+  it("names the evidence pin by its own finding, not by the claim that cites it (anchor rule)", () => {
+    // The fold attaches the claim to its evidence step too (signals.ts); the builder attaches anchors only.
+    const cited = oauthLikeSession();
+    const citedClaim = cited.findings.find((f) => f.ruleId === "claim_contradicted");
+    const failing = cited.findings.find((f) => f.ruleId === "failing_tests");
+    const run = cited.steps.find((s) => s.kind === "test");
+    if (citedClaim === undefined || failing === undefined || run === undefined) throw new Error("fixture changed");
+    run.findingIds.push(citedClaim.id);
+    const p = prepare(cited);
+    const runPin = p.overview.pins.find((pin) => cited.steps[pin.stepIndex]?.id === run.id);
+    expect(runPin?.findingId).toBe(failing.id);
+  });
+
   it("Session level omits noise; Chapter level draws one bar per noise run; problem ticks always survive", () => {
     const session = layoutOverview({ overview: o.overview, camera: o.fit, widthPx: WIDTH, level: "session" });
     expect(session.marks.filter((m) => m.op === "noise")).toHaveLength(0);

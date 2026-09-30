@@ -19,16 +19,13 @@ import {
   type StepKind,
   type TraceSession,
 } from "../../../../../model/index.js";
-import { FINDING_TITLE } from "../../../../inspector/finding-copy.js";
+import { FINDING_TITLE, rowFindingOf } from "../../../../inspector/finding-copy.js";
 import { Graphic } from "../../../../graphics/Graphic.js";
 import { Icon } from "../../../../icons/Icon.js";
 import { KIND_ICON, SIGNAL_ICON } from "../../../../icons/kind-icons.js";
-import { rowFindingOf } from "../row-finding.js";
 import type { FindingBodyProps } from "../Spine.js";
 import styles from "../Spine.module.css";
 import { SelectionFrame } from "./SelectionFrame.js";
-
-const NO_FINDINGS: ReadonlyMap<FindingId, Finding> = new Map();
 
 /** Spec §7.6.3 ROW_GRAPHIC: which kinds show a graphic in the 120 px slot. */
 const ROW_GRAPHIC: { readonly [K in StepKind]: GraphicSpec["kind"] | null } = {
@@ -109,7 +106,7 @@ export function StepRow(props: StepRowProps) {
   const rowFinding = rowFindingOf(session, step, findingsById);
   const finding = rowFinding?.finding ?? null;
   const titled = rowFinding?.titled === true;
-  const tone = stepTone(step, rowFinding?.anchored ?? NO_FINDINGS);
+  const tone = stepTone(step, findingsById);
   const graphicKind = ROW_GRAPHIC[step.kind];
   const picked = graphicKind === null ? null : pickGraphic(step, session);
   const graphic = picked !== null && picked.kind === graphicKind ? picked : null;
