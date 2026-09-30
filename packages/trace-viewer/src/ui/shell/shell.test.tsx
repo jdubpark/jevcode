@@ -15,6 +15,7 @@ import type { ViewDefinition } from "../views/view-port.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useAnnounce } from "./LiveRegion.js";
 import { INITIAL_SELECTION_PAINTED } from "./perf.js";
+import { appendCapped, MAX_REPORTED_ERRORS } from "./Shell.js";
 import { TraceViewer } from "./TraceViewer.js";
 import { ViewSlot } from "./ViewSlot.js";
 
@@ -158,5 +159,37 @@ describe("Shell", () => {
     expect(h.announcements).toEqual(["Live follow paused", "3 new steps"]);
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
     expect(screen.getByRole("status").textContent).toBe("3 new steps");
+  });
+
+  it("does not re-run the open logic when a parent passes a new but equal location", async () => {
+    const bundle = fixtureBundle("oauth");
+    const source = createStaticBundleSource(bundle);
+    const onDiagnostics = vi.fn();
+    const host = { onDiagnostics };
+    const makeLocation = (): ViewerLocation => ({
+      v: 1,
+      sessionId: bundle.session.sessionId,
+      view: "hybrid",
+      level: "chapter",
+      brush: { kind: "session" },
+    });
+    const view = render(<TraceViewer source={source} host={host} location={makeLocation()} />);
+    await waitFor(() => expect(onDiagnostics.mock.calls.length).toBeGreaterThan(0));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    const before = onDiagnostics.mock.calls.length;
+    view.rerender(<TraceViewer source={source} host={host} location={makeLocation()} />);
+    view.rerender(<TraceViewer source={source} host={host} location={makeLocation()} />);
+    expect(onDiagnostics.mock.calls.length).toBe(before);
+  });
+
+  it("caps reported errors at 50, dropping the oldest", () => {
+    let list: readonly string[] = [];
+    for (let i = 0; i < MAX_REPORTED_ERRORS + 10; i += 1) list = appendCapped(list, `e${i}`, MAX_REPORTED_ERRORS);
+    expect(MAX_REPORTED_ERRORS).toBe(50);
+    expect(list).toHaveLength(50);
+    expect(list[0]).toBe("e10");
+    expect(list.at(-1)).toBe("e59");
   });
 });
