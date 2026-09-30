@@ -78,6 +78,8 @@ describe("Shell", () => {
   });
 
   it("marks tv:initial-selection-painted in the first frame after the commit that applies the initial selection", async () => {
+    // Let frames scheduled by earlier tests' viewers drain so their marks do not land in this test.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     performance.clearMarks(INITIAL_SELECTION_PAINTED);
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
