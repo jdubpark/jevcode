@@ -70,6 +70,8 @@ export function zoomToSelection(layout: CanvasLayout, frameKey: string, viewport
   const frame = layout.frameByKey.get(frameKey);
   if (frame === undefined || !hasArea(viewport)) return null;
   const limits = { minK: LEVEL_SPECS[layout.level].minZoom, maxK: SELECTION_MAX_K };
+  // "Rest-edge neighbors" (spec §7.5) excludes the trunk: it is drawn at rest too, but its ends are the first and last
+  // story frames of a whole turn, so following it would fit the turn rather than the selection's own relations.
   const neighbors = layout.edges
     .filter((edge) => edge.rest && edge.kind !== "trunk" && (edge.from === frameKey || edge.to === frameKey))
     .map((edge) => layout.frameByKey.get(edge.from === frameKey ? edge.to : edge.from))
@@ -149,7 +151,6 @@ export function columnXAt(layout: CanvasLayout, t: number): number {
 
 export interface ShowCameraInput {
   layout: CanvasLayout;
-  scale: TimeScale;
   session: TraceSession;
   index: TraceIndex;
   brush: Brush;
@@ -196,6 +197,8 @@ export function brushForWindow(input: BrushWindowInput): Brush | null {
   const { camera, viewport, session } = input;
   if (!hasArea(viewport)) return null;
   const map = canvasXMap(input.layout, input.scale);
+  // Both binary searches need session.steps sorted by tMs: steps are in seq order and Step.tMs never decreases with
+  // seq (the display clock, spec §6.5).
   const t0 = map.tOf(screenToWorld(camera, { x: 0, y: 0 }).x);
   const t1 = map.tOf(screenToWorld(camera, { x: viewport.w, y: 0 }).x);
   const steps = session.steps;

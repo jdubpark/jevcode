@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
+import type { CanvasEdge } from "../../../layout/canvas-routes.js";
 import { LEVEL_SPECS } from "../../../layout/canvas-levels.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { isInsideInset, worldToScreen, type Size, type UniformCamera } from "../../../layout/viewport.js";
@@ -81,6 +82,30 @@ describe("zoomToSelection", () => {
     const tight = zoomToSelection(layout, claim.key, { w: 400, h: 300 });
     expect(tight?.k).toBeCloseTo((400 - 96) / 224, 6);
   });
+
+  it("does not widen the fit along a trunk edge, which spans a whole turn", () => {
+    const intent = frame((candidate) => candidate.item === "intent");
+    const roomy: Size = { w: 1_400, h: 900 };
+    const trunk: CanvasEdge = {
+      id: "trunk:turn:1",
+      kind: "trunk",
+      from: intent.key,
+      to: claim.key,
+      shape: "comb",
+      lane: null,
+      d: "M0 0",
+      rest: true,
+      tone: "neutral",
+      badge: null,
+      findingId: null,
+    };
+    // The claim card alone fits far past the 1.5 cap; the intent-to-claim union (x 0 to 1016) would give 1.28.
+    expect(zoomToSelection({ ...layout, edges: [trunk] }, claim.key, roomy)?.k).toBe(1.5);
+  });
+
+  it("does nothing for a 0x0 viewport", () => {
+    expect(zoomToSelection(layout, claim.key, { w: 0, h: 0 })).toBeNull();
+  });
 });
 
 describe("revealCamera", () => {
@@ -91,6 +116,14 @@ describe("revealCamera", () => {
     if (moved === null) throw new Error("expected a move");
     expect(moved.k).toBe(1);
     expect(worldToScreen(moved, { x: 2_100, y: 150 })).toEqual({ x: 400, y: 300 });
+  });
+
+  it("reveals a card whose edge is inside the 48 px margin and leaves one exactly at it", () => {
+    const view: Size = { w: 800, h: 600 };
+    expect(revealCamera(camera(0, 0, 1), { x: 40, y: 100, w: 200, h: 100 }, view)).not.toBeNull();
+    expect(revealCamera(camera(0, 0, 1), { x: 48, y: 100, w: 200, h: 100 }, view)).toBeNull();
+    expect(revealCamera(camera(0, 0, 1), { x: 552, y: 100, w: 200, h: 100 }, view)).toBeNull();
+    expect(revealCamera(camera(0, 0, 1), { x: 560, y: 100, w: 200, h: 100 }, view)).not.toBeNull();
   });
 
   it("does nothing for a 0x0 viewport", () => {
@@ -138,6 +171,12 @@ describe("brushForWindow", () => {
     expect(brush).toEqual({ kind: "range", fromSeq: oauth.steps[0]?.firstSeq, toSeq: lastInside?.lastSeq });
   });
 
+  it("writes nothing for a 0x0 viewport", () => {
+    expect(
+      brushForWindow({ layout, scale: canvasScale(oauth), session: oauth, camera: camera(0, 0, 1), viewport: { w: 0, h: 0 } }),
+    ).toBeNull();
+  });
+
   it("writes nothing for an empty window", () => {
     const brush = brushForWindow({
       layout,
@@ -161,6 +200,11 @@ describe("live follow and the N frames badge", () => {
     expect(framesAhead(layout, camera(-150, 0, 1), { w: 600, h: 600 })).toBe(1);
     expect(framesAhead(layout, camera(-464, 0, 1), { w: 600, h: 600 })).toBe(0);
   });
+
+  it("neither pans nor counts for a 0x0 viewport", () => {
+    expect(frontierFollowCamera(layout, camera(0, 12, 1), { w: 0, h: 0 })).toBeNull();
+    expect(framesAhead(layout, camera(-150, 0, 1), { w: 0, h: 0 })).toBe(0);
+  });
 });
 
 describe("showCamera", () => {
@@ -172,7 +216,6 @@ describe("showCamera", () => {
     const view: Size = { w: 800, h: 600 };
     const shown = showCamera({
       layout,
-      scale: canvasScale(oauth),
       session: oauth,
       index,
       brush: { kind: "chapter", anchorSeq: Number(key.slice(3)) },
@@ -188,12 +231,77 @@ describe("showCamera", () => {
     expect(worldToScreen(shown, { x: 752, y: 0 }).x).toBeLessThanOrEqual(view.w);
   });
 
+  it("fits the whole session for a session brush, 48 px from each side", () => {
+    const index = buildTraceIndex(oauth);
+    const view: Size = { w: 1_200, h: 600 };
+    const shown = showCamera({
+      layout,
+      session: oauth,
+      index,
+      brush: { kind: "session" },
+      camera: camera(0, 37, 1),
+      viewport: view,
+      selectionCard: null,
+    });
+    if (shown === null) throw new Error("no camera");
+    expect(shown.k).toBeCloseTo((1_200 - 96) / layout.bounds.w, 9);
+    expect(shown.ty).toBe(37);
+    expect(worldToScreen(shown, { x: layout.bounds.x, y: 0 }).x).toBeCloseTo(48, 9);
+    expect(worldToScreen(shown, { x: layout.bounds.x + layout.bounds.w, y: 0 }).x).toBeCloseTo(1_152, 9);
+  });
+
+  it("centers a range brush's columns and caps k at 1.5", () => {
+    const index = buildTraceIndex(oauth);
+    const step = oauth.steps.find((candidate) => candidate.id === claim.selId);
+    if (step === undefined) throw new Error("no claim step");
+    const view: Size = { w: 800, h: 600 };
+    const shown = showCamera({
+      layout,
+      session: oauth,
+      index,
+      brush: { kind: "range", fromSeq: step.firstSeq, toSeq: step.lastSeq },
+      camera: camera(0, 0, 1),
+      viewport: view,
+      selectionCard: null,
+    });
+    if (shown === null) throw new Error("no camera");
+    // One 224 px column in 800 − 96 px would take k ≈ 3.1; the cap holds it at 1.5, centered.
+    expect(shown.k).toBe(1.5);
+    expect(worldToScreen(shown, { x: claim.card.x + claim.card.w / 2, y: 0 }).x).toBeCloseTo(400, 9);
+  });
+
+  it("reveals the selection without zooming when the fit leaves it off screen", () => {
+    const index = buildTraceIndex(oauth);
+    const view: Size = { w: 1_200, h: 600 };
+    const input = {
+      layout,
+      session: oauth,
+      index,
+      brush: { kind: "session" } as const,
+      camera: camera(0, -2_000, 1),
+      viewport: view,
+    };
+    const fitted = showCamera({ ...input, selectionCard: null });
+    const shown = showCamera({ ...input, selectionCard: linkingTest.card });
+    if (fitted === null || shown === null) throw new Error("no camera");
+    expect(shown.k).toBe(fitted.k);
+    const center = worldToScreen(shown, {
+      x: linkingTest.card.x + linkingTest.card.w / 2,
+      y: linkingTest.card.y + linkingTest.card.h / 2,
+    });
+    expect(center.x).toBeCloseTo(600, 9);
+    expect(center.y).toBeCloseTo(300, 9);
+    // On screen already: the fit stands.
+    expect(showCamera({ ...input, camera: camera(0, 0, 1), selectionCard: linkingTest.card })).toEqual(
+      showCamera({ ...input, camera: camera(0, 0, 1), selectionCard: null }),
+    );
+  });
+
   it("never fits a 0x0 viewport", () => {
     const index = buildTraceIndex(oauth);
     expect(
       showCamera({
         layout,
-        scale: canvasScale(oauth),
         session: oauth,
         index,
         brush: { kind: "session" },
