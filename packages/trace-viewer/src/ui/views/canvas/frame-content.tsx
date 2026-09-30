@@ -20,25 +20,20 @@ import { KIND_ICON } from "../../icons/kind-icons.js";
 import styles from "./Frame.module.css";
 import {
   claimSpanFor,
-  frameEnd,
-  frameFlag,
-  frameFullTitle,
-  frameGraphic,
-  frameIcon,
-  frameStart,
   frameStepRows,
-  frameSteps,
-  frameTitle,
   graphicPhrase,
   planItems,
   STEP_LIST_CAP,
   type FrameContext,
+  type FrameModel,
 } from "./frame-label.js";
 import { CULL_FRAMES } from "./spike-rulings.js";
 
 interface BodyProps {
   frame: CanvasFrame;
   ctx: FrameContext;
+  /** frameModel(frame, ctx, level), derived once per frame by Frame. */
+  model: FrameModel;
   /** The source's now() on the live tick; running bars grow to it (C1a hand-off M-1). */
   nowMs?: number | null;
 }
@@ -55,17 +50,20 @@ function elapsedOf(step: Step, nowMs: number | null | undefined): number | undef
   return step.endTMs === null && nowMs !== null && nowMs !== undefined ? Math.max(0, nowMs - step.startMs) : undefined;
 }
 
+/** A final message keeps its line breaks (.claim is pre-line); every other control character becomes a token. */
+const PROSE = { multiline: true } as const;
+
 /** Agent text renders only as React text nodes; the underline covers text.slice(...span) and is dropped when out of range. */
 function ClaimText({ text, span }: { text: string; span: readonly [number, number] | undefined }): React.JSX.Element {
   if (span === undefined || span[0] < 0 || span[1] > text.length || span[0] >= span[1]) {
-    return <p className={styles.claim}>{displayUntrusted(text)}</p>;
+    return <p className={styles.claim}>{displayUntrusted(text, PROSE)}</p>;
   }
   // displayUntrusted replaces code units one by one, so sanitizing each slice equals slicing the sanitized text.
   return (
     <p className={styles.claim}>
-      {displayUntrusted(text.slice(0, span[0]))}
-      <mark className={styles.span}>{displayUntrusted(text.slice(span[0], span[1]))}</mark>
-      {displayUntrusted(text.slice(span[1]))}
+      {displayUntrusted(text.slice(0, span[0]), PROSE)}
+      <mark className={styles.span}>{displayUntrusted(text.slice(span[0], span[1]), PROSE)}</mark>
+      {displayUntrusted(text.slice(span[1]), PROSE)}
     </p>
   );
 }
@@ -73,7 +71,7 @@ function ClaimText({ text, span }: { text: string; span: readonly [number, numbe
 function PlanBody({ step }: { step: Step | undefined }): React.JSX.Element {
   const text = step?.text ?? "";
   const items = planItems(text);
-  if (items.length === 0) return <p className={styles.plan}>{displayUntrusted(text, { multiline: true })}</p>;
+  if (items.length === 0) return <p className={styles.plan}>{displayUntrusted(text, PROSE)}</p>;
   const shown = items.length > 4 ? items.slice(0, 3) : items;
   return (
     <ol className={styles.checklist} aria-label="Plan">
@@ -192,11 +190,16 @@ function StepList({ steps }: { steps: readonly Step[] }): React.JSX.Element {
 }
 
 /** The chapter's last owned test or check run: the one its TestDots summarize. */
-function testRunOf(frame: CanvasFrame, ctx: FrameContext): Step | undefined {
+function testRunOf({ frame, ctx, model }: BodyProps): Step | undefined {
   const chapter = ctx.chapterById.get(frame.selId);
   const shared = new Set(chapter?.validationOnlyStepIds ?? []);
-  const runs = frameSteps(frame, ctx).filter((step) => step.tests !== undefined);
+  const runs = model.steps.filter((step) => step.tests !== undefined);
   return runs.filter((step) => !shared.has(step.id)).at(-1) ?? runs.at(-1);
+}
+
+/** Spec §7.12 DurationBar: a failed test or check ends in a red dot. */
+function runEnd(run: Step): "bad_dot" | "none" {
+  return (run.kind === "test" || run.kind === "check") && run.status === "failed" ? "bad_dot" : "none";
 }
 
 function TestsGraphic({ spec, run, nowMs }: { spec: Extract<GraphicSpec, { kind: "tests" }>; run: Step | undefined; nowMs?: number | null }): React.JSX.Element {
@@ -222,13 +225,14 @@ function TestsGraphic({ spec, run, nowMs }: { spec: Extract<GraphicSpec, { kind:
       {run === undefined ? null : (
         <div className={styles.meta}>
           <Icon name="term" size={14} className={styles.icon} />
-          <span className={styles.bar}>
+          {/* The run's bar is part of the graphic: hidden below GRAPHIC_MIN_K with the dots (spec §7.5). */}
+          <span className={styles.bar} data-part="graphic">
             <DurationBar
               size="sm"
               durationMs={run.durationMs}
               running={run.endTMs === null}
               elapsedMs={elapsedOf(run, nowMs)}
-              end="none"
+              end={runEnd(run)}
             />
           </span>
           <span className={styles.spacer} />
@@ -256,11 +260,11 @@ function EditSummary({ steps }: { steps: readonly Step[] }): React.JSX.Element |
 }
 
 /** The frame's mini graphic at card scale; hidden below GRAPHIC_MIN_K by the zoom band. */
-function GraphicPart({ frame, ctx, nowMs }: BodyProps): React.JSX.Element | null {
-  const graphic = frameGraphic(frame, ctx);
+function GraphicPart(props: BodyProps): React.JSX.Element | null {
+  const graphic = props.model.graphic;
   if (graphic === null) return null;
-  // Tests keep their counts and duration as text below GRAPHIC_MIN_K; only the dots are the graphic part.
-  if (graphic.kind === "tests") return <TestsGraphic spec={graphic} run={testRunOf(frame, ctx)} nowMs={nowMs} />;
+  // Tests keep their counts and duration as text below GRAPHIC_MIN_K; the dots and the run's bar are the graphic part.
+  if (graphic.kind === "tests") return <TestsGraphic spec={graphic} run={testRunOf(props)} nowMs={props.nowMs} />;
   const body = graphic.kind === "fork" ? <OptionFork spec={graphic} /> : <Graphic spec={graphic} size="sm" />;
   return (
     <div className={styles.graphic} data-part="graphic" data-graphic={graphic.kind}>
@@ -269,17 +273,26 @@ function GraphicPart({ frame, ctx, nowMs }: BodyProps): React.JSX.Element | null
   );
 }
 
-function SessionChip({ frame, ctx }: BodyProps): React.JSX.Element {
-  const flag = frameFlag(frame, ctx);
+function SessionChip({ model }: BodyProps): React.JSX.Element {
+  const flag = model.flag;
   return (
     <>
-      <Icon name={frameIcon(frame, ctx)} size={14} className={styles.icon} />
-      <span className={styles.chipTitle} title={frameFullTitle(frame, ctx)}>
-        {frameTitle(frame, ctx)}
+      <Icon name={model.icon} size={14} className={styles.icon} />
+      <span className={styles.chipTitle} title={model.fullTitle}>
+        {model.title}
       </span>
       {flag === "failed" ? <span className={styles.flagWord}>✕</span> : null}
-      {flag === "neq" ? <Icon name="neq" size={12} className={styles.flagBad} /> : null}
-      {flag === "shield" ? <Icon name="shield" size={12} className={styles.flagBad} /> : null}
+      {flag === "neq" ? (
+        <span className={styles.flagBad} data-flag="neq">
+          <Icon name="neq" size={12} />
+        </span>
+      ) : null}
+      {/* Neutral like the Outline's: a bad clamp already reads "failed" (frameFlag). */}
+      {flag === "shield" ? (
+        <span className={styles.flagIcon} data-flag="shield">
+          <Icon name="shield" size={12} />
+        </span>
+      ) : null}
     </>
   );
 }
@@ -288,13 +301,13 @@ function decidedByWord(decidedBy: "supervisor" | "delegated" | undefined): strin
   return decidedBy === "delegated" ? "Delegated" : decidedBy === "supervisor" ? "Supervisor" : "Open";
 }
 
-function DecisionBody({ frame, ctx }: BodyProps): React.JSX.Element {
-  const step = ctx.stepById.get(frame.selId);
+function DecisionBody(props: BodyProps): React.JSX.Element {
+  const step = props.ctx.stepById.get(props.frame.selId);
   const decidedBy = step?.decision?.decidedBy;
   const answered = step !== undefined && decidedBy !== undefined;
   return (
     <>
-      <GraphicPart frame={frame} ctx={ctx} />
+      <GraphicPart {...props} />
       <div className={styles.meta}>
         <Icon name="person" size={14} className={styles.icon} />
         <span>{decidedByWord(decidedBy)}</span>
@@ -307,11 +320,11 @@ function DecisionBody({ frame, ctx }: BodyProps): React.JSX.Element {
   );
 }
 
-function LooseBody({ frame, ctx }: BodyProps): React.JSX.Element {
+function LooseBody({ frame, ctx, model }: BodyProps): React.JSX.Element {
   const step = ctx.stepById.get(frame.selId);
   if (step === undefined) return <></>;
   // The label above the card already reads the headline; the card shows the outcome.
-  const graphic = frameGraphic(frame, ctx);
+  const graphic = model.graphic;
   if (graphic?.kind === "tests") {
     return (
       <div className={styles.row}>
@@ -333,8 +346,8 @@ function LooseBody({ frame, ctx }: BodyProps): React.JSX.Element {
 }
 
 /** Step level header: one line with the xs graphic and its phrase above the step list. */
-function StepHeader({ frame, ctx }: BodyProps): React.JSX.Element {
-  const graphic = frameGraphic(frame, ctx);
+function StepHeader({ model }: BodyProps): React.JSX.Element {
+  const graphic = model.graphic;
   return (
     <div className={styles.header}>
       {graphic === null ? null : (
@@ -347,26 +360,44 @@ function StepHeader({ frame, ctx }: BodyProps): React.JSX.Element {
   );
 }
 
-function ChapterBody({ frame, ctx, level, expanded, nowMs }: FrameContentProps): React.JSX.Element {
-  const steps = frameSteps(frame, ctx);
+/** Sparse frames (C3-6 ruling): compact rows (kind icon, headline, offset) under a graphic that leaves the card empty. */
+function FillRows({ steps }: { steps: readonly Step[] }): React.JSX.Element | null {
+  if (steps.length === 0) return null;
+  return (
+    <ol className={styles.fill} data-part="fill" aria-label="Recent steps">
+      {steps.map((step) => (
+        <li key={step.id} className={styles.fillRow}>
+          <Icon name={KIND_ICON[step.kind]} size={12} className={styles.icon} />
+          <StepText step={step} />
+          <span className={styles.offset}>{formatOffset(step.tMs)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function ChapterBody(props: FrameContentProps): React.JSX.Element {
+  const { frame, ctx, model, level, expanded } = props;
+  const steps = model.steps;
   if (level === "step") {
     return (
       <>
-        <StepHeader frame={frame} ctx={ctx} />
+        <StepHeader {...props} />
         <StepList steps={steps} />
       </>
     );
   }
   if (expanded) return <StepList steps={steps} />;
-  const graphic = frameGraphic(frame, ctx);
+  const graphic = model.graphic;
   const summary = graphic !== null && graphic.kind !== "diff" && graphic.kind !== "tests";
   const chapter = ctx.chapterById.get(frame.selId);
   // The span of the chapter and its steps: unit timestamps alone are often a single instant.
-  const spanMs = frameEnd(frame, ctx) - frameStart(frame, ctx);
+  const spanMs = model.end - model.start;
   return (
     <>
-      <GraphicPart frame={frame} ctx={ctx} nowMs={nowMs} />
+      <GraphicPart {...props} />
       {summary || graphic === null ? <EditSummary steps={steps} /> : null}
+      <FillRows steps={model.fill} />
       {graphic?.kind === "tests" || chapter === undefined ? null : (
         <div className={`${styles.meta} ${styles.foot}`}>
           {spanMs > 0 ? (
@@ -384,28 +415,24 @@ function ChapterBody({ frame, ctx, level, expanded, nowMs }: FrameContentProps):
 }
 
 export function FrameContent(props: FrameContentProps): React.JSX.Element {
-  const { frame, ctx, level } = props;
-  if (level === "session") return <SessionChip frame={frame} ctx={ctx} />;
+  const { frame, ctx, level, model } = props;
+  if (level === "session") return <SessionChip {...props} />;
   const step = ctx.stepById.get(frame.selId);
   switch (frame.item) {
     case "intent":
     case "instruction":
-      return <p className={styles.prompt}>{displayUntrusted(step?.text ?? step?.headline ?? "", { multiline: true })}</p>;
+      return <p className={styles.prompt}>{displayUntrusted(step?.text ?? step?.headline ?? "", PROSE)}</p>;
     case "plan":
       return <PlanBody step={step} />;
     case "claim":
       return <ClaimText text={step?.text ?? ""} span={step === undefined ? undefined : claimSpanFor(step, ctx)} />;
     case "decision":
-      return <DecisionBody frame={frame} ctx={ctx} />;
+      return <DecisionBody {...props} />;
     case "noise":
-      return <EditSummary steps={frameSteps(frame, ctx)} />;
+      return <EditSummary steps={model.steps} />;
     case "loose":
-      return <LooseBody frame={frame} ctx={ctx} />;
+      return <LooseBody {...props} />;
     case "chapter":
-      return frame.kind === "noise" ? (
-        <EditSummary steps={frameSteps(frame, ctx)} />
-      ) : (
-        <ChapterBody {...props} />
-      );
+      return frame.kind === "noise" ? <EditSummary steps={model.steps} /> : <ChapterBody {...props} />;
   }
 }

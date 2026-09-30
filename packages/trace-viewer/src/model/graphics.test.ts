@@ -171,7 +171,7 @@ describe("pickGraphic: chapters follow CHAPTER_GRAPHIC", () => {
     });
   });
 
-  it("draws a chapter with an answered decision as a fork", () => {
+  it("draws a decision-born chapter with an answered decision as a fork where the decision is not shown", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     b.fact(hunk("src/link.ts", 6, 1));
@@ -186,7 +186,10 @@ describe("pickGraphic: chapters follow CHAPTER_GRAPHIC", () => {
     b.unit({ id: "cu_linked", files: ["src/link.ts"], relatedDecisions: ["dec-1"] });
     b.unit({ id: "cu_waiting", files: ["src/link.ts"], relatedDecisions: ["dec-2"] });
     const session = foldRows(testMeta(), b.rows, { live: false });
-    expect(pickGraphic(chapterOf(session, "cu_linked"), session)).toEqual({
+    // Spec §7.12 refinement (C3-6 ruling): the fork shows on the decision-born chapter only where no decision frame
+    // or row beside it already shows it; every list surface shows the decision step, so the default is a DiffBar.
+    expect(pickGraphic(chapterOf(session, "cu_linked"), session)).toMatchObject({ kind: "diff", added: 6, removed: 1 });
+    expect(pickGraphic(chapterOf(session, "cu_linked"), session, { decisionShown: () => false })).toEqual({
       kind: "fork",
       options: [
         { label: "Option A", chosen: false },
@@ -195,6 +198,32 @@ describe("pickGraphic: chapters follow CHAPTER_GRAPHIC", () => {
       decidedBy: "supervisor",
     });
     expect(pickGraphic(chapterOf(session, "cu_waiting"), session)).toMatchObject({ kind: "diff", added: 6, removed: 1 });
+  });
+
+  it("forks only the decision-born chapter, never one that links the decision but predates it", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact(hunk("src/identity.ts", 24, 0));
+    // Like oauth's Identity layer: the decision lists this unit as affected, but the unit comes first.
+    b.unit({ id: "cu_identity", category: "security", files: ["src/identity.ts"] });
+    // Decision rows inherit the agent clock (R25): this message puts the decision after cu_identity.
+    b.agent({ type: "agent_message", role: "assistant", text: "Which linking policy?" });
+    b.decision({ id: "dec-1", title: "Linking policy", affectedChangeUnits: ["cu_identity", "cu_policy"] });
+    b.decision({
+      id: "dec-1",
+      title: "Linking policy",
+      affectedChangeUnits: ["cu_identity", "cu_policy"],
+      status: "answered",
+      answer: { decisionId: "dec-1", decision: { policy: "b" }, evidence: [] },
+    });
+    b.fact(hunk("src/link.ts", 6, 1));
+    b.unit({ id: "cu_policy", category: "security", files: ["src/link.ts"] });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    const hidden = { decisionShown: () => false };
+    expect(chapterOf(session, "cu_identity").decisionIds).toEqual(["decision:dec-1"]);
+    expect(pickGraphic(chapterOf(session, "cu_identity"), session, hidden)).toMatchObject({ kind: "diff", added: 24 });
+    expect(pickGraphic(chapterOf(session, "cu_policy"), session, hidden)).toMatchObject({ kind: "fork" });
+    expect(pickGraphic(chapterOf(session, "cu_policy"), session)).toMatchObject({ kind: "diff", added: 6 });
   });
 
   it("lists a chapter's top 4 files by lines changed and counts the rest", () => {

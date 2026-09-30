@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas, type CanvasFrame } from "../../../layout/canvas-layout.js";
@@ -7,6 +7,7 @@ import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type Level, type TraceSession } from "../../../model/index.js";
 import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
 import { Frame } from "./Frame.js";
+import styles from "./Frame.module.css";
 import { buildFrameContext } from "./frame-label.js";
 
 afterEach(() => {
@@ -155,7 +156,101 @@ describe("Frame", () => {
     const group = screen.getByRole("group");
     expect(group.getAttribute("data-tone")).toBe("bad");
     expect(group.textContent).toContain("1 failed");
-    expect(group.textContent).toContain("14");
+    // The pass count is its own element next to the check mark, not a digit run inside another number.
+    expect(within(group).getByText("14").className).toBe(styles.passCount);
+  });
+
+  it("puts the tests card's duration bar in the graphic part and ends a failed run in a red dot", () => {
+    const { view } = renderFrame(oauthCanvasSession(), (frame) => frame.selId === "unit:oauth-linking-test-failure");
+    const dot = view.container.querySelector('[data-end="bad_dot"]');
+    expect(dot).not.toBeNull();
+    // Below GRAPHIC_MIN_K the zoom band hides every [data-part="graphic"], the run's bar included.
+    expect(dot?.closest('[data-part="graphic"]')).not.toBeNull();
+  });
+
+  it("keeps a multi-line claim's line breaks instead of showing U+000A tokens", () => {
+    for (const flagged of [false, true]) {
+      const session = buildCanvasSession([
+        { atMs: 1_000, kind: "loose" },
+        { atMs: 6_000, kind: "claim", flagged, title: "Done.\nAll checks pass." },
+      ]);
+      renderFrame(session, (frame) => frame.item === "claim");
+      const text = screen.getByRole("group").textContent ?? "";
+      expect(text).toBe("Done.\nAll checks pass.");
+      cleanup();
+    }
+  });
+
+  it("toggles expansion on Enter from the frame itself, not with a modifier or from inside", () => {
+    const { frame, onToggle, view } = renderFrame(oauthCanvasSession(), (candidate) => candidate.item === "decision");
+    const group = screen.getByRole("group");
+    const event = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true });
+    group.dispatchEvent(event);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledWith(frame);
+    expect(event.defaultPrevented).toBe(true);
+    fireEvent.keyDown(group, { key: "Enter", code: "Enter", metaKey: true });
+    fireEvent.keyDown(group, { key: "Enter", code: "Enter", shiftKey: true });
+    fireEvent.keyDown(group, { key: " ", code: "Space" });
+    const inner = view.container.querySelector("li");
+    if (inner === null) throw new Error("no option row");
+    fireEvent.keyDown(inner, { key: "Enter", code: "Enter" });
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws the decision's fork on the decision frame only; the identity chapter lists its files", () => {
+    const identity = renderFrame(oauthCanvasSession(), (frame) => frame.selId === "unit:oauth-identity-layer");
+    expect(identity.view.container.querySelector('[data-graphic="fork"]')).toBeNull();
+    expect(identity.view.container.querySelectorAll("[data-file]")).toHaveLength(4);
+    cleanup();
+    const policy = renderFrame(oauthCanvasSession(), (frame) => frame.selId === "unit:oauth-account-linking-decision");
+    expect(policy.view.container.querySelector('[data-graphic="fork"]')).toBeNull();
+    cleanup();
+    const decision = renderFrame(oauthCanvasSession(), (frame) => frame.item === "decision");
+    expect(decision.view.container.querySelector('[data-graphic="fork"]')).not.toBeNull();
+  });
+
+  it("fills a sparse chapter card with up to three compact step rows, newest problem first", () => {
+    const session = oauthCanvasSession();
+    const dependency = renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency");
+    const fill = dependency.view.container.querySelector('[data-part="fill"]');
+    const rows = [...(fill?.querySelectorAll("li") ?? [])];
+    // Two steps, newest first: the package.json edit, then the dependency it added.
+    expect(rows.map((row) => row.textContent)).toEqual(["package.json+0:20", "+google-auth-library+0:14"]);
+    expect(rows.every((row) => row.querySelector("svg use") !== null)).toBe(true);
+    cleanup();
+    // A four-file list already fills the Identity card; the tests card is full too.
+    const identity = renderFrame(session, (frame) => frame.selId === "unit:oauth-identity-layer");
+    expect(identity.view.container.querySelector('[data-part="fill"]')).toBeNull();
+    cleanup();
+    const tests = renderFrame(session, (frame) => frame.selId === "unit:oauth-linking-test-failure");
+    expect(tests.view.container.querySelector('[data-part="fill"]')).toBeNull();
+    cleanup();
+    // Step level shows the whole list instead.
+    const atStep = renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency", { level: "step" });
+    expect(atStep.view.container.querySelector('[data-part="fill"]')).toBeNull();
+  });
+
+  it("fills with sanitized headlines", () => {
+    const session: TraceSession = structuredClone(oauthCanvasSession());
+    const added = session.steps.find((step) => step.id === "step:12");
+    if (added === undefined) throw new Error("no dependency step");
+    added.headline = "pnpm add \u202Eevil";
+    renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency");
+    const text = screen.getByRole("group").textContent ?? "";
+    expect(text).toContain(displayUntrusted("pnpm add \u202Eevil"));
+    expect(text).not.toContain("\u202E");
+  });
+
+  it("keeps a Session chip's guardrail shield neutral when no clamp step is bad", () => {
+    const session: TraceSession = structuredClone(oauthCanvasSession());
+    const chapter = session.chapters.find((candidate) => candidate.id === "unit:oauth-dependency");
+    if (chapter === undefined) throw new Error("no chapter");
+    chapter.clampIds = ["clamp-1"];
+    const { view } = renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency", { level: "session" });
+    const shield = view.container.querySelector('[data-flag="shield"]');
+    expect(shield).not.toBeNull();
+    expect(shield?.getAttribute("class")).not.toContain(styles.flagBad);
   });
 
   it("lists the plan's items", () => {

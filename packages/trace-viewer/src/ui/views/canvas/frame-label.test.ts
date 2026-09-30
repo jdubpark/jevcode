@@ -9,12 +9,14 @@ import {
   frameApprox,
   frameEnd,
   frameFullTitle,
+  frameGraphic,
   frameLabel,
   frameStart,
   frameStepRows,
   frameTitle,
   frameTone,
   graphicPhrase,
+  fillSteps,
   planItems,
   timeChip,
   zoomBand,
@@ -199,5 +201,38 @@ describe("frameStepRows", () => {
     expect(seqs(rows).slice(-5)).toEqual([17, 18, 19, 20, 21]);
     const shown = rows.reduce((sum, row) => sum + (row.t === "band" ? row.count : 1), 0);
     expect(shown).toBe(steps.length);
+  });
+});
+
+describe("chapter fork (spec §7.12 refinement, C3-6 ruling)", () => {
+  it("draws oauth's fork only on the decision frame; the identity chapter shows its file list", () => {
+    const forks = layout.frames.filter((f) => frameGraphic(f, ctx)?.kind === "fork").map((f) => f.item);
+    expect(forks).toEqual(["decision"]);
+    const identity = frameGraphic(frame((f) => f.selId === "unit:oauth-identity-layer"), ctx);
+    expect(identity?.kind).toBe("diff");
+    expect(identity?.kind === "diff" ? identity.files?.map((file) => file.path) : null).toEqual([
+      "src/auth/google.ts",
+      "src/auth/identity.ts",
+      "src/auth/service.ts",
+      "src/server/index.ts",
+    ]);
+    // The decision-born chapter sits under its decision frame, which already shows the fork.
+    expect(frameGraphic(frame((f) => f.selId === "unit:oauth-account-linking-decision"), ctx)?.kind).toBe("diff");
+  });
+});
+
+describe("fillSteps (sparse frames, C3-6 ruling)", () => {
+  function stepOf(id: string): Step {
+    const step = ctx.stepById.get(id);
+    if (step === undefined) throw new Error(`no ${id}`);
+    return step;
+  }
+
+  it("takes up to n steps, problem steps first and newest first", () => {
+    const steps = ["step:1", "step:41", "step:43", "step:49"].map(stepOf);
+    // step:43 (failed test) and step:49 (contradicted claim) are the problems.
+    expect(fillSteps(steps, 3).map((step) => step.id)).toEqual(["step:49", "step:43", "step:41"]);
+    expect(fillSteps(steps, 0)).toEqual([]);
+    expect(fillSteps(steps.slice(0, 2), 3).map((step) => step.id)).toEqual(["step:41", "step:1"]);
   });
 });

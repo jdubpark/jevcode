@@ -1347,6 +1347,8 @@ Commands use `term` (not the mockups' boxed `cmd`); schema chapters use `table` 
 
 `CHAPTER_GRAPHIC` takes the first rule that matches, in this order: `schema` → TableGlyph; `architecture`, `api` → FlowGlyph; `tests` → TestDots; a chapter with an answered decision → ForkGlyph; everything else → DiffBar.
 
+**Refinement from lane C3b (C3-6 ruling):** the ForkGlyph rule applies only to the chapter born from the decision (the first current, non-noise chapter of the decision's turn that lists it and starts at or after it) and only when no decision frame or row at the same level already shows that fork; otherwise the chapter falls through to DiffBar. Canvas decision frames, Outline decision rows and spine decision rows always show it, so there chapters take DiffBar; the Inspector, which shows one chapter alone, keeps the fork for the decision-born chapter (`pickGraphic(…, { decisionShown })`). On oauth only the decision frame draws a fork, and the Identity layer chapter lists its four files. Chapter cards keep their fixed §7.5 heights; a Chapter-level chapter card whose graphic leaves its body empty fills it with up to 3 compact step rows (kind icon, headline through `displayUntrusted`, offset), problem steps first, newest first.
+
 ### 7.13 Accessibility
 
 - Landmarks `header`, `nav`, `main`, `aside`; the Inspector is a panel, not a dialog. One polite `aria-live` region carries view switches, "Live follow paused", new-step counts, findings and copy confirmations.
