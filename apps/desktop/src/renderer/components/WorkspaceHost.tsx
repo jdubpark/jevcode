@@ -339,7 +339,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   const [composer, dispatchComposer] = useReducer(composerReducer, sessionId, initialComposer);
   const instruction = composer.draft;
   const traceNote = composer.held;
-  const focusRequest = composer.focus;
+  const focusPending = composer.focusPending;
   const setInstruction = (draft: string) => dispatchComposer({ type: "edit", draft });
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [sending, setSending] = useState(false);
@@ -381,14 +381,18 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   }, [bridge]);
 
   useEffect(() => {
-    if (focusRequest === 0) return;
+    // Consumes a pending request once the textarea is enabled: a note that
+    // arrived during a send takes focus when the send settles, and unrelated
+    // renders never do.
+    if (!focusPending) return;
     const composer = composerRef.current;
     if (composer === null || composer.disabled) return;
     composer.focus();
     const end = composer.value.length;
     composer.setSelectionRange(end, end);
     composer.scrollTop = composer.scrollHeight;
-  }, [focusRequest]);
+    dispatchComposer({ type: "focusDone" });
+  }, [focusPending, sending, sessionId]);
 
   useEffect(() => {
     const element = workspaceEl;

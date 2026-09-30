@@ -179,4 +179,37 @@ PENDING human checks for the M5 exit (all deferred by the person on 2026-09-30; 
 | Check | Status | Exact steps |
 |---|---|---|
 | Live tick p95 on the dev host | PENDING — deferred by the person on 2026-09-30; revisit before the M5 exit | From the repository root: `pnpm --filter jevcode-trace-viewer-dev build && pnpm --filter jevcode-trace-viewer-dev exec vite preview --port 4179 --strictPort`. In Chrome on the reference machine open `http://localhost:4179/?bundle=soak&perf=1&drip=20,1000,-2000`, stay in Live for at least 6 minutes (300 ticks or more) and read the HUD's `tv:live-tick` p95 and sample count. Budget: p95 ≤ 16 ms. Stop `vite preview` afterwards. To regenerate the bundle: `JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_EXPORT="$PWD/apps/trace-viewer-dev/public/bundles/soak.json" node scripts/soak.mjs` (about 18 minutes). |
-| Manual live session on the mock adapter (items 1 to 7) | PENDING — deferred by the person on 2026-09-30; revisit before the M5 exit | Prepare: `REPO="${TMPDIR:-/tmp}/jevcode-m5-repo"; rm -rf "$REPO" && cp -R fixtures/rate-limit/repo "$REPO"; git -C "$REPO" init -q && git -C "$REPO" add -A && git -C "$REPO" -c user.name=m5 -c user.email=m5@example.invalid commit -qm seed; rm -f "${TMPDIR:-/tmp}/jevcode-m5-live.db"*; pnpm --filter jevcode-desktop build && pnpm --filter jevcode-desktop run rebuild`. Start: `JEVC_AGENT=mock JEVCODE_TRACE_PERF=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-m5-live.db" pnpm --filter jevcode-desktop start 2>&1 \| tee "${TMPDIR:-/tmp}/jevcode-m5-live.log"`. Open `$REPO`, start the task "Add a Redis-backed rate limiter to the API server and make it fail open when Redis is unavailable.", press **Trace** while it runs, and confirm: (1) the trace window opens light with no dark flash, at least 1000 px wide, in Live, and new steps appear within about a second; (2) selecting an earlier row switches to Review ("Live follow paused" once), later appends raise "N new", the selected row stays in place and keyboard focus never moves; (3) `G` or the "N new" pill returns to the live edge and Live resumes; (4) pressing **Trace** again focuses the same trace window, also when minimized, and no second window opens; (5) **Request changes** on a step focuses the main window, the composer holds the prior draft plus the note on a new line with the caret at the end and the Steer/Queue choice unchanged, and nothing is sent until the button is pressed; (6) when the agent completes, the trace window shows the session as ended and Live is disabled; (7) closing the main window closes the trace window. Quit the app, then: `node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").split("\n");const t=l.filter(x=>x.startsWith("TRACE_PERF tv:live-tick ")).map(x=>Number(x.split(" ")[2])).sort((a,b)=>a-b);console.log("trace window live tick p95",t.length===0?NaN:t[Math.max(0,Math.ceil(t.length*0.95)-1)],"ms over",t.length,"samples")' "${TMPDIR:-/tmp}/jevcode-m5-live.log"`, then `grep -c "SMOKE_FAIL\|rejected:" "${TMPDIR:-/tmp}/jevcode-m5-live.log"` (expect `0`), then `pnpm --filter jevcode-desktop rebuild:node` (expect `native modules restored to node ABI`; restore node-pty's `build/Release/pty.node` and `spawn-helper` from its prebuilds if missing). A short mock session gives fewer than 300 samples; record the count. |
+| Manual live session on the mock adapter (items 1 to 7) | PENDING — deferred by the person on 2026-09-30; revisit before the M5 exit | Steps 1 to 4 below the table (prepare, start, confirm items 1 to 7, check the log and restore the Node ABI). A short mock session gives fewer than 300 samples; record the count. |
+
+Manual live session steps (run each block in the repository root; `LOG` must be set in the shell that runs blocks 2 and 4):
+
+1. Prepare:
+
+```sh
+REPO="${TMPDIR:-/tmp}/jevcode-m5-repo"
+rm -rf "$REPO" && cp -R fixtures/rate-limit/repo "$REPO"
+git -C "$REPO" init -q && git -C "$REPO" add -A
+git -C "$REPO" -c user.name=m5 -c user.email=m5@example.invalid commit -qm seed
+rm -f "${TMPDIR:-/tmp}/jevcode-m5-live.db"*
+pnpm --filter jevcode-desktop build && pnpm --filter jevcode-desktop run rebuild
+```
+
+2. Start (output goes to the log file, not the terminal):
+
+```sh
+LOG="${TMPDIR:-/tmp}/jevcode-m5-live.log"
+JEVC_AGENT=mock JEVCODE_TRACE_PERF=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-m5-live.db" pnpm --filter jevcode-desktop start > "$LOG" 2>&1
+```
+
+3. Open `$REPO`, start the task "Add a Redis-backed rate limiter to the API server and make it fail open when Redis is unavailable.", press **Trace** while it runs, and confirm: (1) the trace window opens light with no dark flash, at least 1000 px wide, in Live, and new steps appear within about a second; (2) selecting an earlier row switches to Review ("Live follow paused" once), later appends raise "N new", the selected row stays in place and keyboard focus never moves; (3) `G` or the "N new" pill returns to the live edge and Live resumes; (4) pressing **Trace** again focuses the same trace window, also when minimized, and no second window opens; (5) **Request changes** on a step focuses the main window, the composer holds the prior draft plus the note on a new line with the caret at the end and the Steer/Queue choice unchanged, and nothing is sent until the button is pressed; (6) when the agent completes, the trace window shows the session as ended and Live is disabled; (7) closing the main window closes the trace window.
+
+4. Quit the app, then:
+
+```sh
+LOG="${TMPDIR:-/tmp}/jevcode-m5-live.log"
+node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").split("\n");const t=l.filter(x=>x.startsWith("TRACE_PERF tv:live-tick ")).map(x=>Number(x.split(" ")[2])).sort((a,b)=>a-b);console.log("trace window live tick p95",t.length===0?NaN:t[Math.max(0,Math.ceil(t.length*0.95)-1)],"ms over",t.length,"samples")' "$LOG"
+grep -c -e SMOKE_FAIL -e 'rejected:' "$LOG"   # expect 0
+pnpm --filter jevcode-desktop rebuild:node    # expect: native modules restored to node ABI
+```
+
+If `rebuild:node` leaves node-pty without `build/Release/pty.node` and `spawn-helper`, restore both from its prebuilds.

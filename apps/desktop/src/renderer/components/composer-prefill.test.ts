@@ -69,7 +69,7 @@ describe("composerReducer", () => {
       { type: "prefill", payload: note("s1") },
     );
     expect(next.draft).toBe("draft\nnote");
-    expect(next.focus).toBe(1);
+    expect(next.focusPending).toBe(true);
     expect(next.held).toBeNull();
   });
 
@@ -81,7 +81,7 @@ describe("composerReducer", () => {
     const switched = composerReducer(held, { type: "sessionChanged", sessionId: "s2" });
     expect(switched.draft).toBe("note");
     expect(switched.held).toBeNull();
-    expect(switched.focus).toBe(1);
+    expect(switched.focusPending).toBe(true);
   });
 
   it("keeps the held note when the session changes to a third session", () => {
@@ -110,6 +110,25 @@ describe("composerReducer", () => {
     const withNote = composerReducer(sending, { type: "prefill", payload: note("s1", NOTE) });
     const after = composerReducer(withNote, { type: "sent", text: "fix it" });
     expect(after.draft).toBe(NOTE);
+  });
+
+  it("keeps the focus request from a note that arrived during a send until the view consumes it", () => {
+    const sending = composerReducer(start, { type: "edit", draft: "fix it" });
+    const withNote = composerReducer(sending, { type: "prefill", payload: note("s1", NOTE) });
+    const after = composerReducer(withNote, { type: "sent", text: "fix it" });
+    expect(after.focusPending).toBe(true);
+    const consumed = composerReducer(after, { type: "focusDone" });
+    expect(consumed.focusPending).toBe(false);
+    expect(consumed.draft).toBe(NOTE);
+  });
+
+  it("requests no focus for edits, sends, dismissals or a held note", () => {
+    const edited = composerReducer(start, { type: "edit", draft: "fix it" });
+    expect(edited.focusPending).toBe(false);
+    expect(composerReducer(edited, { type: "sent", text: "fix it" }).focusPending).toBe(false);
+    const held = composerReducer(start, { type: "prefill", payload: note("s2") });
+    expect(held.focusPending).toBe(false);
+    expect(composerReducer(held, { type: "dismiss" }).focusPending).toBe(false);
   });
 
   it("clears the draft when nothing arrived during the send", () => {
