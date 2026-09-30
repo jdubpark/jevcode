@@ -7,6 +7,7 @@ import {
   buildOutlineRows,
   DEFAULT_OPEN_SECTIONS,
   FILE_TITLE_MAX,
+  fileTitleBudget,
   searchMatches,
   type OutlineItemRow,
   type OutlineRow,
@@ -151,8 +152,23 @@ describe("buildOutlineRows", () => {
     const migration = rows.find((row) => row.hint === "migrations/001_create_identities.sql");
     // "001_create_identities.sql" is too long for the 216 px column: the extension must survive.
     expect(migration?.title).toMatch(/^001_.*….*\.sql$/u);
-    expect(migration?.title.length).toBeLessThanOrEqual(FILE_TITLE_MAX);
+    expect(migration?.title.length).toBeLessThanOrEqual(FILE_TITLE_MAX + (migration?.flag === "shield" ? 0 : 2));
     expect(migration?.label.startsWith("migrations/001_create_identities.sql")).toBe(true);
+  });
+
+  it("sizes the Files basename budget to the measured column", () => {
+    // 216 px and 200 px Outline columns (§7.1): 118 px of row chrome, then 12 px mono glyphs.
+    expect(fileTitleBudget(216)).toBe(13);
+    expect(fileTitleBudget(200)).toBe(11);
+    expect(fileTitleBudget(0)).toBe(FILE_TITLE_MAX);
+    const rows = itemsOf(buildOutlineRows(foldFixture("oauth"), { ...ALL_OPEN, fileTitleMax: 11 }), "files");
+    const lock = rows.find((row) => row.hint === "pnpm-lock.yaml");
+    expect(lock?.title).toMatch(/^pnpm.*….*yaml$/u);
+    expect(lock?.title.length).toBe(lock?.flag === "shield" ? 11 : 13);
+    // A row without the shield gains its 20 px: "package.json" (12) fits the 200 px column whole.
+    const pkg = rows.find((row) => row.hint === "package.json");
+    expect(pkg?.flag).toBeNull();
+    expect(pkg?.title).toBe("package.json");
   });
 
   it("folds a decision-born chapter into its decision row with the fork glyph", () => {

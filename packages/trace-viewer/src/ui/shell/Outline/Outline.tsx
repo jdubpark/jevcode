@@ -11,6 +11,7 @@ import { useSessionView } from "../session-context.js";
 import {
   buildOutlineRows,
   DEFAULT_OPEN_SECTIONS,
+  fileTitleBudget,
   searchMatches,
   type OutlineRow,
   type OutlineSection,
@@ -42,14 +43,34 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const [query, setQuery] = useState(search?.query ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
+  const [columnW, setColumnW] = useState(0);
+  const fileTitleMax = fileTitleBudget(columnW);
+
+  // Files basenames are cut in the middle to what the column holds (216 px, 200 px under 1180 px).
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return undefined;
+    const apply = (width: number): void => {
+      if (width > 0) setColumnW(Math.round(width));
+    };
+    apply(element.getBoundingClientRect().width);
+    const Observer = element.ownerDocument.defaultView?.ResizeObserver;
+    if (typeof Observer !== "function") return undefined;
+    const observer = new Observer((entries) => {
+      const entry = entries[0];
+      apply(entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect.width ?? 0);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (search === null) setQuery("");
   }, [search]);
 
   const rows = useMemo<OutlineRow[]>(
-    () => (session === null ? [] : buildOutlineRows(session, { open, showAll })),
-    [session, open, showAll],
+    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax })),
+    [session, open, showAll, fileTitleMax],
   );
   const searchIndex = useMemo(() => (session === null ? null : buildSearchIndex(session)), [session]);
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
