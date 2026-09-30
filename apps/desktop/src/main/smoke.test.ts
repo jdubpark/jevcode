@@ -255,6 +255,18 @@ describe("runSmoke, trace phase", () => {
     missing.trace.emit("did-fail-load", {}, -6, "ERR_FILE_NOT_FOUND");
     expect(missing.err).toEqual(["SMOKE_FAIL: trace window failed to load (-6 ERR_FILE_NOT_FOUND)"]);
   });
+
+  it("strips control characters from Electron-supplied failure reasons", () => {
+    const gone = harness(TRACE_ENV);
+    gone.main.emit("did-finish-load");
+    gone.trace.emit("render-process-gone", {}, { reason: "crashed\nSMOKE_OK" });
+    expect(gone.err).toEqual(["SMOKE_FAIL: trace renderer gone (crashedSMOKE_OK)"]);
+    const missing = harness(TRACE_ENV);
+    missing.main.emit("did-finish-load");
+    missing.trace.emit("did-fail-load", {}, -6, "ERR\r\nSMOKE_OK\u2028");
+    expect(missing.err).toEqual(["SMOKE_FAIL: trace window failed to load (-6 ERRSMOKE_OK)"]);
+    expect(missing.out).toEqual([]);
+  });
 });
 
 describe("smoke helpers", () => {

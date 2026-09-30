@@ -51,7 +51,11 @@ function tempDir(): string {
  * The trace window's view of main: requests pass the toMain zod schemas (as the
  * ipc.ts handle wrapper does), replies are structured-cloned (as IPC does), and
  * the session summary and every row payload pass the bundle's redaction, so both
- * folds see identical strings (spec §8.7).
+ * folds see identical strings (spec §8.7). The redaction happens here, not in the
+ * service: the real trace:* handlers do not redact (stored payloads are redacted
+ * at ingest, spec §4.3), and the service clips payloads at TRACE_CLIP_CHARS while
+ * the bundle does not. Parity holds only because the fixture payloads are below
+ * the clip limit; a longer payload would diverge between the IPC path and the bundle.
  */
 function bridgeOver(
   service: TraceService,

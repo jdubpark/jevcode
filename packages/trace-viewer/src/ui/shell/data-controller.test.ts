@@ -204,6 +204,19 @@ describe("createDataController", () => {
     expect(scheduler.pending()).toBe(0);
   });
 
+  it("a source whose rows() throws synchronously fails the load like a rejection", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(3), { state: "completed" });
+    control.onRows = () => {
+      throw new Error("bridge missing");
+    };
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    expect(controller.get().status.kind).toBe("error");
+    expect(controller.get().session).toBeNull();
+  });
+
   it("yields a macrotask after each page so the first commit can paint before the next page is requested", async () => {
     const scheduler = new FakeScheduler();
     const { source, control } = fakeSource(messageRows(9), { state: "completed" });

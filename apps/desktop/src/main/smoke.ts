@@ -104,7 +104,8 @@ export function runSmoke(deps: SmokeDeps): void {
   function fail(reason: string): void {
     if (finished) return;
     finish();
-    deps.error(`SMOKE_FAIL: ${reason}`);
+    // Page text and Electron-supplied reasons must not forge extra output lines.
+    deps.error(`SMOKE_FAIL: ${reason.replace(CONTROL_CHARS, "")}`);
     deps.fail();
   }
 
@@ -117,7 +118,7 @@ export function runSmoke(deps: SmokeDeps): void {
 
   function watch(window: { webContents: SmokeWebContents }, name: "main" | "trace"): void {
     window.webContents.on("console-message", (_event, level, message) => {
-      if (isConsoleFailure(level, message)) fail(`console error in ${name} window: ${message.replace(CONTROL_CHARS, "")}`);
+      if (isConsoleFailure(level, message)) fail(`console error in ${name} window: ${message}`);
     });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
       fail(`${name} window failed to load (${errorCode} ${errorDescription})`);
