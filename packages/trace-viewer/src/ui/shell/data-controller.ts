@@ -48,6 +48,9 @@ export interface DataControllerOptions {
 
 export const BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000, 10_000];
 
+/** While catching up, a progressive commit waits at least this many times the previous finalize (see requestCommit). */
+export const COMMIT_COST_FACTOR = 4;
+
 export interface DataController {
   start(): void;
   stop(): void;
@@ -129,6 +132,7 @@ export function createDataController(options: DataControllerOptions): DataContro
   let cursor = 0;
   let lastPage: TraceRowsPage | null = null;
   let lastCommitAt = Number.NEGATIVE_INFINITY;
+  let lastCommitCostMs = 0;
   let commitTimer: unknown = null;
   let commitCaughtUp = false;
   let pollTimer: unknown = null;
@@ -168,6 +172,7 @@ export function createDataController(options: DataControllerOptions): DataContro
   function commitNow(caughtUp: boolean): void {
     if (fold === null || lastPage === null) return;
     const page = lastPage;
+    const startedAt = scheduler.now();
     const session = finalize(fold, {
       live: !isTerminalState(page.state),
       state: page.state,
@@ -175,6 +180,7 @@ export function createDataController(options: DataControllerOptions): DataContro
       nowMs: source.now(),
     });
     lastCommitAt = scheduler.now();
+    lastCommitCostMs = lastCommitAt - startedAt;
     failures = 0;
     emit({
       summary: latest.summary,
@@ -201,10 +207,22 @@ export function createDataController(options: DataControllerOptions): DataContro
     schedulePoll(gen, pollMs);
   }
 
+  /**
+   * Spec §7.11 caps progressive commits at maxCommitsPerSecond. Each commit re-derives the whole
+   * session (finalize, then the Shell's index and views), O(rows), so while catching up the gap
+   * also grows to COMMIT_COST_FACTOR times the last finalize: re-deriving stays a bounded share of
+   * the load instead of O(rows x load time). The caught-up commit waits only the plain cap, and it
+   * replaces a pending progressive commit rather than waiting behind it.
+   */
   function requestCommit(gen: number, caughtUp: boolean): void {
     commitCaughtUp = caughtUp;
-    if (commitTimer !== null) return; // the pending commit publishes the latest fold
-    const wait = lastCommitAt + minCommitGapMs - scheduler.now();
+    if (commitTimer !== null) {
+      if (!caughtUp) return; // the pending commit publishes the latest fold
+      scheduler.clearTimeout(commitTimer);
+      commitTimer = null;
+    }
+    const gapMs = caughtUp ? minCommitGapMs : Math.max(minCommitGapMs, COMMIT_COST_FACTOR * lastCommitCostMs);
+    const wait = lastCommitAt + gapMs - scheduler.now();
     if (wait <= 0) {
       commitNow(caughtUp);
       afterCommit(gen, caughtUp);
@@ -219,12 +237,27 @@ export function createDataController(options: DataControllerOptions): DataContro
     }, wait);
   }
 
+  /** A source that throws synchronously fails like one that rejects. */
+  function requestRows(afterSeq: number): Promise<TraceRowsPage> {
+    try {
+      return source.rows({ afterSeq, limit: pageSize });
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
   async function page(gen: number, first?: Promise<TraceRowsPage>): Promise<void> {
     let pending = first;
     for (;;) {
-      const next = await (pending ?? source.rows({ afterSeq: cursor, limit: pageSize }));
+      const next = await (pending ?? requestRows(cursor));
       pending = undefined;
       if (gen !== generation || fold === null) return;
+      if (next.nextAfterSeq !== null) {
+        // Pipeline, one request ahead: the next page crosses IPC while this one folds, commits and
+        // yields. A superseded generation drops it unread; a failure resurfaces when the loop awaits it.
+        pending = requestRows(cursorAfter(next));
+        pending.catch(() => undefined);
+      }
       if (next.rows.length > 0 && latest.session !== null && latest.loadedFraction >= 1) markLiveTickStart();
       const changed =
         next.rows.length > 0 ||
@@ -269,12 +302,7 @@ export function createDataController(options: DataControllerOptions): DataContro
   async function load(gen: number): Promise<void> {
     let summary: TraceSessionSummary;
     // The first page does not depend on the summary: request both together.
-    let firstPage: Promise<TraceRowsPage>;
-    try {
-      firstPage = source.rows({ afterSeq: cursor, limit: pageSize });
-    } catch (error) {
-      firstPage = Promise.reject(error); // a source that throws synchronously fails like one that rejects
-    }
+    const firstPage = requestRows(cursor);
     firstPage.catch(() => undefined); // a summary failure abandons it; a page failure resurfaces through page()
     try {
       summary = await source.summary();
@@ -295,6 +323,7 @@ export function createDataController(options: DataControllerOptions): DataContro
     cursor = 0;
     lastPage = null;
     lastCommitAt = Number.NEGATIVE_INFINITY;
+    lastCommitCostMs = 0;
     commitCaughtUp = false;
     failures = 0;
   }

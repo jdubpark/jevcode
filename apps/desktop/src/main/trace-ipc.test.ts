@@ -7,8 +7,9 @@ import { openDb, openTraceReader } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { IpcError } from "../shared/errors.js";
 import { parseToMain } from "../shared/ipc-registry.js";
-import { registerTraceHandlers } from "./trace-ipc.js";
+import { createRowsReadAhead, registerTraceHandlers } from "./trace-ipc.js";
 import type { IpcHandle } from "./trace-ipc.js";
 import { createTraceService } from "./trace-service.js";
 
@@ -197,5 +198,108 @@ describe("trace IPC handlers", () => {
     await expect(ipc.invoke("trace:listSessions", { sessionId: "" })).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
     });
+  });
+});
+
+describe("trace:rows read-ahead", () => {
+  const SEQS = [1, 2, 3, 4, 5];
+
+  /** Pages of `limit` rows over SEQS; `failAt` makes the read at that afterSeq throw once. */
+  function fakeService() {
+    const reads: Array<{ afterSeq: number; limit: number | undefined }> = [];
+    const control = { failAt: null as number | null, lastSeq: 5, missing: false };
+    const service = {
+      session(sessionId: string): TraceSessionSummary {
+        if (control.missing) throw new IpcError("UNKNOWN_SESSION", `no session with id ${sessionId}`);
+        return { sessionId } as TraceSessionSummary;
+      },
+      rows(request: { sessionId: string; afterSeq?: number; limit?: number }): TraceRowsPage {
+        const afterSeq = request.afterSeq ?? 0;
+        reads.push({ afterSeq, limit: request.limit });
+        if (control.failAt === afterSeq) {
+          control.failAt = null;
+          throw new Error("database is locked");
+        }
+        const limit = request.limit ?? 2;
+        const rows = SEQS.filter((seq) => seq > afterSeq)
+          .slice(0, limit)
+          .map((seq) => ({ seq, type: "agent_event", ts: TS }) as TraceRow);
+        const last = rows.at(-1);
+        return {
+          rows,
+          nextAfterSeq: rows.length === limit && last !== undefined ? last.seq : null,
+          lastSeq: control.lastSeq,
+          state: "running",
+        };
+      },
+    };
+    const deferred: Array<() => void> = [];
+    const clock = { t: 0 };
+    const rows = createRowsReadAhead(service, { defer: (fn) => deferred.push(fn), now: () => clock.t });
+    const runDeferred = (): void => {
+      while (deferred.length > 0) deferred.shift()?.();
+    };
+    return { rows, reads, control, deferred, clock, runDeferred };
+  }
+
+  it("reads the page after a full page once the reply is out and serves it to the next request", () => {
+    const f = fakeService();
+    const first = f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    expect(first.rows.map((row) => row.seq)).toEqual([1, 2]);
+    // Nothing is read ahead inside the request itself.
+    expect(f.reads).toEqual([{ afterSeq: 0, limit: 2 }]);
+    f.runDeferred();
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2]);
+
+    const second = f.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 });
+    expect(second.rows.map((row) => row.seq)).toEqual([3, 4]);
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2]);
+    f.runDeferred();
+    const last = f.rows({ sessionId: SESSION, afterSeq: 4, limit: 2 });
+    expect(last).toMatchObject({ nextAfterSeq: null });
+    expect(last.rows.map((row) => row.seq)).toEqual([5]);
+    // A last page (nextAfterSeq null) reads nothing ahead: a caught-up viewer polls instead.
+    expect(f.deferred).toHaveLength(0);
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2, 4]);
+  });
+
+  it("reads directly for any other request, a held page older than one poll period, or a second ask", () => {
+    const f = fakeService();
+    f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    f.runDeferred();
+    // Another limit (or session, or afterSeq) is not the held page.
+    f.rows({ sessionId: SESSION, afterSeq: 2, limit: 3 });
+    expect(f.reads.map((read) => [read.afterSeq, read.limit])).toEqual([[0, 2], [2, 2], [2, 3]]);
+
+    const g = fakeService();
+    g.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    g.runDeferred();
+    g.control.lastSeq = 9;
+    g.clock.t = 1_001;
+    expect(g.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 }).lastSeq).toBe(9);
+    expect(g.reads.map((read) => read.afterSeq)).toEqual([0, 2, 2]);
+
+    const h = fakeService();
+    h.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    h.runDeferred();
+    h.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 });
+    h.control.lastSeq = 9;
+    // The held page was used once; asking again (a retry) reads fresh.
+    expect(h.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 }).lastSeq).toBe(9);
+  });
+
+  it("still rejects a session deleted since the read-ahead, and a failed read-ahead surfaces on the direct read", () => {
+    const f = fakeService();
+    f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    f.runDeferred();
+    f.control.missing = true;
+    expect(() => f.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 })).toThrow(/no session with id/);
+
+    const g = fakeService();
+    g.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 });
+    g.control.failAt = 2;
+    expect(() => g.runDeferred()).not.toThrow();
+    g.control.failAt = 2;
+    expect(() => g.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 })).toThrow("database is locked");
   });
 });
