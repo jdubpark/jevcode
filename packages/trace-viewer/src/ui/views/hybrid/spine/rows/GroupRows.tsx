@@ -36,9 +36,11 @@ export function GroupRow({
         <span className={styles.graphic}>
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} />}
         </span>
-        {/* The short title reads in the row; the full title is the tooltip and, through aria-labelledby, the name. */}
-        <span id={lineId} className={styles.line} title={fullTitle} aria-label={fullTitle}>
-          {displayUntrusted(chapter.shortTitle ?? chapter.title)}
+        {/* The short title reads in the row; the full title is the tooltip and, as hidden text the row's
+            aria-labelledby points at, the name. */}
+        <span className={styles.line} title={fullTitle}>
+          <span aria-hidden="true">{displayUntrusted(chapter.shortTitle ?? chapter.title)}</span>
+          <span id={lineId} className={styles.srOnly}>{fullTitle}</span>
         </span>
         <span className={styles.metric}>
           {`${formatDuration(chapter.endTMs - chapter.tMs)} · ${chapter.stepIds.length} steps`}
