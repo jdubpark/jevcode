@@ -27,7 +27,7 @@ import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
 import { rowFindingOf } from "./row-finding.js";
-import { extendRange, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { extendRange, pushTarget, revealAlign, snapToRowStart, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
 export interface FindingBodyProps {
@@ -218,9 +218,12 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     }, USER_SCROLL_MS) ?? null;
   };
 
-  /** The viewport in list coordinates; the virtualizer's own measurement of the height, which the DOM may not report. */
+  /**
+   * The viewport in list coordinates, from the virtualizer's own scroll offset and height. Reading element.scrollTop
+   * here would force a synchronous layout right after React mutated the DOM (perf investigation fix 6).
+   */
   const windowOf = (element: HTMLElement): { offset: number; height: number } => ({
-    offset: element.scrollTop,
+    offset: virtualizer.scrollOffset ?? element.scrollTop,
     height: virtualizer.scrollRect?.height || element.clientHeight,
   });
 
@@ -327,17 +330,23 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     [],
   );
 
+  /** Rows revealed in this commit's layout effects; a queued revealSeq for the same row then adds no second scroll. */
+  const revealedThisCommit = useRef<number[]>([]);
   const revealIndex = (position: number, align: "auto" | "center"): void => {
     const element = scrollRef.current;
-    const item = virtualizer.measurementsCache[position];
+    const cache = virtualizer.measurementsCache;
+    const item = cache[position];
     if (element === null || item === undefined) return;
-    const decided =
-      align === "center"
-        ? "center"
-        : revealAlign({ start: item.start, end: item.end }, windowOf(element));
+    revealedThisCommit.current.push(position);
+    const win = windowOf(element);
+    const decided = align === "center" ? "center" : revealAlign({ start: item.start, end: item.end }, win);
     if (decided === "none") return;
+    const target = virtualizer.getOffsetForIndex(position, decided);
+    if (target === undefined) return;
+    // Land on a row start so the first visible row never sits half under the range chip (audit 2-8).
+    const offset = snapToRowStart(target[0], cache.length, (i) => cache[i]?.start ?? 0, Math.max(0, virtualizer.getTotalSize() - win.height));
     beginProgrammatic();
-    virtualizer.scrollToIndex(position, { align: decided, behavior: "auto" });
+    virtualizer.scrollToOffset(offset, { align: "start", behavior: "auto" });
   };
 
   // An external playhead write (overview, keys, search, finding, outline) reveals the playhead row.
@@ -352,6 +361,23 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     if (playheadIndex < 0 || origin === "spine" || ownClick) return;
     revealIndex(playheadIndex, "auto");
   }, [playheadSeq, focusRev, origin, active, playheadIndex]);
+
+  // A reveal asked through the api (the view port, e.g. after j) waits for this render: it names a seq, and resolving it
+  // against the previous render's rows could pick a stale row and scroll twice (perf fix 6). When the playhead effect
+  // above already revealed the same row in this commit, the queued reveal is dropped.
+  const pendingReveal = useRef<{ seq: number; align: "auto" | "center" } | null>(null);
+  useLayoutEffect(() => {
+    const pending = pendingReveal.current;
+    if (pending === null || session === null) return;
+    pendingReveal.current = null;
+    if (!active) return;
+    const position = spineRowIndexForSeq(rowsRef.current, session, pending.seq);
+    if (position >= 0 && !revealedThisCommit.current.includes(position)) revealIndex(position, pending.align);
+  });
+  // The record covers one commit's layout effects only.
+  useEffect(() => {
+    revealedThisCommit.current = [];
+  });
 
   // A brush or level change replaces the row set: reveal the playhead row centered.
   const setKey = `${level}|${brush.kind}|${brush.kind === "chapter" ? brush.anchorSeq : brush.kind === "range" ? `${brush.fromSeq}-${brush.toSeq}` : ""}`;
@@ -429,8 +455,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       rows: () => rowsRef.current,
       revealSeq: (seq, align) => {
         if (session === null) return;
-        const position = spineRowIndexForSeq(rowsRef.current, session, seq);
-        if (position >= 0) revealIndex(position, align);
+        pendingReveal.current = { seq, align };
+        rerender();
       },
       focusRow: (key) => {
         const position = rowsRef.current.findIndex((row) => row.key === key);

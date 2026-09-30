@@ -3,7 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { foldRows } from "../../../model/index.js";
 import { createStaticBundleSource } from "../../../sources/static-bundle.js";
+import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   applyOpenDefaults,
   fixtureBundle,
@@ -130,6 +132,51 @@ describe("HybridView", () => {
     if (brush.kind !== "range") throw new Error(`expected a range brush, got ${brush.kind}`);
     expect(typeof brush.toSeq).toBe("number");
     expect(brush.toSeq).toBeGreaterThanOrEqual(selected?.firstSeq ?? 0);
+  });
+
+  it("a j press reads no scroll offset from the DOM and scrolls the spine at most once", async () => {
+    layout.restore();
+    layout = stubLayout({ width: 1400, height: 200 });
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Run the scripts" });
+    for (let i = 0; i < 40; i += 1) {
+      b.agent({ type: "command_started", command: `node script-${i}.js` });
+      b.agent({ type: "command_completed", command: `node script-${i}.js`, exitCode: 0, stdout: "", stderr: "" });
+    }
+    b.agent({ type: "agent_completed" });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    const h = renderHarness(
+      <WithKeys>
+        <HybridView active />
+      </WithKeys>,
+      session,
+      { state: { level: "step" } },
+    );
+    act(() => applyOpenDefaults(h, session));
+    act(() => h.store.dispatch({ type: "select", id: session.steps[3]?.id ?? null, by: "shell" }));
+    await settle();
+    const feed = document.querySelector<HTMLElement>("[data-scroll-root]") as HTMLElement;
+    let top = feed.scrollTop;
+    let reads = 0;
+    Object.defineProperty(feed, "scrollTop", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return top;
+      },
+      set: (value: number) => {
+        top = value;
+      },
+    });
+    layout.scrollCalls.length = 0;
+    // Synchronous part of the press: the keydown handler plus the render and layout effects it triggers.
+    await act(async () => {
+      fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
+      await Promise.resolve();
+    });
+    expect(h.store.get().selection).toBe(session.steps[4]?.id);
+    expect(reads).toBe(0);
+    expect(layout.scrollCalls.length).toBeLessThanOrEqual(1);
   });
 
   it("applies the level presets on Alt+1, Alt+2 and Alt+3", async () => {
