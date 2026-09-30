@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Level, TraceSession } from "../model/index.js";
+import { decisionStableId, type Level, type TraceSession } from "../model/index.js";
 import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../test-support/canvas-arbitraries.js";
 import type { CanvasSeed } from "../test-support/canvas-arbitraries.js";
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "./canvas-layout.js";
@@ -147,6 +147,36 @@ describe("route stability under append (spec §7.5 lane reservation)", () => {
     expect(earlier.size).toBeGreaterThan(0);
   });
 
+  it("does not move an older decides edge when a new decision fills an empty story cell of the newest column", () => {
+    // Decision D1 opens column 1 and chapter 11 (column 3) lists it. The new decision D2 at 11 s fills column 3's
+    // empty story cell, and the second chapter (ch:4, column 1) lists D2. D2 sits before chapter 11 in (col, row) order but was
+    // placed after it, so its edge must route after D1 -> chapter 11 and leave that edge on lane 2.
+    const seeds: CanvasSeed[] = [{ atMs: 1_000, kind: "decision" }];
+    for (let i = 0; i < 8; i += 1) seeds.push({ atMs: 2_000 + i * 1_000, kind: "chapter" });
+    seeds.push({ atMs: 10_000, kind: "chapter", decides: true });
+    const before = buildCanvasSession(seeds);
+    const first = layoutCanvas(before, buildTraceIndex(before), canvasScale(before), "chapter");
+    const older = edge(first, "decides", "decision:dec-2", "ch:11");
+    expect(older.lane).toBe(2);
+
+    const grown = buildCanvasSession([...seeds, { atMs: 11_000, kind: "decision" }]);
+    const decision2 = grown.steps.filter((step) => step.kind === "decision")[1];
+    const listsD2: TraceSession = {
+      ...grown,
+      chapters: grown.chapters.map((chapter, i) =>
+        i === 1
+          ? { ...chapter, decisionIds: [...chapter.decisionIds, decisionStableId(decision2?.target ?? "")] }
+          : chapter,
+      ),
+    };
+    const next = layoutCanvas(listsD2, buildTraceIndex(listsD2), canvasScale(listsD2), "chapter", first);
+    const filled = frameOf(next, (frame) => frame.item === "decision" && frame.key !== "decision:dec-2");
+    expect([filled.col, filled.row]).toEqual([3, 0]);
+    expect(edge(next, "decides", filled.key, "ch:4").lane).not.toBeNull();
+    const after = edge(next, "decides", "decision:dec-2", "ch:11");
+    expect({ shape: after.shape, lane: after.lane, d: after.d }).toEqual({ shape: older.shape, lane: older.lane, d: older.d });
+  });
+
   it("routes validates through a channel lane above the reserved ones", () => {
     const session = buildCanvasSession(seeds);
     const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
@@ -251,5 +281,55 @@ describe("routeEdges rules", () => {
     expect(directPath({ x: 0, y: 0, w: 100, h: 40 }, { x: 0, y: 100, w: 100, h: 40 })).toBe(
       "M50 40C50 70 50 70 50 100",
     );
+  });
+});
+
+describe("samplePath", () => {
+  it("returns the M point alone for a bare move", () => {
+    expect(samplePath("M3 4")).toEqual([{ x: 3, y: 4 }]);
+  });
+
+  it("interpolates L, H and V linearly and ends on the target", () => {
+    expect(samplePath("M0 0L8 4", 4)).toEqual([
+      { x: 0, y: 0 },
+      { x: 2, y: 1 },
+      { x: 4, y: 2 },
+      { x: 6, y: 3 },
+      { x: 8, y: 4 },
+    ]);
+    expect(samplePath("M1 2H5", 2)).toEqual([{ x: 1, y: 2 }, { x: 3, y: 2 }, { x: 5, y: 2 }]);
+    expect(samplePath("M1 2V6", 2)).toEqual([{ x: 1, y: 2 }, { x: 1, y: 4 }, { x: 1, y: 6 }]);
+  });
+
+  it("evaluates a cubic at t = 1/2 and ends on the target", () => {
+    // B(1/2) = (p0 + 3 c1 + 3 c2 + p3) / 8 on each axis: x = 32/8 = 4, y = 48/8 = 6.
+    const points = samplePath("M0 0C0 8 8 8 8 0", 2);
+    expect(points).toHaveLength(3);
+    expect(points[1]).toEqual({ x: 4, y: 6 });
+    expect(points[2]).toEqual({ x: 8, y: 0 });
+  });
+
+  it("evaluates a quadratic at t = 1/2 and ends on the target", () => {
+    // B(1/2) = (p0 + 2 c + p3) / 4 on each axis.
+    const points = samplePath("M0 0Q4 8 8 0", 2);
+    expect(points[1]).toEqual({ x: 4, y: 4 });
+    expect(points[2]).toEqual({ x: 8, y: 0 });
+  });
+
+  it("repeats the last command for implicit coordinates and reads negatives and decimals", () => {
+    expect(samplePath("M0 0L2 0 2 2", 1)).toEqual([{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }]);
+    expect(samplePath("M0 0 4 0", 1)).toEqual([{ x: 0, y: 0 }, { x: 4, y: 0 }]);
+    expect(samplePath("M-1.5 .5H-3.25", 1)).toEqual([{ x: -1.5, y: 0.5 }, { x: -3.25, y: 0.5 }]);
+  });
+
+  it("samples a rounded rail path from its start to its end", () => {
+    const points = samplePath("M160 172L160 150Q160 144 166 144L706 144", 8);
+    expect(points[0]).toEqual({ x: 160, y: 172 });
+    expect(points.at(-1)).toEqual({ x: 706, y: 144 });
+    expect(points).toHaveLength(1 + 8 * 3);
+  });
+
+  it("returns no points for an empty path", () => {
+    expect(samplePath("")).toEqual([]);
   });
 });
