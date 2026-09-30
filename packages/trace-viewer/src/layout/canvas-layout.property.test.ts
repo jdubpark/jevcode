@@ -263,8 +263,18 @@ describe("canvas layout invariants", () => {
             expect(edge.rest).toBe(true);
             expect(edge.d).not.toBeNull();
           }
-          if (edge.shape === "channel") expect(edge.lane ?? -1).toBeLessThan(spec.channelLanes);
-          if (edge.shape === "rail") expect(edge.lane ?? -1).toBeLessThan(spec.railLanes);
+          // Spec §7.5: channel lane 0 is the trunk, channel lane 1 and rail lane 0 are reserved for contradicts.
+          if (edge.shape === "channel" && edge.d !== null) {
+            expect(edge.lane).not.toBeNull();
+            expect(edge.lane ?? -1).toBeLessThan(spec.channelLanes);
+            expect(edge.lane === 1, `${edge.id} lane ${edge.lane}`).toBe(edge.kind === "contradicts");
+            expect(edge.lane ?? 0).toBeGreaterThanOrEqual(1);
+          }
+          if (edge.shape === "rail" && edge.d !== null) {
+            expect(edge.lane).not.toBeNull();
+            expect(edge.lane ?? -1).toBeLessThan(spec.railLanes);
+            expect(edge.lane === 0, `${edge.id} lane ${edge.lane}`).toBe(edge.kind === "contradicts");
+          }
           if (!edge.rest || edge.d === null || edge.shape === "direct") continue;
           for (const point of samplePath(edge.d)) {
             for (const frame of layout.frames) {
@@ -285,6 +295,8 @@ describe("canvas layout invariants", () => {
           );
           const drawn = layout.edges.filter((edge) => edge.kind === "contradicts" && edge.findingId === finding.id);
           expect(drawn).toHaveLength(targets.size);
+          expect(new Set(drawn.map((edge) => edge.to))).toEqual(targets);
+          for (const edge of drawn) expect(edge.from).toBe(from);
         }
       }),
       RUNS,

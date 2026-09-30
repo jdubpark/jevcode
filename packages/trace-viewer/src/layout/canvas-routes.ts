@@ -308,7 +308,8 @@ function adjacentRoute(a: CanvasFrame, b: CanvasFrame): Routed {
 }
 
 function railLanesFor(ctx: RouteContext, kind: EdgeKind): number[] {
-  return kind === "contradicts" ? range(0, ctx.input.spec.railLanes) : range(1, ctx.input.spec.railLanes);
+  // Spec §7.5: rail lane 0 is reserved for contradicts; decides/validates use the rest.
+  return kind === "contradicts" ? [0] : range(1, ctx.input.spec.railLanes);
 }
 
 function railRoute(ctx: RouteContext, book: IntervalBook, kind: EdgeKind, a: CanvasFrame, b: CanvasFrame): Routed | null {
@@ -335,7 +336,8 @@ function channelRoute(ctx: RouteContext, book: IntervalBook, kind: EdgeKind, a: 
   const [l, r] = a.col < b.col ? [a, b] : [b, a];
   const lPort = directPort(ctx, l);
   const rPort = directPort(ctx, r);
-  const lanes = kind === "contradicts" ? [1, 2] : range(2, spec.channelLanes);
+  // Spec §7.5: channel lane 0 is the trunk, lane 1 is reserved for contradicts.
+  const lanes = kind === "contradicts" ? [1] : range(2, spec.channelLanes);
   for (const lane of lanes.filter((value) => value < spec.channelLanes)) {
     const y = laneY(spec, lane);
     const lRail =
@@ -417,8 +419,15 @@ function wantedEdges(ctx: RouteContext): EdgeSpec[] {
     if (seen === undefined || compareText(spec.findingId ?? "", seen.findingId ?? "") < 0) unique.set(id, spec);
   }
   const order = (key: string): number => ctx.order.get(key) ?? Number.MAX_SAFE_INTEGER;
+  // Age first (newest endpoint), so an appended edge is routed after every edge already placed and
+  // can only take lanes nobody holds. Reserved lanes make kind irrelevant for cross-kind contention.
+  const age = (spec: EdgeSpec): number => Math.max(order(spec.from), order(spec.to));
   return [...unique.values()].sort(
-    (a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || order(a.from) - order(b.from) || order(a.to) - order(b.to),
+    (a, b) =>
+      age(a) - age(b) ||
+      KIND_RANK[a.kind] - KIND_RANK[b.kind] ||
+      compareText(a.from, b.from) ||
+      compareText(a.to, b.to),
   );
 }
 
