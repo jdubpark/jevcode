@@ -1,4 +1,4 @@
-import { hasSevereClamp } from "./classify.js";
+import { hasSevereClamp, ownsRunOutcome } from "./classify.js";
 import { normalizeCommand } from "./format.js";
 import { clampMeta, severityRank } from "./registry.js";
 import {
@@ -76,22 +76,15 @@ function sortStepIds(ids: readonly StepId[], steps: ReadonlyMap<StepId, Step>): 
   return [...new Set(ids)].sort((a, b) => (steps.get(a)?.firstSeq ?? 0) - (steps.get(b)?.firstSeq ?? 0));
 }
 
-/** Equal, or one path ends with the other at a segment boundary (a runner may report absolute paths). */
-function samePath(a: string, b: string): boolean {
-  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
-}
-
 /** The chapters a finding about a test or check run names (spec §6.7 "Finding chapters"). One
  *  validation is often cited by every unit, so the run belongs to every chapter; only the chapters
  *  that own the failure count: of the run's chapters, those whose unit failed or whose files hold a
  *  failing test's file, else the latest of them (session order). This keeps a shared validation from
  *  making every chapter a finding chapter and from clearing noise on lockfile or formatting chapters. */
 function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
-  const failureFiles = (run.tests?.failures ?? []).map((failure) => failure.file);
   const owners = run.chapterIds.filter((id) => {
     const chapter = chapterById.get(id);
-    if (chapter === undefined) return false;
-    return chapter.status === "failed" || chapter.files.some((file) => failureFiles.some((failure) => samePath(file, failure)));
+    return chapter !== undefined && ownsRunOutcome(chapter, run);
   });
   if (owners.length > 0) return owners;
   const latest = run.chapterIds[run.chapterIds.length - 1];

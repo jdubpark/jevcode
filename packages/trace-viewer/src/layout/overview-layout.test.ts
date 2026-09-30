@@ -137,9 +137,11 @@ describe("chapter band footprints (orchestrator ruling M6)", () => {
     }
     b.agent({ type: "command_started", command: "pnpm test", ts: TraceBuilder.at(30) });
     b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "", ts: TraceBuilder.at(35) });
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 0, skipped: 0, failures: [], ts: TraceBuilder.at(35) }, "fact_tr");
     b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "passed", passed: 3, failed: 0, skipped: 0 });
-    b.unit({ id: "cu_a", files: ["src/a.ts"], title: "Changed 1 file: src/a.ts", evidence: ["fact_src/a.ts"], validationResults: ["val_1"] });
-    b.unit({ id: "cu_b", files: ["src/b.ts"], title: "Changed 1 file: src/b.ts", evidence: ["fact_src/b.ts"], validationResults: ["val_1"] });
+    // Like every oauth unit, both cite the run's test_result fact as well as the validation.
+    b.unit({ id: "cu_a", files: ["src/a.ts"], title: "Changed 1 file: src/a.ts", evidence: ["fact_src/a.ts", "fact_tr"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], title: "Changed 1 file: src/b.ts", evidence: ["fact_src/b.ts", "fact_tr"], validationResults: ["val_1"] });
     const session = foldRows(testMeta(), b.rows, { live: false });
     const index = buildTraceIndex(session);
     const scale = buildTimeScale(timeScaleInputOf(session));

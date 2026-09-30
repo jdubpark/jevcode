@@ -1,5 +1,6 @@
 import { AttentionDecisionSchema, type ChangeUnit, type Decision, type JevDecisionLog } from "@jevcode/contracts";
 
+import { ownsRunOutcome } from "./classify.js";
 import {
   addRowToStep,
   createStep,
@@ -265,12 +266,8 @@ export function buildChapters(
     const unit = entry.unit;
     const id = unitStableId(unit.id);
     const linked = new Set<StepId>();
-    // Every join but the validation one: a step only a validation links is validation-only.
-    const joined = new Set<StepId>();
-    const pick = (draft: StepDraft | Step | undefined, byValidation = false): void => {
-      if (draft === undefined) return;
-      linked.add(draft.id);
-      if (!byValidation) joined.add(draft.id);
+    const pick = (draft: StepDraft | Step | undefined): void => {
+      if (draft !== undefined) linked.add(draft.id);
     };
     const factIds = [...new Set(unit.evidence.filter((evidenceId) => evidenceId.startsWith("fact_")))];
     const resolvedSeqs: number[] = [];
@@ -304,7 +301,7 @@ export function buildChapters(
       const seq = evidence.validationSeqById.get(validationId);
       if (seq === undefined) continue;
       const draft = evidence.stepByEvidenceSeq.get(seq);
-      pick(draft, true);
+      pick(draft);
       if (draft !== undefined) validationSteps.add(draft.id);
     }
     const decisionIds: DecisionStableId[] = [];
@@ -328,7 +325,6 @@ export function buildChapters(
         if (linked.has(step.id)) continue;
         approx += 1;
         linked.add(step.id);
-        joined.add(step.id);
         for (const seq of step.evidenceSeqs) factSeqs.add(seq);
       }
     }
@@ -361,12 +357,25 @@ export function buildChapters(
       decisionIds,
       validationIds: [...unit.validationResults],
       validationStepIds: [...validationSteps].sort(bySeq),
-      validationOnlyStepIds: [...validationSteps].filter((stepId) => !joined.has(stepId)).sort(bySeq),
+      validationOnlyStepIds: [],
       clampIds,
       triad: triadOf(unit, chapters.attentionByUnit.get(unit.id)),
       schemaChanges: unit.schemaChanges.map((change) => ({ ...change })),
       dependencyChanges: unit.dependencyChanges.map((change) => ({ ...change })),
       findingIds: [],
+    });
+  }
+  // A test or check run that several current chapters join (one validation cited by every unit,
+  // together with the run's own test_result fact and call id) belongs only to the chapters that own
+  // its outcome; for the rest it is validation-only, and the overview band footprint skips it
+  // (spec §6.6, §7.6.1).
+  const current = new Set(result.filter((chapter) => chapter.current).map((chapter) => chapter.id));
+  for (const chapter of result) {
+    chapter.validationOnlyStepIds = chapter.stepIds.filter((stepId) => {
+      const step = stepById.get(stepId);
+      if (step === undefined || (step.kind !== "test" && step.kind !== "check")) return false;
+      const shared = step.chapterIds.filter((id) => current.has(id)).length > 1;
+      return shared && !ownsRunOutcome(chapter, step);
     });
   }
   const byPath = new Map(entities.map((entity) => [entity.path, entity]));
