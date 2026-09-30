@@ -1,3 +1,4 @@
+import "./zod-jitless.js";
 import { defineCatalog, defineSchema } from "@json-render/core";
 import { z as z4 } from "zod";
 
