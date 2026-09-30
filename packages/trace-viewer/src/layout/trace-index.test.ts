@@ -71,6 +71,28 @@ describe("TraceIndex", () => {
     expect(brushSeqRange({ kind: "chapter", anchorSeq }, after)).toEqual({ fromSeq: 2, toSeq: 3 });
   });
 
+  it("chapters that share an anchor are ordered by id, and a chapter brush spans all of them", () => {
+    // A decision linked to both units is each unit's earliest step, so both anchor at seq 1 (spec §7.5).
+    const session = buildSession({
+      steps: [
+        { kind: "decision", tMs: 0, chapter: "b", alsoChapters: ["a"] },
+        { kind: "edit", tMs: 1_000, target: "a.ts", chapter: "a" },
+        { kind: "edit", tMs: 2_000, target: "a2.ts", chapter: "a" },
+        { kind: "message", tMs: 3_000 },
+        { kind: "edit", tMs: 4_000, target: "b.ts", chapter: "b" },
+      ],
+      chapters: [{ id: "b", title: "B" }, { id: "a", title: "A" }, { id: "old", title: "Old", current: false }],
+    });
+    const idx = buildTraceIndex({ ...session, chapters: [...session.chapters].reverse() });
+    expect(idx.chapterKey("unit:a")).toBe("ch:1");
+    expect(idx.chapterKey("unit:b")).toBe("ch:1");
+    expect(idx.chaptersByAnchor(1)).toEqual(["unit:a", "unit:b"]);
+    expect(idx.chapterByAnchor(1)).toBe("unit:a");
+    expect(idx.chaptersByAnchor(2)).toEqual([]);
+    expect(brushSeqRange({ kind: "chapter", anchorSeq: 1 }, idx)).toEqual({ fromSeq: 1, toSeq: 5 });
+    expect(emptyTraceIndex("s").chaptersByAnchor(1)).toEqual([]);
+  });
+
   it("a chapter brush with no chapter falls back to its turn", () => {
     const session = buildSession({
       turns: [{ trigger: "initial", prompt: "one" }, { trigger: "steer", prompt: "two" }],

@@ -382,7 +382,7 @@ function nav(state: ViewState, target: "chapter" | "turn" | "finding", dir: 1 | 
   const chapters = session.chapters
     .filter((c) => c.current)
     .map((c) => ({ id: c.id, anchor: anchorOf(c.id, index) ?? c.firstSeq }))
-    .sort((a, b) => a.anchor - b.anchor);
+    .sort((a, b) => a.anchor - b.anchor || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   if (chapters.length === 0) return state;
   const selected = state.selection === null ? null : state.selection.startsWith("unit:") ? state.selection : index.entry(state.selection)?.parent ?? null;
   const at = selected === null ? -1 : chapters.findIndex((c) => c.id === selected);

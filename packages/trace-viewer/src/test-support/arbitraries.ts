@@ -22,6 +22,8 @@ export function arbSessionSeed(options: ArbSessionOptions = {}): fc.Arbitrary<Se
     outcome: fc.constantFrom("ok", "ok", "ok", "ok", "failed", "unknown"),
     noise: fc.option(fc.constantFrom(...NOISE_REASONS), { freq: 4, nil: null }),
     chapter: fc.integer({ min: -1, max: Math.max(0, maxChapters - 1) }),
+    /** A second unit link (a decision or multi-file step), so chapters can share an anchor seq. */
+    alsoChapter: fc.option(fc.integer({ min: 0, max: Math.max(0, maxChapters - 1) }), { freq: 5, nil: null }),
     newTurn: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
     rows: fc.integer({ min: 1, max: 3 }),
     finding: fc.option(
@@ -55,6 +57,7 @@ export function arbSessionSeed(options: ArbSessionOptions = {}): fc.Arbitrary<Se
           turn,
           rows: s.rows,
           chapter: s.chapter >= 0 && s.chapter < chapters ? `u${s.chapter}` : undefined,
+          alsoChapters: s.alsoChapter !== null && s.alsoChapter < chapters ? [`u${s.alsoChapter}`] : undefined,
           noise: s.noise,
           target: s.kind === "edit" || s.kind === "read" ? `src/f${i % 13}.ts` : `cmd-${i % 7}`,
           tests: s.kind === "test" ? { passed: 3, failed: s.outcome === "failed" ? 1 : 0, skipped: 0 } : undefined,

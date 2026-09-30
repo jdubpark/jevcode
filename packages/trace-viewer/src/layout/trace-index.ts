@@ -34,9 +34,15 @@ export interface TraceIndex {
   stepIndexAtOrBefore(seq: number): number;
   /** First step index with firstSeq ≥ seq, or steps.length. */
   stepIndexAtOrAfter(seq: number): number;
-  /** "ch:<anchorSeq>", anchorSeq = min over factSeqs and step firstSeqs (spec §7.5). */
+  /** "ch:<anchorSeq>", anchorSeq = min over factSeqs and step firstSeqs (spec §7.5). Chapters can share it. */
   chapterKey(id: UnitStableId): `ch:${number}` | undefined;
+  /** First of chaptersByAnchor, else a superseded chapter with that anchor. */
   chapterByAnchor(anchorSeq: number): UnitStableId | undefined;
+  /**
+   * Current chapters with this anchor seq, ordered by id. Lane B links a decision or a multi-file step to
+   * several units, so units can share an anchor; the first is keyed ch:<anchor>, the rest ch:<anchor>.<n> (spec §7.5).
+   */
+  chaptersByAnchor(anchorSeq: number): readonly UnitStableId[];
   /** The current chapter whose step span holds seq (latest anchor wins). */
   chapterAtSeq(seq: number): Chapter | undefined;
   turnAtSeq(seq: number): Turn | undefined;
@@ -45,6 +51,12 @@ export interface TraceIndex {
   /** The tail step: highest firstSeq. */
   readonly tailStepId: StepId | null;
   readonly findingsById: ReadonlyMap<FindingId, Finding>;
+}
+
+const NO_CHAPTERS: readonly UnitStableId[] = [];
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** First index with arr[i] ≥ value. */
@@ -79,6 +91,7 @@ export function buildTraceIndex(session: TraceSession): TraceIndex {
   steps.forEach((step, i) => positionOf.set(step.id, i));
   const anchorOf = new Map<UnitStableId, number>();
   const byAnchor = new Map<number, UnitStableId>();
+  const currentByAnchor = new Map<number, UnitStableId[]>();
 
   session.chapters.forEach((chapter, position) => {
     const own = chapter.stepIds
@@ -88,10 +101,17 @@ export function buildTraceIndex(session: TraceSession): TraceIndex {
     const anchor = candidates.length > 0 ? Math.min(...candidates) : chapter.firstSeq;
     anchorOf.set(chapter.id, anchor);
     if (!byAnchor.has(anchor)) byAnchor.set(anchor, chapter.id);
+    if (chapter.current) {
+      const shared = currentByAnchor.get(anchor);
+      if (shared === undefined) currentByAnchor.set(anchor, [chapter.id]);
+      else shared.push(chapter.id);
+    }
     const firstSeq = own.length > 0 ? Math.min(...own.map((s) => s.firstSeq)) : anchor;
     const lastSeq = own.length > 0 ? Math.max(...own.map((s) => s.lastSeq)) : anchor;
     entries.set(chapter.id, { id: chapter.id, kind: "chapter", t0: chapter.tMs, t1: chapter.endTMs, firstSeq, lastSeq, parent: null, position });
   });
+
+  for (const shared of currentByAnchor.values()) shared.sort(compareText);
 
   steps.forEach((step, position) => {
     let parent: UnitStableId | null = null;
@@ -125,7 +145,8 @@ export function buildTraceIndex(session: TraceSession): TraceIndex {
       const anchor = anchorOf.get(id);
       return anchor === undefined ? undefined : `ch:${anchor}`;
     },
-    chapterByAnchor: (anchorSeq) => byAnchor.get(anchorSeq),
+    chapterByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq)?.[0] ?? byAnchor.get(anchorSeq),
+    chaptersByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq) ?? NO_CHAPTERS,
     chapterAtSeq: (seq) => {
       let found: Chapter | undefined;
       let bestAnchor = Number.NEGATIVE_INFINITY;
@@ -165,6 +186,7 @@ export function emptyTraceIndex(sessionId: string): TraceIndex {
     stepIndexAtOrAfter: () => 0,
     chapterKey: () => undefined,
     chapterByAnchor: () => undefined,
+    chaptersByAnchor: () => NO_CHAPTERS,
     chapterAtSeq: () => undefined,
     turnAtSeq: () => undefined,
     findingsBySeq: [],
@@ -173,7 +195,10 @@ export function emptyTraceIndex(sessionId: string): TraceIndex {
   };
 }
 
-/** Inclusive seq range; "live" → loadedThroughSeq; a chapter brush with no chapter falls back to its turn. */
+/**
+ * Inclusive seq range; "live" → loadedThroughSeq. A chapter brush spans every current chapter that shares its
+ * anchor, so `b` never drops a selection inside the playhead's chapter; with no chapter it falls back to its turn.
+ */
 export function brushSeqRange(brush: Brush, index: TraceIndex): { fromSeq: number; toSeq: number } {
   const loaded = Math.max(1, index.loadedThroughSeq);
   if (brush.kind === "session") return { fromSeq: 1, toSeq: loaded };
@@ -182,6 +207,15 @@ export function brushSeqRange(brush: Brush, index: TraceIndex): { fromSeq: numbe
     const from = Math.max(1, Math.min(brush.fromSeq, to));
     return { fromSeq: from, toSeq: Math.max(from, to) };
   }
+  let fromSeq = Number.POSITIVE_INFINITY;
+  let toSeq = Number.NEGATIVE_INFINITY;
+  for (const shared of index.chaptersByAnchor(brush.anchorSeq)) {
+    const e = index.entry(shared);
+    if (e === undefined) continue;
+    fromSeq = Math.min(fromSeq, e.firstSeq);
+    toSeq = Math.max(toSeq, e.lastSeq);
+  }
+  if (fromSeq <= toSeq) return { fromSeq, toSeq };
   const id = index.chapterByAnchor(brush.anchorSeq);
   const entry = id === undefined ? undefined : index.entry(id);
   if (entry !== undefined) return { fromSeq: entry.firstSeq, toSeq: entry.lastSeq };
