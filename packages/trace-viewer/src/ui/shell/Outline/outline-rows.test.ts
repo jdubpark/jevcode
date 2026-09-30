@@ -93,6 +93,14 @@ describe("buildOutlineRows", () => {
     const all = buildOutlineRows(session, { ...ALL_OPEN, showAll: new Set<OutlineSection>(["files"]) });
     expect(itemsOf(all, "files")).toHaveLength(13);
     expect(itemsOf(all, "files").every((row) => row.mono && row.openEvidence)).toBe(true);
+    // Only the shown rows are built: the collapsed list is the full list's head, and a closed section keeps the count.
+    expect(itemsOf(collapsed, "files")).toStrictEqual(itemsOf(all, "files").slice(0, 12));
+    const header = (rows: typeof all) => rows.find((row) => row.key === "section:files");
+    expect(header(collapsed)).toStrictEqual(header(all));
+    const closed = buildOutlineRows(session, { ...ALL_OPEN, open: new Set<OutlineSection>(["story", "commands", "tests"]) });
+    expect(header(closed)).toStrictEqual({ ...header(all), open: false });
+    expect(itemsOf(closed, "files")).toHaveLength(0);
+    expect(closed.some((row) => row.key === "more:files")).toBe(false);
   });
 
   it("marks a failed command with ✕ and the word failed", () => {

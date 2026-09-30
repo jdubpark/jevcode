@@ -342,10 +342,15 @@ function basename(path: string): string {
   return slash < 0 ? trimmed : trimmed.slice(slash + 1);
 }
 
-function fileRows(session: TraceSession, titleMax: number): OutlineItemRow[] {
+/** The first `limit` Files rows, and how many there are in all (one per entity with a step). */
+function fileRows(session: TraceSession, titleMax: number, limit: number): { rows: OutlineItemRow[]; count: number } {
+  let count = 0;
+  for (const entity of session.entities) if (entity.stepIds.length > 0) count += 1;
+  if (limit <= 0) return { rows: [], count };
   const clamped = new Set(session.chapters.filter((chapter) => chapter.clampIds.length > 0).map((chapter) => chapter.id));
   const out: OutlineItemRow[] = [];
   for (const entity of session.entities) {
+    if (out.length >= limit) break;
     const latest = entity.stepIds.at(-1);
     if (latest === undefined) continue;
     const shield = entity.chapterIds.some((id) => clamped.has(id));
@@ -360,7 +365,7 @@ function fileRows(session: TraceSession, titleMax: number): OutlineItemRow[] {
     fileRowCache.set(entity, { titleMax, shield, tMs, row });
     out.push(row);
   }
-  return out;
+  return { rows: out, count };
 }
 
 function fileRow(entity: Entity, latest: StepId, tMs: number, titleMax: number, shield: boolean): OutlineItemRow {
@@ -463,7 +468,6 @@ function pushSection(
   section: OutlineSection,
   entries: readonly OutlineRow[],
   input: OutlineInput,
-  cap?: number,
 ): void {
   const open = input.open.has(section);
   rows.push({
@@ -474,19 +478,24 @@ function pushSection(
     count: entries.filter((entry) => entry.t === "item").length,
     open,
   });
+  if (open) rows.push(...entries);
+}
+
+/** Files: a closed section or the collapsed first FILES_COLLAPSE_ABOVE rows build only the rows they show. */
+function pushFiles(rows: OutlineRow[], session: TraceSession, input: OutlineInput): void {
+  const open = input.open.has("files");
+  const capped = !input.showAll.has("files");
+  const files = fileRows(session, input.fileTitleMax ?? FILE_TITLE_MAX, !open ? 0 : capped ? FILES_COLLAPSE_ABOVE : Number.POSITIVE_INFINITY);
+  rows.push({ t: "section", key: "section:files", section: "files", label: SECTION_LABEL.files, count: files.count, open });
   if (!open) return;
-  if (cap !== undefined && !input.showAll.has(section) && entries.length > cap) {
-    rows.push(...entries.slice(0, cap));
-    rows.push({ t: "more", key: `more:${section}`, section, hidden: entries.length - cap });
-    return;
-  }
-  rows.push(...entries);
+  rows.push(...files.rows);
+  if (capped && files.count > FILES_COLLAPSE_ABOVE) rows.push({ t: "more", key: "more:files", section: "files", hidden: files.count - FILES_COLLAPSE_ABOVE });
 }
 
 export function buildOutlineRows(session: TraceSession, input: OutlineInput): OutlineRow[] {
   const rows: OutlineRow[] = [];
   pushSection(rows, "story", storyRows(session), input);
-  pushSection(rows, "files", fileRows(session, input.fileTitleMax ?? FILE_TITLE_MAX), input, FILES_COLLAPSE_ABOVE);
+  pushFiles(rows, session, input);
   pushSection(rows, "commands", commandRows(session), input);
   pushSection(rows, "tests", testRows(session), input);
   return rows;

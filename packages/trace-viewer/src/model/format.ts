@@ -339,37 +339,64 @@ function linesChanged(entity: Entity): number {
 }
 
 /** Per-session lookups for chapter graphics, so an Outline of n chapters costs O(n · own data), not
- *  O(n · (entities + steps)). A finalized TraceSession never changes (spec §6.4). */
+ *  O(n · (entities + steps)). A finalized TraceSession never changes (spec §6.4). Each part is built on first use:
+ *  a Live commit whose rows need no test or fork graphic never indexes the steps. */
 interface GraphicLookups {
   /** Entity positions per path, ascending. */
-  entitiesByPath: Map<string, number[]>;
-  stepPosition: Map<string, number>;
+  readonly entitiesByPath: Map<string, number[]>;
+  readonly stepPosition: Map<string, number>;
   /** decisionId → position of the first step deciding it (decidedBy set). */
-  decidedStep: Map<string, number>;
+  readonly decidedStep: Map<string, number>;
   /** chapter id → the decision that gave birth to it (bornChapters). */
-  bornFrom: Map<string, string>;
+  readonly bornFrom: Map<string, string>;
 }
 
 const LOOKUPS = new WeakMap<TraceSession, GraphicLookups>();
 
+function lazyLookups(session: TraceSession): GraphicLookups {
+  let entitiesByPath: Map<string, number[]> | undefined;
+  let steps: { stepPosition: Map<string, number>; decidedStep: Map<string, number> } | undefined;
+  let bornFrom: Map<string, string> | undefined;
+  const stepMaps = () => {
+    if (steps !== undefined) return steps;
+    const stepPosition = new Map<string, number>();
+    const decidedStep = new Map<string, number>();
+    session.steps.forEach((step, position) => {
+      stepPosition.set(step.id, position);
+      const decision = step.decision;
+      if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
+    });
+    return (steps = { stepPosition, decidedStep });
+  };
+  return {
+    get entitiesByPath() {
+      if (entitiesByPath !== undefined) return entitiesByPath;
+      const map = new Map<string, number[]>();
+      session.entities.forEach((entity, position) => {
+        const list = map.get(entity.path);
+        if (list === undefined) map.set(entity.path, [position]);
+        else list.push(position);
+      });
+      return (entitiesByPath = map);
+    },
+    get stepPosition() {
+      return stepMaps().stepPosition;
+    },
+    get decidedStep() {
+      return stepMaps().decidedStep;
+    },
+    get bornFrom() {
+      return (bornFrom ??= bornChapters(session));
+    },
+  };
+}
+
 function lookupsOf(session: TraceSession): GraphicLookups {
-  const cached = LOOKUPS.get(session);
-  if (cached !== undefined) return cached;
-  const entitiesByPath = new Map<string, number[]>();
-  session.entities.forEach((entity, position) => {
-    const list = entitiesByPath.get(entity.path);
-    if (list === undefined) entitiesByPath.set(entity.path, [position]);
-    else list.push(position);
-  });
-  const stepPosition = new Map<string, number>();
-  const decidedStep = new Map<string, number>();
-  session.steps.forEach((step, position) => {
-    stepPosition.set(step.id, position);
-    const decision = step.decision;
-    if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
-  });
-  const lookups = { entitiesByPath, stepPosition, decidedStep, bornFrom: bornChapters(session) };
-  LOOKUPS.set(session, lookups);
+  let lookups = LOOKUPS.get(session);
+  if (lookups === undefined) {
+    lookups = lazyLookups(session);
+    LOOKUPS.set(session, lookups);
+  }
   return lookups;
 }
 
@@ -484,10 +511,10 @@ export interface PickGraphicOptions {
 /** ForkGlyph for the chapter born from an answered or delegated decision, only where the decision is not shown. */
 function chapterForkSpec(chapter: Chapter, session: TraceSession, options: PickGraphicOptions): GraphicSpec | null {
   if (chapter.decisionIds.length === 0) return null;
-  const { decidedStep, bornFrom } = lookupsOf(session);
-  const decisionId = bornFrom.get(chapter.id);
+  const lookups = lookupsOf(session);
+  const decisionId = lookups.bornFrom.get(chapter.id);
   if (decisionId === undefined || (options.decisionShown?.(decisionId) ?? true)) return null;
-  const decision = session.steps[decidedStep.get(decisionId) ?? -1]?.decision;
+  const decision = session.steps[lookups.decidedStep.get(decisionId) ?? -1]?.decision;
   return decision === undefined ? null : forkSpec(decision);
 }
 
