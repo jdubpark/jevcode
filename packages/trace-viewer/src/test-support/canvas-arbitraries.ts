@@ -1,7 +1,25 @@
-import type { TraceSessionSummary } from "@jevcode/contracts";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
+  TRACE_BUNDLE_FORMAT,
+  TRACE_BUNDLE_VERSION,
+  type ChangeUnit,
+  type TraceBundle,
+  type TraceRow,
+  type TraceSessionSummary,
+} from "@jevcode/contracts";
+import fc from "fast-check";
+
+import { loadFixtureTrace } from "./fixture-rows.js";
+
+import { RESUME_DEFAULT_PROMPT } from "../layout/canvas-layout.js";
+import { buildTimeScale, timeScaleInputOf, type TimeScale } from "../layout/time-scale.js";
+import {
   decisionStableId,
+  foldRows,
+  type UnitStableId,
   findingStableId,
   stepStableId,
   unitStableId,
@@ -329,5 +347,392 @@ export function buildCanvasSession(
     gaps: [],
     coverage: { capabilities: [], signals: [], approximateJoins: false, inferredSteps: 0 },
     hidden: { byType: {}, unreceived: 0 },
+  };
+}
+
+// ------------------------------------------------------------ scale
+
+export function canvasScale(session: TraceSession, liveTMs?: number): TimeScale {
+  return buildTimeScale(timeScaleInputOf(session, liveTMs));
+}
+
+// ------------------------------------------------------------ arbitraries (P1–P10)
+
+interface RawSeed {
+  dtMs: number;
+  kind: CanvasSeedKind;
+  durationMs: number;
+  flagged: boolean;
+  decides: boolean;
+  validates: boolean;
+  trigger: TurnTrigger;
+  resumeDefault: boolean;
+}
+
+const rawSeed: fc.Arbitrary<RawSeed> = fc.record({
+  dtMs: fc.oneof(
+    { weight: 6, arbitrary: fc.integer({ min: 0, max: 20_000 }) },
+    { weight: 1, arbitrary: fc.integer({ min: 60_000, max: 1_200_000 }) },
+  ),
+  kind: fc.constantFrom<CanvasSeedKind>(
+    "prompt",
+    "plan",
+    "claim",
+    "decision",
+    "chapter",
+    "chapter",
+    "chapter",
+    "noise",
+    "loose",
+    "work",
+  ),
+  durationMs: fc.oneof(
+    fc.constant(0),
+    fc.integer({ min: 100, max: 5_000 }),
+    fc.integer({ min: 60_000, max: 400_000 }),
+  ),
+  flagged: fc.boolean(),
+  decides: fc.boolean(),
+  validates: fc.boolean(),
+  trigger: fc.constantFrom<TurnTrigger>("steer", "resume"),
+  resumeDefault: fc.boolean(),
+});
+
+/** Turns, story items, chapters, noise, loose findings, decisions, validations, idle gaps and long commands. */
+export function arbCanvasSession(options: { maxSeeds?: number } = {}): fc.Arbitrary<TraceSession> {
+  return fc.array(rawSeed, { minLength: 1, maxLength: options.maxSeeds ?? 40 }).map((raw) => {
+    let t = 0;
+    const seeds: CanvasSeed[] = raw.map((seed, index) => {
+      t += index === 0 ? 0 : seed.dtMs;
+      const prompt =
+        seed.kind === "prompt" && seed.trigger === "resume" && seed.resumeDefault ? RESUME_DEFAULT_PROMPT : undefined;
+      return {
+        atMs: t,
+        kind: seed.kind,
+        durationMs: seed.durationMs,
+        flagged: seed.flagged,
+        decides: seed.decides,
+        validates: seed.validates,
+        trigger: seed.trigger,
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(seed.validates ? { category: "tests" as const } : {}),
+      };
+    });
+    return buildCanvasSession(seeds);
+  });
+}
+
+/** The items with start < beforeMs, unchanged (P5: "no key mutated after T"). */
+export function canvasPrefix(session: TraceSession, beforeMs: number): TraceSession {
+  const steps = session.steps.filter((step) => step.tMs < beforeMs);
+  const kept = new Set<string>(steps.map((step) => step.id));
+  const turns = session.turns
+    .filter((turn) => turn.tMs < beforeMs)
+    .map((turn) => {
+      const next: Turn = { ...turn, stepIds: turn.stepIds.filter((id) => kept.has(id)) };
+      if (next.planStepId !== undefined && !kept.has(next.planStepId)) delete next.planStepId;
+      if (next.claimStepId !== undefined && !kept.has(next.claimStepId)) delete next.claimStepId;
+      return next;
+    });
+  const last = steps.at(-1);
+  return {
+    ...session,
+    meta: { ...session.meta, lastEventSeq: last?.lastSeq ?? 0 },
+    loadedThroughSeq: last?.lastSeq ?? 0,
+    turns,
+    steps,
+    chapters: session.chapters.filter((chapter) => chapter.tMs < beforeMs),
+    findings: session.findings.filter((finding) => kept.has(finding.anchorStepId)),
+  };
+}
+
+export interface CanvasMutation {
+  op: "churn" | "merge" | "flip" | "late" | "append";
+  pick: number;
+}
+
+export const arbCanvasMutation: fc.Arbitrary<CanvasMutation> = fc.record({
+  op: fc.constantFrom<CanvasMutation["op"]>("churn", "merge", "flip", "late", "append"),
+  pick: fc.nat({ max: 1_000 }),
+});
+
+function chapterAnchor(chapter: Chapter, session: TraceSession): number {
+  const stepSeqs = chapter.stepIds.map((id) => session.steps.find((step) => step.id === id)?.firstSeq ?? Infinity);
+  return Math.min(...chapter.factSeqs, ...stepSeqs);
+}
+
+function replaceChapterId(session: TraceSession, from: UnitStableId, to: UnitStableId): void {
+  const swap = (ids: UnitStableId[]): UnitStableId[] => [...new Set(ids.map((id) => (id === from ? to : id)))];
+  for (const step of session.steps) step.chapterIds = swap(step.chapterIds);
+  for (const finding of session.findings) finding.chapterIds = swap(finding.chapterIds);
+}
+
+function applyMutation(session: TraceSession, { op, pick }: CanvasMutation): void {
+  const chapters = session.chapters;
+  switch (op) {
+    case "churn": {
+      const chapter = chapters[pick % Math.max(1, chapters.length)];
+      if (chapter === undefined) return;
+      const id: UnitStableId = `${chapter.id}~r`;
+      replaceChapterId(session, chapter.id, id);
+      chapter.id = id;
+      chapter.changeUnitId = id.slice("unit:".length);
+      return;
+    }
+    case "merge": {
+      if (chapters.length < 2) return;
+      const i = pick % chapters.length;
+      const a = chapters[i];
+      const b = chapters[(i + 1) % chapters.length];
+      if (a === undefined || b === undefined) return;
+      a.stepIds = [...new Set([...a.stepIds, ...b.stepIds])].sort(
+        (x, y) => Number(x.slice("step:".length)) - Number(y.slice("step:".length)),
+      );
+      a.factSeqs = [...new Set([...a.factSeqs, ...b.factSeqs])].sort((x, y) => x - y);
+      a.findingIds = [...new Set([...a.findingIds, ...b.findingIds])];
+      a.tMs = Math.min(a.tMs, b.tMs);
+      a.endTMs = Math.max(a.endTMs, b.endTMs);
+      a.noise = a.noise && b.noise;
+      replaceChapterId(session, b.id, a.id);
+      session.chapters = chapters.filter((chapter) => chapter !== b);
+      return;
+    }
+    case "flip": {
+      const clean = chapters.filter(
+        (chapter) =>
+          chapter.findingIds.length === 0 &&
+          chapter.stepIds.every((id) => (session.steps.find((step) => step.id === id)?.findingIds.length ?? 0) === 0),
+      );
+      const chapter = clean[pick % Math.max(1, clean.length)];
+      if (chapter !== undefined) chapter.noise = !chapter.noise;
+      return;
+    }
+    case "late": {
+      const pool = session.steps.filter(
+        (step) => step.kind === "edit" || step.kind === "test" || step.kind === "command",
+      );
+      const step = pool[pick % Math.max(1, pool.length)];
+      if (step === undefined) return;
+      const id: UnitStableId = `unit:late${step.firstSeq}`;
+      if (chapters.some((chapter) => chapter.id === id)) return;
+      const source = chapters[0];
+      const base: Chapter =
+        source === undefined
+          ? (buildCanvasSession([{ atMs: 0, kind: "chapter" }]).chapters[0] as Chapter)
+          : source;
+      chapters.push({
+        ...base,
+        id,
+        changeUnitId: id.slice("unit:".length),
+        title: `Late ${step.firstSeq}`,
+        firstSeq: step.firstSeq,
+        lastSeq: step.lastSeq,
+        tMs: step.tMs,
+        endTMs: step.endTMs ?? step.tMs,
+        stepIds: [step.id],
+        factSeqs: [step.firstSeq],
+        decisionIds: [],
+        validationStepIds: [],
+        findingIds: [],
+        noise: false,
+        current: true,
+      });
+      step.chapterIds.push(id);
+      chapters.sort((x, y) => chapterAnchor(x, session) - chapterAnchor(y, session));
+      return;
+    }
+    case "append": {
+      const last = session.steps.at(-1);
+      const turn = session.turns.at(-1);
+      if (last === undefined || turn === undefined) return;
+      const endT = session.steps.reduce((max, step) => Math.max(max, step.endTMs ?? step.tMs), 0);
+      const extra = buildCanvasSession([
+        { atMs: 0, kind: "prompt" },
+        { atMs: endT + 1_000 * (1 + (pick % 90)), kind: "chapter" },
+      ]);
+      const edit = extra.steps[1];
+      const chapter = extra.chapters[0];
+      if (edit === undefined || chapter === undefined) return;
+      const seq = last.lastSeq + 1;
+      const stepId = stepStableId(seq);
+      const unitId = unitStableId(`a${seq}`);
+      session.steps.push({
+        ...edit,
+        id: stepId,
+        seqs: [seq],
+        firstSeq: seq,
+        lastSeq: seq,
+        turnIndex: turn.index,
+        chapterIds: [unitId],
+      });
+      session.chapters.push({
+        ...chapter,
+        id: unitId,
+        changeUnitId: `a${seq}`,
+        firstSeq: seq,
+        lastSeq: seq,
+        stepIds: [stepId],
+        factSeqs: [seq],
+      });
+      turn.stepIds.push(stepId);
+      turn.endSeq = seq;
+      session.loadedThroughSeq = seq;
+      session.meta = { ...session.meta, lastEventSeq: seq };
+      return;
+    }
+  }
+}
+
+/** Id churn, merges, kind flips, late arrivals and appends (P6). Never mutates its input. */
+export function mutateCanvasSession(session: TraceSession, ops: readonly CanvasMutation[]): TraceSession {
+  const next = structuredClone(session);
+  for (const op of ops) applyMutation(next, op);
+  return next;
+}
+
+// ------------------------------------------------------------ oauth (spec §7.5 table)
+
+interface ExpectedUnit {
+  id: string;
+  title: string;
+  category: ChangeUnit["category"];
+  files: string[];
+}
+
+// path + fileURLToPath, not new URL(relative, import.meta.url): under jsdom that resolves against http://localhost:3000.
+const EXPECTED_UNITS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../fixtures/oauth/expected_units.json",
+);
+
+type Payload = Record<string, unknown>;
+
+function payloadOf(row: TraceRow): Payload {
+  return typeof row.payload === "object" && row.payload !== null ? (row.payload as Payload) : {};
+}
+
+function isFileFact(path: string): (row: TraceRow, payload: Payload) => boolean {
+  return (row, payload) => row.type === "evidence_fact" && payload.type === "file_changed" && payload.path === path;
+}
+
+/** Each unit's creation time, located by content in fixtures/oauth/events.jsonl (never by line number). */
+const UNIT_START: Record<string, (row: TraceRow, payload: Payload) => boolean> = {
+  "oauth-dependency": (row, payload) =>
+    row.type === "agent_event" && payload.type === "command_started" && payload.command === "pnpm add google-auth-library",
+  "oauth-identity-layer": isFileFact("src/auth/identity.ts"),
+  "oauth-migration": isFileFact("migrations/001_create_identities.sql"),
+  "oauth-lockfile-noise": isFileFact("pnpm-lock.yaml"),
+  "oauth-format-noise": isFileFact("src/db/users.ts"),
+  "oauth-account-linking-decision": (row, payload) =>
+    row.type === "agent_event" && payload.type === "agent_message" && payload.role === "user",
+  "oauth-linking-test-failure": isFileFact("tests/auth/oauth.test.ts"),
+};
+
+/** The mockup (canvas-1440.png) draws Identity layer → Account linking; the decision-born unit lists its decision. */
+const RELATED_DECISIONS: Record<string, string[]> = {
+  "oauth-identity-layer": ["dec-oauth-0001"],
+  "oauth-account-linking-decision": ["dec-oauth-0001"],
+};
+
+function unitEvidence(unit: ExpectedUnit, rows: readonly TraceRow[]): string[] {
+  const files = new Set(unit.files);
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.type !== "evidence_fact" || row.factId === undefined) continue;
+    const payload = payloadOf(row);
+    const path = payload.path ?? payload.file ?? payload.manifest;
+    const touches = typeof path === "string" && files.has(path);
+    const testRun = unit.category === "tests" && payload.type === "test_result";
+    if (touches || testRun) ids.push(row.factId);
+  }
+  return ids;
+}
+
+function expectedUnits(): ExpectedUnit[] {
+  const parsed: unknown = JSON.parse(readFileSync(EXPECTED_UNITS_PATH, "utf8"));
+  if (!Array.isArray(parsed)) throw new Error("expected_units.json is not an array");
+  return parsed as ExpectedUnit[];
+}
+
+/**
+ * oauth rows with the clusterer's change_unit rows replaced by units built from
+ * fixtures/oauth/expected_units.json, so clusterer drift cannot move the §7.5 table.
+ * Default: units are appended after every record row (they arrive late, as in replay).
+ * unitsInline: each unit row sits right after the row it was created at, and seqs are renumbered 1..N.
+ */
+export function oauthCanvasRows(options: { unitsInline?: boolean } = {}): {
+  meta: TraceSessionSummary;
+  rows: TraceRow[];
+} {
+  const fixture = loadFixtureTrace("oauth");
+  const records = fixture.rows.filter((row) => row.type !== "change_unit");
+  const units: TraceRow[] = [];
+  const after = new Map<number, TraceRow[]>();
+  let seq = records.reduce((max, row) => Math.max(max, row.seq), 0);
+  for (const expected of expectedUnits()) {
+    const locate = UNIT_START[expected.id];
+    const origin = locate === undefined ? undefined : records.find((row) => locate(row, payloadOf(row)));
+    const createdAt = origin === undefined ? undefined : payloadOf(origin).ts;
+    if (origin === undefined || typeof createdAt !== "string") {
+      throw new Error(`oauth unit ${expected.id} has no start row`);
+    }
+    const unit: ChangeUnit = {
+      id: expected.id,
+      sessionId: fixture.meta.sessionId,
+      title: expected.title,
+      category: expected.category,
+      status: "detected",
+      files: [...expected.files],
+      symbols: [],
+      interfacesChanged: [],
+      schemaChanges: [],
+      dependencyChanges: [],
+      relatedDecisions: RELATED_DECISIONS[expected.id] ?? [],
+      validationResults: [],
+      evidence: unitEvidence(expected, records),
+      createdAt,
+      updatedAt: createdAt,
+    };
+    seq += 1;
+    const row: TraceRow = { seq, type: "change_unit", ts: createdAt, payload: unit };
+    units.push(row);
+    const list = after.get(origin.seq) ?? [];
+    list.push(row);
+    after.set(origin.seq, list);
+  }
+  if (options.unitsInline !== true) return { meta: fixture.meta, rows: [...records, ...units] };
+  const ordered: TraceRow[] = [];
+  for (const row of records) {
+    ordered.push(row);
+    for (const unit of after.get(row.seq) ?? []) ordered.push(unit);
+  }
+  return { meta: fixture.meta, rows: ordered.map((row, index) => ({ ...row, seq: index + 1 })) };
+}
+
+/** Folds the first `count` rows; running until the last row arrives. */
+export function foldCanvasPrefix(meta: TraceSessionSummary, rows: readonly TraceRow[], count: number): TraceSession {
+  const slice = rows.slice(0, count);
+  const done = count >= rows.length;
+  return foldRows({ ...meta, state: done ? meta.state : "running" }, slice, {
+    live: !done,
+    state: done ? meta.state : "running",
+    throughSeq: slice.at(-1)?.seq ?? 0,
+  });
+}
+
+export function oauthCanvasSession(): TraceSession {
+  const { meta, rows } = oauthCanvasRows();
+  return foldRows(meta, rows, { live: false });
+}
+
+export function oauthCanvasBundle(): TraceBundle {
+  const { meta, rows } = oauthCanvasRows({ unitsInline: true });
+  return {
+    format: TRACE_BUNDLE_FORMAT,
+    version: TRACE_BUNDLE_VERSION,
+    exportedAt: meta.startedAt,
+    redactionCount: 0,
+    session: { ...meta, lastEventSeq: rows.at(-1)?.seq ?? 0 },
+    rows,
   };
 }
