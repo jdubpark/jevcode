@@ -12,22 +12,46 @@ const emit = (event) => {
 
 const threadId = args[1] === "resume" ? args[2] : "fake-thread-123";
 const prompt = args[args.length - 1];
+// FAKE_CODEX_COMPLETE_ON_INTERRUPT=1: the first (non-resume) process starts a
+// command and holds it open; ^C answers with turn.completed then turn.failed,
+// the way a real exec reports TurnStatus::Interrupted, then exits 1.
+const holdForInterrupt =
+  process.env.FAKE_CODEX_COMPLETE_ON_INTERRUPT === "1" && args[1] !== "resume";
 
-process.on("SIGINT", () => {
-  emit({ type: "error", message: "turn interrupted" });
+let interrupted = false;
+function onInterrupt() {
+  if (interrupted) return;
+  interrupted = true;
+  if (holdForInterrupt) {
+    emit({
+      type: "turn.completed",
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 },
+    });
+    emit({ type: "turn.failed", error: { message: "turn interrupted" } });
+  } else {
+    emit({ type: "error", message: "turn interrupted" });
+  }
   process.exit(1);
-});
+}
+
+process.on("SIGINT", onInterrupt);
 
 emit({ type: "thread.started", thread_id: threadId });
 emit({ type: "turn.started" });
+if (holdForInterrupt) {
+  emit({
+    type: "item.started",
+    item: { id: "item_cmd", type: "command_execution", command: "bash -lc pnpm test", status: "in_progress" },
+  });
+}
 
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.resume();
 process.stdin.on("data", (chunk) => {
   if (chunk.includes("\u0003")) {
-    emit({ type: "error", message: "turn interrupted" });
-    process.exit(1);
+    onInterrupt();
+    return;
   }
   buffer += chunk;
   const lines = buffer.split("\n");
@@ -46,6 +70,7 @@ process.stdin.on("data", (chunk) => {
 });
 
 setTimeout(() => {
+  if (holdForInterrupt) return;
   if (args[1] === "resume") {
     emit({
       type: "item.completed",
@@ -75,4 +100,4 @@ setTimeout(() => {
   });
 }, 300);
 
-setTimeout(() => process.exit(0), 900);
+setTimeout(() => process.exit(0), holdForInterrupt ? 5000 : 900);

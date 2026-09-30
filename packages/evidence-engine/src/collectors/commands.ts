@@ -30,7 +30,8 @@ export interface CommandCollectorOptions extends CollectorOptions {}
 export interface CommandCollector {
   readonly sink: FactSink;
   readonly facts: readonly EvidenceFact[];
-  observe(command: string, exitCode: number): EvidenceFact | null;
+  // sourceCallId: the agent call that ran the command (command_completed.callId).
+  observe(command: string, exitCode: number, sourceCallId?: string): EvidenceFact | null;
   observeAll(observations: readonly { command: string; exitCode: number }[]): EvidenceFact[];
 }
 
@@ -46,7 +47,7 @@ export function createCommandCollector(
     get facts(): readonly EvidenceFact[] {
       return sinkFacts(cfg.sink);
     },
-    observe(command: string, exitCode: number): EvidenceFact | null {
+    observe(command: string, exitCode: number, sourceCallId?: string): EvidenceFact | null {
       const trimmed = command.trim();
       if (!trimmed) return null;
       const fact: EvidenceFact = {
@@ -56,6 +57,7 @@ export function createCommandCollector(
         command: trimmed,
         exitCode,
         isDestructive: classifyDestructive(trimmed),
+        ...(sourceCallId !== undefined && sourceCallId !== "" ? { sourceCallId } : {}),
         ts: cfg.now(),
       };
       cfg.sink.push(fact);

@@ -106,7 +106,7 @@ No package may depend on another package's internals. All cross-package communic
 | Which events are directly available? | Determined by T2-1 spike. Expected: turn start/end, message deltas, tool calls (read/write/exec), approval requests, agent finish. Mapping table is an artifact of the spike. |
 | Which must be inferred? | Anything not in the structured stream: exact file edits (from git diff), test outcomes (from output parsing), dependency intent (from manifests + import edges). |
 | How are approvals mapped? | **Verified by spike:** headless `codex exec` runs with approval_policy=Never — no interactive approval prompts exist. Declined commands surface as `command_execution` `status:"declined"` and map to `ApprovalRequested` events. The Decision flow covers cases the agent itself asks about plus declined-command surfacing. |
-| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait. It ends the current turn and the process exits 1 with no resume channel. Mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn. Queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
+| Interrupt/resume? | **Verified by T2-1 spike (codex 0.155.1):** SIGINT does not pause-and-wait. It ends the current turn and the process exits 1 with no resume channel. Mid-run stdin is ignored. v0 mechanism: interrupt() ends the turn and **pauses** the session (resumable, never failed): the process's first terminal signal (`turn.completed`, `turn.failed` or exit) becomes one `agent_interrupted {reason: "interrupt"}` event and later ones are dropped. A steer records `agent_interrupted {reason: "steer"}` for the running turn before the relaunch. Stopping a live session records `agent_interrupted {reason: "stop"}` and leaves it `paused`, with no `endedAt` and its execution claim kept (§3.1b). A user stop (`stopSession` with `teardown: false`) also keeps the session registered with its adapter, which holds the thread id, so Resume relaunches `codex exec resume <thread_id>`. The stopped session records nothing and its evidence collection pauses until Resume, an instruction or a decision answer reaches it. Closing the repo, the replay CLI and soak tear the session down (`teardown: true`, the default). The thread id lives only in memory, so a session stopped before an app restart cannot be resumed. Queued instructions/decisions are applied by relaunching `codex exec resume <thread_id>` as a new process and writing the structured text as its prompt. This is the "next natural boundary" fallback the spec anticipated, now the shipped path. The thread id (from `thread.started`) is exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`. |
 | Structured decision response format | A fixed markdown/YAML block appended as a user message (PRD §8 format): `decision:`, `evidence:`, `instruction:`. Deterministic serialization from `StructuredDecision` contract. Two deny semantics (OpenCode v2 pattern): `instruction` present = correction-with-feedback (model-visible). Absent = plain decline (serializer emits an explicit decline line). |
 
 ### 3.1a Durable instruction admission (OpenCode v2 pattern)
@@ -123,7 +123,7 @@ Agent instructions and decision answers are **admitted through a durable inbox**
 
 - `sessions.execution_claim_ts` is set at session start and released on terminal agent exit (write-ahead claim, OpenCode's `time_suspended`).
 - Boot sweep: any session still `running` (and stale `paused`/`waiting_decision` with claim older than 24h) is marked `failed`. The codex thread id stays on the session row for later resumption.
-- Resume budget: `resume_attempts` increments per resume. At ≥3 the session fails with "resume budget exhausted" (prevents crash-loops, as in OpenCode's resume counter).
+- Resume budget: `resume_attempts` increments per resume. At ≥3 the session fails with "resume budget exhausted" (prevents crash-loops, as in OpenCode's resume counter). The `agent_failed` event is written to the event log before it is sent to the renderer.
 - PTY stall watchdog: `JEVCODE_AGENT_STALL_MS` (default 0 = off) emits an `agent_waiting` event when the agent produces no output while running.
 
 ### 3.1c Model & reasoning configuration (auto-selection policy)
@@ -194,6 +194,7 @@ Precedence at session start: explicit session input → env override → auto po
 | Renderer sandboxing | `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. Preload exposes only `window.jevcode` with the allowlisted API. |
 | Secrets handling | Redaction pipeline before any repo content reaches Jev/System-2 context (pattern set + .env exclusion). Terminal output is never sent to model context unless explicitly invoked by an action. |
 | Model-context redaction | Same pipeline. Redacted spans replaced with `[REDACTED:<kind>]`, counts logged to telemetry. |
+| Stored diffs | `git_hunk.diff.text` is redacted before it is stored. Files named `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*` or `id_dsa*` (except `*.pub`), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc`, `.pgpass`, `.pypirc` or `credentials` are withheld (`withheld: "secret_path"`, no text). In every other file, lines are classified first: `---`/`+++` are headers only between `diff --git` and the first `@@`, and inside a hunk each line is classified by its first character and counted against the `@@` header's line counts, so a removed `-- password=…` line is content. Header lines, the `@@ … @@` part of hunk headers, `Binary files … differ` and `\ No newline at end of file` are kept verbatim; the function heading git appends after `@@ … @@` is file text and is redacted. Each PEM private-key block (from a `-----BEGIN … PRIVATE KEY-----` line through its `-----END … PRIVATE KEY-----` line, or to the end of its hunk) becomes one `[REDACTED:private_key]` line behind the BEGIN line's diff prefix; certificates and public keys are kept. Every other hunk line is redacted after its diff prefix (`+`, `-` or space). The text is capped at 32 KiB, cut before the `@@` header of the first hunk that would overflow (`truncated: true`). `hash` and `bytes` describe the raw diff; `redactions` counts the replacements in the stored text, one per key block. The store itself is owner-only (§11). |
 
 ## 4. Shared Contracts (`packages/contracts`)
 
@@ -423,15 +424,15 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
 
 | Collector | Input | Output facts | Notes |
 |---|---|---|---|
-| GitCollector | `git status/diff` against session base commit | `git_hunk` (per file, classified formatting-only/config/lockfile) | Classifier: whitespace-only hunk detection + path heuristics (`*.lock`, `package-lock.json`, `.prettierrc`, etc.) |
+| GitCollector | `git status/diff` against session base commit | `git_hunk` (per file, classified formatting-only/config/lockfile) | Classifier: whitespace-only hunk detection + path heuristics (`*.lock`, `package-lock.json`, `.prettierrc`, etc.). Emits a file only when its diff hash changes; a file that leaves and re-enters `git status` emits again. `diff` holds `{hash, bytes, text?, truncated, redactions, withheld?}` from an injected `prepareDiff`; the default stores no text (`withheld: "not_captured"`), the desktop policy is in §3.7 |
 | FileWatcher | chokidar on repo root | `file_changed` | 300ms debounce, ignores `.git`, drop policy merges same-file |
 | SymbolCollector (worker) | tree-sitter parse of changed files | `symbol_delta` | vs. base parse snapshot, signature hash identity |
 | DependencyCollector | `package.json` (+ `pnpm-lock.yaml`/`yarn.lock`/`package-lock.json` for resolution) | `dependency_change` | lockfile-only changes → still emit, guardrail suppresses UI |
-| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0, runner registry for extension |
-| CommandCollector | PTY log | `command_executed` | destructive classifier (§8.3.1) |
+| TestCollector | PTY + command log parsing (vitest/jest/pytest formats) | `test_result` | regex suite v0, runner registry for extension; `sourceCallId` = the agent call's `callId` |
+| CommandCollector | PTY log | `command_executed` | destructive classifier (§8.3.1); `sourceCallId` = the agent call's `callId` |
 | RevertDetector | git status/reset observation | `revert_detected` | |
 
-All collectors emit into the event store. None talk to the renderer directly.
+All collectors emit into the event store. None talk to the renderer directly. Each collector pushes every fact into its sink exactly once; callers must not push the returned facts again.
 
 ## 8. Jev Harness (`packages/jev-router`)
 
@@ -489,7 +490,7 @@ Mapping to `JevResult`: `Score` level position maps linearly to 0..1 (levels eve
 
 ### 8.5 Jev decision logging
 
-Every call result is stored (`jev_decisions`: inputs hash, outputs, confidence, probabilities, latency, client kind, guardrail clamps applied). Debug panel (`Cmd/Ctrl+Shift+J` overlay) shows the last 50 per session. This satisfies PRD §59.17 and enables calibration (§14).
+Every call result is stored (`jev_decisions`: inputs hash, outputs, confidence, probabilities, latency, client kind, guardrail clamps applied). Debug panel (`Cmd/Ctrl+Shift+J` overlay) shows the last 50 per session. This satisfies PRD §59.17 and enables calibration (§14). Each log carries `pass`: `"A"` for attention, including guardrail suppressions, and `"B"` for projection. A unit suppressed by a guardrail is logged with the client's real `clientKind` and confidence, the guardrail's clamps, and `output.guardrailSuppression: true`.
 
 ## 9. UI Compiler and Component Catalog (`packages/ui-compiler`, `packages/ui-catalog`)
 
@@ -584,9 +585,11 @@ interface StartSessionInput {
 
 Codex adapter responsibilities: PTY lifecycle, JSONL parse (or transcript normalization fallback), event mapping (spike artifact), approval flow, interrupt/resume, and exit handling. Plus auth error surfacing (missing login → surface actionable FailureAnalysis instead of silent hang).
 
+Each Codex process (`exec` or `exec resume`) is one turn: the adapter mints a `turnId` (`turn_<32 hex>`) and stamps it on every event of that process. Call events carry `callId = ${turnId}:${item.id}`, shared by a call's start and completion, and `reasoning` items map to `agent_reasoning`. Interrupt, steer and stop emit `agent_interrupted` instead of `agent_failed` (§3.1). A missing Codex exit code is stored as `-1` and means unknown.
+
 ## 11. Storage (`packages/storage`)
 
-SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes.
+SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes. The store holds prompts, agent output and diffs, so `openDb` creates `~/.jevcode` with mode 0700 (and tightens an existing one) and `jevcode.db`, `-wal` and `-shm` with mode 0600. A directory chosen through `dbPath` or `JEVCODE_DB` is created 0700 when missing but never chmodded.
 
 Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`). Projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`.
 
@@ -599,7 +602,7 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 1. Renderer sandbox per §3.7. Preload exposes only `window.jevcode` (open repo, session control, action dispatch, terminal I/O, telemetry).
 2. All `ipcMain.handle` entries zod-validate payloads and verify `senderFrame` origin.
 3. Repo boundary: FileWatcher and GitService accept only paths inside the opened repo. Path-traversal attempts are rejected.
-4. Model context redaction: `Redactor` (pattern set: AWS keys, JWT, private keys, `password=`, `token=`, `.env` values) runs on any repo content and agent transcript before Jev/System-2 calls. Redaction events are counted in telemetry.
+4. Model context redaction: `Redactor` (pattern set: AWS access keys, JWT, private keys, GitHub and Slack tokens, provider API keys (`sk-…`, `sk_live_…`, `AIza…`), `Bearer` values, URL passwords, `aws_secret_access_key`, `password=`, `token=`, and `.env` values, also indented or after `export `) runs on any repo content and agent transcript before Jev/System-2 calls. A value that an earlier rule already replaced is not counted again, so a second pass is a no-op. Redaction events are counted in telemetry.
 5. Command logging: every PTY command line stored in `commands` (already a PRD §31 requirement) with `isDestructive` flag.
 6. `json-render` specs validated against the catalog zod before render. The catalog is closed (no dynamic component registration from model output).
 

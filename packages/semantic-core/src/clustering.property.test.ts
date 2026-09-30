@@ -1,8 +1,19 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
+import type { EvidenceFact } from "@jevcode/contracts";
+
 import { clusterSession, type SequencedFact } from "./clustering.js";
-import { fileChanged, hunk, SESSION, symbolDelta, tsOf } from "./test-helpers.js";
+import {
+  agentEvent,
+  commandExecuted,
+  fileChanged,
+  hunk,
+  SESSION,
+  symbolDelta,
+  testResult,
+  tsOf,
+} from "./test-helpers.js";
 
 interface FactSpec {
   file: string;
@@ -159,6 +170,67 @@ describe("clustering property tests", () => {
           decisions: [],
         });
         expect(groupingKey(twice)).toEqual(groupingKey(once));
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it("agentCallIds covers every sourceCallId on a unit's facts, sorted and unique", () => {
+    const CALL_IDS = ["turn_1:item_1", "turn_1:item_2", "turn_2:item_1"];
+    const provenanceArb = fc.record({
+      files: bucketSpecArb,
+      calls: fc.array(
+        fc.record({
+          kind: fc.constantFrom("cmd", "test"),
+          callId: fc.option(fc.constantFrom(...CALL_IDS), { nil: undefined }),
+          at: fc.integer({ min: 0, max: 19 }),
+        }),
+        { maxLength: 6 },
+      ),
+      edits: fc.array(
+        fc.record({
+          file: fc.constantFrom(...FILE_ALPHABET),
+          callId: fc.constantFrom(...CALL_IDS),
+          at: fc.integer({ min: 0, max: 19 }),
+        }),
+        { maxLength: 4 },
+      ),
+    });
+    fc.assert(
+      fc.property(provenanceArb, ({ files, calls, edits }) => {
+        const facts = specsToFacts(files);
+        for (const [index, call] of calls.entries()) {
+          const ts = tsOf(0, call.at);
+          const base: EvidenceFact =
+            call.kind === "cmd" ? commandExecuted(ts) : testResult(ts, { passed: 1 });
+          const fact = (
+            call.callId === undefined ? base : { ...base, sourceCallId: call.callId }
+          ) as EvidenceFact;
+          facts.push({ fact, factId: `c${index}`, seq: facts.length + 1, batchId: 0 });
+        }
+        const result = clusterSession({
+          sessionId: SESSION,
+          facts,
+          agentEvents: edits.map((edit) =>
+            agentEvent("file_changed", tsOf(0, edit.at), { path: edit.file, callId: edit.callId }),
+          ),
+          semanticEvents: [],
+          decisions: [],
+        });
+        for (const unit of result.units) {
+          const ids = unit.agentCallIds ?? [];
+          expect(ids).toEqual([...new Set(ids)].sort());
+          if (unit.agentCallIds !== undefined) expect(ids.length).toBeGreaterThan(0);
+          for (const entry of result.unitEvidenceFacts.get(unit.id) ?? []) {
+            const fact = entry.fact;
+            if (
+              (fact.type === "command_executed" || fact.type === "test_result") &&
+              fact.sourceCallId !== undefined
+            ) {
+              expect(ids).toContain(fact.sourceCallId);
+            }
+          }
+        }
       }),
       { numRuns: 200 },
     );

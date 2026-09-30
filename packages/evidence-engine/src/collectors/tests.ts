@@ -198,7 +198,13 @@ export interface TestCollectorOptions extends CollectorOptions {}
 export interface TestCollector {
   readonly sink: FactSink;
   readonly facts: readonly EvidenceFact[];
-  collect(text: string, command: string, runner?: TestRunnerName): EvidenceFact | null;
+  // sourceCallId: the agent call whose output this is (command_completed.callId).
+  collect(
+    text: string,
+    command: string,
+    runner?: TestRunnerName,
+    sourceCallId?: string,
+  ): EvidenceFact | null;
 }
 
 export function createTestCollector(
@@ -212,7 +218,12 @@ export function createTestCollector(
     get facts(): readonly EvidenceFact[] {
       return sinkFacts(cfg.sink);
     },
-    collect(text: string, command: string, runner?: TestRunnerName): EvidenceFact | null {
+    collect(
+      text: string,
+      command: string,
+      runner?: TestRunnerName,
+      sourceCallId?: string,
+    ): EvidenceFact | null {
       const parsed = parseTestOutput(text, runner);
       if (!parsed) return null;
       const fact: EvidenceFact = {
@@ -225,6 +236,7 @@ export function createTestCollector(
         failed: parsed.failed,
         skipped: parsed.skipped,
         failures: parsed.failures,
+        ...(sourceCallId !== undefined && sourceCallId !== "" ? { sourceCallId } : {}),
         ts: cfg.now(),
       };
       cfg.sink.push(fact);

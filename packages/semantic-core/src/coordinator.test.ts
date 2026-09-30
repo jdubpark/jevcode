@@ -199,6 +199,25 @@ describe("PipelineCoordinator stale-result discard", () => {
   });
 });
 
+describe("PipelineCoordinator unit versions", () => {
+  it("bumps a unit's version when an agent call is linked to it", () => {
+    const coordinator = new PipelineCoordinator();
+    coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+    coordinator.flush();
+    const [unit] = coordinator.snapshot().units;
+    expect(unit).toBeDefined();
+    expect(coordinator.decisionVersionOf(unit!.id)).toBe(1);
+
+    coordinator.ingest(
+      agentEvent("file_changed", tsOf(0, 1), { path: "src/a.ts", callId: "turn_a:item_2" }),
+    );
+    coordinator.flush();
+
+    expect(coordinator.getUnit(unit!.id)?.agentCallIds).toEqual(["turn_a:item_2"]);
+    expect(coordinator.decisionVersionOf(unit!.id)).toBe(2);
+  });
+});
+
 describe("PipelineCoordinator supersede", () => {
   it("marks units containing superseded files as superseded", () => {
     const coordinator = new PipelineCoordinator();

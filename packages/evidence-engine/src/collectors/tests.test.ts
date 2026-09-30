@@ -188,6 +188,23 @@ describe("createTestCollector", () => {
     expect(collector.facts).toHaveLength(1);
   });
 
+  it("stamps the agent call id as sourceCallId", () => {
+    const collector = createTestCollector("/repo", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const fact = collector.collect(VITEST_OUTPUT, "pnpm test", undefined, "turn_a:item_7");
+    expect(fact).toMatchObject({
+      type: "test_result",
+      runner: "vitest",
+      failed: 1,
+      sourceCallId: "turn_a:item_7",
+    });
+    const plain = collector.collect(VITEST_OUTPUT, "pnpm test");
+    expect("sourceCallId" in plain!).toBe(false);
+  });
+
   it("does not emit for unparseable output", () => {
     const collector = createTestCollector("/repo", {
       repoId: "repo-1",

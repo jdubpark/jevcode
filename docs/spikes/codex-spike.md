@@ -92,25 +92,29 @@ Observed emission semantics (source `exec/event_processor_with_jsonl_output.rs`)
 ## 3. Mapping table (codex JSONL → NormalizedAgentEvent)
 
 Implemented in `packages/agent-codex/src/jsonl.ts` (`mapCodexJsonlEvent`).
+Every mapped event carries the adapter's `turnId` (one per `exec` or
+`exec resume` process). Call events also carry `callId = ${turnId}:${item.id}`,
+the same on an item's `item.started` and `item.completed`.
 
 | codex `--json` event | NormalizedAgentEvent |
 |---|---|
 | `thread.started` | none (thread id captured internally. Exposed via `CodingAgentAdapter.getThreadId()` and surfaced on the desktop session state as `agentThreadId`) |
 | `turn.started` | none |
-| `item.started` `command_execution` | `command_started {command}` |
-| `item.completed` `command_execution` (completed/failed) | `command_completed {command, exitCode: exit_code ?? -1, stdout: aggregated_output, stderr: ""}` |
-| `item.completed` `command_execution` (declined) | `approval_requested {command, rationale: output or "declined by codex approval policy"}` |
-| `item.started` `mcp_tool_call` | `tool_started {tool: server.tool, input: JSON(arguments)}` |
-| `item.completed` `mcp_tool_call` | `tool_completed {tool: server.tool, output: JSON(result \| error)}` |
+| `item.started` `command_execution` | `command_started {command, callId}` |
+| `item.completed` `command_execution` (completed/failed) | `command_completed {command, callId, exitCode: exit_code ?? -1, stdout: aggregated_output, stderr: ""}` (`-1` means Codex reported no exit code) |
+| `item.completed` `command_execution` (declined) | `approval_requested {command, callId, rationale: output or "declined by codex approval policy"}` |
+| `item.started` `mcp_tool_call` | `tool_started {tool: server.tool, callId, input: JSON(arguments)}` |
+| `item.completed` `mcp_tool_call` | `tool_completed {tool: server.tool, callId, output: JSON(result \| error)}` |
 | `item.completed` `agent_message` | `agent_message {role: "assistant", text}` |
-| `item.completed` `reasoning` | `agent_message {role: "assistant", text}` |
-| `item.completed` `file_change` (completed) | one `file_changed {path}` per entry in `changes[]` |
+| `item.completed` `reasoning` | `agent_reasoning {text, callId}` (kept out of the conversation) |
+| `item.completed` `file_change` (completed) | one `file_changed {path, callId}` per entry in `changes[]` |
 | `item.*` `todo_list`, `web_search`, `collab_tool_call`, item `error` | none in v0 (forward-compatible skip) |
 | `error` with auth/credit pattern | `agent_failed {error}` |
 | `error` otherwise | none (codex uses it for retry chatter) |
 | `turn.completed` | `agent_completed` |
 | `turn.failed` | `agent_failed {error: error.message}` |
-| process exit without a terminal event | `agent_failed {error: "codex exited with code N"}` (adapter) |
+| `turn.completed` / `turn.failed` after `interrupt()` | one `agent_interrupted {reason: "interrupt"}` (adapter); later terminal events of that process are dropped |
+| process exit without a terminal event | `agent_failed {error: "codex exited with code N"}` (adapter), or `agent_interrupted {reason: "interrupt"}` when `interrupt()` signalled that process |
 
 ## 4. Interrupt / resume findings (gated decision from SPEC §3.1)
 
@@ -134,8 +138,9 @@ Evidence:
   whole prompt and mid-run stdin writes are ignored. A real run logged
   "Reading additional input from stdin..." to stderr when stdin was a pipe.
 - Consequence for the adapter: `interrupt()` writes `\u0003` to the PTY
-  (SIGINT), which terminates the current turn. The session then ends with exit
-  code 1 and the adapter emits `agent_failed`. `resume()`,
+  (SIGINT), which terminates the current turn. The process then exits with
+  code 1, and the adapter emits one `agent_interrupted {reason: "interrupt"}`
+  instead of `agent_failed`: the session is paused, not failed (D10). `resume()`,
   `sendInstruction()`, and `sendDecision()` write to PTY stdin per the
   interface contract, but codex ignores them until a new exec process is
   started. The working continuation mechanism in this codex version is
