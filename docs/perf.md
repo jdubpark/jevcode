@@ -72,11 +72,41 @@ Remaining known cost: a rebuild still re-clusters the full session. The
 debounce bounds this to one rebuild per burst instead of one per batch window.
 Full incremental clustering is out of scope (documented in SPEC §19).
 
+## Trace read (trace viewer, spec §10 M2 budgets)
+
+Measured 2026-09-30 with `JEVCODE_SOAK_PROFILE=trace node scripts/soak.mjs`, the
+full soak on the spec §10 reference input: command stdout of 0.2 to 64 KiB,
+assistant notes of 0.2 to 4 KiB, `callId` pairs, agent `file_changed` claims
+and a steer every 500 records. Run on a quiet machine at commit `f180a95`.
+Before it stops the session, the soak reads the whole session through the
+viewer's own path: a second `query_only` connection (`openTraceReader`),
+`createTraceService` (fact ids, and strings over 16 KiB clipped to a 4 KiB
+head and a 12 KiB tail) and `readAllRows`. Only the six `TRACE_ROW_TYPES` are
+read; graph, telemetry, snapshot and failure rows are skipped. The full read
+runs 6 times in pages of up to 5,000 rows, and a page also ends after the row
+that takes its stored payload past 2 MiB; the first read is a discarded
+warm-up and the budget uses the median of the other 5. The `trace:rows`
+budget times single calls at the viewer's page size of 2,000 rows (or 2 MiB
+of payload) over repeated full reads.
+
+| Budget | Target | Measured | Status |
+|---|---|---|---|
+| Full soak-session trace read in main | ≤1.5s | 998 ms, median of 5 (917, 994, 1300, 1824, 998 ms), for 110,957 trace rows of 452,361 stored | PASS |
+| `trace:rows` call in main (trace profile) | p95 ≤50ms | 13.7 ms p95 over 340 calls (p50 9.1 ms, max 27.8 ms) | PASS |
+
+This soak stored 452,361 events for 10,013 records in 687,528 ms;
+the 2026-09-19 soak above stored 75,181.
+
 ## How to reproduce
 
 ```
 pnpm build
 node scripts/perf.mjs    # fixture replays: persist latency, first-surface latency, compile times
-node scripts/soak.mjs    # 10k-event soak with SurfaceManager invariants
+node scripts/soak.mjs    # 10k-event soak with SurfaceManager invariants and the trace read budgets
 JEVCODE_SOAK_EVENTS=2000 node scripts/soak.mjs  # smaller soak for quick checks
+JEVCODE_SOAK_PROFILE=trace node scripts/soak.mjs  # the trace viewer's reference input (spec §10)
+JEVCODE_SOAK_EXPORT=/tmp/jevcode-soak-trace.json node scripts/soak.mjs  # also writes a trace.json bundle
+JEVCODE_SOAK_KEEP_DB=/tmp/jevcode-soak-trace.db node scripts/soak.mjs  # also keeps the database (mode 0600)
 ```
+
+The full soak takes about 11 minutes; run it in the background.
