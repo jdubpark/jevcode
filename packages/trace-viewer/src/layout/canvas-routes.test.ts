@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Level, TraceSession } from "../model/index.js";
 import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../test-support/canvas-arbitraries.js";
+import type { CanvasSeed } from "../test-support/canvas-arbitraries.js";
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "./canvas-layout.js";
 import { LEVEL_SPECS } from "./canvas-levels.js";
 import { directPath, homeFrameKey, laneY, samplePath, type CanvasEdge, type RouteInput } from "./canvas-routes.js";
@@ -87,6 +88,106 @@ describe("routeEdges on oauth at Chapter level", () => {
   });
 });
 
+describe("route stability under append (spec §7.5 lane reservation)", () => {
+  // Decisions, validations and flagged claims interleaved so decides/validates/contradicts edges compete for
+  // the same rails and channel lanes. Each drip step appends one seed and lays out with the previous layout.
+  const seeds: CanvasSeed[] = [
+    { atMs: 1_000, kind: "loose" },
+    { atMs: 1_500, kind: "decision" },
+    { atMs: 2_000, kind: "chapter" },
+    { atMs: 3_000, kind: "chapter" },
+    { atMs: 4_000, kind: "chapter", decides: true, validates: true },
+    { atMs: 5_000, kind: "chapter" },
+    { atMs: 6_000, kind: "chapter", validates: true },
+    { atMs: 7_000, kind: "chapter" },
+    { atMs: 8_000, kind: "chapter", decides: true },
+    { atMs: 9_000, kind: "chapter" },
+    { atMs: 9_500, kind: "claim", flagged: true },
+    { atMs: 10_000, kind: "chapter", validates: true },
+    { atMs: 11_000, kind: "chapter", decides: true },
+    { atMs: 12_000, kind: "chapter" },
+    { atMs: 12_500, kind: "claim", flagged: true },
+    { atMs: 13_000, kind: "chapter", validates: true },
+    { atMs: 14_000, kind: "chapter" },
+    { atMs: 15_500, kind: "claim", flagged: true },
+  ];
+
+  it.each<Level>(["chapter", "step"])("keeps every earlier edge id, shape, lane and d at %s level", (level) => {
+    let prev: CanvasLayout | undefined;
+    let earlier = new Map<string, { shape: string; lane: number | null; d: string | null; ends: [string, string] }>();
+    let appendedContradicts = 0;
+    for (let count = 1; count <= seeds.length; count += 1) {
+      const session = buildCanvasSession(seeds.slice(0, count));
+      const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), level, prev);
+      // The trunk comb grows with each turn by design; only routed connectors must stay put.
+      const routed = layout.edges.filter((candidate) => candidate.kind !== "trunk");
+      const now = new Map(routed.map((candidate) => [candidate.id, candidate]));
+      for (const [id, before] of earlier) {
+        const after = now.get(id);
+        // A frame key can be re-minted when a later row re-classifies an item (claim:12 becomes step:12);
+        // an edge may then legitimately change id, but never while both of its frames still exist.
+        if (after === undefined) {
+          const [from, to] = before.ends;
+          expect(layout.frameByKey.has(from) && layout.frameByKey.has(to), `${id} vanished at seed ${count}`).toBe(false);
+          continue;
+        }
+        expect({ shape: after.shape, lane: after.lane, d: after.d }, `${id} moved at seed ${count}`).toEqual({
+          shape: before.shape,
+          lane: before.lane,
+          d: before.d,
+        });
+      }
+      if (seeds[count - 1]?.kind === "claim") {
+        appendedContradicts += [...now.values()].filter((candidate) => candidate.kind === "contradicts" && !earlier.has(candidate.id)).length;
+      }
+      earlier = new Map(routed.map((candidate) => [candidate.id, { shape: candidate.shape, lane: candidate.lane, d: candidate.d, ends: [candidate.from, candidate.to] as [string, string] }]));
+      prev = layout;
+    }
+    expect(appendedContradicts).toBeGreaterThan(0);
+    expect(earlier.size).toBeGreaterThan(0);
+  });
+
+  it("routes validates through a channel lane above the reserved ones", () => {
+    const session = buildCanvasSession(seeds);
+    const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
+    const validates = layout.edges.filter((candidate) => candidate.kind === "validates" && candidate.shape === "channel" && candidate.d !== null);
+    expect(validates.length).toBeGreaterThan(0);
+    for (const candidate of validates) {
+      expect(candidate.d).not.toBeNull();
+      expect(candidate.lane).toBeGreaterThanOrEqual(2);
+      expect(candidate.tone).toBe("neutral");
+      expect(candidate.rest).toBe(false);
+    }
+  });
+
+  it("leaves a card through its side port when other frames stand between it and the channel", () => {
+    const session = buildCanvasSession(seeds);
+    const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
+    const sideExits = layout.edges.filter((candidate) => {
+      if (candidate.shape !== "channel" || candidate.d === null) return false;
+      const points = samplePath(candidate.d);
+      const ends = [points[0], points[points.length - 1]];
+      return [candidate.from, candidate.to].some((key) => {
+        const frame = layout.frameByKey.get(key);
+        if (frame === undefined) return false;
+        const { x, y, w, h } = frame.card;
+        return ends.some((end) => end !== undefined && (end.x === x + w || end.x === x) && end.y === y + h / 2);
+      });
+    });
+    expect(sideExits.length).toBeGreaterThan(0);
+  });
+
+  it("uses reserved lanes only for contradicts", () => {
+    const session = buildCanvasSession(seeds);
+    const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
+    for (const candidate of layout.edges) {
+      if (candidate.kind === "trunk" || candidate.lane === null) continue;
+      if (candidate.shape === "channel") expect(candidate.lane === 1).toBe(candidate.kind === "contradicts");
+      if (candidate.shape === "rail") expect(candidate.lane === 0).toBe(candidate.kind === "contradicts");
+    }
+  });
+});
+
 describe("routeEdges rules", () => {
   it("draws only trunk and contradicts at rest at Session level", () => {
     const layout = fresh(oauthCanvasSession(), "session");
@@ -111,7 +212,7 @@ describe("routeEdges rules", () => {
     expect(hi).toBeLessThanOrEqual((column?.x ?? 0) + 1);
   });
 
-  it("gives contradicts lanes 1 and 2 and then falls back to a direct bezier drawn at rest", () => {
+  it("gives contradicts reserved channel lane 1 and then falls back to a direct bezier drawn at rest", () => {
     const layout = fresh(
       buildCanvasSession([
         { atMs: 1_000, kind: "loose" },
@@ -137,7 +238,7 @@ describe("routeEdges rules", () => {
     const contradicts = layout.edges.filter((candidate) => candidate.kind === "contradicts");
     expect(contradicts.map((candidate) => [candidate.shape, candidate.lane, candidate.rest])).toEqual([
       ["channel", 1, true],
-      ["channel", 2, true],
+      ["direct", null, true],
       ["direct", null, true],
     ]);
     expect(contradicts.every((candidate) => candidate.d !== null)).toBe(true);
