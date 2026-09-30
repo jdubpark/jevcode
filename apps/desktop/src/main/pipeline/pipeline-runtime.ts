@@ -565,7 +565,13 @@ export class PipelineRuntime {
     };
     this.refreshThreadId(session);
     await session.adapter?.sendDecision(structured);
-    const answered: Decision = { ...decision, status: "answered", answer: structured };
+    // ts: when the status changed (R4); readers fall back to the row ts.
+    const answered: Decision = {
+      ...decision,
+      status: "answered",
+      answer: structured,
+      ts: this.nowIso(),
+    };
     this.opts.db.upsertDecision(answered);
     session.coordinator.ingest(answered);
     session.openDecisions.delete(decision.id);
@@ -600,7 +606,12 @@ export class PipelineRuntime {
         "The developer delegated this decision to you. Choose the option you judge best and continue.",
     };
     await session.adapter?.sendDecision(structured);
-    const delegated: Decision = { ...decision, status: "delegated", answer: structured };
+    const delegated: Decision = {
+      ...decision,
+      status: "delegated",
+      answer: structured,
+      ts: this.nowIso(),
+    };
     this.opts.db.upsertDecision(delegated);
     session.coordinator.ingest(delegated);
     session.openDecisions.delete(decision.id);
