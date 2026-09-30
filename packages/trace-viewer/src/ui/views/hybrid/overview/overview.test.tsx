@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MAX_OVERLAY_NODES } from "../../../../layout/overview-layout.js";
+import { layoutOverview, MAX_OVERLAY_NODES } from "../../../../layout/overview-layout.js";
 import { RecordingContext } from "../../../../test-support/recording-context.js";
 import {
   foldFixture,
@@ -14,15 +14,54 @@ import {
 } from "../../../../test-support/ui-harness.js";
 import { KeyboardLayer } from "../../../shell/KeyboardLayer.js";
 import { Overview, type OverviewApi } from "./Overview.js";
+import { pinLabel } from "./Pins.js";
 
 let layout: LayoutStub;
 beforeEach(() => {
   layout = stubLayout({ width: 1400, height: 600 });
 });
+let activeFrames: FrameQueue | null = null;
 afterEach(() => {
+  activeFrames?.restore();
+  activeFrames = null;
   cleanup();
   layout.restore();
 });
+
+type FrameQueue = { flush(): void; pending(): number; restore(): void };
+
+/** Replaces the document window's rAF with a manual queue so tests decide when a frame runs. */
+function installFrames(): FrameQueue {
+  const view = document.defaultView as Window & typeof globalThis;
+  const original = { raf: view.requestAnimationFrame, caf: view.cancelAnimationFrame };
+  let next = 1;
+  const queue = new Map<number, FrameRequestCallback>();
+  view.requestAnimationFrame = (callback) => {
+    const id = next;
+    next += 1;
+    queue.set(id, callback);
+    return id;
+  };
+  view.cancelAnimationFrame = (id) => {
+    queue.delete(id);
+  };
+  const queueApi: FrameQueue = {
+    flush: () => {
+      const callbacks = [...queue.values()];
+      queue.clear();
+      act(() => {
+        for (const callback of callbacks) callback(0);
+      });
+    },
+    pending: () => queue.size,
+    restore: () => {
+      view.requestAnimationFrame = original.raf;
+      view.cancelAnimationFrame = original.caf;
+    },
+  };
+  activeFrames = queueApi;
+  return queueApi;
+}
 
 function WithKeys({ children }: { children: ReactNode }) {
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -161,19 +200,131 @@ describe("Overview", () => {
     expect(labels.some((label) => label.startsWith("Claim contradicts tests"))).toBe(true);
   });
 
-  it("ends a drag on pointercancel without committing and clears the gesture", async () => {
+  it("restores the pre-gesture brush when a drag is cancelled", async () => {
+    const frames = installFrames();
     const { h } = await renderOverview();
     const before = h.store.get().brush;
     const track = screen.getByTestId("overview-track");
     fireEvent.pointerDown(track, { clientX: 100, button: 0, pointerId: 1 });
-    fireEvent.pointerMove(track, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(track, { clientX: 300, pointerId: 1 });
+    frames.flush();
+    expect(h.store.get().brush).not.toEqual(before);
     expect(h.store.get().gesture).toBe("brush");
-    fireEvent.pointerCancel(track, { pointerId: 1 });
+    fireEvent.pointerCancel(track, { clientX: 700, pointerId: 1 });
     expect(h.store.get().gesture).toBeNull();
-    const afterCancel = h.store.get().brush;
+    expect(h.store.get().brush).toEqual(before);
     fireEvent.pointerMove(track, { clientX: 900, pointerId: 1 });
-    expect(h.store.get().brush).toEqual(afterCancel);
-    expect(before.kind).toBe("session");
+    frames.flush();
+    expect(h.store.get().brush).toEqual(before);
+  });
+
+  it("restores the pre-gesture playhead when a scrub loses capture", async () => {
+    const frames = installFrames();
+    await renderOverview();
+    const now = (): string | null => slider().getAttribute("aria-valuenow");
+    const before = now();
+    const handle = slider();
+    fireEvent.pointerDown(handle, { clientX: 200, button: 0, pointerId: 2 });
+    fireEvent.pointerMove(handle, { clientX: 900, pointerId: 2 });
+    frames.flush();
+    expect(now()).not.toBe(before);
+    fireEvent(handle, new Event("lostpointercapture"));
+    expect(now()).toBe(before);
+  });
+
+  it("writes at most once per animation frame and commits the last position on pointerup", async () => {
+    const frames = installFrames();
+    const { h } = await renderOverview();
+    let writes = 0;
+    let last = h.store.get().brush;
+    h.store.subscribe(() => {
+      const now = h.store.get().brush;
+      if (now !== last) {
+        last = now;
+        writes += 1;
+      }
+    });
+    const track = screen.getByTestId("overview-track");
+    fireEvent.pointerDown(track, { clientX: 100, button: 0, pointerId: 1 });
+    for (const x of [200, 300, 400, 500]) fireEvent.pointerMove(track, { clientX: x, pointerId: 1 });
+    expect(writes).toBe(0);
+    expect(frames.pending()).toBe(1);
+    frames.flush();
+    expect(writes).toBe(1);
+    fireEvent.pointerMove(track, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerUp(track, { clientX: 800, pointerId: 1 });
+    expect(frames.pending()).toBe(0);
+    const brush = h.store.get().brush;
+    expect(brush.kind).toBe("range");
+    // The pointerup position (800) wins over the unflushed 600.
+    fireEvent.pointerDown(track, { clientX: 100, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(track, { clientX: 800, pointerId: 1 });
+    fireEvent.pointerUp(track, { clientX: 800, pointerId: 1 });
+    expect(h.store.get().brush).toEqual(brush);
+  });
+
+  it("stops a body drag at either session end and keeps the range width in steps", async () => {
+    const session = foldFixture("oauth");
+    const { h } = await renderOverview();
+    const from = 4;
+    const to = 9;
+    const seqOf = (position: number): number => session.steps[position]?.firstSeq ?? 0;
+    act(() =>
+      h.store.dispatch({ type: "brush/set", brush: { kind: "range", fromSeq: seqOf(from), toSeq: seqOf(to) }, by: "hybrid" }),
+    );
+    const body = (): HTMLElement => screen.getByTestId("overview-brush-body");
+    const width = to - from;
+    const last = session.steps.length - 1;
+
+    fireEvent.pointerDown(body(), { clientX: 400, button: 0, pointerId: 3 });
+    fireEvent.pointerMove(body(), { clientX: 9000, pointerId: 3 });
+    fireEvent.pointerUp(body(), { clientX: 9000, pointerId: 3 });
+    expect(h.store.get().brush).toEqual({ kind: "range", fromSeq: seqOf(last - width), toSeq: seqOf(last) });
+
+    fireEvent.pointerDown(body(), { clientX: 400, button: 0, pointerId: 3 });
+    fireEvent.pointerMove(body(), { clientX: -9000, pointerId: 3 });
+    fireEvent.pointerUp(body(), { clientX: -9000, pointerId: 3 });
+    expect(h.store.get().brush).toEqual({ kind: "range", fromSeq: seqOf(0), toSeq: seqOf(width) });
+  });
+
+  it("keeps a session-level snapped end inside a band whose last step is long", async () => {
+    const session = foldFixture("oauth");
+    const { h, apiRef } = await renderOverview();
+    act(() => h.store.dispatch({ type: "level/set", level: "session", by: "hybrid" }));
+    await act(async () => undefined);
+    const api = apiRef.current;
+    if (api === null) throw new Error("no api");
+    const bands = layoutOverview({
+      overview: api.overview() as NonNullable<ReturnType<OverviewApi["overview"]>>,
+      camera: api.camera() as NonNullable<ReturnType<OverviewApi["camera"]>>,
+      widthPx: api.widthPx(),
+      level: "session",
+    }).bands;
+    const band = bands.find((item) => item.key === "ch:37");
+    if (band === undefined) throw new Error("oauth fixture lost its ch:37 band");
+    const track = screen.getByTestId("overview-track");
+    fireEvent.pointerDown(track, { clientX: band.x0 + 0.5, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(track, { clientX: band.x1 - 0.5, pointerId: 1 });
+    fireEvent.pointerUp(track, { clientX: band.x1 - 0.5, pointerId: 1 });
+    const brush = h.store.get().brush;
+    // The band ends inside the 5 s step at +25 s (seq 37); the next step starts at +31 s (seq 40) and is nearer
+    // to the band end than the long step's own start, so a "nearest" lookup used to spill into it.
+    const longStep = session.steps.find((step) => step.firstSeq === 37);
+    expect(longStep?.durationMs).toBe(5000);
+    expect(brush).toEqual({ kind: "range", fromSeq: 35, toSeq: 37 });
+  });
+
+  it("labels a decision pin with its kind, not the agent-written decision title", () => {
+    const session = foldFixture("oauth");
+    const position = session.steps.findIndex(
+      (step) => step.kind === "decision" && step.decision !== undefined && step.findingIds.length === 0,
+    );
+    expect(position).toBeGreaterThanOrEqual(0);
+    const title = session.steps[position]?.decision?.title ?? "";
+    const label = pinLabel({ cluster: false, stepIndexes: [position] } as unknown as Parameters<typeof pinLabel>[0], session);
+    expect(title.length).toBeGreaterThan(0);
+    expect(label).not.toContain(title);
+    expect(label).toContain("Decision");
   });
 
   it("clears the gesture when it unmounts mid-drag", async () => {
@@ -187,11 +338,13 @@ describe("Overview", () => {
   });
 
   it("scrubs with the playhead handle and never leaves a gesture behind on lost capture", async () => {
+    const frames = installFrames();
     const { h } = await renderOverview();
     const handle = slider();
     fireEvent.pointerDown(handle, { clientX: 200, button: 0, pointerId: 2 });
     fireEvent.pointerMove(handle, { clientX: 600, pointerId: 2 });
     expect(h.store.get().gesture).toBe("playhead");
+    frames.flush();
     expect(h.store.get().playhead.kind).toBe("free");
     fireEvent(handle, new Event("lostpointercapture"));
     expect(h.store.get().gesture).toBeNull();

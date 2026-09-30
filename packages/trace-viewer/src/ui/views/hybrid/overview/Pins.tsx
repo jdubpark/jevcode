@@ -1,7 +1,7 @@
 import { LANE_H, PIN_PX, type PinPlacement } from "../../../../layout/overview-layout.js";
-import type { SelectionId, TraceIndex } from "../../../../layout/trace-index.js";
-import { formatOffset, type Step, type TraceSession } from "../../../../model/index.js";
-import { selectionTitle } from "../../../inspector/finding-copy.js";
+import type { SelectionId } from "../../../../layout/trace-index.js";
+import { formatOffset, KIND_META, type Step, type TraceSession } from "../../../../model/index.js";
+import { FINDING_TITLE, topFindingOf } from "../../../inspector/finding-copy.js";
 import type { IconName } from "../../../icons/icon-names.js";
 import { Icon } from "../../../icons/Icon.js";
 import { KIND_ICON, SIGNAL_ICON } from "../../../icons/kind-icons.js";
@@ -30,7 +30,13 @@ export function pinIcon(pin: PinPlacement, session: TraceSession): IconName {
   }
 }
 
-export function pinLabel(pin: PinPlacement, session: TraceSession, index: TraceIndex): string {
+/** Pin names are viewer chrome: a finding title or the kind label, never agent-derived text (spec "Untrusted agent text" row). */
+function pinTitle(session: TraceSession, step: Step): string {
+  const finding = topFindingOf(session, step);
+  return finding === null ? KIND_META[step.kind].label : FINDING_TITLE[finding.ruleId];
+}
+
+export function pinLabel(pin: PinPlacement, session: TraceSession): string {
   const steps = pin.stepIndexes.map((position) => session.steps[position]).filter((step): step is Step => step !== undefined);
   if (pin.cluster) {
     const problems = steps.filter((step) => step.problems.length > 0 || step.findingIds.length > 0).length;
@@ -38,19 +44,18 @@ export function pinLabel(pin: PinPlacement, session: TraceSession, index: TraceI
     return `${steps.length} events, ${range}${problems > 0 ? `, ${problems} ${problems === 1 ? "problem" : "problems"}` : ""}`;
   }
   const step = steps[0];
-  return step === undefined ? "Pin" : `${selectionTitle(session, index, step.id)}, ${formatOffset(step.tMs)}`;
+  return step === undefined ? "Pin" : `${pinTitle(session, step)}, ${formatOffset(step.tMs)}`;
 }
 
 export interface PinsProps {
   pins: readonly PinPlacement[];
   session: TraceSession;
-  index: TraceIndex;
   selection: SelectionId | null;
   onSelect(stepIndex: number): void;
   onZoomTo(stepIndexes: readonly number[]): void;
 }
 
-export function Pins({ pins, session, index, selection, onSelect, onZoomTo }: PinsProps) {
+export function Pins({ pins, session, selection, onSelect, onZoomTo }: PinsProps) {
   return (
     <>
       {pins.map((pin) => {
@@ -65,7 +70,7 @@ export function Pins({ pins, session, index, selection, onSelect, onZoomTo }: Pi
             data-critical={pin.critical ? "" : undefined}
             data-painted={PINS_PAINTED_ON_CANVAS ? "" : undefined}
             aria-pressed={selected}
-            aria-label={pinLabel(pin, session, index)}
+            aria-label={pinLabel(pin, session)}
             className={styles.pin}
             style={{ left: pin.x - PIN_PX / 2, top: laneTop(pin.lane) + (LANE_H - PIN_PX) / 2 }}
             onClick={() => {
