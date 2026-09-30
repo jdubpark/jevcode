@@ -127,3 +127,29 @@ PENDING human rows (all deferred by the person on 2026-09-30):
 | H5 M4a budgets in desktop Chrome | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | With the soak bundle in `apps/trace-viewer-dev/public/bundles/soak.json` (regenerate: `JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_EXPORT="$PWD/apps/trace-viewer-dev/public/bundles/soak.json" node scripts/soak.mjs`, about 18 min), run `pnpm --filter jevcode-trace-viewer-dev build && pnpm --filter jevcode-trace-viewer-dev exec vite preview --port 4179 --strictPort`. In desktop Chrome on a 60 Hz display, open `http://localhost:4179/?bundle=soak&perf=1` in 6 fresh incognito windows (discard the first) and read `tv:first-paint` and `tv:full-load` from the HUD; then open `…&perf=1&perfrun=1`, wait about 60 s for `<pre id="perf-result">` and copy its JSON. Targets: first paint median ≤ 300 ms, full load median ≤ 2,000 ms, `tv:key-to-paint` p95 ≤ 16.7 ms, `tv:overview-paint` p95 ≤ 4 ms, `maxOverlayNodes` ≤ 150. |
 | H6 product review gate | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | The person reviews oauth, api-break and the soak bundle in the dev host against spec §1 and §12 M4a (docs/IMPLEMENTATION-PLAN.md:153) and records the verdict and notes here. |
 | VoiceOver, Hybrid, oauth (gap G3; spec §7.13, §11) | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | Serve `?bundle=oauth` as above (window at least 1440 px). 1) Open `http://localhost:4179/?bundle=oauth`, wait for the Inspector title "Claim contradicts tests". 2) Cmd+F5 (VoiceOver on). 3) Click the address bar, Tab out of the title bar, keep pressing Tab: focus enters the Outline, then the reading spine in `main`, then the Inspector, one stop each; Shift+Tab walks back. 4) On the spine stop VoiceOver reads the selected row with "+0:43" and "Claim contradicts tests". 5) Rotor (Control+Option+U), Form Controls, "Playhead": reads "Playhead", "slider", "+0:43, Claim contradicts tests, step <n> of <m>". 6) Escape, click the claim row, Option+3, rotor Form Controls: "Range start" and "Range end", each with a "+m:ss" value. 7) Cmd+F5, then record pass or fail for 3–6, what VoiceOver said, and the macOS and Chrome versions. A fail returns C2-8 (item 3), C2-12 (item 4) or C2-11 (items 5, 6). |
+
+## M4b gate (C3-5)
+
+Date: 2026-10-01. Lane C3b (`tv/c3b-canvas-view`). Source rows: the risk table above, plus the orchestrator's C3-5 gate rulings.
+
+| Risk | Verdict | Ruling applied | Where |
+|---|---|---|---|
+| 2 DOM raster cost during pinch at Step level | Provisional pass at 120 Hz; 60 Hz rerun PENDING (needs a human to set the display to 60 Hz) | Spec §16 fallback applied pre-emptively | `CULL_FRAMES = true` in `packages/trace-viewer/src/ui/views/canvas/spike-rulings.ts` |
+| 3 Text crispness at rest | Phase-aligned re-measure: pass at k 0.5 and 1, FAIL at k 2 (see below) | Fallback applied | `CANVAS_SETTLE_ROUND_K = 64` (same file) |
+| 6 View switch under `<Activity>` | pass | none | `KEEP_HIDDEN_VIEWS_MOUNTED = true` in `packages/trace-viewer/src/ui/views/registry.ts` |
+| 7 Edge hairlines and ruler sync | pass | none | `INV_K_EVERY_FRAME = false` (same file as risk 2) |
+
+M4b may start: every gating risk passed or has its spec §16 fallback applied above.
+
+### Risk 3 re-measure (phase-aligned crop)
+
+Method: `SPIKE_ONLY3=1 [SPIKE_ROUNDK=64]` driver runs of `apps/trace-viewer-dev/scripts/spike-electron.cjs` (dist-spike build, Electron 33.4.11; DPR 1 via `--force-device-scale-factor=1`). The harness pins the reference title to the transformed title's exact fractional origin (`alignReference`), then captures the title (reference hidden) and the reference (world `visibility: hidden`) with one identical device-pixel crop rect (floor of the origin, ceil of the far edge). Threshold: 1% of pixels with any channel differing by more than 16.
+
+| DPR | roundK | k 0.5 | k 1 | k 2 |
+|---|---|---|---|---|
+| 2 | null | 0.817% of 68x18 px | 0.134% of 124x36 px | 1.512% of 248x72 px |
+| 2 | 64 | 0.817% | 0.134% | 1.512% |
+| 1 | null | 0.98% of 34x9 px | 0% of 62x18 px | 1.411% of 124x36 px |
+| 1 | 64 | 0.98% | 0% | 1.411% |
+
+Reading: the old 17% to 40% failure was crop misalignment, as suspected. Aligned, k 0.5 and k 1 pass. k 2 fails narrowly (1.5% at DPR 2, 1.4% at DPR 1). At k 2 the transformed title measures 123.05 CSS px against 115.15 for the same text laid out at 26 px (k 0.5: 30.76 against 33.25): text laid out at 13 px and scaled has different advance widths than text laid out at `13 × k`, so the metric measures glyph layout, not blur. The 1/64 grid leaves k = 0.5, 1 and 2 unchanged (they are on the grid), so the `roundK=64` rows equal the null rows; the rounding cannot change these three points and the fallback is applied per the ruling (rounding matters only for off-grid k, which the aligned probe did not sample). Risk 3 stays open for a human look at off-grid zoom (PENDING, revisit before the M4b exit).
