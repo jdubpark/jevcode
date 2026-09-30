@@ -35,6 +35,7 @@ import { LiveRegion } from "./LiveRegion.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
 import styles from "./Shell.module.css";
+import { TitleBar } from "./TitleBar.js";
 import { ViewSlot } from "./ViewSlot.js";
 
 export interface ShellProps {
@@ -276,7 +277,9 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
             <ViewDefinitionsContext.Provider value={SHELL_VIEWS}>
               <LiveRegion>
                 <div className={styles.grid}>
-                  <header className={styles.title} data-region="title" />
+                  <header className={styles.title} data-region="title">
+                    <TitleBar onRetry={() => controller.retry()} />
+                  </header>
                   <nav className={styles.outline} aria-label="Outline" data-region="outline" />
                   <main className={styles.main} data-region="main" tabIndex={-1}>
                     <ViewSlot views={SHELL_VIEWS} keepHiddenMounted={KEEP_HIDDEN} />
