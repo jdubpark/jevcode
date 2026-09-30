@@ -30,6 +30,7 @@ export interface PaintContext {
 
 export const LANES_BOTTOM = LANES_TOP + LANES.length * LANE_H;
 export const STRIP_TOP = LANES_TOP - STRIP_H;
+/** Height of one chapter-label tier: the 36 px label area holds two tiers (spec §7.2 Hybrid anatomy). */
 const TIER_H = 18;
 const FULL_TURN = Math.PI * 2;
 
