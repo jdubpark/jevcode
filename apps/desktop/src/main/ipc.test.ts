@@ -43,7 +43,12 @@ function stubRuntime(): { runtime: PipelineRuntime; calls: StubCall[] } {
   return { runtime: proxy as unknown as PipelineRuntime, calls };
 }
 
-function makeDeps(db: JevcodeDb, runtime: PipelineRuntime, state: AppState): IpcDeps {
+function makeDeps(
+  db: JevcodeDb,
+  runtime: PipelineRuntime,
+  state: AppState,
+  senderKind: IpcDeps["senderKind"] = () => "main",
+): IpcDeps {
   return {
     db,
     state,
@@ -53,7 +58,7 @@ function makeDeps(db: JevcodeDb, runtime: PipelineRuntime, state: AppState): Ipc
     requestRepoPath: async () => null,
     log: () => {},
     trace: {} as unknown as IpcDeps["trace"],
-    senderKind: () => "main",
+    senderKind,
     traceWindows: {} as unknown as IpcDeps["traceWindows"],
   };
 }
@@ -113,6 +118,50 @@ describe("session:stop / repo:close teardown wiring (D10 resumable stop)", () =>
 
     const stopCall = calls.find((call) => call.method === "stopSession");
     expect(stopCall?.args).toEqual(["sess_a"]);
+    db.close();
+  });
+});
+
+describe("per-sender allowlist in the handle wrapper (spec 8.6)", () => {
+  const AGENT_CHANNEL = RendererToMainChannels.agentInterrupt;
+
+  function setup(kind: "trace" | "main" | "other") {
+    const { db, state } = seedRepoAndSession();
+    const { runtime, calls } = stubRuntime();
+    const log = vi.fn();
+    const trace = { rows: vi.fn(() => ({ rows: [], nextCursor: null })) };
+    const deps = {
+      ...makeDeps(db, runtime, state, () => kind),
+      log,
+      trace: trace as unknown as IpcDeps["trace"],
+    };
+    return { db, handlers: registerAndCapture(deps), calls, log, trace };
+  }
+
+  it.each(["trace", "other"] as const)(
+    "rejects session:stop and an agent channel from a %s sender without calling the handler",
+    async (kind) => {
+      const { db, handlers, calls, log } = setup(kind);
+      const stop = handlers.get(RendererToMainChannels.sessionStop)!;
+      const agent = handlers.get(AGENT_CHANNEL);
+      expect(agent).toBeDefined();
+
+      await expect(stop(TRUSTED_EVENT, { sessionId: "sess_a" })).rejects.toMatchObject({
+        code: "UNTRUSTED_SENDER",
+      });
+      await expect(agent!(TRUSTED_EVENT, { sessionId: "sess_a" })).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+
+      expect(calls).toEqual([]);
+      expect(log).toHaveBeenCalledTimes(2);
+      db.close();
+    },
+  );
+
+  it("lets a trace sender through on an allowlisted trace read", async () => {
+    const { db, handlers, trace } = setup("trace");
+    const rows = handlers.get("trace:rows")!;
+    await rows(TRUSTED_EVENT, { sessionId: "sess_a" });
+    expect(trace.rows).toHaveBeenCalledTimes(1);
     db.close();
   });
 });

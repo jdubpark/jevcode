@@ -32,7 +32,15 @@ export function registerTraceWindowHandlers(handle: IpcHandle, deps: TraceWindow
     deps.windows.openTraceWindow(sessionId);
   });
 
-  handle(RendererToMainLocalChannels.traceRequestChanges, ({ sessionId, text }) => {
+  handle(RendererToMainLocalChannels.traceRequestChanges, ({ sessionId, text }, { senderId }) => {
+    // A trace window may only ask for changes to the session it shows
+    // (fail closed, spec §8.6); the registry knows each window's session.
+    if (deps.windows.sessionForSender(senderId) !== sessionId) {
+      throw new IpcError(
+        "UNTRUSTED_SENDER",
+        `${RendererToMainLocalChannels.traceRequestChanges} is limited to the sender window's own session`,
+      );
+    }
     if (!deps.sessionExists(sessionId)) throw unknownSession(sessionId);
     deps.focusMainWindow();
     deps.sendToRenderer(MainToRendererLocalChannels.composerPrefill, { sessionId, text });
