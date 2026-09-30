@@ -155,10 +155,14 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
   }, [controller]);
 
   const session = snapshot.session;
+  // Each commit's index starts from the last one built (only what changed objects reach is recomputed); any
+  // earlier index works, so a render React discards costs nothing but speed.
+  const lastIndex = useRef<TraceIndex | undefined>(undefined);
   const index = useMemo(
-    () => (session === null ? emptyTraceIndex(sessionId) : buildTraceIndex(session)),
+    () => (session === null ? emptyTraceIndex(sessionId) : buildTraceIndex(session, lastIndex.current)),
     [session, sessionId],
   );
+  lastIndex.current = index;
   const scale = useMemo<TimeScale>(() => {
     if (session === null) return buildTimeScale(EMPTY_SCALE_INPUT);
     const lastT = session.steps.at(-1)?.tMs ?? 0;
