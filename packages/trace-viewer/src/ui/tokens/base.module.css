@@ -1,0 +1,25 @@
+.root {
+  --tv-dur-fast: 120ms;
+  --tv-dur: 180ms;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--tv-ink);
+  background: var(--tv-panel);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    --tv-dur-fast: 0ms;
+    --tv-dur: 0ms;
+  }
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+}
