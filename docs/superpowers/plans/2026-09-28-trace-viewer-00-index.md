@@ -335,6 +335,11 @@ pnpm -r build
 
 Expected: the second command prints `better-sqlite3 loads under node ok`, `node-pty loads under node ok` and `native modules restored to node ABI`, and `pnpm -r build` exits 0. Without the second command, every storage and desktop test fails with `Error: Could not locate the bindings file.`, and every agent-codex PTY test fails with `posix_spawnp failed`. Then run the baseline in the lane's own "Lane prerequisites" section.
 
+**Environment findings from W1 (binding for later waves).**
+- `pnpm --filter jevcode-desktop rebuild` runs pnpm's builtin `rebuild`, not the package script, and re-runs node-pty's install scripts, which delete `build/Release/pty.node`. Always write `pnpm --filter jevcode-desktop run rebuild` for the Electron ABI (the plans now say so). `rebuild:node` is unaffected.
+- After any rebuild, restore node-pty for Node: copy both `prebuilds/<platform>-<arch>/pty.node` and `spawn-helper` into `build/Release/` (the setup recipe above copies only `spawn-helper`; add `pty.node` to the same `cp`). Symptom when missing: every agent-codex PTY test fails with `posix_spawnp failed`.
+- The Electron ABI rebuild compiles node-pty with node-gyp, which fails with `make` exit 69 until the Xcode license is accepted on this machine (`sudo xcodebuild -license accept`, run by the person). Every Electron step (A2 boot smoke, C1-7 Electron harness, D-6 and D-8 smoke) needs it.
+
 **Flake rule** (lane 01, Gotcha 3, verbatim):
 
 > **Root checks** (the last step of every task, in this order; each must exit 0): `pnpm -r build`, `pnpm -r typecheck`, `pnpm -r --no-bail --workspace-concurrency=1 test`, `pnpm lint`. If the only test failures are in `file-watcher.test.ts`, `stall-watchdog.test.ts` or `codex-adapter.test.ts`, run that package alone (`pnpm --filter @jevcode/evidence-engine test` or `pnpm --filter @jevcode/agent-codex test`; retry once). It must pass alone. Then run `pnpm lint`, and name the flake in the task report. This lane never edits those suites. Any other failure is real: fix it before you commit.
