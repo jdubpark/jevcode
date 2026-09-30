@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
   clampMeta,
+  compareFindings,
   describeGraphic,
   displayUntrusted,
   exitLabel,
@@ -393,13 +394,29 @@ function ChapterDetails({ chapter, session }: { chapter: Chapter; session: Trace
     ["Interruption", chapter.triad.interruption],
   ];
   const hasTriad = triad.some(([, value]) => value !== undefined);
+  // A per-file diff list reads better as one row per file (icon, path, DiffBar xs) than as a second list beside the rows.
+  const perFile =
+    graphic?.kind === "diff" && graphic.files !== undefined && graphic.files.length > 0
+      ? new Map(graphic.files.map((file) => [file.path, file]))
+      : null;
   return (
     <>
       <Section title="Chapter">
-        {graphic === null ? null : <Graphic spec={graphic} size="md" label={describeGraphic(graphic)} />}
-        {chapter.files.map((file) => (
-          <Row key={file} icon="file" label={displayUntrusted(file)} mono title={displayUntrusted(file)} />
-        ))}
+        {graphic === null || perFile !== null ? null : <Graphic spec={graphic} size="md" label={describeGraphic(graphic)} />}
+        {chapter.files.map((file) => {
+          const lines = perFile?.get(file);
+          return (
+            <Row
+              key={file}
+              icon="file"
+              label={displayUntrusted(file)}
+              mono
+              title={displayUntrusted(file)}
+              graphic={lines === undefined ? null : <DiffBar size="xs" added={lines.added} removed={lines.removed} label={`+${lines.added} −${lines.removed}`} />}
+              metric={lines === undefined ? "" : `+${lines.added} −${lines.removed}`}
+            />
+          );
+        })}
         <p className={styles.meta}>
           {`${resolved} of ${cited} evidence links resolve${approx > 0 ? ` · ${approx} approximated` : ""}`}
         </p>
@@ -472,8 +489,13 @@ function SessionSummary({ session, onSelect }: { session: TraceSession; onSelect
     bySignal.set(finding.ruleId, list);
   }
   const chips = [...bySignal.entries()]
-    .map(([ruleId, findings]) => ({ ruleId, findings, critical: findings.some((finding) => finding.severity === "critical") }))
-    .sort((a, b) => Number(b.critical) - Number(a.critical));
+    .map(([ruleId, findings]) => ({
+      ruleId,
+      findings,
+      top: [...findings].sort(compareFindings)[0] as Finding,
+      critical: findings.some((finding) => finding.severity === "critical"),
+    }))
+    .sort((a, b) => compareFindings(a.top, b.top));
   const signals = session.coverage.signals;
   const active = signals.filter((signal) => signal.active);
   const inactive = signals.filter((signal) => !signal.active);
@@ -522,8 +544,9 @@ function SessionSummary({ session, onSelect }: { session: TraceSession; onSelect
         <Row
           icon="edit"
           label="Edits"
+          title={`+${stats.added} −${stats.removed}`}
           graphic={stats.edits > 0 ? <DiffBar size="xs" added={stats.added} removed={stats.removed} label={`+${stats.added} −${stats.removed}`} /> : null}
-          metric={`+${stats.added} −${stats.removed}`}
+          metric={String(stats.edits)}
         />
         {tests === undefined ? null : (
           <Row
@@ -585,7 +608,9 @@ function resolveRef(session: TraceSession, index: TraceIndex, ref: RelatedRef): 
     return { id: step.id, icon: SIGNAL_ICON[ref.asFinding.ruleId], title: FINDING_TITLE[ref.asFinding.ruleId], tMs: step.tMs, graphic: null, shield: false };
   }
   const graphic = step.decision !== undefined || step.tests !== undefined ? pickGraphic(step, session) : null;
-  const title = step.decision !== undefined ? displayUntrusted(step.decision.title) : displayUntrusted(step.headline);
+  const title = displayUntrusted(
+    step.decision !== undefined ? step.decision.title : step.command !== undefined ? normalizeCommand(step.command.command) : step.headline,
+  );
   return { id: step.id, icon: KIND_ICON[step.kind], title, tMs: step.tMs, graphic, shield: false };
 }
 
