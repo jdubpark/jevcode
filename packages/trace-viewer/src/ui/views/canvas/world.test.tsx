@@ -11,11 +11,11 @@ import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layo
 import { samplePath } from "../../../layout/canvas-routes.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type TraceSession } from "../../../model/index.js";
-import { canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
+import { canvasScale, oauthCanvasSession, oauthReplaySession } from "../../../test-support/canvas-arbitraries.js";
 import { drawnEdges } from "./EdgeLayer.js";
 import type { FrameProps } from "./Frame.js";
 import { buildFrameContext, frameFullTitle, frameTitle } from "./frame-label.js";
-import { Overlay, badgeSide } from "./Overlay.js";
+import { Overlay, badgeSide, timeChipRect } from "./Overlay.js";
 import { World, cullFrames, focusFrameElement, type WorldProps } from "./World.js";
 import styles from "./World.module.css";
 
@@ -318,6 +318,53 @@ describe("badgeSide", () => {
     expect(contradicts?.badge).toEqual({ x: 772, y: 224 });
     expect(badgeSide(layout, { x: 772, y: 224 })).toBe("right");
     expect(badgeSide(layout, { x: -400, y: -400 })).toBe("left");
+  });
+
+  // Lane review I-4: before I-3 the replayed bundle put the badge at (772, 299), in the Tests · oauth label row
+  // (x 528–752, y 300–316). The word box left of it (x 672–760) missed every card but covered that label.
+  const replay = oauthReplaySession();
+  const replayLayout = layoutCanvas(replay, buildTraceIndex(replay), canvasScale(replay), "chapter");
+
+  it("treats frame labels as obstacles: a badge in a label row puts its word on the free side", () => {
+    const tests = replayLayout.frames.find((candidate) => candidate.selId === "unit:cu_a2589fe62ff19ebf");
+    expect(tests?.label).toEqual({ x: 528, y: 300, w: 224, h: 16 });
+    expect(badgeSide(replayLayout, { x: 772, y: 299 })).toBe("right");
+  });
+
+  it("drops the word when both sides are blocked", () => {
+    // Gutter 488–528 at y 350: Identity's card (x 264–488) on the left, Tests · oauth's card (x 528–752) on the right.
+    expect(badgeSide(replayLayout, { x: 508, y: 350 })).toBe("mark");
+  });
+
+  it("treats the selection's time chip as an obstacle", () => {
+    const claimFrame = replayLayout.frames.find((candidate) => candidate.item === "claim");
+    if (claimFrame === undefined) throw new Error("no claim");
+    // The chip hangs 8–26 px under the claim card (bottom 118), centered at x 904 and about 47 px wide (x 880–928);
+    // the word box left of this point spans x 900–988, y 123–147.
+    const point = { x: 1000, y: 135 };
+    expect(badgeSide(replayLayout, point)).toBe("left");
+    expect(badgeSide(replayLayout, point, { chip: timeChipRect(claimFrame, "+0:43") })).toBe("right");
+  });
+
+  it("measures the word at the camera's zoom: at k 0.5 it spans twice the world px", () => {
+    // Left box at k 1: x 1000–1088 (clear). At k 0.5: x 912–1088, which reaches the chip under the claim card.
+    const claimFrame = replayLayout.frames.find((candidate) => candidate.item === "claim");
+    if (claimFrame === undefined) throw new Error("no claim");
+    const chip = timeChipRect(claimFrame, "+0:43", 0.5);
+    expect(badgeSide(replayLayout, { x: 1100, y: 150 }, { chip })).toBe("left");
+    expect(badgeSide(replayLayout, { x: 1100, y: 150 }, { chip, k: 0.5 })).toBe("right");
+  });
+
+  it("renders a mark-only badge with its word in the tooltip", () => {
+    const blocked = {
+      ...replayLayout,
+      edges: replayLayout.edges.map((edge) => (edge.kind === "contradicts" ? { ...edge, badge: { x: 508, y: 350 } } : edge)),
+    };
+    const view = render(<Overlay layout={blocked} ctx={buildFrameContext(replay)} level="chapter" selectedKey={null} onSelect={() => undefined} />);
+    const badge = view.container.querySelector("[data-badge]");
+    expect(badge?.getAttribute("data-side")).toBe("mark");
+    expect(badge?.textContent).not.toContain("contradicts");
+    expect(badge?.getAttribute("title")).toBe("contradicts");
   });
 });
 

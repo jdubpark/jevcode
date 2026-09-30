@@ -226,7 +226,8 @@
 }
 
 /* Word to the right when a card sits where the word would go on the left (layout-derived, see Overlay.tsx). */
-.badge[data-side="right"] {
+.badge[data-side="right"],
+.badge[data-side="mark"] {
   flex-direction: row-reverse;
   transform: translate(
     calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 12px),
