@@ -58,12 +58,49 @@ describe("Minimap", () => {
     const outline = view.container.querySelector("[data-viewport]");
     if (outline === null) throw new Error("no viewport outline");
     fireEvent.pointerDown(outline, { clientX: 10, clientY: 10, pointerId: 1 });
-    fireEvent.pointerMove(outline, { clientX: 24, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(outline, { clientX: 24, clientY: 10, pointerId: 1, buttons: 1 });
     fireEvent.pointerUp(outline, { pointerId: 1 });
     expect(onCenter).not.toHaveBeenCalled();
     const [dx, dy] = onPan.mock.calls[0] ?? [];
     expect(dx).toBeCloseTo(14 / SCALE, 6);
     expect(dy).toBe(0);
+  });
+
+  it("centers only for the primary button and stops a drag whose pointer capture is lost", () => {
+    const { onCenter, onPan, view } = renderMinimap();
+    const svg = view.container.querySelector("svg[data-minimap]");
+    const outline = view.container.querySelector("[data-viewport]");
+    if (svg === null || outline === null) throw new Error("no minimap");
+    fireEvent.pointerDown(svg, { clientX: 70, clientY: 42, button: 2 });
+    expect(onCenter).not.toHaveBeenCalled();
+    fireEvent.pointerDown(outline, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.lostPointerCapture(outline, { pointerId: 1 });
+    fireEvent.pointerMove(outline, { clientX: 30, clientY: 10, pointerId: 1, buttons: 1 });
+    fireEvent.pointerDown(outline, { clientX: 10, clientY: 10, pointerId: 2 });
+    fireEvent.pointerMove(outline, { clientX: 30, clientY: 10, pointerId: 2, buttons: 0 });
+    fireEvent.pointerMove(outline, { clientX: 50, clientY: 10, pointerId: 2, buttons: 1 });
+    expect(onPan).not.toHaveBeenCalled();
+  });
+
+  it("keys strip ticks and separators without clashes when two critical frames share a column", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Wider than 140 / 0.03 world px, so the minimap shows a window and the full-width strip.
+    const wide = { ...layout, bounds: { ...layout.bounds, w: 6_000 } };
+    const column = layout.frames.filter((frame) => frame.card.x === layout.frames.find((f) => f.kind === "chapter")?.card.x);
+    expect(column.length).toBeGreaterThanOrEqual(2);
+    const view = render(
+      <Minimap
+        layout={wide}
+        cameraStore={createCameraStore({ mode: "uniform", tx: 0, ty: 0, k: 1 })}
+        viewport={{ w: 800, h: 600 }}
+        selectedKey={null}
+        criticalKeys={new Set(column.map((frame) => frame.key))}
+        onCenter={vi.fn()}
+        onPan={vi.fn()}
+      />,
+    );
+    expect(view.container.querySelectorAll("svg:not([data-minimap]) rect")).toHaveLength(1 + column.length);
+    expect(error.mock.calls.filter(([message]) => String(message).includes("same key"))).toEqual([]);
   });
 
   it("draws the rest contradicts edge and one mark per frame", () => {
