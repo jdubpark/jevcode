@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,5 +159,38 @@ describe("replay export", () => {
     const messages = error.mock.calls.map((call) => String(call[0])).join("\n");
     expect(messages).toContain("export: no session sess_missing");
     expect(messages).toContain(`export: cannot open ${missingDb}`);
+  });
+
+  it("returns 1 and leaves the database intact when --out names the database or its -wal/-shm files", async () => {
+    const dir = tempDir();
+    const dbPath = seededDbPath(dir);
+    const before = readFileSync(dbPath);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const outs = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, path.relative(process.cwd(), dbPath)];
+    if (process.platform !== "win32") {
+      const symlink = path.join(dir, "symlink.db");
+      symlinkSync(dbPath, symlink);
+      const hardLink = path.join(dir, "hardlink.db");
+      linkSync(dbPath, hardLink);
+      outs.push(symlink, hardLink);
+    }
+    // A case-insensitive filesystem (the macOS default) resolves this to the database too.
+    const otherCase = path.join(dir, "EXPORT.db");
+    if (existsSync(otherCase)) outs.push(otherCase);
+    for (const out of outs) {
+      expect(await exportMain(["--db", dbPath, "--session", "sess_export", "--out", out])).toBe(1);
+    }
+    expect(error.mock.calls.map((call) => String(call[0]))).toEqual(
+      outs.map(() => "export: --out must not be the database or its -wal/-shm files"),
+    );
+    expect(readFileSync(dbPath).equals(before)).toBe(true);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
+    const db = openDb({ dbPath });
+    try {
+      expect(db.getSession("sess_export")?.prompt).toBe("Export me");
+    } finally {
+      db.close();
+    }
   });
 });

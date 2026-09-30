@@ -52,7 +52,8 @@ writes to it. Every string in the bundle passes the redactor before strings
 over 16 KiB are clipped to their first 4 KiB and last 12 KiB, your home
 directory becomes `~`, and the file is written with mode 0600. On success it
 prints `{"out", "rows", "redactionCount"}` and exits 0; a missing flag, a
-missing database or an unknown session exits 1 and writes nothing.
+missing database, an unknown session or an `--out` that names the database or
+its `-wal`/`-shm` files exits 1 and writes nothing.
 `pnpm --filter jevcode-desktop replay export …` also works, but pnpm runs the
 script from `apps/desktop`, so pass absolute paths. Bundles stay on this
 machine; sharing them is out of scope for v1.

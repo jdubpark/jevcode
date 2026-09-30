@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -241,16 +241,63 @@ function parseExportFlags(args: readonly string[]): ExportFlags | null {
   return { db: path.resolve(db), session, out: path.resolve(out) };
 }
 
+/** The real path with its on-disk case; for a missing file, its parent's real path plus its name. */
+function canonicalPath(file: string): string {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    try {
+      return path.join(realpathSync.native(path.dirname(file)), path.basename(file));
+    } catch {
+      return file;
+    }
+  }
+}
+
+function fileIdentity(file: string): string | undefined {
+  try {
+    const stats = statSync(file);
+    return `${stats.dev}/${stats.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when `out` names the database or its -wal/-shm files, by any spelling,
+ * symlink or hard link. Writing the bundle there would destroy the store.
+ * SQLite names the -wal/-shm files after the real database path, so both
+ * spellings of the database are guarded.
+ */
+function outNamesDatabase(db: string, out: string): boolean {
+  const databaseFiles = [db, canonicalPath(db)].flatMap((base) => [
+    base,
+    `${base}-wal`,
+    `${base}-shm`,
+  ]);
+  const guarded = new Set(databaseFiles.flatMap((file) => [file, canonicalPath(file)]));
+  if (guarded.has(out) || guarded.has(canonicalPath(out))) return true;
+  const outIdentity = fileIdentity(out);
+  return (
+    outIdentity !== undefined && databaseFiles.some((file) => fileIdentity(file) === outIdentity)
+  );
+}
+
 /**
  * `jevcode-replay export --db <path> --session <id> --out <file>`: writes one
  * stored session as a redacted trace.json (mode 0600). The database is opened
- * query_only and never created. Returns 0 on success, 1 on any failure; a
+ * query_only and never created, and an --out that names the database or its
+ * -wal/-shm files is refused. Returns 0 on success, 1 on any failure; a
  * failure writes no file.
  */
 export async function exportMain(args: readonly string[]): Promise<number> {
   const flags = parseExportFlags(args);
   if (flags === null) {
     console.error(EXPORT_USAGE);
+    return 1;
+  }
+  if (outNamesDatabase(flags.db, flags.out)) {
+    console.error("export: --out must not be the database or its -wal/-shm files");
     return 1;
   }
   let reader: TraceReader;
