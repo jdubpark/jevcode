@@ -736,3 +736,26 @@ export function oauthCanvasBundle(): TraceBundle {
     rows,
   };
 }
+
+/** Spec §10 reference input: 60 chapters and 5,000 steps over three turns, with two idle breaks. */
+export function syntheticCanvasSession(options: { chapters?: number; steps?: number; turns?: number } = {}): TraceSession {
+  const chapters = options.chapters ?? 60;
+  const steps = options.steps ?? 5_000;
+  const turns = options.turns ?? 3;
+  const seeds: CanvasSeed[] = [];
+  const every = Math.max(1, Math.floor(steps / chapters));
+  const turnEvery = Math.max(1, Math.floor(steps / turns));
+  let placedChapters = 0;
+  let t = 0;
+  for (let i = 0; i < steps; i += 1) {
+    t += i % 1_700 === 1_699 ? 180_000 : 400;
+    if (i > 0 && i % turnEvery === 0) seeds.push({ atMs: t, kind: "prompt", trigger: "steer" });
+    else if (i % every === 0 && placedChapters < chapters) {
+      placedChapters += 1;
+      seeds.push({ atMs: t, kind: "chapter", flagged: i % (every * 7) === 0, decides: i % (every * 5) === 0 });
+    } else if (i % 97 === 0) seeds.push({ atMs: t, kind: "loose" });
+    else if (i % 131 === 0) seeds.push({ atMs: t, kind: "decision" });
+    else seeds.push({ atMs: t, kind: "work", durationMs: 300 });
+  }
+  return buildCanvasSession(seeds);
+}
