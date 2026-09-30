@@ -1808,14 +1808,21 @@ import type { TraceService } from "./trace-service.js";
 
 export type IpcHandle = <C extends ToMainChannelName>(
   channel: C,
-  fn: (payload: ToMainPayload<C>) => unknown | Promise<unknown>,
+  fn: (payload: ToMainPayload<C>, context: IpcHandleContext) => unknown | Promise<unknown>,
 ) => void;
+
+/** The wrapper passes the calling window's webContents.id, so a handler can bind a request to its sender. */
+export interface IpcHandleContext {
+  senderId: number;
+}
 
 // trace:listSessions → { sessions: TraceSessionSummary[] }
 // trace:rows         → TraceRowsPage
 // trace:payloads     → { rows: TraceRow[] }
 export function registerTraceHandlers(handle: IpcHandle, service: TraceService): void;
 ```
+
+`TraceWindowRegistry` (Part Da, `main/trace-window.ts`) also exposes `sessionForSender(webContentsId): string | undefined`: the session a trace window shows, `undefined` for any other sender. The `trace:requestChanges` handler (`main/trace-window-ipc.ts`) accepts a note only when `sessionForSender(context.senderId)` equals the payload's `sessionId`; otherwise it throws `UNTRUSTED_SENDER` before the session-existence check, the main-window focus and the prefill.
 
 `apps/desktop/src/main/ipc.ts`: `IpcDeps` gains `trace: TraceService;` and the last statement of `registerIpcHandlers` becomes `registerTraceHandlers(handle, deps.trace);` (the `handle` closure at lines 129-143 already runs `assertTrustedSender` and `parseToMain`). `apps/desktop/src/main/index.ts`: after `db = openDb();` open `traceReader = openTraceReader(db.dbPath)`, pass `trace: createTraceService(traceReader)` in the `registerIpcHandlers` call (line 151), and close the reader in `will-quit` before `db?.close()`.
 
