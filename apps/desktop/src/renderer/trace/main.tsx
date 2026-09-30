@@ -4,13 +4,13 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { getBridge } from "../bridge.js";
-import { createDesktopViewerHost, sessionIdFromSearch, traceConsoleLine } from "./host.js";
+import { createDesktopViewerHost, cspViolationLine, sessionIdFromSearch, traceConsoleLine } from "./host.js";
 import { createIpcTraceSource } from "./ipc-source.js";
 
 // Chromium logs CSP violations itself; this line also names the directive, and
 // main/smoke.ts fails the run on either (spec §8.7).
 document.addEventListener("securitypolicyviolation", (event) => {
-  console.error(`CSP_VIOLATION ${event.violatedDirective} ${event.blockedURI}`);
+  console.error(cspViolationLine(event.violatedDirective, event.blockedURI));
 });
 
 // The viewer's paint and live-tick entries reach main as console lines

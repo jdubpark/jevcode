@@ -115,6 +115,33 @@ describe("createIpcTraceSource", () => {
     });
   });
 
+  it("does not treat 'unknown session' inside another error as UNKNOWN_SESSION", async () => {
+    const bridge = fakeBridge();
+    for (const message of [
+      "database is locked while resolving unknown session state",
+      "failed: UNKNOWN_SESSION appears in agent text",
+      "Error: no session with id s",
+    ]) {
+      bridge.rows.mockRejectedValue(new Error(message));
+      await expect(createIpcTraceSource(bridge, "s").rows()).rejects.toMatchObject({ code: "SOURCE_FAILED" });
+    }
+    bridge.rows.mockRejectedValue(new Error("jevcode.ipc.UNKNOWN_SESSION: no session with id s"));
+    await expect(createIpcTraceSource(bridge, "s").rows()).rejects.toMatchObject({ code: "UNKNOWN_SESSION" });
+  });
+
+  it("malformed results become SOURCE_FAILED instead of reaching the viewer", async () => {
+    const bridge = fakeBridge();
+    const source = createIpcTraceSource(bridge, "s");
+    for (const bad of [null, "x", {}, { ...PAGE, rows: "no" }, { ...PAGE, lastSeq: "3" }, { ...PAGE, state: 4 }]) {
+      bridge.rows.mockResolvedValue(bad as never);
+      await expect(source.rows()).rejects.toMatchObject({ channel: "trace:rows", code: "SOURCE_FAILED" });
+    }
+    bridge.listSessions.mockResolvedValue({ sessions: [] } as never);
+    await expect(source.summary()).rejects.toMatchObject({ channel: "trace:listSessions", code: "SOURCE_FAILED" });
+    bridge.payloads.mockResolvedValue({} as never);
+    await expect(source.payloads([1])).rejects.toMatchObject({ channel: "trace:payloads", code: "SOURCE_FAILED" });
+  });
+
   it("now() is the wall clock", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_234);
     expect(createIpcTraceSource(fakeBridge(), "s").now()).toBe(1_234);

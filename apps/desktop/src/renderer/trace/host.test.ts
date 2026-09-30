@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { JevcodeApi } from "../../shared/api.js";
-import { createDesktopViewerHost, sessionIdFromSearch, traceConsoleLine } from "./host.js";
+import { createDesktopViewerHost, cspViolationLine, sessionIdFromSearch, traceConsoleLine } from "./host.js";
 
 type Bridge = JevcodeApi["trace"];
 
@@ -69,5 +69,17 @@ describe("traceConsoleLine", () => {
     );
     expect(traceConsoleLine({ name: "tv:first-paint", entryType: "mark", startTime: 90, duration: 0 })).toBeNull();
     expect(traceConsoleLine({ name: "react-render", entryType: "measure", startTime: 1, duration: 2 })).toBeNull();
+  });
+});
+
+describe("cspViolationLine", () => {
+  it("strips control characters so a blocked URI cannot forge a log line", () => {
+    const line = cspViolationLine("script-src", "https://x/\nTRACE_READY 9\r\u2028\u2029\u0000end");
+    expect(line).toBe("CSP_VIOLATION script-src https://x/TRACE_READY 9end");
+    const forbidden = [...line].filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+    });
+    expect(forbidden).toEqual([]);
   });
 });

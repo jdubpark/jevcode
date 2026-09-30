@@ -1,12 +1,31 @@
-import type { TraceRowsPage } from "@jevcode/contracts";
+import type { TraceRow, TraceRowsPage, TraceSessionSummary } from "@jevcode/contracts";
 import type { TraceRowsRequest, TraceSource } from "@jevcode/trace-viewer";
 import { TraceSourceError } from "@jevcode/trace-viewer/sources";
 import type { TraceChannel } from "@jevcode/trace-viewer/sources";
 
 import type { JevcodeApi } from "../../shared/api.js";
 
-// The service's IpcError text (main/trace-service.ts) and the code name itself.
-const UNKNOWN_SESSION_MESSAGE = /UNKNOWN_SESSION|no session with id|unknown session/i;
+// The one emitter is main/trace-service.ts ("no session with id <id>"), optionally
+// with the serialized "jevcode.ipc.UNKNOWN_SESSION: " prefix. Anchored so other
+// errors that merely mention these words stay SOURCE_FAILED.
+const UNKNOWN_SESSION_MESSAGE = /^(?:jevcode\.ipc\.UNKNOWN_SESSION: )?no session with id /;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isRowsPage(value: unknown): value is TraceRowsPage {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.rows) &&
+    typeof value.lastSeq === "number" &&
+    typeof value.state === "string"
+  );
+}
+
+function malformed(channel: TraceChannel): TraceSourceError {
+  return new TraceSourceError(channel, "SOURCE_FAILED", `${channel} returned a malformed result`);
+}
 
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -49,8 +68,11 @@ export function createIpcTraceSource(bridge: JevcodeApi["trace"], sessionId: str
     sessionId,
     summary: () =>
       call("trace:listSessions", async () => {
-        const sessions = await bridge.listSessions({ sessionId, limit: 1 });
-        const found = sessions.find((session) => session.sessionId === sessionId);
+        const sessions: unknown = await bridge.listSessions({ sessionId, limit: 1 });
+        if (!Array.isArray(sessions)) throw malformed("trace:listSessions");
+        const found = (sessions as TraceSessionSummary[]).find(
+          (session) => isRecord(session) && session.sessionId === sessionId,
+        );
         if (found === undefined) {
           throw new TraceSourceError("trace:listSessions", "UNKNOWN_SESSION", `no session with id ${sessionId}`);
         }
@@ -61,11 +83,17 @@ export function createIpcTraceSource(bridge: JevcodeApi["trace"], sessionId: str
         const query: { sessionId: string; afterSeq?: number; limit?: number } = { sessionId };
         if (request.afterSeq !== undefined) query.afterSeq = request.afterSeq;
         if (request.limit !== undefined) query.limit = request.limit;
-        return await bridge.rows(query);
+        const page: unknown = await bridge.rows(query);
+        if (!isRowsPage(page)) throw malformed("trace:rows");
+        return page;
       }),
     payloads: (seqs) => {
       if (seqs.length === 0) return Promise.resolve([]);
-      return call("trace:payloads", () => bridge.payloads({ sessionId, seqs: [...seqs] }));
+      return call("trace:payloads", async () => {
+        const rows: unknown = await bridge.payloads({ sessionId, seqs: [...seqs] });
+        if (!Array.isArray(rows)) throw malformed("trace:payloads");
+        return rows as TraceRow[];
+      });
     },
     now: () => Date.now(),
   };

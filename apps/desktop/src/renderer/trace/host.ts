@@ -15,6 +15,16 @@ export function sessionIdFromSearch(search: string): string | null {
   return trimmed.length === 0 ? null : trimmed;
 }
 
+/**
+ * The console line for a CSP violation. main/smoke.ts parses console lines, so
+ * control characters (incl. CR, LF, U+2028/2029) are removed from the page-supplied URI.
+ */
+export function cspViolationLine(directive: string, blockedUri: string): string {
+  // eslint-disable-next-line no-control-regex
+  const clean = blockedUri.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "");
+  return `CSP_VIOLATION ${directive} ${clean}`;
+}
+
 export interface PerfEntryLike {
   name: string;
   entryType: string;
