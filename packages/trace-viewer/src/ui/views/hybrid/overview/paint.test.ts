@@ -102,7 +102,7 @@ describe("paintOverview", () => {
 
 describe("paintOverview bands and strip", () => {
   const band = (key: string, x0: number, x1: number, tier: 0 | 1 | null) =>
-    ({ key, id: null, x0, x1, title: key, tier, iconOnly: false }) as const;
+    ({ key, id: null, x0, x1, labelX: Math.max(0, x0), title: key, tier, iconOnly: false }) as const;
 
   it("rounds bands to 6 px and starts each below its label tier", () => {
     const layout: OverviewLayout = {

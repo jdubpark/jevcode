@@ -183,26 +183,59 @@ describe("Overview lane gutter (spec §7.2)", () => {
 });
 
 describe("Overview band labels", () => {
-  it("shows a hostile chapter title as visible tokens in the label, its tooltip and its name", async () => {
+  it("shows a hostile short title in the label and the hostile full title in its tooltip and name, as visible tokens", async () => {
     const base = foldFixture("oauth");
-    const session = { ...base, chapters: base.chapters.map((chapter) => ({ ...chapter, title: "a\u202Eb" })) };
+    const session = {
+      ...base,
+      chapters: base.chapters.map((chapter) => ({ ...chapter, title: "full a\u202Eb", shortTitle: "a\u202Eb" })),
+    };
     await renderOverview({ state: { level: "session" } }, session);
     const labels = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]"));
     expect(labels.length).toBeGreaterThan(0);
     for (const label of labels) {
-      expect(label.getAttribute("aria-label")).toBe("a\u27E8U+202E\u27E9b");
-      expect(label.getAttribute("title")).toBe("a\u27E8U+202E\u27E9b");
+      expect(label.getAttribute("aria-label")).toBe("full a\u27E8U+202E\u27E9b");
+      expect(label.getAttribute("title")).toBe("full a\u27E8U+202E\u27E9b");
       expect(label.textContent ?? "").not.toContain("\u202E");
     }
-    expect(labels.some((label) => (label.textContent ?? "").includes("a\u27E8U+202E\u27E9b"))).toBe(true);
+    expect(labels.some((label) => (label.textContent ?? "") === "a\u27E8U+202E\u27E9b")).toBe(true);
   });
 
-  it("lets a full label run past its band up to the next label in the same tier", () => {
-    const band = (key: string, x0: number, x1: number, tier: 0 | 1 | null): BandPlacement => ({
-      key, id: null, x0, x1, title: key, tier, iconOnly: false,
+  it("falls back to the full title when a chapter has no short title", async () => {
+    const base = foldFixture("oauth");
+    const session = {
+      ...base,
+      chapters: base.chapters.map(({ shortTitle: _drop, ...chapter }) => ({ ...chapter, title: "a\u202Eb" })),
+    };
+    await renderOverview({ state: { level: "session" } }, session);
+    const labels = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]"));
+    expect(labels.some((label) => (label.textContent ?? "") === "a\u27E8U+202E\u27E9b")).toBe(true);
+  });
+
+  it("starts the label of a band cut by the left edge at the edge, not at the band's negative start", async () => {
+    const { apiRef } = await renderOverview({ state: { level: "session" } });
+    const api = apiRef.current;
+    const camera = api?.camera();
+    if (api === null || camera === undefined || camera === null) throw new Error("no camera");
+    const before = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]")).map((label) => Number.parseFloat(label.style.left));
+    const firstLeft = Math.min(...before.filter((x) => x > 0));
+    // Pan right by a little more than the first labelled band's start: that band now begins left of the viewport.
+    await act(async () => {
+      await api.moveTo({ mode: "xOnly", u0: camera.u0 + (firstLeft + 30) / camera.k, k: camera.k }, false);
     });
-    const widths = bandLabelWidths([band("a", 10, 40, 0), band("b", 30, 50, 1), band("c", 200, 260, 0), band("d", 300, 320, null)], 500);
-    expect(widths.get("a")).toBe(200 - 10 - 8);
+    const lefts = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]")).map((label) => Number.parseFloat(label.style.left));
+    expect(lefts.length).toBeGreaterThan(0);
+    expect(Math.min(...lefts)).toBe(0);
+  });
+
+  it("lets a full label run past its band up to the next label in the same tier, measured from labelX", () => {
+    const band = (key: string, x0: number, x1: number, tier: 0 | 1 | null, labelX = Math.max(0, x0)): BandPlacement => ({
+      key, id: null, x0, x1, labelX, title: key, tier, iconOnly: false,
+    });
+    const widths = bandLabelWidths(
+      [band("a", -50, 40, 0), band("b", 30, 50, 1), band("c", 200, 260, 0), band("d", 300, 320, null)],
+      500,
+    );
+    expect(widths.get("a")).toBe(200 - 0 - 8);
     expect(widths.get("b")).toBe(500 - 30);
     expect(widths.get("c")).toBe(500 - 200);
     expect(widths.has("d")).toBe(false);

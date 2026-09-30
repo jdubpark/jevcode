@@ -89,11 +89,11 @@ const LABEL_GAP_PX = 8;
 export function bandLabelWidths(bands: readonly BandPlacement[], widthPx: number): Map<string, number> {
   const out = new Map<string, number>();
   for (const tier of [0, 1] as const) {
-    const row = bands.filter((band) => band.tier === tier).sort((a, b) => a.x0 - b.x0);
+    const row = bands.filter((band) => band.tier === tier).sort((a, b) => a.labelX - b.labelX);
     row.forEach((band, i) => {
       const next = row[i + 1];
-      const end = next === undefined ? widthPx : next.x0 - LABEL_GAP_PX;
-      out.set(band.key, Math.max(20, end - Math.max(0, band.x0)));
+      const end = next === undefined ? widthPx : next.labelX - LABEL_GAP_PX;
+      out.set(band.key, Math.max(20, end - band.labelX));
     });
   }
   return out;
@@ -405,6 +405,7 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
     () => (renderLayout === null ? new Map<string, number>() : bandLabelWidths(renderLayout.bands, widthPx)),
     [renderLayout, widthPx],
   );
+  const chapterById = useMemo(() => new Map((session?.chapters ?? []).map((chapter) => [chapter.id, chapter])), [session]);
   const selectedChapter =
     selection === null ? null : selection.startsWith("unit:") ? selection : (index.entry(selection)?.parent ?? null);
   // `overview` and `widthPx` are not read in the callback body: presetCamera reads them through a ref, so it keeps a
@@ -469,9 +470,11 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
               {renderLayout.bands
                 .filter((band) => band.tier !== null)
                 .map((band) => {
-                  const chapter = band.id === null ? undefined : session.chapters.find((item) => item.id === band.id);
+                  const chapter = band.id === null ? undefined : chapterById.get(band.id);
                   // Chapter titles embed agent-written paths: neutralise bidi and control characters (lane review I-1).
-                  const title = displayUntrusted(band.title);
+                  // The label shows the band's short title; the tooltip and the name carry the full title.
+                  const shortTitle = displayUntrusted(band.title);
+                  const title = displayUntrusted(chapter?.title ?? band.title);
                   return (
                     <button
                       key={band.key}
@@ -481,13 +484,13 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
                       data-band-label=""
                       data-on={band.id !== null && band.id === selectedChapter ? "" : undefined}
                       className={styles.bandLabel}
-                      style={{ left: band.x0, top: band.tier === 1 ? 18 : 0, maxWidth: labelWidths.get(band.key) ?? 20 }}
+                      style={{ left: band.labelX, top: band.tier === 1 ? 18 : 0, maxWidth: labelWidths.get(band.key) ?? 20 }}
                       title={title}
                       aria-label={title}
                       onDoubleClick={() => focusBand(band)}
                     >
                       <Icon name={chapter === undefined ? "flag" : CATEGORY_ICON[chapter.category]} size={12} />
-                      {band.iconOnly ? null : <span className={styles.bandTitle}>{title}</span>}
+                      {band.iconOnly ? null : <span className={styles.bandTitle}>{shortTitle}</span>}
                     </button>
                   );
                 })}
