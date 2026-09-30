@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { foldRows } from "../model/fold.js";
 import { buildSession } from "../test-support/session-builder.js";
+import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { findingTone, stepTone, worstSeverity } from "./tone.js";
 import { buildTraceIndex } from "./trace-index.js";
 
@@ -49,5 +51,25 @@ describe("tone (spec §6.8 toneOf)", () => {
     const warning = session.findings.find((f) => f.ruleId === "guardrail_clamp");
     expect(critical === undefined ? "missing" : findingTone(critical)).toBe("bad");
     expect(warning === undefined ? "missing" : findingTone(warning)).toBe("neutral");
+  });
+});
+
+describe("guardrail tone from a fold (§7.12: red only for real problems)", () => {
+  it("a warning clamp is neutral; only a critical (blocking) clamp is bad", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const warning = b.jev({ id: "j1", changeUnitId: "cu_1", clamps: ["security_path", "schema_floor", "decision_presence_floor"] });
+    const blocked = b.jev({ id: "j2", changeUnitId: "cu_1", clamps: ["destructive_command"] });
+    b.unit({ id: "cu_1", files: [] });
+    const folded = foldRows(testMeta(), b.rows, { live: false });
+    const index = buildTraceIndex(folded).findingsById;
+    const at = (seq: number) => {
+      const s = folded.steps.find((candidate) => candidate.firstSeq === seq);
+      if (s === undefined) throw new Error("missing step");
+      return s;
+    };
+    expect(worstSeverity(at(warning), index)).toBe("warning");
+    expect(stepTone(at(warning), index)).toBe("neutral");
+    expect(stepTone(at(blocked), index)).toBe("bad");
   });
 });

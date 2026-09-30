@@ -48,6 +48,7 @@ describe("problems", () => {
     const destructive = run(b, "rm -rf dist", 0);
     const warning = b.jev({ id: "j1", clamps: ["security_path"] });
     const info = b.jev({ id: "j2", clamps: ["suppress_formatting", "guardrail.security"] });
+    const blocked = b.jev({ id: "j3", clamps: ["security_path", "destructive_command"] });
     const failed = b.agent({ type: "agent_failed", error: "boom" });
     const session = fold(b);
     expect(stepAt(session, exit).problems).toEqual(["exit_nonzero"]);
@@ -55,8 +56,10 @@ describe("problems", () => {
     expect(stepAt(session, failing).problems).toEqual(["exit_nonzero", "tests_failed"]);
     expect(stepAt(session, destructive).problems).toEqual(["destructive"]);
     expect(stepAt(session, destructive).command?.destructivePattern).toBe("rm-recursive-force");
-    expect(stepAt(session, warning).problems).toEqual(["guardrail"]);
+    // Only a critical (blocking) clamp is a problem; a warning clamp keeps its finding but not red (§7.12).
+    expect(stepAt(session, warning).problems).toEqual([]);
     expect(stepAt(session, info).problems).toEqual([]);
+    expect(stepAt(session, blocked).problems).toEqual(["guardrail"]);
     expect(stepAt(session, failed).problems).toEqual(["agent_failed"]);
   });
 });
@@ -99,7 +102,8 @@ describe("noise", () => {
     const session = fold(b);
     expect(stepAt(session, routine)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
     expect(stepAt(session, unknown)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
-    expect(stepAt(session, warning)).toMatchObject({ kind: "guardrail", problems: ["guardrail"], noise: null });
+    expect(stepAt(session, warning)).toMatchObject({ kind: "guardrail", problems: [], noise: null });
+    expect(stepAt(session, warning).findingIds).toHaveLength(1);
   });
 
   it("collapses intermediate passing runs but never the final run or a failing run", () => {
