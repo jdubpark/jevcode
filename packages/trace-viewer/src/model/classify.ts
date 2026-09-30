@@ -17,9 +17,15 @@ function isRun(step: Step): boolean {
 }
 
 /** A guardrail step with a warning or critical clamp (CLAMP_META; unknown ids are info). Only these
- *  carry the guardrail problem and a guardrail_clamp finding; an info-only step is lifecycle noise. */
+ *  anchor a guardrail_clamp finding; an info-only step is lifecycle noise. */
 export function hasSevereClamp(step: Step): boolean {
   return (step.guardrail?.clampIds ?? []).some((id) => severityRank(clampMeta(id).severity) >= severityRank("warning"));
+}
+
+/** A guardrail step with a critical clamp: the rule blocked something. Only these carry the
+ *  guardrail problem, so a warning clamp keeps its finding but never paints red (spec §7.12). */
+export function hasBlockingClamp(step: Step): boolean {
+  return (step.guardrail?.clampIds ?? []).some((id) => clampMeta(id).severity === "critical");
 }
 
 /** Rule-derived problems of one step. claim_contradicted comes from the claim_contradicted signal. */
@@ -30,7 +36,7 @@ export function problemsOf(step: Step): ProblemKind[] {
   if (step.tests !== undefined && step.tests.failed > 0) found.add("tests_failed");
   if (step.kind === "lifecycle" && step.status === "failed") found.add("agent_failed");
   if (step.command?.destructivePattern !== undefined) found.add("destructive");
-  if (step.kind === "guardrail" && hasSevereClamp(step)) found.add("guardrail");
+  if (step.kind === "guardrail" && hasBlockingClamp(step)) found.add("guardrail");
   if (step.problems.includes("claim_contradicted")) found.add("claim_contradicted");
   return PROBLEM_KINDS.filter((kind) => found.has(kind));
 }
