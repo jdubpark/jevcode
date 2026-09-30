@@ -35,6 +35,12 @@ Each item below differs from the UI index §2.4/§3 text. None renames or remove
 9. **Dev host drip start and serve alias (C2-15).** `?drip=` takes an optional third part, `startAtSeq`; a negative value counts back from the bundle's last seq (`resolveDrip`, additive), because lane 08 D-8 measures the live tick with `?drip=20,1000,-2000`. The serve-only source alias is a plugin with `apply: "serve"`, not a callback config, so C1-7's `vite.spike.config.ts` can still `mergeConfig` the dev config (Vite 5.4 throws "Cannot merge config in form of callback").
 10. **Spec §1 "found at once" (base index gap G1).** `perf.ts` (C2-3) also exports `INITIAL_SELECTION_PAINTED = "tv:initial-selection-painted"` and `markNextFrame(name)`. The Shell calls `markNextFrame(INITIAL_SELECTION_PAINTED)` right after the `session/applied` dispatch that moves the selection from `null` to the open default, so `performance.mark` runs in the first `requestAnimationFrame` after the commit that applies the initial selection (a store dispatch inside a layout effect re-renders synchronously before that frame). The root barrel re-exports the constant. It is not a `PERF` member: `PERF` names the spec §10 measures that the HUD reads and lane 08 greps. The dev host adds `?selftest=open` (C2-15: `selftest-open.ts` with `OpenProbeResult`, `createOpenProbe` and `claimStepIdOf`; `selftest.ts` exports `claimRowOf`, which `selftestDrip` now calls), and C2-16's smoke asserts its result for Hybrid at 1440 px. It is a separate mode because the drip selftest scrolls the spine to its middle in the first frame after `onReady`, which would move the claim row out of view. Lane 07 C3-12 quotes that `onReady` block verbatim, so the drip selftest stays as it is.
 
+## Controller hand-offs from W1 (binding)
+
+- **C1a lane fix (d1dde66):** `ClaimVsObserved` takes `observedTabIndex?: 0 | -1`. Inside the spine (a roving-tabindex region) `ClaimFinding` passes `observedTabIndex={-1}` so a critical claim that auto-expands adds no second tab stop in `main` (already in C2-13's code). The Inspector keeps the default.
+- **C1a lane review M-1 (elapsedMs):** running `DurationBar`s only grow when the caller passes `elapsedMs`. Every spine row and Inspector render of a `duration` graphic whose step is running passes `elapsedMs = nowMs - step.startMs` (with `nowMs` from the source's `now()` on the live tick), to `Graphic`. Add a test: a running command row's hollow bar is wider after one drip tick.
+- **C1a text sanitization:** the graphics (`DiffBar`, `FlowGlyph`, `TableGlyph`, `ClaimVsObserved`) now sanitize their own mono text with `displayUntrusted`; calling `displayUntrusted` again before passing text in is harmless (it is idempotent).
+
 ## Global Constraints
 
 Copied from the UI index, the base index and the decision record; every task's requirements include this section.
@@ -10923,6 +10929,7 @@ export function ClaimFinding({ finding, session, onJump }: FindingBodyProps) {
           tMs: claim.observed.tMs,
         }}
         onObservedClick={() => onJump(evidenceId)}
+        observedTabIndex={-1}
       />
     </div>
   );

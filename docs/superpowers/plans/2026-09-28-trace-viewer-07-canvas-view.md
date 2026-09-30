@@ -66,6 +66,11 @@ Each is a genuine gap or defect in the UI index; nothing here renames or removes
 
 **Pre-check of this plan (2026-09-28).** Every pure module, `canvas-camera.ts`, every UI component and every test in this file was extracted with its edit steps applied (all anchors matched), type-checked under the repo's strict compiler options, and run under vitest 3.2.7 + jsdom 30.1.0 against stand-ins written from UI index §2 for the C1/C2 modules and an oauth-shaped builder session: 105 of 111 tests passed; the 6 others need B's real oauth fold or C2's `TraceViewer` and could not run there. P1–P10 passed 2,000 fast-check runs each. `canvas-layout.bench.ts` measured fresh 0.40 ms and sticky 0.34 ms with a binary-search `TimeScale` stand-in. The pre-check found and fixed three defects now reflected below: P3 at multi-column pushes, fractional column x breaking P1's gap, and `new URL(…, import.meta.url)` under jsdom.
 
+## Controller hand-offs from W1 (binding)
+
+- **C1a lane review M-1 (elapsedMs):** running `DurationBar`s only grow when the caller passes `elapsedMs`. A canvas frame or step-list row that renders a `duration` graphic for a running step passes `elapsedMs = nowMs - step.startMs` to `Graphic` (`nowMs` from the source's `now()` on the live tick).
+- **C1a text sanitization:** the graphics sanitize their own mono text with `displayUntrusted` (idempotent), so frames need not pre-sanitize graphic inputs.
+
 ## Required W0 amendments
 
 None. This lane uses only packages present after W0 with the UI index §1.1 amendments: `react`/`react-dom` 19.2.3, `fast-check` 4.10.1, `jsdom` 30.1.0, `@testing-library/react`, `@testing-library/user-event`, `@jevcode/semantic-core` (dev, through B's `fixture-rows.ts`). It needs the UI index §1.1(d) `src/layout/**` ESLint block and the §1.2(a) and §1.4 model amendments (`LEVELS`, `TraceSession.originMs`, B-10 `CHAPTER_GRAPHIC`); the prerequisites below check them.
