@@ -75,9 +75,11 @@ const factOp: fc.Arbitrary<Op> = fc.oneof(
       added: fc.nat(9),
       formatting: fc.boolean(),
       hash: optional(pick(HASHES)),
+      // Every diff state a hunk can carry (review m3): text, truncated text, withheld as a secret path, not captured.
+      shape: pick(["text", "truncated", "secret_path", "not_captured"] as const),
       factId: optional(pick(FACT_IDS)),
     })
-    .map(({ file, added, formatting, hash, factId }): Op => (b) =>
+    .map(({ file, added, formatting, hash, shape, factId }): Op => (b) =>
       b.fact(
         {
           type: "git_hunk",
@@ -87,7 +89,14 @@ const factOp: fc.Arbitrary<Op> = fc.oneof(
           isFormattingOnly: formatting,
           isConfigOnly: false,
           isLockfile: file === "pnpm-lock.yaml",
-          ...(hash !== undefined ? { diff: { hash, bytes: 10, text: "@@", truncated: false, redactions: 0 } } : {}),
+          ...(hash !== undefined
+            ? {
+                diff:
+                  shape === "text" || shape === "truncated"
+                    ? { hash, bytes: 10, text: "@@", truncated: shape === "truncated", redactions: 0 }
+                    : { hash, bytes: 10, truncated: false, redactions: 0, withheld: shape },
+              }
+            : {}),
         },
         factId,
       ),
