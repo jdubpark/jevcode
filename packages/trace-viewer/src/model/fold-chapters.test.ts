@@ -181,6 +181,20 @@ describe("decisions and Jev", () => {
     expect(session.steps.some((candidate) => candidate.kind === "instruction" && candidate.firstSeq === message)).toBe(false);
   });
 
+  it("reads a decision running while open and unknown once expired (spec §6.6 Status)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
+    const open = b.decision({ id: "dec-open" });
+    const expiring = b.decision({ id: "dec-expired" });
+    b.decision({ id: "dec-expired", status: "expired" });
+    const closed = fold(b);
+    expect(stepAt(closed, open)).toMatchObject({ status: "running", endTs: null, endTMs: null, durationMs: null });
+    expect(stepAt(closed, expiring).status).toBe("unknown");
+    // At the live edge an open decision lasts until now, like any running step.
+    const live = foldRows(testMeta(), b.rows, { live: true, nowMs: Date.parse(TraceBuilder.at(30)) });
+    expect(stepAt(live, open)).toMatchObject({ status: "running", durationMs: 30_000 });
+  });
+
   it("keeps pipeline rows on the inherited clock", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
