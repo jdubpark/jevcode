@@ -6,6 +6,8 @@ import { describeGraphic, type Step, type TraceSession } from "../../../model/in
 import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
 import {
   buildFrameContext,
+  CARD_FILE_ROWS,
+  fillRowCount,
   frameApprox,
   frameEnd,
   frameFullTitle,
@@ -234,5 +236,26 @@ describe("fillSteps (sparse frames, C3-6 ruling)", () => {
     expect(fillSteps(steps, 3).map((step) => step.id)).toEqual(["step:49", "step:43", "step:41"]);
     expect(fillSteps(steps, 0)).toEqual([]);
     expect(fillSteps(steps.slice(0, 2), 3).map((step) => step.id)).toEqual(["step:41", "step:1"]);
+  });
+});
+
+describe("Chapter card budget (C3-6 re-review N-1)", () => {
+  // Spec §7.5: a 134 px Chapter slot holds the 22 px label row, so the card is 112 px. Frame.module.css: 12 px
+  // padding, a 16 px footer and an 8 px gap leave 64 px; a file row is 16 px with 4 px between rows.
+  const plain = ctx.session.steps.filter((step) => step.edit === undefined).slice(0, 3);
+  const edited = ctx.session.steps.filter((step) => step.edit !== undefined).slice(0, 3);
+
+  it("fits three 16 px file rows in the 64 px body of a 112 px card", () => {
+    expect(CARD_FILE_ROWS).toBe(3);
+  });
+
+  it("budgets fill rows from the card, not the slot", () => {
+    expect(fillRowCount(null, plain)).toBe(3);
+    // The edit summary takes 16 px: 64 - 16 - 8 leaves two 20 px rows.
+    expect(fillRowCount(null, edited)).toBe(2);
+    const oneFile = { kind: "diff" as const, added: 3, removed: 1, files: [{ path: "a.ts", added: 3, removed: 1 }] };
+    expect(fillRowCount(oneFile, plain)).toBe(2);
+    const threeFiles = { ...oneFile, files: ["a.ts", "b.ts", "c.ts", "d.ts"].map((path) => ({ path, added: 1, removed: 0 })) };
+    expect(fillRowCount(threeFiles, plain)).toBe(0);
   });
 });

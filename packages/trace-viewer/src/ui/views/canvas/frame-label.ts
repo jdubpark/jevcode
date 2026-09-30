@@ -1,5 +1,5 @@
 import type { CanvasFrame } from "../../../layout/canvas-layout.js";
-import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
+import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, LEVEL_SPECS, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
 import { stepTone } from "../../../layout/tone.js";
 import {
   describeGraphic,
@@ -254,15 +254,29 @@ export function fillSteps(steps: readonly Step[], n: number): Step[] {
   return [...newest.filter(isProblem), ...newest.filter((step) => !isProblem(step))].slice(0, n);
 }
 
-/** Frame.module.css: 12 px card padding, 8 px gaps, a 16 px footer and edit summary, 20 px fill rows. */
+/**
+ * Frame.module.css: 12 px card padding, 8 px gaps, a 16 px footer and edit summary, 20 px fill rows, and 16 px file
+ * rows 4 px apart (a 20 px pitch, measured in Chrome: rows at 12, 32, 52 and 72 px).
+ */
 const PAD_PX = 12;
 const GAP_PX = 8;
 const FOOT_PX = 16;
 const EDIT_SUMMARY_PX = 16;
 const FILL_ROW_PX = 20;
 const FILL_MAX = 3;
-/** A Chapter-level chapter card (spec §7.5, 134 px) leaves 86 px for the graphic and the fill rows above its footer. */
-const BODY_PX = frameSize("chapter", "chapter").h - 2 * PAD_PX - FOOT_PX - GAP_PX;
+const FILE_ROW_PX = 16;
+const FILE_GAP_PX = 4;
+/** The Chapter-level chapter card: the 134 px slot (spec §7.5) minus the 22 px label row above the card. */
+const CARD_H = frameSize("chapter", "chapter").h - LEVEL_SPECS.chapter.labelH;
+/** The 64 px left for the graphic and the fill rows above the footer. */
+const BODY_PX = CARD_H - 2 * PAD_PX - FOOT_PX - GAP_PX;
+
+/** File rows a Chapter-level chapter card shows; the rest are counted as "+n more" in its footer. */
+export const CARD_FILE_ROWS = Math.floor((BODY_PX + FILE_GAP_PX) / (FILE_ROW_PX + FILE_GAP_PX));
+
+function fileRowsPx(rows: number): number {
+  return FILE_ROW_PX * rows + FILE_GAP_PX * Math.max(0, rows - 1);
+}
 
 /** The px a chapter card's graphic (and the edit summary shown beside a non-diff graphic) takes; null = full. */
 function usedPx(graphic: GraphicSpec | null, hasEdits: boolean): number | null {
@@ -270,10 +284,8 @@ function usedPx(graphic: GraphicSpec | null, hasEdits: boolean): number | null {
   if (graphic === null) return summary;
   const withSummary = (px: number): number => px + (hasEdits ? GAP_PX + EDIT_SUMMARY_PX : 0);
   switch (graphic.kind) {
-    case "diff": {
-      const rows = graphic.files === undefined ? 1 : Math.min(4, graphic.files.length) + ((graphic.moreFiles ?? 0) > 0 ? 1 : 0);
-      return 18 * rows + 4 * Math.max(0, rows - 1);
-    }
+    case "diff":
+      return fileRowsPx(graphic.files === undefined ? 1 : Math.max(1, Math.min(CARD_FILE_ROWS, graphic.files.length)));
     case "fork":
       return withSummary(18 * Math.min(3, Math.max(1, graphic.options.length)));
     case "flow":
@@ -282,6 +294,12 @@ function usedPx(graphic: GraphicSpec | null, hasEdits: boolean): number | null {
       // Tests (dots, counts and the run), tables and claims fill the card.
       return null;
   }
+}
+
+/** Files a chapter card's diff graphic leaves out of its CARD_FILE_ROWS rows. */
+export function hiddenFileCount(graphic: GraphicSpec | null): number {
+  if (graphic?.kind !== "diff" || graphic.files === undefined) return 0;
+  return Math.max(0, graphic.files.length - CARD_FILE_ROWS) + (graphic.moreFiles ?? 0);
 }
 
 /** How many compact step rows fit under a chapter card's graphic at Chapter level (0 to 3). */
@@ -304,7 +322,6 @@ export interface FrameModel {
   label: string;
   start: number;
   end: number;
-  running: boolean;
   /** Chapter level only: the compact rows under a sparse chapter card's graphic. */
   fill: Step[];
 }
@@ -328,7 +345,6 @@ export function frameModel(frame: CanvasFrame, ctx: FrameContext, level: Level):
     label: labelOf(frame, ctx, full, flag, graphic, start),
     start,
     end: endOf(frame, ctx, start, steps),
-    running: steps.some((step) => step.endTMs === null),
     fill: sparse ? fillSteps(steps, fillRowCount(graphic, steps)) : [],
   };
 }
