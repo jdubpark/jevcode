@@ -108,6 +108,38 @@ describe("selection, playhead and brush", () => {
     expect(s2.selection).toBe(claim.id);
   });
 
+  it("n and N walk every finding when one is anchored inside its step, as lane B anchors failing_tests", () => {
+    // failing_tests sits on the test_result seq, after the test step's firstSeq.
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0 },
+        { kind: "command", tMs: 1_000, target: "rm -rf build" },
+        { kind: "test", tMs: 2_000, rows: 5, status: "failed", target: "pnpm test", tests: { passed: 14, failed: 1 } },
+        { kind: "message", tMs: 8_000, text: OAUTH_CLAIM_TEXT },
+      ],
+      findings: [
+        { ruleId: "destructive_command", severity: "critical", step: 1 },
+        { ruleId: "failing_tests", severity: "critical", step: 2, anchorRow: 4 },
+        { ruleId: "claim_contradicted", severity: "critical", step: 3, evidence: [2] },
+      ],
+    });
+    const idx = buildTraceIndex(session);
+    const [cmd, tests, said] = [session.steps[1]?.id, session.steps[2]?.id, session.steps[3]?.id];
+    expect(idx.findingsBySeq.map((f) => f.anchorSeq)).toEqual([2, 7, 8]);
+    const walk = (dir: 1 | -1, from: ViewState): (string | null)[] => {
+      const seen: (string | null)[] = [];
+      let s = from;
+      for (let i = 0; i < 4; i += 1) {
+        s = reduce(s, { type: "nav", target: "finding", dir }, idx);
+        seen.push(s.selection);
+      }
+      return seen;
+    };
+    const start = run(initialViewState({ live: false }), [{ type: "select", id: "step:1", by: "shell" }], idx);
+    expect(walk(1, start)).toEqual([cmd, tests, said, cmd]);
+    expect(walk(-1, start)).toEqual([said, tests, cmd, said]);
+  });
+
   it("J moves to the next chapter by anchor; ] and [ move between turns", () => {
     const s = run(initialViewState({ live: false }), [{ type: "select", id: "unit:u-identity", by: "shell" }, { type: "nav", target: "chapter", dir: 1 }]);
     const identityKey = Number(index.chapterKey("unit:u-identity")?.slice(3));
