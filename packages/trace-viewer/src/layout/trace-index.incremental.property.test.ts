@@ -10,7 +10,7 @@ import { FIXTURE_NAMES, loadFixtureTrace } from "../test-support/fixture-rows.js
 import { arbEdit, editSession } from "../test-support/session-edits.js";
 import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder } from "../test-support/trace-builder.js";
-import { buildTraceIndex, traceIndexWork, type TraceIndex } from "./trace-index.js";
+import { buildTraceIndex, traceIndexChanges, traceIndexWork, type TraceIndex } from "./trace-index.js";
 
 // buildTraceIndex(session, previous) starts from the previous build and recomputes only the entries that changed
 // objects reach. It must equal a fresh build after every commit: on fold sessions (where finalize keeps unchanged
@@ -198,5 +198,19 @@ describe("buildTraceIndex from the previous index: identity and work", () => {
     expect(large?.stepEntries).toBe(small?.stepEntries);
     expect(large?.chapterEntries).toBe(small?.chapterEntries);
     expect(large?.chapterEntries).toBe(2);
+  });
+
+  it("a Live chain keeps at most one predecessor reachable (review I2)", () => {
+    const { meta, rows } = soakShapedRows({ units: 12, runs: 3, reemits: 1 });
+    const [s1, s2, s3] = foldChain(meta, rows, [rows.length - 40, rows.length - 20], true);
+    if (s1 === undefined || s2 === undefined || s3 === undefined) throw new Error("chain");
+    const a = buildTraceIndex(s1);
+    const b = buildTraceIndex(s2, a);
+    expect(traceIndexChanges(b)?.from).toBe(a);
+    const c = buildTraceIndex(s3, b);
+    // c reports its changes from b; b no longer reports (and so no longer holds) a, or every Live commit's index and
+    // session would stay reachable from the newest one.
+    expect(traceIndexChanges(c)?.from).toBe(b);
+    expect(traceIndexChanges(b)).toBeUndefined();
   });
 });

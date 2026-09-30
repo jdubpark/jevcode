@@ -546,6 +546,10 @@ export function buildTraceIndex(session: TraceSession, previous?: TraceIndex): T
   STATES.set(index, state);
   WORK.set(index, work);
   if (usable && state.changes !== null && previous !== undefined) CHANGES.set(index, { from: previous, ...state.changes });
+  // Only the newest link keeps its predecessor: an entry here holds `from` strongly, so leaving the previous index's
+  // entry would keep every Live commit's index and session reachable from the newest one (review I2). The overview
+  // reads the changes of the index it is building for, never of an older one.
+  if (previous !== undefined) CHANGES.delete(previous);
   return index;
 }
 
