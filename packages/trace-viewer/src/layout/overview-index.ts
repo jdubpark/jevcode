@@ -152,7 +152,11 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     for (const chapter of current) {
       const key = index.chapterKey(chapter.id);
       if (key === undefined) continue;
+      // A run the chapter reaches only through a (often shared) validation is not its footprint:
+      // otherwise every band stacks over the one test run all units cite (ruling M6).
+      const validationOnly = new Set(chapter.validationOnlyStepIds ?? []);
       const spans = chapter.stepIds
+        .filter((id) => !validationOnly.has(id))
         .map((id) => index.entry(id))
         .filter((e): e is NonNullable<typeof e> => e !== undefined)
         .map((e): [number, number] => [scale.toU(e.t0), scale.toU(e.t1)])
