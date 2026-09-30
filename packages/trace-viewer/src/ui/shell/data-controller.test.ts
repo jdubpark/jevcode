@@ -155,6 +155,55 @@ describe("createDataController", () => {
     expect(scheduler.pending()).toBe(0);
   });
 
+  it("starts the session summary and the first rows page before either resolves", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: inner, control } = fakeSource(messageRows(4), { state: "completed" });
+    const order: string[] = [];
+    let resolveSummary: (summary: Awaited<ReturnType<TraceSource["summary"]>>) => void = () => undefined;
+    const source: TraceSource = {
+      ...inner,
+      summary: () => {
+        order.push("summary");
+        return new Promise((resolve) => {
+          resolveSummary = resolve;
+        });
+      },
+    };
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    // Serial loading would still be waiting on the summary and have made no rows call.
+    expect(order).toEqual(["summary"]);
+    expect(control.calls).toHaveLength(1);
+    expect(controller.get().session).toBeNull();
+
+    resolveSummary(testMeta({ state: "completed" }));
+    await scheduler.run(100);
+    expect(control.calls).toHaveLength(1);
+    expect(controller.get().session?.loadedThroughSeq).toBe(4);
+    expect(controller.get().terminal).toBe(true);
+  });
+
+  it("a rows failure while the summary is in flight surfaces as before, and a summary failure ignores the rows", async () => {
+    const scheduler = new FakeScheduler();
+    const rowsFail = fakeSource(messageRows(3), { state: "completed" });
+    rowsFail.control.failures = 1;
+    const a = createDataController({ source: rowsFail.source, pollMs: 1_000, scheduler, isHidden: () => false });
+    a.start();
+    await scheduler.run(100);
+    expect(a.get().status.kind).toBe("error");
+    expect(a.get().session).toBeNull();
+
+    const summaryFail = fakeSource(messageRows(3), { state: "completed" });
+    summaryFail.control.summaryError = new TraceSourceError("trace:listSessions", "UNKNOWN_SESSION", "gone");
+    const b = createDataController({ source: summaryFail.source, pollMs: 1_000, scheduler, isHidden: () => false });
+    b.start();
+    await scheduler.run(100);
+    expect(b.get().status.kind).toBe("error");
+    expect(b.get().session).toBeNull();
+    expect(scheduler.pending()).toBe(0);
+  });
+
   it("yields a macrotask after each page so the first commit can paint before the next page is requested", async () => {
     const scheduler = new FakeScheduler();
     const { source, control } = fakeSource(messageRows(9), { state: "completed" });

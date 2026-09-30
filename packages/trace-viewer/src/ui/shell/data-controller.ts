@@ -219,9 +219,11 @@ export function createDataController(options: DataControllerOptions): DataContro
     }, wait);
   }
 
-  async function page(gen: number): Promise<void> {
+  async function page(gen: number, first?: Promise<TraceRowsPage>): Promise<void> {
+    let pending = first;
     for (;;) {
-      const next = await source.rows({ afterSeq: cursor, limit: pageSize });
+      const next = await (pending ?? source.rows({ afterSeq: cursor, limit: pageSize }));
+      pending = undefined;
       if (gen !== generation || fold === null) return;
       if (next.rows.length > 0 && latest.session !== null && latest.loadedFraction >= 1) markLiveTickStart();
       const changed =
@@ -248,9 +250,9 @@ export function createDataController(options: DataControllerOptions): DataContro
     }
   }
 
-  async function poll(gen: number): Promise<void> {
+  async function poll(gen: number, first?: Promise<TraceRowsPage>): Promise<void> {
     try {
-      await page(gen);
+      await page(gen, first);
     } catch (error) {
       if (gen !== generation) return;
       if (latest.session === null) {
@@ -266,6 +268,9 @@ export function createDataController(options: DataControllerOptions): DataContro
 
   async function load(gen: number): Promise<void> {
     let summary: TraceSessionSummary;
+    // The first page does not depend on the summary: request both together.
+    const firstPage = source.rows({ afterSeq: cursor, limit: pageSize });
+    firstPage.catch(() => undefined); // a summary failure abandons it; a page failure resurfaces through page()
     try {
       summary = await source.summary();
     } catch (error) {
@@ -275,7 +280,7 @@ export function createDataController(options: DataControllerOptions): DataContro
     if (gen !== generation) return;
     fold = createTraceState(summary);
     emit({ ...latest, summary });
-    await poll(gen);
+    await poll(gen, firstPage);
   }
 
   function reset(): void {
