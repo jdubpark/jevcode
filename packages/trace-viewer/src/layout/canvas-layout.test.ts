@@ -44,6 +44,21 @@ const OAUTH_TABLE: Record<string, [number, number]> = {
   claim: [792, 0],
 };
 
+// Spec §7.5 table "Time x" column: start second → time x (the x the item's start maps to before any push).
+const OAUTH_TIME_X: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [8, 64],
+  [10, 280],
+  [15, 320],
+  [17, 336],
+  [21, 368],
+  [22, 376],
+  [25, 400],
+  [30, 568],
+  [33, 592],
+  [43, 672],
+];
+
 function slots(layout: CanvasLayout): Map<string, string> {
   return new Map(layout.frames.map((frame) => [frame.key, JSON.stringify(frame.slot)]));
 }
@@ -55,6 +70,14 @@ describe("layoutCanvas on oauth", () => {
     expect(layout.bounds).toEqual({ x: 0, y: 0, w: 1016, h: 658 });
     expect(layout.columns.map((column) => column.x)).toEqual([0, 264, 528, 792]);
     expect(layout.stats).toMatchObject({ late: 0, holes: 0, rMaxExceeded: 0 });
+  });
+
+  it("places every item at the spec §7.5 time x", () => {
+    const layout = fresh(oauthCanvasSession());
+    for (const [seconds, timeX] of OAUTH_TIME_X) {
+      const bp = layout.time.bps.find((candidate) => candidate.t === seconds * 1_000);
+      expect(bp?.xIn, `time x at ${seconds} s`).toBe(timeX);
+    }
   });
 
   it("keeps every placed key's slot under a one-row drip of oauth", () => {

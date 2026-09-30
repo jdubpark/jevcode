@@ -221,13 +221,14 @@ describe("canvas layout invariants", () => {
         const scale = canvasScale(session);
         const once = layoutCanvas(session, index, scale, level);
         expect(layoutCanvas(session, index, scale, level)).toEqual(once);
+        // Turns stay in seq order: the model contract sorts them and layout binary-searches them.
         const shuffled: TraceSession = {
           ...session,
           chapters: [...session.chapters].reverse(),
           steps: [...session.steps].reverse(),
           findings: [...session.findings].reverse(),
         };
-        expect(layoutCanvas(shuffled, index, scale, level)).toEqual(once);
+        expect(layoutCanvas(shuffled, buildTraceIndex(shuffled), scale, level)).toEqual(once);
       }),
       RUNS,
     );
