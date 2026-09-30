@@ -32,6 +32,15 @@ describe("computeTicks (spec §7.4)", () => {
     }
   });
 
+  it("takes a wider label gap and finer unlabeled minor ticks as options (visual audit 2-4)", () => {
+    const scale = buildTimeScale({ originMs: 0, work: [[0, 45_000]], awaitingFrom: [] });
+    const map = xOnlyXMap(scale, { mode: "xOnly", u0: 0, k: 0.02 });
+    const { ticks } = computeTicks(map, scale, { x0: 0, x1: 900 }, { labelGapPx: 120, minorGapPx: 20 });
+    // 20 px per s: labels every 10 s (200 px, the first step ≥ 120 px), minor ticks every 1 s.
+    expect(ticks.filter((t) => t.labeled).map((t) => t.tMs)).toEqual([0, 10_000, 20_000, 30_000, 40_000]);
+    expect(ticks.map((t) => t.tMs)).toEqual(Array.from({ length: 46 }, (_, i) => i * 1_000));
+  });
+
   it("uses the published step list", () => {
     expect(TICK_STEPS_MS).toEqual([1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5, 9e5, 18e5, 36e5]);
   });
