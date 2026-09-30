@@ -65,6 +65,35 @@ describe("spine rows on the oauth-like session", () => {
   });
 });
 
+describe("chapters that share an anchor seq", () => {
+  // A decision linked to both units is each unit's earliest step (spec §7.5).
+  const session = buildSession({
+    steps: [
+      { kind: "decision", tMs: 0, chapter: "a", alsoChapters: ["b"] },
+      { kind: "edit", tMs: 1_000, target: "a.ts", chapter: "a" },
+      { kind: "edit", tMs: 2_000, target: "a2.ts", chapter: "a" },
+      { kind: "message", tMs: 3_000 },
+      { kind: "edit", tMs: 4_000, target: "b.ts", chapter: "b" },
+    ],
+    chapters: [{ id: "a", title: "A" }, { id: "b", title: "B" }],
+  });
+
+  it("get distinct Session-level keys, ch:<anchor> then ch:<anchor>.<n> by unit id, whatever the chapter order", () => {
+    const rows = rowsOf(session, { level: "session" });
+    expect(rows.map((r) => r.key)).toEqual(["ch:1", "ch:1.1", "step:1"]);
+    const flipped = { ...session, chapters: [...session.chapters].reverse() };
+    const keyed = rowsOf(flipped, { level: "session" }).map((r) => (r.t === "chapter" ? `${r.key}=${flipped.chapters[r.chapter]?.id}` : r.key));
+    expect(keyed).toEqual(["ch:1=unit:a", "ch:1.1=unit:b", "step:1"]);
+  });
+
+  it("a seq with no row of its own resolves to the chapter row holding its step", () => {
+    const rows = rowsOf(session, { level: "session" });
+    expect(spineRowIndexForSeq(rows, session, 5)).toBe(1);
+    expect(spineRowIndexForSeq(rows, session, 2)).toBe(0);
+    expect(spineRowIndexForSeq(rows, session, 4)).toBe(-1);
+  });
+});
+
 describe("elision and separators", () => {
   it("a 412-row unpinned segment renders 3 + band + 5", () => {
     const session = buildSession({ steps: commands(412) });

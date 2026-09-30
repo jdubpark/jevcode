@@ -1,7 +1,7 @@
 import {
   LANES,
   type Finding, type Lane, type Level, type NoiseReason, type Severity, type SignalId, type Step, type StepId, type StepKind,
-  type TraceSession,
+  type TraceSession, type UnitStableId,
 } from "../model/index.js";
 import { BREAK_MIN_MS, type IdleReason, type TimeScale } from "./time-scale.js";
 import { worstSeverity } from "./tone.js";
@@ -112,26 +112,36 @@ function emitSegment(out: SpineRow[], segment: Segment, input: SpineRowsInput, o
   out.push(...rows.slice(0, ELIDE_HEAD), { t: "elided", key, steps, byLane, spanMs: end - first.tMs }, ...rows.slice(rows.length - ELIDE_TAIL));
 }
 
+/** ch:<anchor> for the first current chapter at an anchor (by id) and ch:<anchor>.<n> for the rest, as Canvas keys them (spec §7.5). */
+function chapterRowKey(id: UnitStableId, index: TraceIndex): `ch:${number}` | undefined {
+  const key = index.chapterKey(id);
+  if (key === undefined) return undefined;
+  const n = index.chaptersByAnchor(Number(key.slice(3))).indexOf(id);
+  return n > 0 ? (`${key}.${n}` as `ch:${number}`) : key;
+}
+
 function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsInput, range: { fromSeq: number; toSeq: number }, i0: number, i1: number): SpineRow[] {
-  const items: { seq: number; turn: number; row: SpineRow }[] = [];
+  const items: { seq: number; turn: number; id: string; row: SpineRow }[] = [];
   const current = session.chapters.filter((c) => c.current);
   session.chapters.forEach((chapter, position) => {
     if (!chapter.current) return;
     const entry = index.entry(chapter.id);
-    const key = index.chapterKey(chapter.id);
+    const key = chapterRowKey(chapter.id, index);
     if (entry === undefined || key === undefined || entry.firstSeq < range.fromSeq || entry.firstSeq > range.toSeq) return;
-    items.push({ seq: entry.firstSeq, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, row: { t: "chapter", key, chapter: position } });
+    items.push({ seq: entry.firstSeq, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, id: chapter.id, row: { t: "chapter", key, chapter: position } });
   });
   for (let i = i0; i <= i1; i += 1) {
     const step = session.steps[i];
     if (step === undefined) continue;
     if (!PINNED_KINDS.has(step.kind) && worstSeverity(step, index.findingsById) !== "critical") continue;
     items.push({
-      seq: step.firstSeq, turn: step.turnIndex,
+      seq: step.firstSeq, turn: step.turnIndex, id: step.id,
       row: { t: "step", key: step.id, step: i, expanded: isStepExpanded(step, index.findingsById, input.expanded, input.collapsed) },
     });
   }
-  items.sort((a, b) => a.seq - b.seq || (a.row.t === "chapter" ? -1 : b.row.t === "chapter" ? 1 : 0));
+  // Chapter rows lead the step at their seq; chapters that start together order by id, independent of chapter order.
+  const rank = (row: SpineRow): number => (row.t === "chapter" ? 0 : 1);
+  items.sort((a, b) => a.seq - b.seq || rank(a.row) - rank(b.row) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const showTurns = session.turns.length > 1 || current.length === 0;
   const out: SpineRow[] = [];
   let turn = -1;

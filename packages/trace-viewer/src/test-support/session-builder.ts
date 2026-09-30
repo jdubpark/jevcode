@@ -43,6 +43,8 @@ export interface StepSeed {
   rows?: number;
   /** Change unit id without the "unit:" prefix. */
   chapter?: string;
+  /** Further units this step links to, as lane B links a decision or a multi-file step to several units. */
+  alsoChapters?: string[];
   noise?: NoiseReason | null;
   problems?: ProblemKind[];
   command?: Partial<CommandDetail>;
@@ -147,7 +149,7 @@ export function buildSession(seed: SessionSeed): TraceSession {
       durationMs,
       approxTime: false,
       evidenceSeqs: [],
-      chapterIds: s.chapter === undefined ? [] : [unitStableId(s.chapter)],
+      chapterIds: [...new Set([...(s.chapter === undefined ? [] : [s.chapter]), ...(s.alsoChapters ?? [])])].map(unitStableId),
       entityIds: [],
       findingIds: [],
       problems: defaultProblems(s, status),

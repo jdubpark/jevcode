@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import type { Step, TraceSession } from "../model/index.js";
+import type { Level, Step, TraceSession } from "../model/index.js";
 import { arbSessionSeed, arbTraceSession } from "../test-support/arbitraries.js";
 import { buildSession } from "../test-support/session-builder.js";
 import { buildSpineRows, type SpineRow } from "./spine-rows.js";
@@ -11,10 +11,10 @@ import { buildTraceIndex } from "./trace-index.js";
 const none = new Set<string>();
 const PINNED_KINDS = new Set(["instruction", "decision", "approval"]);
 
-function rows(session: TraceSession, playheadSeq: number, selection: Step | undefined, matches: ReadonlySet<string>, live: boolean): SpineRow[] {
+function rows(session: TraceSession, playheadSeq: number, selection: Step | undefined, matches: ReadonlySet<string>, live: boolean, level: Level = "chapter"): SpineRow[] {
   const index = buildTraceIndex(session);
   return buildSpineRows(session, index, buildTimeScale(timeScaleInputOf(session)), {
-    brush: { kind: "session" }, level: "chapter", playheadSeq, selection: selection?.id ?? null,
+    brush: { kind: "session" }, level, playheadSeq, selection: selection?.id ?? null,
     expanded: none, collapsed: none, matches, live,
   });
 }
@@ -28,6 +28,9 @@ describe("spine row properties (spec §7.6.3)", () => {
       const matches = new Set(m.map((i) => session.steps[i % n]?.id ?? ""));
       const out = rows(session, playhead?.firstSeq ?? 1, selected, matches, false);
       expect(new Set(out.map((r) => r.key)).size).toBe(out.length);
+      // Chapters that share an anchor seq (a step linked to several units) still get distinct Session-level keys.
+      const beats = rows(session, playhead?.firstSeq ?? 1, selected, matches, false, "session");
+      expect(new Set(beats.map((r) => r.key)).size).toBe(beats.length);
       const shown = new Set(out.flatMap((r) => (r.t === "step" ? [r.step] : [])));
       session.steps.forEach((step, i) => {
         const pinned = PINNED_KINDS.has(step.kind) || step.findingIds.length > 0 || step.status === "failed"

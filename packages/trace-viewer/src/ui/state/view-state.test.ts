@@ -60,6 +60,23 @@ describe("selection, playhead and brush", () => {
     expect(range.toSeq).toBeGreaterThanOrEqual(identity?.firstSeq ?? 0);
   });
 
+  it("b keeps a selection that lies in the second of two chapters sharing an anchor", () => {
+    const session = buildSession({
+      steps: [
+        { kind: "decision", tMs: 0, chapter: "a", alsoChapters: ["b"] },
+        { kind: "edit", tMs: 1_000, target: "a.ts", chapter: "a" },
+        { kind: "edit", tMs: 2_000, target: "a2.ts", chapter: "a" },
+        { kind: "message", tMs: 3_000 },
+        { kind: "edit", tMs: 4_000, target: "b.ts", chapter: "b" },
+      ],
+      chapters: [{ id: "a", title: "A" }, { id: "b", title: "B" }],
+    });
+    const idx = buildTraceIndex(session);
+    const s = run(initialViewState({ live: false }), [{ type: "select", id: "step:5", by: "shell" }, { type: "brush/chapter" }], idx);
+    expect(s).toMatchObject({ brush: { kind: "chapter", anchorSeq: 1 }, selection: "step:5", playhead: { kind: "selection" } });
+    expect(brushSeqRange(s.brush, idx)).toEqual({ fromSeq: 1, toSeq: 5 });
+  });
+
   it("a brush write keeps the brush, clears a selection outside it and clamps the playhead", () => {
     const s = run(initialViewState({ live: false }), [
       { type: "select", id: claim.id, by: "shell" },
