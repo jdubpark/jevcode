@@ -73,6 +73,20 @@ export function createViewportCore<C extends Camera>(options: ViewportController
   let tween: Tween<C> | null = null;
   let drag: { pointerId: number; x: number; y: number } | null = null;
   let destroyed = false;
+  /**
+   * The element's client origin, measured on the first Ctrl/Meta wheel of a gesture and reused until the gesture
+   * settles or the element resizes: a getBoundingClientRect per wheel event forces a synchronous style and layout
+   * flush whenever a camera write or a React commit left style dirty (C3-10 review I-2).
+   */
+  let origin: Point | null = null;
+  const Observer = element.ownerDocument.defaultView?.ResizeObserver;
+  const resizeObserver =
+    typeof Observer === "function"
+      ? new Observer(() => {
+          origin = null;
+        })
+      : null;
+  resizeObserver?.observe(element);
 
   const clampToContent = (next: C): C => clampCamera(next, options.content(), options.viewport(), options.limits());
 
@@ -143,6 +157,7 @@ export function createViewportCore<C extends Camera>(options: ViewportController
     }
     camera = roundCamera(camera);
     gesturing = false;
+    origin = null;
     options.onFrame(camera, "settle");
     options.onGestureEnd?.(camera);
   }
@@ -169,6 +184,7 @@ export function createViewportCore<C extends Camera>(options: ViewportController
       clearTimer(settleHandle);
       settleHandle = null;
     }
+    origin = null;
     if (gesturing) settle();
   }
 
@@ -187,8 +203,11 @@ export function createViewportCore<C extends Camera>(options: ViewportController
   }
 
   function localPoint(clientX: number, clientY: number): Point {
-    const rect = element.getBoundingClientRect();
-    return { x: clientX - rect.left, y: clientY - rect.top };
+    if (origin === null) {
+      const rect = element.getBoundingClientRect();
+      origin = { x: rect.left, y: rect.top };
+    }
+    return { x: clientX - origin.x, y: clientY - origin.y };
   }
 
   function onWheel(event: WheelEvent): void {
@@ -284,6 +303,7 @@ export function createViewportCore<C extends Camera>(options: ViewportController
       element.removeEventListener("pointermove", onPointerMove);
       element.removeEventListener("pointerup", onPointerUp);
       element.removeEventListener("pointercancel", onPointerUp);
+      resizeObserver?.disconnect();
       if (frameHandle !== null) cancelRaf(frameHandle);
       frameHandle = null;
       if (settleHandle !== null) clearTimer(settleHandle);

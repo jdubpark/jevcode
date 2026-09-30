@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type React from "react";
 
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
@@ -119,6 +119,29 @@ function markRelayout(viewport: HTMLElement | null, pinnedKey: string): void {
 /** A cull range no frame overlaps. */
 const NOTHING: CullRange = { x0: Infinity, x1: -Infinity };
 
+/** Spike risk 2 ruling: the mounted range spans one viewport width either side of the view at the mounted camera. */
+function mountedRange(camera: UniformCamera, width: number): CullRange {
+  return { x0: screenToWorld(camera, { x: -width, y: 0 }).x, x1: screenToWorld(camera, { x: 2 * width, y: 0 }).x };
+}
+
+/**
+ * True while the live camera's view stays half a viewport width (at the mounted zoom) inside the mounted range. A pan
+ * of half a width, or a zoom out past 2×, leaves it (C3-10 review M2).
+ */
+function mountCovers(mounted: UniformCamera, live: UniformCamera, width: number): boolean {
+  const range = mountedRange(mounted, width);
+  const slack = width / (2 * mounted.k);
+  const x0 = screenToWorld(live, { x: 0, y: 0 }).x;
+  const x1 = screenToWorld(live, { x: width, y: 0 }).x;
+  return x0 >= range.x0 + slack && x1 <= range.x1 - slack;
+}
+
+/** At most one mounted-range update per this many ms during a long pan or zoom (C3-10 review M2). */
+const MOUNT_THROTTLE_MS = 100;
+
+/** The dot grid's cell at k = 1 (World.module.css `.viewport`). */
+const GRID_PX = 20;
+
 /** Stage width under which the toolbar leaves the center (toolbar ≈ 310 px, minimap 152 px + 16 px margins). */
 const NARROW_PX = 680;
 
@@ -140,9 +163,10 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   const newCount = useView((state) => selectNewCount(state, view.index));
   const playheadSeq = useView((state) => selectEffectivePlayheadSeq(state, view.index));
   const [tidyRev, setTidyRev] = useState(0);
-  const [gesturing, setGesturing] = useState(false);
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
   const [settled, setSettled] = useState<UniformCamera | null>(null);
+  /** The camera the cull range and the ruler are laid out for: each settle, and a long pan or zoom (throttled). */
+  const [mounted, setMounted] = useState<UniformCamera | null>(null);
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const { session, index, scale } = view;
   const layout = useStickyLayout(session, index, scale, level, tidyRev);
@@ -151,6 +175,11 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef<UniformCamera | null>(null);
+  const mountTimerRef = useRef<number | null>(null);
+  /** A programmatic move (moveTo) is in flight: its camera does not agree with focus yet. */
+  const movingRef = useRef(false);
   const controllerRef = useRef<ViewportController<UniformCamera> | null>(null);
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const latest = useRef<Latest>({ layout, session, index, scale, level, active });
@@ -173,22 +202,85 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     latest.current = { layout, session, index, scale, level, active };
   });
 
+  const mountAt = useCallback((camera: UniformCamera) => {
+    mountedRef.current = camera;
+    setMounted(camera);
+  }, []);
+
+  /** Long pans and zooms re-mount around the live camera, throttled; a settle always does (sync). */
+  const followMount = useCallback(
+    function follow(camera: UniformCamera): void {
+      const width = sizeRef.current.w;
+      const current = mountedRef.current;
+      if (!CULL_FRAMES || width <= 0 || current === null || mountTimerRef.current !== null) return;
+      if (mountCovers(current, camera, width)) return;
+      mountAt(camera);
+      const win = domView(viewportRef.current);
+      if (win === null) return;
+      // Trailing check: the camera may have moved on while the update was held back.
+      mountTimerRef.current = win.setTimeout(() => {
+        mountTimerRef.current = null;
+        follow(cameraStore.get());
+      }, MOUNT_THROTTLE_MS);
+    },
+    [cameraStore, mountAt],
+  );
+
+  /**
+   * One camera write per animation frame (spec §7.5 "Controller"), all compositor-friendly (C3-10 review I-1): the
+   * world layer's transform, the dot grid's background on the viewport (non-inherited), and the three camera variables
+   * on the overlay root, whose subtree is the culled labels, handles, chip and badges. Nothing inherited is written
+   * above the world, so a frame restyles no card or edge. Spike risk 7 ruling (INV_K_EVERY_FRAME = false): --tv-inv-k
+   * re-scales hairlines and junction dots at settle and at a tween's end only. will-change holds only while a gesture
+   * or a tween runs.
+   */
   const writeCamera = useCallback(
     (camera: UniformCamera, phase: FramePhase) => {
-      const element = viewportRef.current;
-      if (element !== null) {
-        element.style.setProperty("--tv-tx", `${camera.tx}px`);
-        element.style.setProperty("--tv-ty", `${camera.ty}px`);
-        element.style.setProperty("--tv-k", String(camera.k));
-        // Spike risk 7 ruling (INV_K_EVERY_FRAME = false): hairlines and junction dots re-scale at settle only.
-        if (INV_K_EVERY_FRAME || phase !== "gesture") element.style.setProperty("--tv-inv-k", String(1 / camera.k));
+      const world = worldRef.current;
+      if (world !== null) {
+        world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
+        const moving = phase !== "settle";
+        if (INV_K_EVERY_FRAME || !moving) world.style.setProperty("--tv-inv-k", String(1 / camera.k));
+        const willChange = moving ? "transform" : "";
+        if (world.style.willChange !== willChange) world.style.willChange = willChange;
+      }
+      const viewport = viewportRef.current;
+      if (viewport !== null) {
+        viewport.style.backgroundPosition = `${camera.tx}px ${camera.ty}px`;
+        viewport.style.backgroundSize = `${GRID_PX * camera.k}px ${GRID_PX * camera.k}px`;
         const band = zoomBand(camera.k);
-        if (element.dataset.zoomBand !== band) element.dataset.zoomBand = band;
+        if (viewport.dataset.zoomBand !== band) viewport.dataset.zoomBand = band;
+      }
+      const overlay = overlayRef.current;
+      if (overlay !== null) {
+        overlay.style.setProperty("--tv-tx", `${camera.tx}px`);
+        overlay.style.setProperty("--tv-ty", `${camera.ty}px`);
+        overlay.style.setProperty("--tv-k", String(camera.k));
       }
       cameraStore.set(camera);
+      if (phase !== "settle") followMount(camera);
+    },
+    [cameraStore, followMount],
+  );
+
+  /** The overlay mounts with the layout, after the controller's first write: give it the current camera. */
+  const setOverlayRoot = useCallback(
+    (element: HTMLDivElement | null) => {
+      overlayRef.current = element;
+      if (element === null) return;
+      const camera = cameraStore.get();
+      element.style.setProperty("--tv-tx", `${camera.tx}px`);
+      element.style.setProperty("--tv-ty", `${camera.ty}px`);
+      element.style.setProperty("--tv-k", String(camera.k));
     },
     [cameraStore],
   );
+
+  /** A tween's end (or a programmatic jump) is a rest: settle writes (--tv-inv-k, no will-change) for its camera. */
+  const rest = useCallback(() => {
+    const camera = controllerRef.current?.get();
+    if (camera !== undefined) writeCamera(camera, "settle");
+  }, [writeCamera]);
 
   /** Stamps the camera as agreeing with focus (spec §7.8 rule 3) and tells the title bar the zoom label may differ. */
   const sync = useCallback(() => {
@@ -198,20 +290,25 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     syncedRevRef.current = store.get().focusRev;
     store.dispatch({ type: "camera/sync", view: "canvas", camera: { mode: "uniform", tx: camera.tx, ty: camera.ty, k: camera.k } });
     setSettled(camera);
+    mountAt(camera);
     registry.notify();
-  }, [registry, store]);
+  }, [mountAt, registry, store]);
 
   const moveTo = useCallback(
     (camera: UniformCamera, animate: boolean) => {
       const controller = controllerRef.current;
       if (controller === null) return;
       const token = (moveTokenRef.current += 1);
+      movingRef.current = true;
       void controller.set(camera, { animate: animate && !prefersReducedMotion(viewportRef.current) }).then(() => {
         // A superseded move (a newer one started) or a destroyed controller never stamps the camera.
-        if (token === moveTokenRef.current && controllerRef.current === controller) sync();
+        if (token !== moveTokenRef.current || controllerRef.current !== controller) return;
+        movingRef.current = false;
+        rest();
+        sync();
       });
     },
-    [sync],
+    [rest, sync],
   );
 
   const leaveLive = useCallback(() => {
@@ -339,6 +436,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     if (exact) syncedRevRef.current = saved.syncedRev;
     lastSelectionRef.current = state.selection;
     writeCamera(initial, "settle");
+    mountAt(initial);
     const controller = createViewportController<UniformCamera>({
       element,
       initial,
@@ -348,12 +446,10 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       onFrame: (camera, phase) => writeCamera(camera, phase),
       onGestureStart: (kind) => {
         userGestureRef.current = true;
-        setGesturing(true);
         store.dispatch({ type: "gesture", gesture: kind });
         leaveLive();
       },
       onGestureEnd: (camera) => {
-        setGesturing(false);
         writeCamera(camera, "settle");
         if (userGestureRef.current) {
           userGestureRef.current = false;
@@ -394,20 +490,27 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     runPendingShow();
     return () => {
       observer?.disconnect();
+      if (mountTimerRef.current !== null) win.clearTimeout(mountTimerRef.current);
+      mountTimerRef.current = null;
       const camera = controller.get();
       const interrupted = controller.isGesturing() || userGestureRef.current;
+      // A show still waiting for a real size, or a programmatic move cut short, never agreed with focus (C3-10 review
+      // M4): stamping it would make the next show restore it "exactly" instead of re-fitting.
+      const unsettled = pendingShowRef.current || movingRef.current;
       controller.destroy();
       controllerRef.current = null;
       moveTokenRef.current += 1;
+      movingRef.current = false;
       // A view hidden or unmounted mid-gesture releases it; the Shell holds data applies while a gesture is set.
       if (interrupted) {
         userGestureRef.current = false;
-        setGesturing(false);
         store.dispatch({ type: "gesture", gesture: null });
       }
-      store.dispatch({ type: "camera/sync", view: "canvas", camera: { mode: "uniform", tx: camera.tx, ty: camera.ty, k: camera.k } });
+      if (!unsettled) {
+        store.dispatch({ type: "camera/sync", view: "canvas", camera: { mode: "uniform", tx: camera.tx, ty: camera.ty, k: camera.k } });
+      }
     };
-  }, [active, cameraStore, leaveLive, markSeen, runPendingShow, store, sync, writeCamera]);
+  }, [active, cameraStore, leaveLive, markSeen, mountAt, runPendingShow, store, sync, writeCamera]);
 
   // Spec §10 view switch: mark the paint after the canvas comes back into view (restored in the toggle's frame).
   useEffect(() => {
@@ -437,7 +540,12 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       if (focus !== undefined && next !== undefined) {
         const pinned = pinFrameCamera(before, focus.card, next.card, levelLimits(layout.level));
         writeCamera(pinned, "settle");
-        void controller.set(pinned, { animate: false });
+        void controller.set(pinned, { animate: false }).then(() => {
+          if (controllerRef.current !== controller) return;
+          rest();
+          // The controller reports the pinned camera only after its frame; mount around it, not the pre-switch one.
+          mountAt(controller.get());
+        });
         markRelayout(viewportRef.current, next.key);
         if (diagnostics.enabled) {
           const a = screenPoint(before, focus);
@@ -468,7 +576,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     }
     runPendingShow();
     markSeen();
-  }, [diagnostics, fitAll, layout, markSeen, moveTo, runPendingShow, store, sync, writeCamera]);
+  }, [diagnostics, fitAll, layout, markSeen, mountAt, moveTo, rest, runPendingShow, store, sync, writeCamera]);
 
   // Reveal (spec §7.5): a selection made outside the canvas (keys, Outline, n/N, the badge) comes into view. A canvas
   // click (focusBy "canvas") never moves the camera; its camera already agrees with focus, so it is stamped.
@@ -532,10 +640,11 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   );
   useRegisterViewPort("canvas", port);
 
-  // "N frames →" (spec §7.10 Review): read per camera frame only while the badge can show.
+  // "N frames →" (spec §7.10 Review): per settled camera, never per camera frame (C3-10 review M5).
   const badgeCanShow = !follow && newCount > 0 && layout !== null;
-  const ahead = useSyncExternalStore(cameraStore.subscribe, () =>
-    badgeCanShow && layout !== null ? framesAhead(layout, cameraStore.get(), size) : 0,
+  const ahead = useMemo(
+    () => (badgeCanShow && layout !== null ? framesAhead(layout, settled ?? cameraStore.get(), size) : 0),
+    [badgeCanShow, layout, settled, cameraStore, size],
   );
 
   // Per (layout, selection), never per camera tick (C3a hand-off: homeFrameKey rebuilds its context per call).
@@ -590,15 +699,15 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     [selectedFrame, ctx],
   );
   const hatchFromT = view.loadedFraction < 1 ? (session?.steps.at(-1)?.tMs ?? null) : null;
-  // Spike risk 2 ruling (CULL_FRAMES): one viewport width of margin each side of the settled camera (the initial
-  // camera until the first settle). Before the viewport is measured nothing but the selection and the tab stop mounts:
-  // at soak scale (thousands of frames) a first render of every frame would block the main thread for seconds.
+  // Spike risk 2 ruling (CULL_FRAMES): one viewport width of margin each side of the mounted camera (the settled
+  // camera, moved along during a long pan or zoom). Before the viewport is measured nothing but the selection and the
+  // tab stop mounts: at soak scale (thousands of frames) a first render of every frame would block the main thread.
+  const mountCamera = mounted ?? cameraStore.get();
   const cullRange = useMemo<CullRange | null>(() => {
     if (!CULL_FRAMES) return null;
     if (size.w <= 0) return NOTHING;
-    const camera = settled ?? cameraStore.get();
-    return { x0: screenToWorld(camera, { x: -size.w, y: 0 }).x, x1: screenToWorld(camera, { x: 2 * size.w, y: 0 }).x };
-  }, [settled, size.w, cameraStore]);
+    return mountedRange(mountCamera, size.w);
+  }, [mountCamera, size.w]);
 
   const onSelect = useCallback(
     (frame: CanvasFrame) => {
@@ -642,9 +751,17 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   const overlay = useMemo(
     () =>
       layout !== null && ctx !== null ? (
-        <Overlay layout={layout} ctx={ctx} level={level} selectedKey={selectedKey} onSelect={onSelect} cullRange={cullRange} />
+        <Overlay
+          layout={layout}
+          ctx={ctx}
+          level={level}
+          selectedKey={selectedKey}
+          onSelect={onSelect}
+          cullRange={cullRange}
+          rootRef={setOverlayRoot}
+        />
       ) : null,
-    [layout, ctx, level, selectedKey, onSelect, cullRange],
+    [layout, ctx, level, selectedKey, onSelect, cullRange, setOverlayRoot],
   );
 
   // Below this width the centered toolbar would run under the minimap: it moves to the left edge and the minimap
@@ -670,6 +787,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
             layout={layout}
             scale={scale}
             cameraStore={cameraStore}
+            base={mountCamera}
             widthPx={size.w}
             playheadT={playheadT}
             band={band}
@@ -685,7 +803,6 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
           level={level}
           selectedKey={selectedKey}
           expanded={expanded}
-          gesturing={gesturing}
           tool={tool}
           cullRange={cullRange}
           viewportRef={viewportRef}

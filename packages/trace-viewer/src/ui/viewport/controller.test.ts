@@ -65,6 +65,7 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
@@ -221,6 +222,35 @@ describe("viewport controller", () => {
     pointer(h.element, "pointermove", { clientX: -5, clientY: 0, pointerId: 2 });
     h.flush();
     expect(h.controller.get().tx).toBe(15);
+  });
+
+  it("measures the element once per zoom gesture, again after settle and after a resize (C3-10 review I-2)", () => {
+    const observers: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          observers.push(callback);
+        }
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    const h = setup();
+    const measure = vi.mocked(h.element.getBoundingClientRect);
+    measure.mockClear();
+    for (let i = 0; i < 5; i += 1) {
+      wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 400, clientY: 300 });
+      h.flush();
+    }
+    expect(measure).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SETTLE_MS);
+    wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 400, clientY: 300 });
+    expect(measure).toHaveBeenCalledTimes(2);
+    for (const callback of observers) callback([], {} as ResizeObserver);
+    wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 400, clientY: 300 });
+    expect(measure).toHaveBeenCalledTimes(3);
   });
 
   it("destroy removes the wheel listener and stops frames", () => {

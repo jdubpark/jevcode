@@ -1,5 +1,7 @@
-/* Canvas viewport (R17): the camera writes --tv-tx, --tv-ty, --tv-k and --tv-inv-k on the viewport once per frame;
-   the world layer and every overlay item position themselves from those four properties. */
+/* Canvas viewport (R17). Once per frame the camera writes, directly and compositor-friendly: the world layer's
+   transform, the viewport's dot-grid background-position and background-size (non-inherited), and --tv-tx, --tv-ty
+   and --tv-k on the overlay root only. --tv-inv-k goes on the world at settle and at a tween's end (spike risk 7).
+   Inherited custom properties above the world would restyle every frame, card and edge each frame (C3-10 review I-1). */
 .viewport {
   position: absolute;
   inset: 0;
@@ -8,8 +10,8 @@
   touch-action: none;
   background-color: var(--tv-canvas);
   background-image: radial-gradient(circle, var(--tv-ink-4) 0.6px, transparent 1.1px);
-  background-size: calc(20px * var(--tv-k, 1)) calc(20px * var(--tv-k, 1));
-  background-position: var(--tv-tx, 0px) var(--tv-ty, 0px);
+  background-size: 20px 20px;
+  background-position: 0 0;
 }
 
 .viewport[data-tool="hand"] {
@@ -21,7 +23,6 @@
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  transform: translate(var(--tv-tx, 0px), var(--tv-ty, 0px)) scale(var(--tv-k, 1));
 }
 
 .separator {

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas } from "../../../layout/canvas-layout.js";
@@ -101,6 +102,64 @@ describe("Minimap", () => {
     );
     expect(view.container.querySelectorAll("svg:not([data-minimap]) rect")).toHaveLength(1 + column.length);
     expect(error.mock.calls.filter(([message]) => String(message).includes("same key"))).toEqual([]);
+  });
+
+  it("moves only the viewport outline on a camera frame, with no React render (C3-10 review I-2)", () => {
+    const cameraStore = createCameraStore({ mode: "uniform", tx: 0, ty: 0, k: 1 });
+    let renders = 0;
+    const view = render(
+      <Profiler id="minimap" onRender={() => (renders += 1)}>
+        <Minimap
+          layout={layout}
+          cameraStore={cameraStore}
+          viewport={{ w: 800, h: 600 }}
+          selectedKey={null}
+          criticalKeys={new Set()}
+          onCenter={vi.fn()}
+          onPan={vi.fn()}
+        />
+      </Profiler>,
+    );
+    const outline = view.container.querySelector("[data-viewport]");
+    if (outline === null) throw new Error("no viewport outline");
+    const mounted = renders;
+    for (let i = 1; i <= 5; i += 1) act(() => cameraStore.set({ mode: "uniform", tx: -40 * i, ty: -10 * i, k: 1 }));
+    act(() => cameraStore.set({ mode: "uniform", tx: -200, ty: -50, k: 2 }));
+    expect(renders).toBe(mounted);
+    // The viewport's world rect (100, 25, 400, 300) in minimap px: (world − bounds origin) · s.
+    expect(Number(outline.getAttribute("x"))).toBeCloseTo((100 - layout.bounds.x) * SCALE, 6);
+    expect(Number(outline.getAttribute("y"))).toBeCloseTo((25 - layout.bounds.y) * SCALE, 6);
+    expect(Number(outline.getAttribute("width"))).toBeCloseTo(400 * SCALE, 6);
+    expect(Number(outline.getAttribute("height"))).toBeCloseTo(300 * SCALE, 6);
+  });
+
+  it("re-windows a wide session only when the view moves a quarter of the window span", () => {
+    // 6000 world px at the 0.03 floor: the window spans 140 / 0.03 ≈ 4667 world px.
+    const wide = { ...layout, bounds: { ...layout.bounds, w: 6_000 } };
+    const cameraStore = createCameraStore({ mode: "uniform", tx: 0, ty: 0, k: 1 });
+    let renders = 0;
+    const view = render(
+      <Profiler id="minimap" onRender={() => (renders += 1)}>
+        <Minimap
+          layout={wide}
+          cameraStore={cameraStore}
+          viewport={{ w: 800, h: 600 }}
+          selectedKey={null}
+          criticalKeys={new Set()}
+          onCenter={vi.fn()}
+          onPan={vi.fn()}
+        />
+      </Profiler>,
+    );
+    const bracket = (): number => Number(view.container.querySelector("svg:not([data-minimap]) rect")?.getAttribute("x"));
+    const mounted = renders;
+    expect(bracket()).toBe(0);
+    act(() => cameraStore.set({ mode: "uniform", tx: -600, ty: 0, k: 1 }));
+    expect(renders).toBe(mounted);
+    // Center 400 → 2600 world px, more than a quarter span: the window slides to x0 = 1333 (clamped at 6000 − span).
+    act(() => cameraStore.set({ mode: "uniform", tx: -2_200, ty: 0, k: 1 }));
+    expect(renders).toBe(mounted + 1);
+    expect(bracket()).toBeGreaterThan(0);
   });
 
   it("draws the rest contradicts edge and one mark per frame", () => {

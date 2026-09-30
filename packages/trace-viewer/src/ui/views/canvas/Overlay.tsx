@@ -19,7 +19,7 @@ import {
   type FrameContext,
   type FrameFlag,
 } from "./frame-label.js";
-import { cullFrames, type CullRange } from "./World.js";
+import { cullFrames, cullSeparators, type CullRange } from "./World.js";
 import styles from "./World.module.css";
 
 export interface OverlayProps {
@@ -28,8 +28,16 @@ export interface OverlayProps {
   level: Level;
   selectedKey: string | null;
   onSelect(frame: CanvasFrame): void;
-  /** The World's cull range (CULL_FRAMES); labels outside it are not rendered, the selection's always is. */
+  /**
+   * The World's cull range (CULL_FRAMES); labels, separator labels and badges outside it are not rendered, the
+   * selection's label always is.
+   */
   cullRange?: CullRange | null;
+  /**
+   * The overlay root. The camera writes --tv-tx, --tv-ty and --tv-k here and nowhere above it, so a camera frame
+   * restyles only this subtree (C3-10 review I-1).
+   */
+  rootRef?: React.Ref<HTMLDivElement>;
 }
 
 /** World coordinates as unitless custom properties; the CSS maps them through --tv-tx/--tv-ty/--tv-k. */
@@ -130,7 +138,7 @@ function Selection({ frame, ctx }: { frame: CanvasFrame; ctx: FrameContext }): R
   );
 }
 
-function OverlayView({ layout, ctx, level, selectedKey, onSelect, cullRange = null }: OverlayProps): React.JSX.Element {
+function OverlayView({ layout, ctx, level, selectedKey, onSelect, cullRange = null, rootRef }: OverlayProps): React.JSX.Element {
   const models = useMemo(() => labelModels(layout, ctx), [layout, ctx]);
   const selected = selectedKey === null ? undefined : layout.frameByKey.get(selectedKey);
   const labelled = level === "session" ? [] : cullFrames(layout.frames, cullRange);
@@ -142,20 +150,27 @@ function OverlayView({ layout, ctx, level, selectedKey, onSelect, cullRange = nu
         .map((edge) => ({ edge, side: badgeSide(layout, edge.badge) })),
     [layout],
   );
+  const shownBadges =
+    cullRange === null
+      ? badges
+      : badges.filter(
+          ({ edge }) =>
+            edge.from === selectedKey || edge.to === selectedKey || (edge.badge.x >= cullRange.x0 && edge.badge.x <= cullRange.x1),
+        );
   return (
-    <div className={styles.overlay} aria-hidden="true">
+    <div ref={rootRef} className={styles.overlay} data-tv-overlay="" aria-hidden="true">
       {labels.map((frame) => {
         const model = models.get(frame.key);
         return model === undefined ? null : (
           <FrameLabel key={frame.key} frame={frame} model={model} selected={frame.key === selectedKey} onSelect={onSelect} />
         );
       })}
-      {layout.separators.map((sep) => (
+      {cullSeparators(layout.separators, cullRange).map((sep) => (
         <span key={`${sep.kind}:${sep.x}`} className={styles.sepLabel} data-sep-label={sep.kind} style={place({ x: sep.x })}>
           {sep.label}
         </span>
       ))}
-      {badges.map(({ edge, side }) => {
+      {shownBadges.map(({ edge, side }) => {
         const dim = selectedKey !== null && edge.from !== selectedKey && edge.to !== selectedKey;
         return (
           <span
@@ -178,5 +193,5 @@ function OverlayView({ layout, ctx, level, selectedKey, onSelect, cullRange = nu
   );
 }
 
-/** Screen-space overlay (R17): one DOM layer over the world; every item reads the camera custom properties. */
+/** Screen-space overlay (R17): one DOM layer over the world; every item reads the camera custom properties on its root. */
 export const Overlay = memo(OverlayView);

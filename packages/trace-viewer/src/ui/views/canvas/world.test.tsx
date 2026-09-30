@@ -8,6 +8,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
+import { samplePath } from "../../../layout/canvas-routes.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type TraceSession } from "../../../model/index.js";
 import { canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
@@ -66,7 +67,6 @@ function renderWorld(overrides: Partial<WorldProps> = {}) {
     level: "chapter",
     selectedKey,
     expanded: new Set<string>(),
-    gesturing: false,
     tool: "select",
     cullRange: null,
     viewportRef: createRef<HTMLDivElement>(),
@@ -187,14 +187,6 @@ describe("World", () => {
     fireEvent.click(hit);
     expect(onSelectEdge).toHaveBeenCalledWith(expect.objectContaining({ kind: "contradicts", tone: "bad" }));
     expect(view.container.querySelector("[data-badge]")?.textContent).toContain("contradicts");
-  });
-
-  it("sets will-change only while a gesture runs", () => {
-    const { props, view } = renderWorld({ gesturing: true });
-    const world = view.container.querySelector<HTMLElement>("[data-tv-world]");
-    expect(world?.style.willChange).toBe("transform");
-    view.rerender(<World {...props} gesturing={false} />);
-    expect(world?.style.willChange ?? "").toBe("");
   });
 
   it("focuses frames with preventScroll and undoes any browser scroll of the viewport", () => {
@@ -337,6 +329,32 @@ describe("edge and cull helpers", () => {
     if (last === undefined) throw new Error("no frames");
     expect(keys({ x0: last.card.x - 50, x1: last.card.x })).toContain(last.key);
     expect(keys({ x0: last.card.x - 50, x1: last.card.x - 1 })).not.toContain(last.key);
+  });
+
+  it("culls edges by their path's x-extent and separators by x, keeping the selection's edges (C3-10 review M1)", () => {
+    const drawn = (container: HTMLElement): string[] =>
+      [...container.querySelectorAll<SVGGElement>("g[data-edge]")].map((element) => element.dataset.edge ?? "");
+    const far = { x0: layout.bounds.x + layout.bounds.w + 1_000, x1: layout.bounds.x + layout.bounds.w + 2_000 };
+    const { view } = renderWorld({ cullRange: far });
+    expect(drawn(view.container)).toEqual([]);
+    expect(view.container.querySelectorAll("[data-sep]")).toHaveLength(0);
+    cleanup();
+    // The selection's one-hop edges stay drawn wherever the camera is (spec §7.5: they are what the selection shows).
+    const selected = renderWorld({ selectedKey: linkingTest.key, cullRange: far });
+    const hops = layout.edges
+      .filter((edge) => edge.kind !== "trunk" && (edge.from === linkingTest.key || edge.to === linkingTest.key))
+      .map((edge) => edge.id);
+    expect(hops.length).toBeGreaterThan(0);
+    expect(drawn(selected.view.container).sort()).toEqual([...hops].sort());
+    cleanup();
+    // A trunk's from/to are placement-order ends, not its extremes (C3a hand-off): a range that meets only the middle
+    // of its path still draws it.
+    const trunk = layout.edges.find((edge) => edge.kind === "trunk" && edge.d !== null);
+    if (trunk === undefined || trunk.d === null) throw new Error("no trunk");
+    const xs = samplePath(trunk.d).map((point) => point.x);
+    const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const middle = renderWorld({ cullRange: { x0: mid - 1, x1: mid + 1 } });
+    expect(drawn(middle.view.container)).toContain(trunk.id);
   });
 
   it("draws the selection's lane-less edges as direct paths above the frames", () => {

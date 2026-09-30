@@ -22,10 +22,11 @@ export interface WorldProps {
   /** Frame key of the selection. */
   selectedKey: string | null;
   expanded: ReadonlySet<string>;
-  /** Gesture-time will-change (R17). */
-  gesturing: boolean;
   tool: Tool;
-  /** Spike risk 2 ruling (CULL_FRAMES): world x range to draw; null draws every frame. */
+  /**
+   * Spike risk 2 ruling (CULL_FRAMES): world x range to draw; null draws everything. Frames, edges (by their path's
+   * x-extent), separators and junction dots outside it are not mounted; the selection's frame and edges always are.
+   */
   cullRange: CullRange | null;
   viewportRef: React.Ref<HTMLDivElement>;
   worldRef: React.Ref<HTMLDivElement>;
@@ -73,6 +74,11 @@ export function focusFrameElement(root: ParentNode, key: string): boolean {
   return false;
 }
 
+/** Separators whose x lies in the range (all when the range is null). */
+export function cullSeparators<T extends { x: number }>(separators: readonly T[], range: CullRange | null): readonly T[] {
+  return range === null ? separators : separators.filter((sep) => sep.x >= range.x0 && sep.x <= range.x1);
+}
+
 /** The culled frames plus the selection and the tab stop, which stay mounted (focus and roving), in time order. */
 function mountedFrames(
   layout: CanvasLayout,
@@ -102,6 +108,7 @@ function WorldView(props: WorldProps): React.JSX.Element {
   const focusKey =
     layout !== null && selectedKey !== null && layout.frameByKey.has(selectedKey) ? selectedKey : (layout?.frames[0]?.key ?? null);
   const frames = layout === null ? [] : mountedFrames(layout, order, props.cullRange, [selectedKey, focusKey]);
+  const separators = layout === null ? [] : cullSeparators(layout.separators, props.cullRange);
   return (
     <div
       ref={props.viewportRef}
@@ -116,15 +123,11 @@ function WorldView(props: WorldProps): React.JSX.Element {
         event.currentTarget.scrollTop = 0;
       }}
     >
-      <div
-        ref={props.worldRef}
-        className={styles.world}
-        data-tv-world=""
-        style={{ willChange: props.gesturing ? "transform" : undefined }}
-      >
+      {/* The camera writes this layer's transform (and --tv-inv-k, will-change) directly; React sets no style here. */}
+      <div ref={props.worldRef} className={styles.world} data-tv-world="">
         {layout === null || ctx === null ? null : (
           <>
-            {layout.separators.map((sep) => (
+            {separators.map((sep) => (
               <div
                 key={`${sep.kind}:${sep.x}`}
                 className={styles.separator}
@@ -133,7 +136,7 @@ function WorldView(props: WorldProps): React.JSX.Element {
                 style={{ left: sep.x, height: Math.max(1, layout.bounds.h) }}
               />
             ))}
-            <EdgeLayer layout={layout} layer="under" selectedKey={selectedKey} onSelectEdge={props.onSelectEdge} />
+            <EdgeLayer layout={layout} layer="under" selectedKey={selectedKey} cullRange={props.cullRange} onSelectEdge={props.onSelectEdge} />
             {frames.map((frame) => (
               <Frame
                 key={frame.key}
@@ -148,7 +151,7 @@ function WorldView(props: WorldProps): React.JSX.Element {
                 onToggle={props.onToggle}
               />
             ))}
-            <EdgeLayer layout={layout} layer="over" selectedKey={selectedKey} onSelectEdge={props.onSelectEdge} />
+            <EdgeLayer layout={layout} layer="over" selectedKey={selectedKey} cullRange={props.cullRange} onSelectEdge={props.onSelectEdge} />
           </>
         )}
       </div>
@@ -157,5 +160,5 @@ function WorldView(props: WorldProps): React.JSX.Element {
   );
 }
 
-/** Viewport (camera custom properties, zoom band, scroll guard) holding the transformed world and the overlay. */
+/** Viewport (dot grid, zoom band, scroll guard) holding the transformed world and the screen-space overlay. */
 export const World = memo(WorldView);
