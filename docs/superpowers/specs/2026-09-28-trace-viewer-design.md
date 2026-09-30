@@ -897,12 +897,13 @@ collectItems(s):
               "plan" (plan:<seq>) if t.planStepId; "claim" (claim:<seq>) if t.claimStepId
   for decision steps: story item "decision" (decision:<id>)
   for current chapters: work item key ch:<anchorSeq>, selId unit:<id>,
-              kind "noise" if chapter.noise and no step in it has a finding, else "chapter"
+              kind "noise" if chapter.noise, no finding names it, and none of its own steps
+              (stepIds less validationOnlyStepIds) anchors a finding, else "chapter"
   for steps with a warning+ finding, no chapter and no story item: work item "loose" (step:<seq>)
   disambiguate equal keys by selId; sort by (start, anchorSeq, key)
 ```
 
-An item's `start` is its step's `tMs` or its chapter's `tMs` (display clock). A chapter's placement key is `ch:<anchorSeq>` (the min fact or step seq), which survives unit-id churn; the store resolves a stale `unit:<old>` selection through the key.
+An item's `start` is its step's `tMs` or its chapter's `tMs` (display clock). A chapter's placement key is `ch:<anchorSeq>` (the min fact or step seq), which survives unit-id churn; the store resolves a stale `unit:<old>` selection through the key. A noise chapter that reaches a shared failed test run only through its validation stays in its stack: the run and its findings belong to the chapter that owns the outcome (§6.6, §6.7 "Finding chapters"), and a finding that only cites a step does not count (anchor rule, §7.1). On the replayed oauth bundle, Lockfile and Code · users both join the failed `pnpm test` run and still stack as `Noise ×2` (lane C3b review I-3, 2026-10-01).
 
 **Column map.** Columns are time bins. The time map is a list of breakpoints `{t, xIn, xOut}`, one per placed frontier item; x is linear in `toU(t)` between breakpoints and continues at `pps` past the last as a tentative live edge.
 
@@ -1346,6 +1347,8 @@ Commands use `term` (not the mockups' boxed `cmd`); schema chapters use `table` 
 | `ClaimVsObserved` | Claim `{text, claimSpan, tMs}`, observed `{passed, failed, command, tMs}` | Claim clamped to 2 lines at `sm`, full at `md` |
 
 `CHAPTER_GRAPHIC` takes the first rule that matches, in this order: `schema` → TableGlyph; `architecture`, `api` → FlowGlyph; `tests` → TestDots; a chapter with an answered decision → ForkGlyph; everything else → DiffBar.
+
+**Refinement from lane C3b (C3-6 ruling):** the ForkGlyph rule applies only to the chapter born from the decision (the first current, non-noise chapter of the decision's turn that lists it and starts at or after it) and only when no decision frame or row at the same level already shows that fork; otherwise the chapter falls through to DiffBar. Canvas decision frames, Outline decision rows and spine decision rows always show it, so there chapters take DiffBar; the Inspector, which shows one chapter alone, keeps the fork for the decision-born chapter (`pickGraphic(…, { decisionShown })`). On oauth only the decision frame draws a fork, and the Identity layer chapter lists its four files. Chapter cards keep their fixed §7.5 heights; a Chapter-level chapter card whose graphic leaves its body empty fills it with up to 3 compact step rows (kind icon, headline through `displayUntrusted`, offset), problem steps first, newest first.
 
 ### 7.13 Accessibility
 

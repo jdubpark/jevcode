@@ -13,7 +13,7 @@ const twoFrames = (win) => js(win, "new Promise((r) => requestAnimationFrame(() 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function open(win, harness) {
-  await win.loadFile(path.join(ROOT, "dist-spike", "spike.html"), { query: { bench: BENCH, harness } });
+  await win.loadFile(path.join(ROOT, "dist-spike", "spike.html"), { query: { bench: BENCH, harness, ...(process.env.SPIKE_ROUNDK ? { roundK: process.env.SPIKE_ROUNDK } : {}) } });
   await twoFrames(win);
 }
 
@@ -76,13 +76,29 @@ async function main() {
   const risk3 = [];
   for (const k of [0.5, 1, 2]) {
     const rects = await js(win, `window.__spikeRun.settleAt(${k})`);
-    const a = await win.webContents.capturePage(toRect(rects.frame));
-    const b = await win.webContents.capturePage(toRect(rects.reference));
+    // Phase-aligned crop: the reference sits at the title's exact fractional origin; both renders use one
+    // device-pixel crop rect (floor of the origin, ceil of the far edge) so neither is shifted or clipped.
+    const aligned = await js(win, "window.__spikeRun.alignReference()");
+    const far = (r) => ({ x: r.x + r.width, y: r.y + r.height });
+    const fx = Math.max(far(aligned.frame).x, far(aligned.reference).x);
+    const fy = Math.max(far(aligned.frame).y, far(aligned.reference).y);
+    const crop = { x: Math.floor(aligned.frame.x), y: Math.floor(aligned.frame.y), width: Math.ceil(fx) - Math.floor(aligned.frame.x), height: Math.ceil(fy) - Math.floor(aligned.frame.y) };
+    await js(win, 'window.__spikeRun.showOnly("frame")');
+    const a = await win.webContents.capturePage(crop);
+    await js(win, 'window.__spikeRun.showOnly("reference")');
+    const b = await win.webContents.capturePage(crop);
+    await js(win, 'window.__spikeRun.showOnly("frame")');
     fs.writeFileSync(path.join(OUT, `risk3-k${k}-${tag}-frame.png`), a.toPNG());
     fs.writeFileSync(path.join(OUT, `risk3-k${k}-${tag}-reference.png`), b.toPNG());
-    risk3.push({ k: rects.k, ...diffImages(a, b) });
+    risk3.push({ k: rects.k, frameW: aligned.frame.width, refW: aligned.reference.width, ...diffImages(a, b) });
   }
   await js(win, "window.__spikeRun.hideReference()");
+  if (process.env.SPIKE_ONLY3) {
+    const f3 = (n) => Number(n.toFixed(3));
+    console.log(`RISK3 ${tag} roundK=${process.env.SPIKE_ROUNDK ?? "null"} ${risk3.map((r) => `k ${f3(r.k)}: ${f3(r.fraction * 100)}% of ${r.width}x${r.height} px (title ${f3(r.frameW)} vs ref ${f3(r.refW)} css px)`).join("; ")}`);
+    console.log(`SPIKE_DONE ${tag}`);
+    return;
+  }
 
   const risk7 = { stroke: await js(win, "window.__spikeRun.strokeCheck()"), ...(await js(win, "window.__spikeRun.rulerSync()")) };
   const risk4 = await js(win, "window.__spikeRun.keyboardWalk(20)");

@@ -60,6 +60,10 @@ interface RouteContext {
   frameBySel: Map<SelectionId, CanvasFrame>;
   order: Map<string, number>;
   byColumn: Map<number, CanvasFrame[]>;
+  /** Chapter id → anchor seq, filled on first use: homeKey sorts a step's chapters by anchor for every step. */
+  anchors: Map<string, number>;
+  /** Step id → home frame key, filled on first use: edges ask for the same step's home once per chapter. */
+  homes: Map<string, string | undefined>;
 }
 
 function createContext(input: RouteInput): RouteContext {
@@ -81,36 +85,53 @@ function createContext(input: RouteInput): RouteContext {
     frameBySel,
     order,
     byColumn,
+    anchors: new Map(),
+    homes: new Map(),
   };
 }
 
 function anchorOf(ctx: RouteContext, chapter: Chapter): number {
+  const cached = ctx.anchors.get(chapter.id);
+  if (cached !== undefined) return cached;
   let min = Infinity;
   for (const seq of chapter.factSeqs) if (seq < min) min = seq;
   for (const id of chapter.stepIds) {
     const seq = ctx.stepOf(id)?.firstSeq ?? Infinity;
     if (seq < min) min = seq;
   }
+  ctx.anchors.set(chapter.id, min);
   return min;
 }
 
 function homeKey(ctx: RouteContext, stepId: string): string | undefined {
+  if (ctx.homes.has(stepId)) return ctx.homes.get(stepId);
+  const key = findHomeKey(ctx, stepId);
+  ctx.homes.set(stepId, key);
+  return key;
+}
+
+function findHomeKey(ctx: RouteContext, stepId: string): string | undefined {
   const step = ctx.stepOf(stepId);
   if (step === undefined) return undefined;
   const loose = ctx.input.frameByKey.get(`step:${step.firstSeq}`);
   if (loose !== undefined && loose.kind === "loose") return loose.key;
   const story = ctx.frameBySel.get(step.id);
   if (story !== undefined && story.kind === "story") return story.key;
-  const byAnchor = (a: Chapter, b: Chapter): number => anchorOf(ctx, a) - anchorOf(ctx, b) || compareText(a.id, b.id);
-  const chapters = step.chapterIds
-    .map((id) => ctx.chapterById.get(id))
-    .filter((chapter): chapter is Chapter => chapter !== undefined && ctx.frameBySel.has(chapter.id))
-    .sort(byAnchor);
-  if (step.kind === "test" || step.kind === "check") {
-    const tests = chapters.find((chapter) => chapter.category === "tests");
-    if (tests !== undefined) return ctx.frameBySel.get(tests.id)?.key;
+  // The lowest-anchor placed chapter (and the lowest `tests` one) in one pass: a step can sit in thousands of chapters
+  // (soak bundle), so sorting its chapter list per step is far too slow.
+  const before = (a: Chapter, b: Chapter | undefined): boolean =>
+    b === undefined || (anchorOf(ctx, a) - anchorOf(ctx, b) || compareText(a.id, b.id)) < 0;
+  let lowest: Chapter | undefined;
+  let lowestTests: Chapter | undefined;
+  for (const id of step.chapterIds) {
+    const chapter = ctx.chapterById.get(id);
+    if (chapter === undefined || !ctx.frameBySel.has(chapter.id)) continue;
+    if (before(chapter, lowest)) lowest = chapter;
+    if (chapter.category === "tests" && before(chapter, lowestTests)) lowestTests = chapter;
   }
-  const lowest = chapters[0];
+  if ((step.kind === "test" || step.kind === "check") && lowestTests !== undefined) {
+    return ctx.frameBySel.get(lowestTests.id)?.key;
+  }
   return lowest === undefined ? undefined : ctx.frameBySel.get(lowest.id)?.key;
 }
 

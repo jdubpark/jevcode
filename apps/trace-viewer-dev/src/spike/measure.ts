@@ -6,6 +6,8 @@ export interface SpikeResults { csp: string[]; scrollResets: number; risk1?: Ris
 export interface SpikeRun {
   sweep?(willChange: boolean): Promise<Drops & { willChange: boolean }>;
   settleAt?(k: number): Promise<{ k: number; dpr: number; frame: Rect; reference: Rect }>;
+  alignReference?(): Promise<{ frame: Rect; reference: Rect }>;
+  showOnly?(which: "frame" | "reference"): Promise<void>;
   hideReference?(): Promise<void>;
   strokeCheck?(): Promise<{ k: number; renderedPx: number }[]>;
   rulerSync?(): Promise<{ maxTickDriftPx: number }>;

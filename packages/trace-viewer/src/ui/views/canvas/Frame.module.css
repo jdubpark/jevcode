@@ -1,0 +1,560 @@
+/* Canvas frames (canvas mockup `.card`): one elevation, no borders; color only for state. */
+.frame {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font-size: 13px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: default;
+  outline: none;
+}
+
+.frame:focus-visible {
+  box-shadow: var(--tv-shadow), 0 0 0 2px var(--tv-accent);
+}
+
+.frame[data-selected] {
+  box-shadow: var(--tv-shadow), 0 0 0 1.5px var(--tv-accent);
+}
+
+.frame[data-selected]:focus-visible {
+  box-shadow: var(--tv-shadow), 0 0 0 2px var(--tv-accent);
+}
+
+/* Prompt and claim prose: 4 and 3 lines of 15/20 inside a 96 px card. */
+.frame[data-item="intent"],
+.frame[data-item="instruction"],
+.frame[data-item="claim"],
+.frame[data-item="plan"] {
+  padding: 8px 12px;
+}
+
+.frame[data-item="decision"] {
+  padding: 10px 12px;
+  justify-content: space-between;
+}
+
+.frame[data-kind="loose"] {
+  justify-content: center;
+  padding: 0 12px;
+}
+
+.frame[data-kind="chapter"][data-level="step"] {
+  gap: 0;
+  padding: 0;
+}
+
+/* Session level: 28 px chips (icon, short title, status glyph). */
+.chip {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Noise stacks: one line of ink-3 meta over a second card peeking out below (mockup `.stack`). */
+.noise {
+  justify-content: center;
+  padding: 0 12px;
+  overflow: visible;
+  color: var(--tv-ink-3);
+}
+
+.noise::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -5px;
+  height: 12px;
+  border-radius: 0 0 8px 8px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  z-index: -1;
+}
+
+.noise.chip::before {
+  bottom: -4px;
+  height: 10px;
+  border-radius: 0 0 6px 6px;
+}
+
+.body {
+  display: contents;
+}
+
+.iconOnly {
+  display: none;
+}
+
+.prompt,
+.claim {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--tv-ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  unicode-bidi: isolate;
+}
+
+.prompt {
+  -webkit-line-clamp: 4;
+}
+
+.claim {
+  -webkit-line-clamp: 3;
+  /* 22 px lines keep the wavy underline inside the last line box, which the clamp clips. */
+  line-height: 22px;
+}
+
+.span {
+  background: none;
+  color: inherit;
+  text-decoration: underline wavy var(--tv-bad) 1.5px;
+  text-underline-offset: 2px;
+  text-decoration-skip-ink: none;
+}
+
+.plan {
+  margin: 0;
+  color: var(--tv-ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  unicode-bidi: isolate;
+}
+
+/* Plan checklist (mockup `.steps`): 20 px rows, a small neutral bullet, the item cut to one line. */
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.checkItem,
+.checkMore {
+  position: relative;
+  height: 20px;
+  padding-left: 14px;
+  line-height: 20px;
+  color: var(--tv-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.checkItem::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--tv-ink-4);
+}
+
+.checkMore {
+  font-size: 12px;
+  color: var(--tv-ink-3);
+}
+
+/* Never shrinks under the footer: a graphic the budget (frame-label.ts) misjudges clips instead of overlapping. */
+.graphic {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* A chapter's file list (canvas mockup): path, bars, counts; 16 px rows 4 px apart (CARD_FILE_ROWS in frame-label.ts). */
+.files {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fileRow {
+  display: contents;
+}
+
+.filePath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.fileCount {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.graphic[data-graphic="tests"] {
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* A chapter's time and size, pinned to the card's bottom edge. */
+.foot {
+  flex: none;
+  margin-top: auto;
+}
+
+.icon {
+  flex: none;
+  color: var(--tv-ink-3);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Tests chapter (mockup "1 failed ✓ 14"): the failed count as a large numeral with its word. */
+.result {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 24px;
+  white-space: nowrap;
+}
+
+.big {
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--tv-bad-ink);
+}
+
+.bigWord {
+  font-weight: 500;
+  color: var(--tv-bad-ink);
+}
+
+.passWord {
+  font-weight: 500;
+  color: var(--tv-ink);
+}
+
+.passMark {
+  flex: none;
+  align-self: center;
+  color: var(--tv-good);
+}
+
+.passCount {
+  color: var(--tv-ink-2);
+}
+
+/* Decision fork at card scale (mockup `.fork`): chosen branch solid ink, others dashed. */
+.fork {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.forkLines {
+  flex: none;
+  overflow: visible;
+}
+
+.forkRoot,
+.forkEndChosen {
+  fill: var(--tv-ink);
+}
+
+.forkChosen {
+  fill: none;
+  stroke: var(--tv-ink);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.forkOther {
+  fill: none;
+  stroke: var(--tv-ink-4);
+  stroke-width: 1.5;
+  stroke-dasharray: 2.5 3;
+  stroke-linecap: round;
+}
+
+.forkEnd {
+  fill: var(--tv-panel);
+  stroke: var(--tv-ink-4);
+  stroke-width: 1.5;
+}
+
+.forkLabels {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.option,
+.optionChosen {
+  height: 18px;
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.option {
+  color: var(--tv-ink-3);
+}
+
+.optionChosen {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tv-ink);
+}
+
+.forkMore {
+  flex: none;
+  align-self: flex-end;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+}
+
+.chipTitle,
+.stepText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.stepText {
+  color: var(--tv-ink-2);
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Step level: a 56 px summary header over the nine-row list that scrolls inside the frame. */
+.header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 12px;
+  box-shadow: inset 0 -1px 0 var(--tv-hair);
+}
+
+.headerText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--tv-ink-2);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.frame[data-level="step"] .steps {
+  padding: 0 4px;
+}
+
+/* An expanded chapter at Chapter level trades its graphic for the list; rows drop their xs graphic to keep the text. */
+.frame[data-kind="chapter"][data-level="chapter"][data-expanded] {
+  padding: 6px 4px;
+}
+
+.frame[data-level="chapter"] .steps .rowGraphic {
+  display: none;
+}
+
+.rowGraphic {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.stepRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+  white-space: nowrap;
+}
+
+.offset {
+  flex: none;
+  font-size: 12px;
+  color: var(--tv-ink-3);
+}
+
+.band {
+  padding-left: 30px;
+  color: var(--tv-ink-3);
+}
+
+.failed {
+  flex: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tv-bad-ink);
+}
+
+.flagWord {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tv-bad-ink);
+}
+
+.flagBad,
+.flagIcon {
+  display: flex;
+  flex: none;
+  color: var(--tv-bad);
+}
+
+/* A guardrail clamp that is not a problem: neutral, as in the Outline (layout/tone.ts). */
+.flagIcon {
+  color: var(--tv-ink-3);
+}
+
+/* Sparse chapter cards (C3-6 ruling): up to three compact 20 px step rows under the graphic, never past the footer. */
+.fill {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fillRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+  white-space: nowrap;
+}
+
+/* Zoom bands (spec §7.5): below 0.5 no graphic, below 0.35 only the icon and the state fill. */
+[data-zoom-band="nographic"] [data-part="graphic"],
+[data-zoom-band="icon"] [data-part="graphic"] {
+  display: none;
+}
+
+[data-zoom-band="icon"] .body {
+  display: none;
+}
+
+[data-zoom-band="icon"] .iconOnly {
+  display: grid;
+  place-items: center;
+  flex: 1 1 auto;
+  color: var(--tv-ink-2);
+}
+
+[data-zoom-band="icon"] .frame[data-tone="bad"] {
+  background: var(--tv-bad-soft);
+}
+
+[data-zoom-band="icon"] .frame[data-tone="bad"] .iconOnly {
+  color: var(--tv-bad);
+}
+
+[data-relayout] .frame:not([data-pinned]) {
+  transition:
+    left var(--tv-dur) ease-out,
+    top var(--tv-dur) ease-out,
+    width var(--tv-dur) ease-out,
+    height var(--tv-dur) ease-out;
+}

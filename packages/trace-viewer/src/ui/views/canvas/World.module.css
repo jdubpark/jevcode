@@ -1,0 +1,259 @@
+/* Canvas viewport (R17). Once per frame the camera writes, directly and compositor-friendly: the world layer's
+   transform, the viewport's dot-grid background-position and background-size (non-inherited), and --tv-tx, --tv-ty
+   and --tv-k on the overlay root only. --tv-inv-k goes on the world at settle and at a tween's end (spike risk 7).
+   Inherited custom properties above the world would restyle every frame, card and edge each frame (C3-10 review I-1). */
+.viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  background-color: var(--tv-canvas);
+  background-image: radial-gradient(circle, var(--tv-ink-4) 0.6px, transparent 1.1px);
+  background-size: 20px 20px;
+  background-position: 0 0;
+}
+
+.viewport[data-tool="hand"] {
+  cursor: grab;
+}
+
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.separator {
+  position: absolute;
+  top: 0;
+  width: 0;
+  border-left: 1px dashed var(--tv-hair);
+  pointer-events: none;
+}
+
+.separator[data-sep="break"] {
+  border-left-style: dotted;
+}
+
+/* Edges: one SVG under the frames, one over them (direct and lane-less paths). No arrowheads. */
+.edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--tv-ink-4);
+  stroke-width: calc(1.5px * var(--tv-inv-k, 1));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hop {
+  stroke: var(--tv-accent);
+}
+
+/* After .hop: a selected contradicts edge stays red (red is state, accent is selection; spec §7.5). */
+.bad {
+  stroke: var(--tv-bad);
+  stroke-width: calc(2px * var(--tv-inv-k, 1));
+}
+
+.dim {
+  opacity: 0.3;
+}
+
+/* Spec §7.5: a lifted edge carries a 3 px panel halo on each side of its 2 px stroke. */
+.halo {
+  fill: none;
+  stroke: var(--tv-panel);
+  stroke-width: calc(8px * var(--tv-inv-k, 1));
+  stroke-linecap: round;
+}
+
+.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: calc(8px * var(--tv-inv-k, 1));
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.junction {
+  fill: var(--tv-ink-4);
+  r: calc(2.5px * var(--tv-inv-k, 1));
+}
+
+/* Screen-space overlay: labels, handles, time chip, separator labels and the contradicts badge stay 12 px at any k. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.label {
+  contain: layout style;
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: default;
+  /* Masks edges running under the label without a dot-free strip wider than the text. */
+  background: var(--tv-canvas);
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px),
+    calc(var(--tv-ty, 0px) + var(--cy) * var(--tv-k, 1) * 1px - 22px)
+  );
+  /* --tv-kw follows --tv-k at rest only, so a zoom frame does not re-lay out the label text. */
+  max-width: calc(var(--w) * var(--tv-kw, 1) * 1px);
+}
+
+.labelIcon {
+  flex: none;
+  color: var(--tv-ink-3);
+}
+
+.label[data-selected],
+.label[data-selected] .labelIcon,
+.label[data-selected] .labelTime {
+  color: var(--tv-accent-ink);
+}
+
+.labelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.labelTime {
+  flex: none;
+  color: var(--tv-ink-3);
+}
+
+.flagBad {
+  flex: none;
+  color: var(--tv-bad);
+}
+
+.flagIcon {
+  flex: none;
+  color: var(--tv-ink-3);
+}
+
+.handle {
+  contain: layout style;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  background: var(--tv-panel);
+  box-shadow: inset 0 0 0 1.25px var(--tv-accent);
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 3.5px),
+    calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px - 3.5px)
+  );
+}
+
+.timeChip {
+  contain: layout style;
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--tv-accent-ink);
+  color: var(--tv-panel);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 50%),
+    calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px + 8px)
+  );
+}
+
+.sepLabel {
+  contain: layout style;
+  position: absolute;
+  left: 0;
+  top: 6px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  background: var(--tv-canvas);
+  white-space: nowrap;
+  transform: translateX(calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 50%));
+}
+
+/* The ≠ mark sits centered on the badge point with the word to its left (canvas mockup). */
+.badge {
+  contain: layout style;
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--tv-bad-ink);
+  white-space: nowrap;
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 100% + 12px),
+    calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px - 12px)
+  );
+}
+
+/* Word to the right when a card sits where the word would go on the left (layout-derived, see Overlay.tsx). */
+.badge[data-side="right"],
+.badge[data-side="mark"] {
+  flex-direction: row-reverse;
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 12px),
+    calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px - 12px)
+  );
+}
+
+.badge[data-dim] {
+  opacity: 0.3;
+}
+
+.badgeText {
+  padding: 0 2px;
+  background: var(--tv-canvas);
+}
+
+.badgeMark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--tv-bad);
+  color: var(--tv-panel);
+}
+
+[data-zoom-band="icon"] .label {
+  display: none;
+}
