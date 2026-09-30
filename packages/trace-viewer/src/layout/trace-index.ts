@@ -348,7 +348,11 @@ function diffList<T extends { id: string }>(
     }
     const old = entries.get(item.id);
     const was = old?.kind === kind ? before[old.position] : undefined;
-    if (was !== undefined && was.id === item.id) kept += 1;
+    // Each earlier id counts once: a second copy of an id that still sits at its old position keeps nothing, so
+    // [A, B] -> [A, A] reports B as gone and the entry-count guard sees the repeat (review m1).
+    if (was !== undefined && was.id === item.id && (old?.position === position || items[old?.position ?? -1]?.id !== item.id)) {
+      kept += 1;
+    }
     onChanged(item, position, was?.id === item.id ? was : undefined);
   }
   return kept;
