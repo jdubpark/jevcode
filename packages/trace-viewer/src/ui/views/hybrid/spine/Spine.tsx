@@ -18,7 +18,6 @@ import {
   type StepId,
   type TraceSession,
 } from "../../../../model/index.js";
-import { topFindingOf } from "../../../inspector/finding-copy.js";
 import { markAfterPaint, PERF } from "../../../shell/perf.js";
 import { useDiagnostics, useSessionView } from "../../../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../../../state/store.js";
@@ -27,7 +26,8 @@ import { NewBadge } from "../../shared/NewBadge.js";
 import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
-import { extendRange, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { rowFindingOf } from "./row-finding.js";
+import { extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
 export interface FindingBodyProps {
@@ -35,6 +35,8 @@ export interface FindingBodyProps {
   step: Step;
   session: TraceSession;
   onJump(stepId: StepId): void;
+  /** "header" renders the signal's inline header extras (next to the row title), if it has any; default "body". */
+  part?: "header" | "body";
 }
 
 export const FindingBodyContext = createContext<ComponentType<FindingBodyProps> | null>(null);
@@ -176,6 +178,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   const suppressTimer = useRef<number | null>(null);
   const userScroll = useRef(false);
   const userTimer = useRef<number | null>(null);
+  /** Reader input arrived since the last drift sample (lane review I-3); consumed by the sampler. */
+  const readerMovedSinceSample = useRef(false);
   /** focusRev of the selection the spine itself wrote; consumed by the reveal effect. */
   const ownRev = useRef(-1);
   const frame = useRef<number | null>(null);
@@ -209,6 +213,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   const markUserScroll = (): void => {
     endProgrammatic();
     userScroll.current = true;
+    readerMovedSinceSample.current = true;
+    intendedOffset.current = null;
     clearTimer(userTimer);
     userTimer.current = viewOf()?.setTimeout(() => {
       userTimer.current = null;
@@ -216,9 +222,17 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     }, USER_SCROLL_MS) ?? null;
   };
 
-  /** The viewport in list coordinates; the virtualizer's own measurement of the height, which the DOM may not report. */
+  /**
+   * The offset the spine's own last reveal scrolled to, until the frame after it: the virtualizer learns the new
+   * offset only from the scroll event, so a second reveal in the same commit would otherwise decide from the old one.
+   */
+  const intendedOffset = useRef<number | null>(null);
+  /**
+   * The viewport in list coordinates, from the virtualizer's own scroll offset and height. Reading element.scrollTop
+   * here would force a synchronous layout right after React mutated the DOM (perf investigation fix 6).
+   */
   const windowOf = (element: HTMLElement): { offset: number; height: number } => ({
-    offset: element.scrollTop,
+    offset: intendedOffset.current ?? virtualizer.scrollOffset ?? element.scrollTop,
     height: virtualizer.scrollRect?.height || element.clientHeight,
   });
 
@@ -325,17 +339,39 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     [],
   );
 
+  /** Rows revealed in this commit's layout effects; a queued revealSeq for the same row then adds no second scroll. */
+  const revealedThisCommit = useRef<number[]>([]);
   const revealIndex = (position: number, align: "auto" | "center"): void => {
     const element = scrollRef.current;
-    const item = virtualizer.measurementsCache[position];
+    // Rows measured in this commit (an expanded finding row mounting) reach measurementsCache only through
+    // getMeasurements(); getTotalSize() runs it, so the offsets and the list end below are the measured ones.
+    const totalSize = virtualizer.getTotalSize();
+    const cache = virtualizer.measurementsCache;
+    const item = cache[position];
     if (element === null || item === undefined) return;
-    const decided =
-      align === "center"
-        ? "center"
-        : revealAlign({ start: item.start, end: item.end }, windowOf(element));
+    revealedThisCommit.current.push(position);
+    const win = windowOf(element);
+    const decided = align === "center" ? "center" : revealAlign({ start: item.start, end: item.end }, win);
     if (decided === "none") return;
+    const target = virtualizer.getOffsetForIndex(position, decided);
+    if (target === undefined) return;
+    // Start-align the row at or after the wanted offset, so the reveal lands on a row start (audit 2-8). Scrolling by
+    // index keeps the virtualizer re-targeting while expanded rows are measured.
+    const maxOffset = Math.max(0, totalSize - win.height);
+    let snapped = firstRowAtOrAfter(target[0], cache.length, (i) => cache[i]?.start ?? 0);
+    // Near the end of the list the browser clamps the offset; start-align the row before instead, so the top row
+    // stays whole and the cut, if any, falls at the bottom edge.
+    if (snapped > 0 && (cache[snapped]?.start ?? 0) > maxOffset) snapped -= 1;
+    const start = cache[snapped]?.start;
     beginProgrammatic();
-    virtualizer.scrollToIndex(position, { align: decided, behavior: "auto" });
+    if (snapped < 0 || start === undefined) virtualizer.scrollToIndex(position, { align: decided, behavior: "auto" });
+    else virtualizer.scrollToIndex(snapped, { align: "start", behavior: "auto" });
+    intendedOffset.current = Math.max(0, Math.min(start ?? target[0], maxOffset));
+    const view = viewOf();
+    // The scroll event (which updates the virtualizer) runs before the next frame's callbacks.
+    view?.requestAnimationFrame(() => {
+      intendedOffset.current = null;
+    });
   };
 
   // An external playhead write (overview, keys, search, finding, outline) reveals the playhead row.
@@ -350,6 +386,23 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     if (playheadIndex < 0 || origin === "spine" || ownClick) return;
     revealIndex(playheadIndex, "auto");
   }, [playheadSeq, focusRev, origin, active, playheadIndex]);
+
+  // A reveal asked through the api (the view port, e.g. after j) waits for this render: it names a seq, and resolving it
+  // against the previous render's rows could pick a stale row and scroll twice (perf fix 6). When the playhead effect
+  // above already revealed the same row in this commit, the queued reveal is dropped.
+  const pendingReveal = useRef<{ seq: number; align: "auto" | "center" } | null>(null);
+  useLayoutEffect(() => {
+    const pending = pendingReveal.current;
+    if (pending === null || session === null) return;
+    pendingReveal.current = null;
+    if (!active) return;
+    const position = spineRowIndexForSeq(rowsRef.current, session, pending.seq);
+    if (position >= 0 && !revealedThisCommit.current.includes(position)) revealIndex(position, pending.align);
+  });
+  // The record covers one commit's layout effects only.
+  useEffect(() => {
+    revealedThisCommit.current = [];
+  });
 
   // A brush or level change replaces the row set: reveal the playhead row centered.
   const setKey = `${level}|${brush.kind}|${brush.kind === "chapter" ? brush.anchorSeq : brush.kind === "range" ? `${brush.fromSeq}-${brush.toSeq}` : ""}`;
@@ -384,10 +437,10 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       const node = Array.from(element.querySelectorAll<HTMLElement>("[data-key]")).find((item) => item.dataset.key === before.key);
       if (node === undefined) return;
       const top = node.getBoundingClientRect().top - element.getBoundingClientRect().top;
-      // Movement the scroll offset explains (a reader's scroll) or that the anchor's compensation
-      // removed (top unchanged) is not drift; the smaller of the two residues is the unexplained part.
-      const scrolled = element.scrollTop - before.scroll;
-      diagnostics.reportDrift(Math.min(Math.abs(top - before.top), Math.abs(top - before.top + scrolled)));
+      // Any movement of the anchored row is drift, including a scroll the viewer made (a stray follow, a reveal after
+      // an append, a wrong anchor compensation). Only the reader's own input since the last sample re-baselines it.
+      if (readerMovedSinceSample.current) readerMovedSinceSample.current = false;
+      else diagnostics.reportDrift(Math.abs(top - before.top));
       anchor.current = { key: before.key, top, scroll: element.scrollTop };
     });
     return () => view.cancelAnimationFrame(id);
@@ -427,8 +480,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       rows: () => rowsRef.current,
       revealSeq: (seq, align) => {
         if (session === null) return;
-        const position = spineRowIndexForSeq(rowsRef.current, session, seq);
-        if (position >= 0) revealIndex(position, align);
+        pendingReveal.current = { seq, align };
+        rerender();
       },
       focusRow: (key) => {
         const position = rowsRef.current.findIndex((row) => row.key === key);
@@ -456,7 +509,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
 
   const toggleFinding = (step: Step, isExpanded: boolean): void => {
     if (session === null) return;
-    const finding = topFindingOf(session, step);
+    const finding = rowFindingOf(session, step, findingsById)?.finding ?? null;
     if (isExpanded) {
       dispatch({ type: "expand/set", key: step.id, expanded: false });
       if (finding !== null) dispatch({ type: "expand/set", key: finding.id, expanded: false });
@@ -511,6 +564,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
         <span className={styles.chipBar} aria-hidden="true" />
         <span>{`${formatOffset(rangeFrom)} – ${formatOffset(rangeTo)}`}</span>
       </div>
+      <div className={styles.chipFade} aria-hidden="true" />
       {empty === null ? null : <p className={styles.empty}>{empty}</p>}
       <div
         ref={scrollRef}
@@ -520,7 +574,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
         aria-label="Reading spine"
         aria-busy={loadedFraction < 1}
       >
-        <div className={styles.sizer} style={{ height: virtualizer.getTotalSize() }}>
+        <div className={styles.sizer} data-hour={hourGutter ? "" : undefined} style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((item) => {
             const row = rows[item.index];
             if (row === undefined) return null;

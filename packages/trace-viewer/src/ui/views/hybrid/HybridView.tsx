@@ -22,6 +22,7 @@ export function HybridView({ active }: ViewProps) {
   const registry = useViewPortRegistry();
   const { session, index, scale } = useSessionView();
   const level = useView((state) => state.level);
+  const loaded = useView((state) => state.loaded);
   const overviewApi = useRef<OverviewApi | null>(null);
   const spineApi = useRef<SpineApi | null>(null);
   const anchor = useRef<{ key: string; offsetPx: number } | null>(null);
@@ -50,6 +51,24 @@ export function HybridView({ active }: ViewProps) {
       });
     },
     [store],
+  );
+
+  // The title bar's zoom readout divides by the same preset k as the overview toolbar (spec §7.1, §7.6.1): the
+  // preset is recomputed only when the level, the overview model or the width changes, never when only the playhead
+  // moves, so moving the selection is not read as a zoom.
+  const presetK = useRef<{ level: Level; model: unknown; widthPx: number; k: number | null } | null>(null);
+  const presetKFor = useCallback(
+    (forLevel: Level): number | null => {
+      const api = overviewApi.current;
+      const model = api?.overview() ?? null;
+      const widthPx = api?.widthPx() ?? 0;
+      const cached = presetK.current;
+      if (cached !== null && cached.level === forLevel && cached.model === model && cached.widthPx === widthPx) return cached.k;
+      const k = presetFor(forLevel)?.camera.k ?? null;
+      presetK.current = { level: forLevel, model, widthPx, k };
+      return k;
+    },
+    [presetFor],
   );
 
   // A zoom key is a camera gesture: it leaves Live (spec §7.10).
@@ -126,7 +145,7 @@ export function HybridView({ active }: ViewProps) {
         if (selection !== null) spineApi.current?.focusRow(selection);
       },
       zoom: {
-        label: () => zoomReadout(overviewApi.current?.camera() ?? null, presetFor(store.get().level)?.camera.k ?? null, store.get().level),
+        label: () => zoomReadout(overviewApi.current?.camera() ?? null, presetKFor(store.get().level), store.get().level),
         presets: () => HYBRID_PRESETS,
         applyPreset: (id: string) => {
           if (isLevel(id)) dispatch({ type: "level/set", level: id, by: "hybrid" });
@@ -157,7 +176,7 @@ export function HybridView({ active }: ViewProps) {
         },
       },
     }),
-    [store, dispatch, presetFor, zoomAroundPlayhead, leaveLive, moveAndSettle],
+    [store, dispatch, presetFor, presetKFor, zoomAroundPlayhead, leaveLive, moveAndSettle],
   );
   useRegisterViewPort("hybrid", port);
 
@@ -173,13 +192,33 @@ export function HybridView({ active }: ViewProps) {
     moveAndSettle(preset.camera, true);
   }, [level, active, presetFor, dispatch, moveAndSettle]);
 
+  // After that remount the overview measures its width and places its camera a frame or two later; the title bar
+  // rendered before then, so tell it once the new camera exists.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const view = rootRef.current?.ownerDocument.defaultView ?? null;
+    if (!loaded || !active || view === null) return undefined;
+    let frames = 0;
+    let id = 0;
+    const check = (): void => {
+      frames += 1;
+      if (overviewApi.current?.camera() != null) registry.notify();
+      else if (frames < 30) id = view.requestAnimationFrame(check);
+    };
+    id = view.requestAnimationFrame(check);
+    return () => view.cancelAnimationFrame(id);
+  }, [loaded, active, registry]);
+
   const onAnchor = useCallback((next: { key: string; offsetPx: number } | null): void => {
     anchor.current = next;
   }, []);
 
   return (
-    <div className={styles.hybrid}>
-      <Overview active={active} apiRef={overviewApi} spineWindow={spineWindow} onSettle={onSettle} />
+    <div ref={rootRef} className={styles.hybrid}>
+      {/* The overview places its first camera at the level preset for the playhead it sees. The open defaults (spec
+          §7.8) move the playhead to the initial selection only once loading ends, after that first camera; one remount
+          at that moment gives the camera and both zoom readouts the preset of the initial selection. */}
+      <Overview key={loaded ? "loaded" : "loading"} active={active} apiRef={overviewApi} spineWindow={spineWindow} onSettle={onSettle} />
       <FindingBodyContext.Provider value={FindingBody}>
         <Spine active={active} apiRef={spineApi} onWindow={setSpineWindow} onAnchor={onAnchor} />
       </FindingBodyContext.Provider>

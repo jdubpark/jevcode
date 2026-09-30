@@ -27,11 +27,17 @@ function ClaimText({ text, span }: { text: string; span?: readonly [number, numb
 }
 
 function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick, observedTabIndex }: ClaimVsObservedProps): JSX.Element {
+  // Mockup `.obs`: the eye and the dots over "1 failed <command>".
   const content: ReactNode = (
     <>
-      <TestDots size="xs" passed={observed.passed} failed={observed.failed} skipped={0} />
-      <span className={observed.failed > 0 ? styles.observedFail : undefined}>{`${observed.failed} failed`}</span>
-      <span className={styles.mono}>{displayUntrusted(observed.command)}</span>
+      <span className={styles.observedTop}>
+        <Icon name="eye" size={14} />
+        <TestDots size="xs" passed={observed.passed} failed={observed.failed} skipped={0} />
+      </span>
+      <span className={styles.observedBottom}>
+        <span className={observed.failed > 0 ? styles.observedFail : undefined}>{`${observed.failed} failed`}</span>
+        <span className={styles.mono}>{displayUntrusted(observed.command)}</span>
+      </span>
     </>
   );
   // Unlike the other glyphs, this one can hold a real interactive control (the observed
@@ -47,19 +53,28 @@ function ClaimVsObservedImpl({ size, label, claim, observed, onObservedClick, ob
       : {};
   return (
     <span className={`${styles.graphic} ${styles[size]} ${styles.claim}`} {...wrapperA11y}>
-      <span className={styles.bubble}>
-        <ClaimText text={claim.text} span={claim.span} />
+      {/* The inner row is what the container query restacks in a narrow panel (the Inspector at 248–280 px). */}
+      <span className={styles.claimRow}>
+        <span className={styles.bubble}>
+          <span className={styles.quote}>
+            <Icon name="quote" size={14} />
+          </span>
+          {/* The line clamp sits on this inner span so the bubble's padding never shows a clipped third line. */}
+          <span className={styles.claimText}>
+            <ClaimText text={claim.text} span={claim.span} />
+          </span>
+        </span>
+        <span className={styles.neq}>
+          <Icon name="neq" size={size === "md" ? 16 : 14} />
+        </span>
+        {onObservedClick === undefined ? (
+          <span className={styles.observed}>{content}</span>
+        ) : (
+          <button type="button" className={styles.observed} tabIndex={observedTabIndex} onClick={onObservedClick}>
+            {content}
+          </button>
+        )}
       </span>
-      <span className={styles.neq}>
-        <Icon name="neq" size={size === "md" ? 16 : 14} />
-      </span>
-      {onObservedClick === undefined ? (
-        <span className={styles.observed}>{content}</span>
-      ) : (
-        <button type="button" className={styles.observed} tabIndex={observedTabIndex} onClick={onObservedClick}>
-          {content}
-        </button>
-      )}
     </span>
   );
 }

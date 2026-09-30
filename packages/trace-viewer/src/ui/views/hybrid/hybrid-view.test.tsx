@@ -3,7 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { foldRows } from "../../../model/index.js";
 import { createStaticBundleSource } from "../../../sources/static-bundle.js";
+import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   applyOpenDefaults,
   fixtureBundle,
@@ -67,6 +69,36 @@ describe("HybridView", () => {
     expect(main.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   });
 
+  it("opens with both zoom readouts at the Chapter preset of the initial selection", async () => {
+    // A late tail event outside the claim's chapter (like the recorded bundle's Jev pipeline tail), so the Chapter
+    // preset at the session end differs from the one at the initial selection.
+    const bundle = fixtureBundle("oauth");
+    const last = bundle.rows.at(-1);
+    const tail = {
+      seq: (last?.seq ?? 0) + 1,
+      type: "agent_event",
+      ts: last?.ts ?? "2026-09-18T09:00:00.000Z",
+      payload: { type: "agent_message", sessionId: bundle.session.sessionId, ts: "2026-09-18T09:03:00.000Z", role: "assistant", text: "Tail." },
+    };
+    render(<TraceViewer source={createStaticBundleSource({ ...bundle, rows: [...bundle.rows, tail] })} />);
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="title"]')?.textContent).toBe("Claim contradicts tests"),
+    );
+    await settle();
+    // Title bar (spec §7.1): the level name at its preset; overview toolbar (spec §7.6.1): k / k_preset.
+    const titleBar = document.querySelector('header button[aria-haspopup="true"]')?.textContent;
+    const toolbar = Array.from(document.querySelectorAll<HTMLElement>("[data-overview-lanes] ~ * span, span"))
+      .map((node) => node.textContent ?? "")
+      .find((text) => /^\d+%$/.test(text));
+    expect(titleBar).toBe("Chapter");
+    expect(toolbar).toBe("100%");
+    // Moving the selection (and the playhead) out of that chapter is not a zoom: both readouts keep their value.
+    fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
+    await settle();
+    expect(document.querySelector('[data-slot="title"]')?.textContent).not.toBe("Claim contradicts tests");
+    expect(document.querySelector('header button[aria-haspopup="true"]')?.textContent).toBe("Chapter");
+  });
+
   it("registers a port whose reading order equals the spine's step keys", async () => {
     const session = foldFixture("oauth");
     const h = renderHarness(<HybridView active />, session);
@@ -100,6 +132,51 @@ describe("HybridView", () => {
     if (brush.kind !== "range") throw new Error(`expected a range brush, got ${brush.kind}`);
     expect(typeof brush.toSeq).toBe("number");
     expect(brush.toSeq).toBeGreaterThanOrEqual(selected?.firstSeq ?? 0);
+  });
+
+  it("a j press reads no scroll offset from the DOM and scrolls the spine at most once", async () => {
+    layout.restore();
+    layout = stubLayout({ width: 1400, height: 200 });
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Run the scripts" });
+    for (let i = 0; i < 40; i += 1) {
+      b.agent({ type: "command_started", command: `node script-${i}.js` });
+      b.agent({ type: "command_completed", command: `node script-${i}.js`, exitCode: 0, stdout: "", stderr: "" });
+    }
+    b.agent({ type: "agent_completed" });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    const h = renderHarness(
+      <WithKeys>
+        <HybridView active />
+      </WithKeys>,
+      session,
+      { state: { level: "step" } },
+    );
+    act(() => applyOpenDefaults(h, session));
+    act(() => h.store.dispatch({ type: "select", id: session.steps[3]?.id ?? null, by: "shell" }));
+    await settle();
+    const feed = document.querySelector<HTMLElement>("[data-scroll-root]") as HTMLElement;
+    let top = feed.scrollTop;
+    let reads = 0;
+    Object.defineProperty(feed, "scrollTop", {
+      configurable: true,
+      get: () => {
+        reads += 1;
+        return top;
+      },
+      set: (value: number) => {
+        top = value;
+      },
+    });
+    layout.scrollCalls.length = 0;
+    // Synchronous part of the press: the keydown handler plus the render and layout effects it triggers.
+    await act(async () => {
+      fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
+      await Promise.resolve();
+    });
+    expect(h.store.get().selection).toBe(session.steps[4]?.id);
+    expect(reads).toBe(0);
+    expect(layout.scrollCalls.length).toBeLessThanOrEqual(1);
   });
 
   it("applies the level presets on Alt+1, Alt+2 and Alt+3", async () => {

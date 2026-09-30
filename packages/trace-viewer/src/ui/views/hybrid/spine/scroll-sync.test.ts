@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { comfortBand, extendRange, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { comfortBand, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 
 const win = { offset: 1_000, height: 600 };
 
@@ -45,5 +45,16 @@ describe("scroll-sync", () => {
 
   it("keeps the playhead and focused rows mounted", () => {
     expect(extendRange([3, 4, 5], [9, -1, 4, 40], 20)).toEqual([3, 4, 5, 9]);
+  });
+
+  it("finds the row a reveal start-aligns, so no row sits half under the range chip", () => {
+    // Rows of 32, 24 (a separator), 124 (an expanded claim) and 32 px.
+    const starts = [0, 32, 56, 180, 212];
+    const startOf = (i: number): number => starts[i] ?? 0;
+    expect(firstRowAtOrAfter(40, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(56, starts.length, startOf)).toBe(2);
+    expect(firstRowAtOrAfter(0, starts.length, startOf)).toBe(0);
+    expect(firstRowAtOrAfter(181, starts.length, startOf)).toBe(4);
+    expect(firstRowAtOrAfter(230, starts.length, startOf)).toBe(-1);
   });
 });

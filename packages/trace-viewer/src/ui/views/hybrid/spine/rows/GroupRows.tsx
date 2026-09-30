@@ -1,9 +1,10 @@
 import type { SpineRow } from "../../../../../layout/spine-rows.js";
-import { describeGraphic, formatDuration, formatOffset, LANES, pickGraphic, type TraceSession } from "../../../../../model/index.js";
+import { describeGraphic, displayUntrusted, formatDuration, formatOffset, LANES, pickGraphic, type TraceSession } from "../../../../../model/index.js";
 import { Graphic } from "../../../../graphics/Graphic.js";
 import { Icon } from "../../../../icons/Icon.js";
 import { CATEGORY_ICON, LANE_LABEL } from "../../../../icons/kind-icons.js";
 import styles from "../Spine.module.css";
+import { SelectionFrame } from "./SelectionFrame.js";
 
 export function GroupRow({
   row,
@@ -26,6 +27,7 @@ export function GroupRow({
     const graphic = pickGraphic(chapter, session);
     return (
       <div className={styles.group} data-selected={selected ? "" : undefined} onClick={onActivate}>
+        {selected ? <SelectionFrame /> : null}
         <span className={styles.time} data-playhead={playhead ? "" : undefined}>{formatOffset(chapter.tMs)}</span>
         <span className={styles.node}>
           <Icon name={CATEGORY_ICON[chapter.category]} size={14} />
@@ -33,7 +35,7 @@ export function GroupRow({
         <span className={styles.graphic}>
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} />}
         </span>
-        <span id={lineId} className={styles.line}>{chapter.title}</span>
+        <span id={lineId} className={styles.line}>{displayUntrusted(chapter.title)}</span>
         <span className={styles.metric}>
           {`${formatDuration(chapter.endTMs - chapter.tMs)} · ${chapter.stepIds.length} steps`}
           {chapter.findingIds.length > 0 ? <Icon name="flag" size={12} title={`${chapter.findingIds.length} findings`} /> : null}
@@ -45,6 +47,7 @@ export function GroupRow({
   if (row.t === "noise") {
     return (
       <div className={styles.group} data-selected={selected ? "" : undefined} onClick={onActivate} data-noise="">
+        {selected ? <SelectionFrame /> : null}
         <span className={styles.time} data-playhead={playhead ? "" : undefined}>{first === undefined ? "" : formatOffset(first.tMs)}</span>
         <span className={styles.node}>
           <Icon name="eyeoff" size={14} />
@@ -64,6 +67,7 @@ export function GroupRow({
   parts.push(formatDuration(row.spanMs));
   return (
     <div className={styles.group} data-selected={selected ? "" : undefined} onClick={onActivate} data-elided="">
+      {selected ? <SelectionFrame /> : null}
       <span className={styles.time} data-playhead={playhead ? "" : undefined}>{first === undefined ? "" : formatOffset(first.tMs)}</span>
       <span className={styles.node}>
         <Icon name="stack" size={14} />
