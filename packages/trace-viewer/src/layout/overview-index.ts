@@ -26,8 +26,10 @@ export const PLACEMENT: { readonly [K in StepKind]: { glyph: Glyph; pin: PinRule
   dependency: { glyph: "hist", pin: "finding" },
   revert: { glyph: "hist", pin: "finding" },
   read: { glyph: "ring", pin: "never" },
-  guardrail: { glyph: "dot", pin: "always" },
-  attention: { glyph: "dot", pin: "finding" },
+  // A warning-or-worse clamp anchors a guardrail_clamp finding; info clamps are pipeline noise and
+  // attention rows never pin, so the lane's pins are real guardrail hits only (visual audit 2-10).
+  guardrail: { glyph: "dot", pin: "finding" },
+  attention: { glyph: "dot", pin: "never" },
 };
 
 export const GLYPH_CODE: { readonly [G in Glyph]: number } = { dot: 0, ring: 1, bar: 2, hist: 3, wait: 4 };
