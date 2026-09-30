@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { displayUntrusted } from "./format.js";
 import { chapterShortTitle, isPlaceholderTitle } from "./short-title.js";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -46,5 +47,22 @@ describe("chapterShortTitle (orchestrator ruling M2)", () => {
     for (const title of ["Google OAuth identity layer", "identities table migration", "OAuth account-linking test failure"]) {
       expect(graphemeCount(short("implementation", [], title))).toBeLessThanOrEqual(24);
     }
+  });
+
+  it("never turns a control character into a space or trims it away (lane review I-1)", () => {
+    // A \r, \v or \f is shown as a visible token at render time; whitespace folding must not erase it first.
+    expect(short("tests", [], "Fix\rlogin flow")).toBe("Fix\rlogin flow");
+    expect(short("tests", [], "Fix login\u000B")).toBe("Fix login\u000B");
+    expect(short("tests", [], "\u000CFix login")).toBe("\u000CFix login");
+    expect(displayUntrusted(short("tests", [], "Fix\rlogin flow"))).toBe("Fix\u27E8U+000D\u27E9login flow");
+  });
+
+  it("keeps a bidi control whole when the cut lands next to it, so its display token is never cut", () => {
+    const title = `${"x".repeat(22)}\u202E${"y".repeat(10)}`;
+    const cut = short("tests", [], title);
+    expect(cut).toBe(`${"x".repeat(22)}\u202E…`);
+    expect(displayUntrusted(cut)).toBe(`${"x".repeat(22)}\u27E8U+202E\u27E9…`);
+    // A clause break is a real space, not a control: a colon followed by \r does not end the clause there.
+    expect(short("tests", [], "Auth flow:\rrm -rf")).toBe("Auth flow:\rrm -rf");
   });
 });

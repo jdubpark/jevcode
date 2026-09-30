@@ -33,6 +33,12 @@ const CATEGORY_NOUN: { readonly [C in ChangeCategory]: string } = {
   documentation: "Docs",
 };
 
+/** Whitespace that is not a C0 control: \n, \v, \f and \r are shown as ⟨U+XXXX⟩ tokens at render
+ *  (displayUntrusted), so folding or trimming them here would hide them (lane review I-1). */
+const SPACES = /[^\S\n\v\f\r]+/gu;
+const EDGE_SPACES = /^[^\S\n\v\f\r]+|[^\S\n\v\f\r]+$/gu;
+const TRAILING_PUNCT = /(?:[,;:.·–—-]|[^\S\n\v\f\r])+$/u;
+
 /** Cuts to max graphemes with a trailing "…", at the last space when that keeps at least half. */
 function clipTitle(text: string, max: number): string {
   const parts = graphemes(text);
@@ -40,7 +46,7 @@ function clipTitle(text: string, max: number): string {
   let head = parts.slice(0, max - 1).join("");
   const space = head.lastIndexOf(" ");
   if (space >= max / 2) head = head.slice(0, space);
-  return `${head.replace(/[\s,;:.·–—-]+$/u, "")}…`;
+  return `${head.replace(TRAILING_PUNCT, "")}…`;
 }
 
 /** Basename up to its first dot, without a leading sequence number or a migration verb:
@@ -61,9 +67,10 @@ function focusStem(path: string): string {
  * Any other title is trimmed to its first clause and cut at a word.
  */
 export function chapterShortTitle(input: { title: string; category: ChangeCategory; files: readonly string[] }): string {
-  const title = input.title.trim().replace(/\s+/g, " ");
+  // Graphemes are cut whole and control characters are kept, so a later displayUntrusted token is never split.
+  const title = input.title.replace(EDGE_SPACES, "").replace(SPACES, " ");
   if (!isPlaceholderTitle(title)) {
-    const clause = /^(.{8,}?)(?:[:;.]\s|\s[—–-]\s|,\s|\s\(|\.$)/u.exec(title)?.[1] ?? title;
+    const clause = /^(.{8,}?)(?:[:;.] | [—–-] |, | \(|\.$)/u.exec(title)?.[1] ?? title;
     return clipTitle(clause, SHORT_TITLE_MAX);
   }
   const focus = input.files.find((file) => !isLockfilePath(file));
