@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { layoutCanvas, type CanvasFrame } from "../../../layout/canvas-layout.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type Level, type TraceSession } from "../../../model/index.js";
-import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../../../test-support/canvas-arbitraries.js";
+import { buildCanvasSession, canvasScale, oauthCanvasSession, oauthReplaySession } from "../../../test-support/canvas-arbitraries.js";
 import { Frame } from "./Frame.js";
 import styles from "./Frame.module.css";
 import { buildFrameContext } from "./frame-label.js";
@@ -256,6 +256,21 @@ describe("Frame", () => {
     const shield = view.container.querySelector('[data-flag="shield"]');
     expect(shield).not.toBeNull();
     expect(shield?.getAttribute("class")).not.toContain(styles.flagBad);
+  });
+
+  it("lists a shared failed run only in the chapter that owns it (replay-shaped oauth, lane review I-2)", () => {
+    const replay = oauthReplaySession();
+    const other = renderFrame(replay, (frame) => frame.selId === "unit:cu_78093dbe9212089d", { level: "step" });
+    const otherText = other.view.container.textContent ?? "";
+    expect(otherText).not.toContain("pnpm test");
+    expect(otherText).not.toContain("failed");
+    cleanup();
+    const owner = renderFrame(replay, (frame) => frame.selId === "unit:cu_a2589fe62ff19ebf", { level: "step" });
+    expect(owner.view.container.textContent ?? "").toContain("pnpm test");
+    cleanup();
+    const card = renderFrame(replay, (frame) => frame.selId === "unit:cu_78093dbe9212089d");
+    expect(card.view.container.textContent ?? "").toContain("3 steps");
+    expect(card.view.container.textContent ?? "").not.toContain("pnpm test");
   });
 
   it("lists the plan's items", () => {
