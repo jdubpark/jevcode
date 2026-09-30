@@ -32,6 +32,7 @@ import {
 import { isLiveState, LIVE_TICK_START, type DataController, type DataSnapshot } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
 import { LiveRegion } from "./LiveRegion.js";
+import { Outline } from "./Outline/Outline.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
 import styles from "./Shell.module.css";
@@ -271,6 +272,11 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
     return store.subscribe(emit);
   }, [store, host, sessionId]);
 
+  const hiddenRows =
+    session === null
+      ? 0
+      : Object.values(session.hidden.byType).reduce<number>((sum, count) => sum + (count ?? 0), 0) +
+        session.hidden.unreceived;
   return (
     <div className={`${base.root} ${styles.root}`} style={tokenStyle() as CSSProperties} data-trace-viewer="">
       <IconSprite />
@@ -283,7 +289,9 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
                   <header className={styles.title} data-region="title">
                     <TitleBar onRetry={() => controller.retry()} />
                   </header>
-                  <nav className={styles.outline} aria-label="Outline" data-region="outline" />
+                  <nav className={styles.outline} aria-label="Outline" data-region="outline">
+                    <Outline hiddenRows={hiddenRows} />
+                  </nav>
                   <main className={styles.main} data-region="main" tabIndex={-1}>
                     <ViewSlot views={SHELL_VIEWS} keepHiddenMounted={KEEP_HIDDEN} />
                   </main>
