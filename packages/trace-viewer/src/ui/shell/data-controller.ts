@@ -132,6 +132,7 @@ export function createDataController(options: DataControllerOptions): DataContro
   let commitTimer: unknown = null;
   let commitCaughtUp = false;
   let pollTimer: unknown = null;
+  let yieldTimer: unknown = null;
   let failures = 0;
 
   function flush(): void {
@@ -148,8 +149,20 @@ export function createDataController(options: DataControllerOptions): DataContro
   function clearTimers(): void {
     if (commitTimer !== null) scheduler.clearTimeout(commitTimer);
     if (pollTimer !== null) scheduler.clearTimeout(pollTimer);
+    if (yieldTimer !== null) scheduler.clearTimeout(yieldTimer);
     commitTimer = null;
     pollTimer = null;
+    yieldTimer = null;
+  }
+
+  /** One macrotask, so the host can render and paint the commit a page produced before the next page folds (spec §10 first paint). */
+  function yieldToHost(): Promise<void> {
+    return new Promise((resolve) => {
+      yieldTimer = scheduler.setTimeout(() => {
+        yieldTimer = null;
+        resolve();
+      }, 0);
+    });
   }
 
   function commitNow(caughtUp: boolean): void {
@@ -221,6 +234,8 @@ export function createDataController(options: DataControllerOptions): DataContro
       cursor = cursorAfter(next);
       if (next.nextAfterSeq !== null) {
         requestCommit(gen, false);
+        await yieldToHost();
+        if (gen !== generation) return;
         continue;
       }
       const settled = latest.session !== null && latest.status.kind === "ready" && latest.loadedFraction >= 1;

@@ -155,6 +155,25 @@ describe("createDataController", () => {
     expect(scheduler.pending()).toBe(0);
   });
 
+  it("yields a macrotask after each page so the first commit can paint before the next page is requested", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(9), { state: "completed" });
+    const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    // Drain microtasks only: no scheduler timer runs, so a page loop that never yields would fetch every page here.
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0]);
+    expect(seen.filter((entry) => entry.snapshot.session !== null)).toHaveLength(1);
+    expect(scheduler.pending()).toBeGreaterThan(0);
+
+    await scheduler.run(2_000);
+    expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 6, 9]);
+    expect(controller.get().loadedFraction).toBe(1);
+    expect(controller.get().terminal).toBe(true);
+    expect(scheduler.pending()).toBe(0);
+  });
+
   it("polls every pollMs until terminal, applies once more, then stops", async () => {
     const scheduler = new FakeScheduler();
     const { source, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
