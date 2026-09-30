@@ -490,7 +490,7 @@ Mapping to `JevResult`: `Score` level position maps linearly to 0..1 (levels eve
 
 ### 8.5 Jev decision logging
 
-Every call result is stored (`jev_decisions`: inputs hash, outputs, confidence, probabilities, latency, client kind, guardrail clamps applied). Debug panel (`Cmd/Ctrl+Shift+J` overlay) shows the last 50 per session. This satisfies PRD §59.17 and enables calibration (§14).
+Every call result is stored (`jev_decisions`: inputs hash, outputs, confidence, probabilities, latency, client kind, guardrail clamps applied). Debug panel (`Cmd/Ctrl+Shift+J` overlay) shows the last 50 per session. This satisfies PRD §59.17 and enables calibration (§14). Each log carries `pass`: `"A"` for attention, including guardrail suppressions, and `"B"` for projection. A unit suppressed by a guardrail is logged with the client's real `clientKind` and confidence, the guardrail's clamps, and `output.guardrailSuppression: true`.
 
 ## 9. UI Compiler and Component Catalog (`packages/ui-compiler`, `packages/ui-catalog`)
 

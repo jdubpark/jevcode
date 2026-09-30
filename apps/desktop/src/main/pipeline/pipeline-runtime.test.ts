@@ -704,6 +704,15 @@ describe("MockAgentAdapter decision flow (scripted)", () => {
         "resumed agent message",
       );
       expect(collected.channels.get("decision:resolved")?.length ?? 0).toBeGreaterThan(0);
+      const decisionRows = db
+        .listEvents(sessionId)
+        .filter((event) => event.type === "decision")
+        .map((event) => JSON.parse(event.payloadJson) as Decision);
+      const answered = decisionRows.find(
+        (row) => row.id === "dec-mock-0001" && row.status === "answered",
+      );
+      expect(answered?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(decisionRows.find((row) => row.status === "open")?.ts).toBeUndefined();
       const agentStates = collected.channels.get("agent:state") ?? [];
       expect(
         agentStates.some((entry) => (entry as { state: string }).state === "waiting_decision"),
