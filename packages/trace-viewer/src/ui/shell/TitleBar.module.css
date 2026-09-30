@@ -58,12 +58,29 @@ button.chip {
   left: 0;
   z-index: 10;
   min-width: 220px;
+  max-height: 240px;
+  overflow-y: auto;
   margin: 0;
   padding: 4px;
   list-style: none;
   border-radius: 8px;
   background: var(--tv-panel);
   box-shadow: var(--tv-shadow);
+}
+
+.note {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  z-index: 10;
+  width: 260px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
 }
 
 .popoverItem {

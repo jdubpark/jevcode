@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceSession } from "../../model/index.js";
 import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
-import type { ViewDefinition } from "../views/view-port.js";
+import type { ViewDefinition, ViewPort } from "../views/view-port.js";
 import { TitleBar } from "./TitleBar.js";
 
 let layout: LayoutStub;
@@ -114,5 +114,87 @@ describe("TitleBar", () => {
     expect(screen.getByRole("radiogroup", { name: "View" })).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: /Canvas/ }));
     expect(h.store.get().view).toBe("canvas");
+  });
+  describe("popover dismissal", () => {
+    const gapSession = (): TraceSession => ({
+      ...foldFixture("oauth"),
+      gaps: [{ kind: "invalid_row", atSeq: 5, message: "x" }],
+    });
+    const port = (): ViewPort => ({
+      readingOrder: () => [],
+      reveal: noop,
+      captureCamera: () => null,
+      focusSelected: noop,
+      zoom: {
+        label: () => "Session",
+        presets: () => [{ id: "session", label: "Session" }],
+        applyPreset: noop,
+        zoomIn: noop,
+        zoomOut: noop,
+        resetToPreset: noop,
+        fitAll: noop,
+        fitSelection: noop,
+      },
+    });
+
+    it("Escape closes the gaps popover and returns focus to its trigger", () => {
+      renderHarness(<TitleBar onRetry={noop} />, gapSession());
+      const trigger = screen.getByRole("button", { name: "1 gap" });
+      fireEvent.click(trigger);
+      expect(screen.getByRole("list", { name: "Gaps" })).toBeTruthy();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("list", { name: "Gaps" })).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("an outside pointerdown closes the gaps popover but a pointerdown inside does not", () => {
+      renderHarness(<TitleBar onRetry={noop} />, gapSession());
+      fireEvent.click(screen.getByRole("button", { name: "1 gap" }));
+      fireEvent.pointerDown(screen.getByRole("list", { name: "Gaps" }));
+      expect(screen.getByRole("list", { name: "Gaps" })).toBeTruthy();
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole("list", { name: "Gaps" })).toBeNull();
+    });
+
+    it("the zoom menu is plain buttons that Escape and an outside click dismiss", () => {
+      const h = renderHarness(<TitleBar onRetry={noop} />, foldFixture("oauth"), { views: [hybrid] });
+      act(() => {
+        h.registry.register("hybrid", port());
+      });
+      const trigger = screen.getByRole("button", { name: /Session/ });
+      fireEvent.click(trigger);
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+      expect(screen.getByRole("button", { name: "Fit all" })).toBeTruthy();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("button", { name: "Fit all" })).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      fireEvent.click(trigger);
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole("button", { name: "Fit all" })).toBeNull();
+    });
+
+    it("the approximate-joins chip is a focusable button that opens the window-rule explanation", () => {
+      const base = foldFixture("oauth");
+      renderHarness(<TitleBar onRetry={noop} />, { ...base, coverage: { ...base.coverage, approximateJoins: true } });
+      const chip = screen.getByRole("button", { name: /Approximate joins/ });
+      expect(chip.getAttribute("data-tone")).toBe("neutral");
+      fireEvent.click(chip);
+      expect(screen.getByRole("dialog", { name: "Approximate joins" }).textContent).toContain("time window");
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog", { name: "Approximate joins" })).toBeNull();
+      expect(document.activeElement).toBe(chip);
+    });
+  });
+
+  it("renders the prompt line through displayUntrusted", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = { ...base, meta: { ...base.meta, prompt: "Fix\u202Eevil\nsecond line" } };
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    const title = screen.getByText(session.meta.repoName).closest("p");
+    expect(title?.textContent).toContain("Fix⟨U+202E⟩evil");
+    expect(title?.textContent).not.toContain("\u202E");
+    expect(title?.getAttribute("title")?.includes("\u202E")).toBe(false);
   });
 });
