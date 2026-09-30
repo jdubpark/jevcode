@@ -111,6 +111,17 @@ export function buildTimeScale(input: TimeScaleInput): TimeScale {
     if (seg === undefined) return value;
     return seg.idle === null ? seg.t0 + (value - seg.u0) : seg.t0 + realGapMs(value - seg.u0);
   };
+  // Segments tile [0, endU] in u order, so the first one that can reach u0 is the last with s.u0 ≤ u0.
+  // buildSpineRows calls this once per inter-step gap, so it must not scan every segment.
+  const breaks = (u0: number, u1: number, minMs = BREAK_MIN_MS): readonly ScaleSegment[] => {
+    const out: ScaleSegment[] = [];
+    for (let i = Math.max(0, lastAtOrBefore(segments, u0, (s) => s.u0)); i < segments.length; i += 1) {
+      const s = segments[i];
+      if (s === undefined || s.u0 >= u1) break;
+      if (s.idle !== null && s.idle.ms >= minMs && s.u1 > u0) out.push(s);
+    }
+    return out;
+  };
   return {
     originMs: input.originMs,
     endT,
@@ -118,8 +129,7 @@ export function buildTimeScale(input: TimeScaleInput): TimeScale {
     segments,
     toU,
     toT,
-    breaks: (u0, u1, minMs = BREAK_MIN_MS) =>
-      segments.filter((s) => s.idle !== null && s.idle.ms >= minMs && s.u1 > u0 && s.u0 < u1),
+    breaks,
   };
 }
 
