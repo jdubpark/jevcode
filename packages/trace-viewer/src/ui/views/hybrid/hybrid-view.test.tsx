@@ -97,8 +97,9 @@ describe("HybridView", () => {
     const selected = session.steps.find((step) => step.id === h.store.get().selection);
     const brush = h.store.get().brush;
     expect(selected?.firstSeq ?? 0).toBeGreaterThan(c?.firstSeq ?? 0);
-    expect(brush.kind).toBe("range");
-    if (brush.kind === "range" && brush.toSeq !== "live") expect(brush.toSeq).toBeGreaterThanOrEqual(selected?.firstSeq ?? 0);
+    if (brush.kind !== "range") throw new Error(`expected a range brush, got ${brush.kind}`);
+    expect(typeof brush.toSeq).toBe("number");
+    expect(brush.toSeq).toBeGreaterThanOrEqual(selected?.firstSeq ?? 0);
   });
 
   it("applies the level presets on Alt+1, Alt+2 and Alt+3", async () => {
@@ -110,20 +111,77 @@ describe("HybridView", () => {
       session,
     );
     act(() => applyOpenDefaults(h, session));
-    await settle();
-    fireEvent.keyDown(document.body, { code: "Digit1", key: "1", altKey: true });
-    await settle();
-    expect(h.store.get().level).toBe("session");
-    expect(h.store.get().brush).toEqual({ kind: "session" });
-    fireEvent.keyDown(document.body, { code: "Digit3", key: "3", altKey: true });
-    await settle();
-    expect(h.store.get().level).toBe("step");
-    expect(h.store.get().brush.kind).toBe("range");
-    fireEvent.keyDown(document.body, { code: "Digit2", key: "2", altKey: true });
-    await settle();
-    expect(h.store.get().level).toBe("chapter");
-    expect(h.store.get().brush.kind).toBe("chapter");
     await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Chapter"));
+    const zoom = () => h.registry.get("hybrid")?.zoom;
+    const cameraK = (): number | undefined => h.store.get().cameras.hybrid?.k;
+
+    // The camera lands on the level's preset k, which is what presetFor(level) reports through the port:
+    // the label reads the level name only at that k, and a preset reset then leaves k unchanged.
+    const presetK = async (level: "session" | "step", label: string): Promise<number> => {
+      const stored = h.store.get().cameras.hybrid;
+      await waitFor(() => expect(h.store.get().level).toBe(level));
+      await waitFor(() => expect(zoom()?.label()).toBe(label));
+      // The level effect must also write the settled camera to the store (camera/sync).
+      await waitFor(() => expect(h.store.get().cameras.hybrid).not.toBe(stored));
+      const applied = cameraK();
+      expect(applied).toBeDefined();
+      const before = h.store.get().cameras.hybrid;
+      act(() => zoom()?.resetToPreset());
+      await waitFor(() => expect(h.store.get().cameras.hybrid).not.toBe(before));
+      expect(cameraK()).toBeCloseTo(applied ?? Number.NaN, 6);
+      return applied ?? Number.NaN;
+    };
+
+    fireEvent.keyDown(document.body, { code: "Digit1", key: "1", altKey: true });
+    const sessionK = await presetK("session", "Session");
+    expect(h.store.get().brush).toEqual({ kind: "session" });
+
+    fireEvent.keyDown(document.body, { code: "Digit3", key: "3", altKey: true });
+    const stepK = await presetK("step", "Step");
+    expect(stepK).not.toBeCloseTo(sessionK, 4);
+    expect(h.store.get().brush.kind).toBe("range");
+
+    fireEvent.keyDown(document.body, { code: "Digit2", key: "2", altKey: true });
+    await waitFor(() => expect(h.store.get().level).toBe("chapter"));
+    await waitFor(() => expect(zoom()?.label()).toBe("Chapter"));
+    expect(h.store.get().brush.kind).toBe("chapter");
+    expect(cameraK()).not.toBeCloseTo(sessionK, 4);
+  });
+
+  it("applies a level change made while hidden when the view becomes active", async () => {
+    const session = foldFixture("oauth");
+    const h = renderHarness(<HybridView active />, session);
+    act(() => applyOpenDefaults(h, session));
+    await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Chapter"));
+    h.result.rerender(h.wrap(<HybridView active={false} />));
+    act(() => h.store.dispatch({ type: "level/set", level: "session", by: "canvas" }));
+    await settle();
+    expect(h.registry.get("hybrid")?.zoom.label()).not.toBe("Session");
+    h.result.rerender(h.wrap(<HybridView active />));
+    await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Session"));
+  });
+
+  it("syncs only the camera of the latest preset move", async () => {
+    const session = foldFixture("oauth");
+    const h = renderHarness(<HybridView active />, session);
+    act(() => applyOpenDefaults(h, session));
+    await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Chapter"));
+    await settle();
+    const seen: unknown[] = [];
+    const stop = h.store.subscribe(() => {
+      const camera = h.store.get().cameras.hybrid;
+      if (camera !== null && seen.at(-1) !== camera) seen.push(camera);
+    });
+    act(() => {
+      h.registry.get("hybrid")?.zoom.applyPreset("session");
+    });
+    act(() => {
+      h.registry.get("hybrid")?.zoom.applyPreset("step");
+    });
+    await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Step"));
+    await settle();
+    stop();
+    expect(seen).toHaveLength(1);
   });
 
   it("a zoom key in Live switches to Review", async () => {

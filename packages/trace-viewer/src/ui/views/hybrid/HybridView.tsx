@@ -26,6 +26,9 @@ export function HybridView({ active }: ViewProps) {
   const spineApi = useRef<SpineApi | null>(null);
   const anchor = useRef<{ key: string; offsetPx: number } | null>(null);
   const [spineWindow, setSpineWindow] = useState<{ t0: number; t1: number } | null>(null);
+  const moveToken = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const live = useRef({ session, index, scale });
   live.current = { session, index, scale };
 
@@ -66,7 +69,10 @@ export function HybridView({ active }: ViewProps) {
     (camera: XOnlyCamera, animate: boolean): void => {
       const api = overviewApi.current;
       if (api === null) return;
+      const token = (moveToken.current += 1);
       void api.moveTo(camera, animate).then(() => {
+        // A superseded move (a newer one started) or a hidden view never writes the camera store.
+        if (token !== moveToken.current || !activeRef.current) return;
         const settled = overviewApi.current?.camera();
         if (settled !== null && settled !== undefined) onSettle(settled);
       });
@@ -156,13 +162,13 @@ export function HybridView({ active }: ViewProps) {
   useRegisterViewPort("hybrid", port);
 
   // Picking a level applies its preset camera and brush (spec §7.6.1); continuous zoom leaves the level alone.
-  const previousLevel = useRef(level);
+  // Compared against the level last applied (not last seen), so a change made while hidden lands on activation.
+  const appliedLevel = useRef(level);
   useEffect(() => {
-    if (previousLevel.current === level) return;
-    previousLevel.current = level;
-    if (!active) return;
+    if (appliedLevel.current === level || !active) return;
     const preset = presetFor(level);
     if (preset === null) return;
+    appliedLevel.current = level;
     dispatch({ type: "brush/set", brush: preset.brush, by: "hybrid" });
     moveAndSettle(preset.camera, true);
   }, [level, active, presetFor, dispatch, moveAndSettle]);
