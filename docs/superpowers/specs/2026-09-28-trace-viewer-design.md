@@ -788,8 +788,8 @@ Benchmarks, not CI gates (`pnpm --filter @jevcode/trace-viewer bench`, printed a
 | Section | Rows |
 |---|---|
 | Header | "Outline" and a search field (`/`) |
-| Story | Turn rows only when there is more than one turn ("Turn 2 · steer"); under each: Intent, chapters and decisions in time order, a dim "Noise n" row, Final claim. The Intent is the step whose `seqs` include the turn's `startSeq` (§6.6 "Instruction dedupe"); when that step is a decision, it shows once, as the decision row |
-| Files | Path (mono, middle-truncated), guardrail shield, `DiffBar xs`; collapsed above 12 files |
+| Story | Turn rows only when there is more than one turn ("Turn 2 · steer"); under each: Intent, chapters and decisions in time order, a dim "Noise n" row, Final claim. The Intent is the step whose `seqs` include the turn's `startSeq` (§6.6 "Instruction dedupe"); when that step is a decision, it shows once, as the decision row. A decision and the chapter born of it (the first chapter at or after it whose `decisionIds` name it) share one row: the decision's title, its `ForkGlyph xs` and the chapter's flag |
+| Files | Basename (mono, middle-truncated to the measured column so the extension survives; the full path in the tooltip and the accessible name), guardrail shield, `DiffBar xs` in a 44 px slot; collapsed above 12 files |
 | Commands | Normalized command and a status glyph (✕ for failed, never only a dot) |
 | Tests | Test runs with `TestDots xs`; collapsed by default |
 | Footer | "N pipeline rows hidden" (`hidden.unreceived` plus the `hidden.byType` counts, §6.4) |
@@ -823,7 +823,7 @@ Footer: the primary action is **Request changes** when the host provides `reques
 | Canvas: "expected 7 to be null" | "expected null to be 7" | Fixture fix (§4.3) |
 | Marks dimmed outside the brush or after the playhead | Not dimmed; an `--tv-accent-soft` backdrop marks the brush | Dimmed marks fail the 3:1 contrast check (R24) |
 | Canvas: Plan below Intent with a three-way fan; decision and chapter in one frame | Plan beside Intent in its own column; the fan becomes the trunk comb; decision and decision-born chapter are separate frames | Column packing (§7.5) |
-| Hybrid Outline rows with mini graphics; search icon in the title bar | Story rows: offsets and one flag glyph, no mini graphic; Files rows keep `DiffBar xs` and Tests rows keep `TestDots xs`; search in the Outline header | Width at 216 px; one search location |
+| Hybrid Outline rows with mini graphics; search icon in the title bar | Story rows: offsets and one flag glyph, no mini graphic except the `ForkGlyph` of a decision row; Files rows keep `DiffBar xs` and Tests rows keep `TestDots xs`; search in the Outline header | Width at 216 px; one search location |
 | Canvas: Migration frame TableGlyph (users → identities) | DiffBar list for `migrations/001_create_identities.sql` | Clustering emits `schemaChanges: []` (clustering.ts:926) |
 | Request changes filled with `--accent` `#2F6BFF` | Filled with `--tv-accent-ink` `#1F5EF0` | White on `#2F6BFF` measures 4.499:1, under R24's 4.5:1 text floor; white on `#1F5EF0` is 5.36:1 |
 | Canvas "Layers", Hybrid "Chapters" rails | One Outline | Same content |
@@ -832,7 +832,7 @@ Footer: the primary action is **Request changes** when the host provides `reques
 
 **Canvas.** One CSS-transformed world `div` holds React frames (`role="group"`, `aria-label`, roving tabindex, DOM order = time order). One edge `<svg>` sits beneath the frames; the red connector has an 8 px transparent hit twin. Labels, selection handles and the time chip live in a screen-space overlay. v1 never culls frames at any count, so each stays focusable and findable with Cmd+F; spike risk 2 measures the Step-level cost, and culling by binary search on `x0` is its fallback. Focus uses `el.focus({preventScroll: true})`, and an `onScroll` guard resets any browser scroll of the `overflow: hidden` viewport. Layers bottom to top: dot background (CSS), turn bands and break markers, edges, frames, overlay, ruler, minimap.
 
-**Hybrid overview.** The same controller in `xOnly` mode. One DPR-scaled, `aria-hidden` Canvas2D paints bands, lane lines, ticks and binned marks, with colors read from the typed token object. The DOM holds all text, pins (buttons), the playhead and brush sliders (`role="slider"`) and the `≠` link path, at most 150 nodes.
+**Hybrid overview.** The same controller in `xOnly` mode. One DPR-scaled, `aria-hidden` Canvas2D paints bands, lane lines, ticks and binned marks, with colors read from the typed token object. Bands are 6 px rounded rectangles that start below their label tier (18 px; 36 px for the second tier), and each tone fills as one path, so overlapping bands never stack their alpha and a selected band shows a single `--tv-fill-2` layer. The session strip has no track fill and outlines the viewport only while it crops the session. The DOM holds all text, pins (buttons), the playhead and brush sliders (`role="slider"`) and the `≠` link path, at most 150 nodes.
 
 **Viewport math** (`layout/viewport.ts`, pure). `Camera = {mode: "uniform", tx, ty, k} | {mode: "xOnly", u0, k}` with `zoomAt`, `panBy`, `fitBounds`, `setCenter`, `clamp`, `screenToWorld` and a 180 ms tween.
 
@@ -865,7 +865,7 @@ export interface XMap { xOf(tMs: number): number; tOf(x: number): number }   // 
 - `liveTMs = max(last step tMs, source.now() − originMs)`. The curve is continuous, so as `liveTMs` grows the live edge moves without jumps, and a row that closes a gap lands where the edge was.
 - `BREAK_MIN_MS` drives the break glyph ("⫽ 4m idle"), the spine's idle rows and the canvas column breaks at Chapter and Step levels. The Canvas Session level uses 300 s.
 - No fixture has a gap over 10 s (the largest between timestamped lines is 5.0 s: oauth lines 35→38 and rate-limit lines 21→25), so fixtures render linear and match the mockups.
-- `ticks.ts` picks the smallest step of 1, 2, 5, 10, 15, 30 s, 1, 2, 5, 10, 15, 30 min or 1 h whose labels stay ≥ 64 px apart, draws no ticks inside breaks, and labels real offsets with `formatOffset`. Hybrid's `XMap` is `(toU(t) − u0) · k`; Canvas's is its column map (§7.5) over `toU`. One `Ruler` component draws any `XMap`.
+- `ticks.ts` picks the smallest step of 1, 2, 5, 10, 15, 30 s, 1, 2, 5, 10, 15, 30 min or 1 h whose labels stay ≥ 64 px apart, draws no ticks inside breaks, and labels real offsets with `formatOffset`. Hybrid's `XMap` is `(toU(t) − u0) · k`; Canvas's is its column map (§7.5) over `toU`. One `Ruler` component draws any `XMap`: it labels about every 120 px (never under 64 px) without the plus sign ("0:15", as the mockups do) and adds unlabeled minor ticks at least 8 px apart at a step that divides the label step; both passes go through `ticks.ts`.
 
 ### 7.5 Canvas layout
 

@@ -211,12 +211,16 @@
   overflow: hidden;
   border: 0;
   background: transparent;
-  color: var(--tv-ink-2);
+  color: var(--tv-ink-3);
   font: inherit;
   font-size: 12px;
   line-height: 16px;
   white-space: nowrap;
   cursor: default;
+}
+
+.bandLabel[data-on] {
+  color: var(--tv-ink-2);
 }
 
 .bandTitle {

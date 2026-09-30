@@ -4,6 +4,7 @@ import {
   OVERVIEW_H,
   RULER_TOP,
   STRIP_H,
+  type BandPlacement,
   type MarkOp,
   type OverviewLayout,
   type PinPlacement,
@@ -23,6 +24,11 @@ export interface PaintContext {
   fillRect(x: number, y: number, w: number, h: number): void;
   strokeRect(x: number, y: number, w: number, h: number): void;
   beginPath(): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  roundRect(x: number, y: number, w: number, h: number, radius: number): void;
+  clip(fillRule?: CanvasFillRule): void;
+  save(): void;
+  restore(): void;
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number): void;
   fill(): void;
   stroke(): void;
@@ -32,6 +38,8 @@ export const LANES_BOTTOM = LANES_TOP + LANES.length * LANE_H;
 export const STRIP_TOP = LANES_TOP - STRIP_H;
 /** Height of one chapter-label tier: the 36 px label area holds two tiers (spec §7.2 Hybrid anatomy). */
 const TIER_H = 18;
+/** Band corner radius (mockup `.band`). */
+const BAND_RADIUS = 6;
 const FULL_TURN = Math.PI * 2;
 
 export function laneTop(lane: Lane): number {
@@ -123,10 +131,46 @@ function paintMark(ctx: PaintContext, mark: MarkOp, tokens: Tokens): void {
   }
 }
 
+/** A band starts below its own label tier: tier 0 (and unlabeled) under the first 18 px row, tier 1 under the second. */
+function bandTop(band: BandPlacement): number {
+  return band.tier === 1 ? 2 * TIER_H : TIER_H;
+}
+
+function addBandPath(ctx: PaintContext, band: BandPlacement): void {
+  const top = bandTop(band);
+  ctx.roundRect(band.x0, top, Math.max(1, band.x1 - band.x0), LANES_BOTTOM - top, BAND_RADIUS);
+}
+
+/**
+ * Bands as one path per tone, each filled once: overlapping bands never stack their translucent fill, and the
+ * emphasized (selected) band shows exactly one fill-2 layer because the plain fill is clipped away from it.
+ */
+function paintBands(ctx: PaintContext, input: PaintInput): void {
+  const { layout, tokens, widthPx, emphasizedBands } = input;
+  if (layout.bands.length === 0) return;
+  const emphasized = layout.bands.filter((band) => emphasizedBands.has(band.key));
+  ctx.save();
+  if (emphasized.length > 0) {
+    ctx.beginPath();
+    ctx.rect(0, 0, widthPx, OVERVIEW_H);
+    for (const band of emphasized) addBandPath(ctx, band);
+    ctx.clip("evenodd");
+  }
+  ctx.beginPath();
+  for (const band of layout.bands) if (!emphasizedBands.has(band.key)) addBandPath(ctx, band);
+  ctx.fillStyle = tokens.fill;
+  ctx.fill();
+  ctx.restore();
+  if (emphasized.length === 0) return;
+  ctx.beginPath();
+  for (const band of emphasized) addBandPath(ctx, band);
+  ctx.fillStyle = tokens.fill2;
+  ctx.fill();
+}
+
+/** The 6 px session strip, kept quiet: faint density bins, the brush, the viewport outline only when it crops. */
 function paintStrip(ctx: PaintContext, input: PaintInput): void {
   const { layout, tokens, widthPx, strip } = input;
-  ctx.fillStyle = tokens.fill;
-  ctx.fillRect(0, STRIP_TOP, widthPx, STRIP_H);
   if (strip.brush !== null) {
     ctx.fillStyle = tokens.accentSoft;
     ctx.fillRect(strip.brush.x0, STRIP_TOP, Math.max(1, strip.brush.x1 - strip.brush.x0), STRIP_H);
@@ -134,7 +178,7 @@ function paintStrip(ctx: PaintContext, input: PaintInput): void {
   let max = 0;
   for (const value of layout.strip) max = Math.max(max, value);
   if (max > 0) {
-    ctx.fillStyle = tokens.mark;
+    ctx.fillStyle = tokens.ink4;
     const bins = Math.min(layout.strip.length, Math.ceil(widthPx));
     for (let x = 0; x < bins; x += 1) {
       const value = layout.strip[x] ?? 0;
@@ -143,7 +187,7 @@ function paintStrip(ctx: PaintContext, input: PaintInput): void {
       ctx.fillRect(x, STRIP_TOP + STRIP_H - h, 1, h);
     }
   }
-  if (strip.viewport !== null) {
+  if (strip.viewport !== null && (strip.viewport.x0 > 0.5 || strip.viewport.x1 < widthPx - 0.5)) {
     ctx.strokeStyle = tokens.ink4;
     ctx.lineWidth = 1;
     ctx.strokeRect(strip.viewport.x0 + 0.5, STRIP_TOP + 0.5, Math.max(1, strip.viewport.x1 - strip.viewport.x0 - 1), STRIP_H - 1);
@@ -172,11 +216,7 @@ export function paintOverview(ctx: PaintContext, input: PaintInput): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, widthPx, OVERVIEW_H);
 
-  for (const band of layout.bands) {
-    ctx.fillStyle = input.emphasizedBands.has(band.key) ? tokens.fill2 : tokens.fill;
-    const top = band.tier === 1 ? TIER_H : 0;
-    ctx.fillRect(band.x0, top, Math.max(1, band.x1 - band.x0), LANES_BOTTOM - top);
-  }
+  paintBands(ctx, input);
 
   ctx.fillStyle = tokens.hair;
   for (const lane of LANES) ctx.fillRect(0, Math.round(laneCenter(lane)), widthPx, 1);

@@ -168,6 +168,20 @@
   color: var(--tv-bad-ink);
 }
 
+/* Files rows align their DiffBar in one 44 px column, as the mockup's file rail does. */
+.slot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 44px;
+}
+
+.graphic {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
 .offset {
   flex: none;
   font-size: 12px;

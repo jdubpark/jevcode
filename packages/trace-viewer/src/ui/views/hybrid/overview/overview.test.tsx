@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { layoutOverview, MAX_OVERLAY_NODES } from "../../../../layout/overview-layout.js";
+import { layoutOverview, MAX_OVERLAY_NODES, type BandPlacement } from "../../../../layout/overview-layout.js";
+import type { TraceSession } from "../../../../model/index.js";
 import { RecordingContext } from "../../../../test-support/recording-context.js";
 import {
   foldFixture,
@@ -13,8 +14,21 @@ import {
   type LayoutStub,
 } from "../../../../test-support/ui-harness.js";
 import { KeyboardLayer } from "../../../shell/KeyboardLayer.js";
-import { Overview, type OverviewApi } from "./Overview.js";
+import { bandLabelWidths, Overview, type OverviewApi } from "./Overview.js";
 import { pinLabel } from "./Pins.js";
+
+// Counts overview layouts at the module boundary (perf fix 3: one layout per camera change).
+const layoutCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../../../layout/overview-layout.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../../layout/overview-layout.js")>();
+  return {
+    ...actual,
+    layoutOverview: (input: Parameters<typeof actual.layoutOverview>[0]) => {
+      layoutCalls.count += 1;
+      return actual.layoutOverview(input);
+    },
+  };
+});
 
 let layout: LayoutStub;
 beforeEach(() => {
@@ -73,8 +87,7 @@ function WithKeys({ children }: { children: ReactNode }) {
   );
 }
 
-async function renderOverview(options: HarnessOptions = {}) {
-  const session = foldFixture("oauth");
+async function renderOverview(options: HarnessOptions = {}, session: TraceSession = foldFixture("oauth")) {
   const apiRef: { current: OverviewApi | null } = { current: null };
   const h = renderHarness(
     <WithKeys>
@@ -103,6 +116,116 @@ function claimStep(): `step:${number}` {
   if (claim === undefined) throw new Error("oauth has no claim_contradicted finding");
   return claim.anchorStepId;
 }
+
+/** Gives the Shell root and the overview their own widths: the stub layout measures every element alike. */
+function installWidths(widths: { shell: number; overview: number }): () => void {
+  const proto = Element.prototype;
+  const stubbedRect = proto.getBoundingClientRect;
+  const stubbedObserver = globalThis.ResizeObserver;
+  const widthOf = (element: Element): number | null =>
+    element.hasAttribute("data-trace-viewer") ? widths.shell : element.hasAttribute("data-measure-root") ? widths.overview : null;
+  proto.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+    const rect = stubbedRect.call(this);
+    const w = widthOf(this);
+    return w === null ? rect : ({ ...rect, width: w, right: w, toJSON: () => ({}) } as DOMRect);
+  };
+  class WidthObserver {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(target: Element): void {
+      const w = widthOf(target) ?? target.getBoundingClientRect().width;
+      const box = [{ inlineSize: w, blockSize: 288 }];
+      const entry = { target, contentRect: { width: w }, contentBoxSize: box, borderBoxSize: box } as unknown as ResizeObserverEntry;
+      queueMicrotask(() => this.callback([entry], this as unknown as ResizeObserver));
+    }
+    unobserve(): void {
+      return undefined;
+    }
+    disconnect(): void {
+      return undefined;
+    }
+  }
+  globalThis.ResizeObserver = WidthObserver as unknown as typeof ResizeObserver;
+  return () => {
+    proto.getBoundingClientRect = stubbedRect;
+    globalThis.ResizeObserver = stubbedObserver;
+  };
+}
+
+async function renderInShell(shellW: number, overviewW: number) {
+  const restore = installWidths({ shell: shellW, overview: overviewW });
+  try {
+    const session = foldFixture("oauth");
+    renderHarness(
+      <div data-trace-viewer="">
+        <Overview active apiRef={{ current: null }} spineWindow={null} onSettle={() => undefined} createContext={() => new RecordingContext()} />
+      </div>,
+      session,
+    );
+    await act(async () => undefined);
+    await act(async () => undefined);
+  } finally {
+    restore();
+  }
+}
+
+describe("Overview lane gutter (spec §7.2)", () => {
+  it("names the lanes when the Shell container is at least 1180 px, whatever the overview's own width", async () => {
+    // 1440 window: the overview gets 1440 − 216 − 280 = 944 px.
+    await renderInShell(1440, 944);
+    expect(screen.getByText("Supervisor")).toBeTruthy();
+    expect(screen.getByText("Jev")).toBeTruthy();
+  });
+
+  it("drops to icon-only under a 1180 px Shell container", async () => {
+    await renderInShell(1000, 552);
+    expect(screen.queryByText("Supervisor")).toBeNull();
+  });
+});
+
+describe("Overview band labels", () => {
+  it("shows a hostile chapter title as visible tokens in the label, its tooltip and its name", async () => {
+    const base = foldFixture("oauth");
+    const session = { ...base, chapters: base.chapters.map((chapter) => ({ ...chapter, title: "a\u202Eb" })) };
+    await renderOverview({ state: { level: "session" } }, session);
+    const labels = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]"));
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      expect(label.getAttribute("aria-label")).toBe("a\u27E8U+202E\u27E9b");
+      expect(label.getAttribute("title")).toBe("a\u27E8U+202E\u27E9b");
+      expect(label.textContent ?? "").not.toContain("\u202E");
+    }
+    expect(labels.some((label) => (label.textContent ?? "").includes("a\u27E8U+202E\u27E9b"))).toBe(true);
+  });
+
+  it("lets a full label run past its band up to the next label in the same tier", () => {
+    const band = (key: string, x0: number, x1: number, tier: 0 | 1 | null): BandPlacement => ({
+      key, id: null, x0, x1, title: key, tier, iconOnly: false,
+    });
+    const widths = bandLabelWidths([band("a", 10, 40, 0), band("b", 30, 50, 1), band("c", 200, 260, 0), band("d", 300, 320, null)], 500);
+    expect(widths.get("a")).toBe(200 - 10 - 8);
+    expect(widths.get("b")).toBe(500 - 30);
+    expect(widths.get("c")).toBe(500 - 200);
+    expect(widths.has("d")).toBe(false);
+  });
+});
+
+describe("Overview layout cost", () => {
+  it("lays the overview out once per camera change and not at all for a selection change", async () => {
+    const { h, apiRef, session } = await renderOverview();
+    const api = apiRef.current;
+    const camera = api?.camera();
+    if (api === null || camera === undefined || camera === null) throw new Error("no camera");
+    layoutCalls.count = 0;
+    await act(async () => {
+      await api.moveTo({ mode: "xOnly", u0: camera.u0 + 500, k: camera.k * 1.5 }, false);
+    });
+    expect(layoutCalls.count).toBe(1);
+    layoutCalls.count = 0;
+    act(() => h.store.dispatch({ type: "select", id: session.steps[3]?.id ?? null, by: "hybrid" }));
+    await act(async () => undefined);
+    expect(layoutCalls.count).toBe(0);
+  });
+});
 
 describe("Overview", () => {
   it("moves the playhead on a click on the empty track and keeps the selection", async () => {
