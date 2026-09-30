@@ -2,9 +2,14 @@ import type { ToMainChannelName, ToMainPayload } from "../shared/ipc-registry.js
 import { RendererToMainLocalChannels } from "../shared/local-channels.js";
 import type { TraceService } from "./trace-service.js";
 
+/** What the ipc.ts wrapper knows about the caller, beyond the parsed payload. */
+export interface IpcHandleContext {
+  senderId: number;
+}
+
 export type IpcHandle = <C extends ToMainChannelName>(
   channel: C,
-  fn: (payload: ToMainPayload<C>) => unknown | Promise<unknown>,
+  fn: (payload: ToMainPayload<C>, context: IpcHandleContext) => unknown | Promise<unknown>,
 ) => void;
 
 /**

@@ -1364,6 +1364,15 @@ git commit -m "feat(desktop): add trace window channels and a per-sender IPC all
 
 **Part Da exit:** `pnpm --filter jevcode-desktop typecheck` and `test` pass; the four root checks pass; `trace:open` and `trace:requestChanges` exist but nothing in the renderer calls them yet. Merge to `main` after C2 and C3a (UI index §4).
 
+### Hand-offs from Da (lane review)
+
+The Da lane review (2026-09-30) found no blocking issue. Part Db must know four contract points:
+
+1. **`trace:requestChanges` is bound to the sender window's own session.** `createDesktopViewerHost` must send the same `sessionId` as the `?session=` query that opened the window. A mismatch is rejected inside the handler, is serialized, and arrives as `jevcode.ipc.UNTRUSTED_SENDER: …`.
+2. **Allowlist rejections cross the bridge without a code.** The `handle` wrapper throws a raw `IpcError` outside its `try`, like the existing `assertTrustedSender` and `parseToMain` paths, so the renderer sees no `jevcode.ipc.<CODE>` prefix. The ipc-source maps unknown errors to `SOURCE_FAILED`; Db must not depend on the code for these errors.
+3. **`IpcHandle` changed.** `fn` takes a second `context: IpcHandleContext` argument (`{ senderId }`). One-parameter handlers still typecheck; a test harness that calls `fn` directly must pass `{ senderId }`. D-7's `bridgeOver` calls the service directly and is not affected.
+4. **`TraceWindowRegistry` gained `sessionForSender(webContentsId)`.** A hand-written fake registry in Db tests must implement it. The Db plan has none today.
+
 ---
 
 ## Part Db: trace window, live follow, parity and M5 exit (lane 08b, wave W3)
@@ -3592,7 +3601,7 @@ Expected: one line (A2-6's trace viewer read-only row).
 Insert this row directly after that line:
 
 ```markdown
-| 8 | Trace window cannot reach write, agent, session, repo or telemetry channels | PASS | `apps/desktop/src/main/trace-allowlist.ts` (`isChannelAllowed`): the ipc.ts `handle` wrapper classifies `event.sender.id` as main, trace (recorded by `trace-window.ts` before `loadFile`) or other before zod parsing. A trace window may invoke only `trace:listSessions`, `trace:rows`, `trace:payloads` and `trace:requestChanges`; `trace:open` and every non-trace channel need the main window; `trace:requestChanges` needs a trace window; anything else gets `UNTRUSTED_SENDER`. Trace windows share the main window's `webPreferences` (`sharedWebPreferences`), block `will-navigate`, deny `window.open` and load `trace.html` under the same CSP. `trace:requestChanges` only focuses the main window and pushes `composer:prefill`; it never sends an instruction. Covered by `trace-allowlist.test.ts`, `trace-window.test.ts`, `trace-window-ipc.test.ts`, `smoke.test.ts` and the extended smoke | `assertTrustedSender` still accepts any `file:` URL (separate PR, spec §14) |
+| 8 | Trace window cannot reach write, agent, session, repo or telemetry channels | PASS | `apps/desktop/src/main/trace-allowlist.ts` (`isChannelAllowed`): the ipc.ts `handle` wrapper classifies `event.sender.id` as main, trace (recorded by `trace-window.ts` before `loadFile`) or other before zod parsing. A trace window may invoke only `trace:listSessions`, `trace:rows`, `trace:payloads` and `trace:requestChanges`; `trace:open` and every non-trace channel need the main window; `trace:requestChanges` needs a trace window, and only for the session that window shows (`sessionForSender`); anything else gets `UNTRUSTED_SENDER`. Trace windows share the main window's `webPreferences` (`sharedWebPreferences`), block `will-navigate`, deny `window.open` and load `trace.html` under the same CSP. `trace:requestChanges` only focuses the main window and pushes `composer:prefill`; it never sends an instruction. Covered by `trace-allowlist.test.ts`, `trace-window.test.ts`, `trace-window-ipc.test.ts`, `smoke.test.ts` and the extended smoke | `assertTrustedSender` still accepts any `file:` URL (separate PR, spec §14) |
 ```
 
 - [ ] **Step 7: Check the M5 exit criteria**
