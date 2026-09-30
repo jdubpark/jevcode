@@ -43,12 +43,6 @@ export function firstRowAtOrAfter(offset: number, count: number, startOf: (index
   return next;
 }
 
-/** The index of the top row that `offset` cuts through (more than half a pixel from either edge), else null. */
-export function cutTopRow(items: readonly { index: number; start: number; end: number }[], offset: number): number | null {
-  const top = items.find((item) => item.end > offset);
-  return top !== undefined && offset > top.start + 0.5 && offset < top.end - 0.5 ? top.index : null;
-}
-
 export interface PushCandidate {
   index: number;
   start: number;
