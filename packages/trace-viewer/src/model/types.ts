@@ -330,6 +330,9 @@ export interface Chapter {
   id: UnitStableId;
   changeUnitId: string;
   title: string;
+  /** At most 24 graphemes, from chapterShortTitle (format.ts): category and focus file stem for a
+   *  placeholder title, else the title's first clause. Set by the fold; absent on hand-built sessions. */
+  shortTitle?: string;
   intent?: string;
   category: ChangeCategory;
   status: ChangeUnitStatus;

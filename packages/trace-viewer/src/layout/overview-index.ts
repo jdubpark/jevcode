@@ -155,6 +155,8 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
       // A run the chapter reaches only through a (often shared) validation is not its footprint:
       // otherwise every band stacks over the one test run all units cite (ruling M6).
       const validationOnly = new Set(chapter.validationOnlyStepIds ?? []);
+      // Band labels are short (§7.6.1); placeholder unit titles do not fit any band (ruling M2).
+      const title = chapter.shortTitle ?? chapter.title;
       const spans = chapter.stepIds
         .filter((id) => !validationOnly.has(id))
         .map((id) => index.entry(id))
@@ -166,11 +168,11 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
       for (const span of spans) {
         if (piece !== null && span[0] <= piece[1]) piece[1] = Math.max(piece[1], span[1]);
         else {
-          if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title: chapter.title });
+          if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title });
           piece = [span[0], span[1]];
         }
       }
-      if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title: chapter.title });
+      if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title });
     }
   } else {
     for (const turn of session.turns) {

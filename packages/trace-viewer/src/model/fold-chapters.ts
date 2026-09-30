@@ -12,6 +12,7 @@ import {
   type UnitAttention,
 } from "./fold-state.js";
 import { clampMeta } from "./registry.js";
+import { chapterShortTitle } from "./short-title.js";
 import {
   decisionStableId,
   unitStableId,
@@ -339,6 +340,7 @@ export function buildChapters(
       id,
       changeUnitId: unit.id,
       title: unit.title,
+      shortTitle: chapterShortTitle(unit),
       ...(unit.intent !== undefined ? { intent: unit.intent } : {}),
       category: unit.category,
       status: unit.status,
