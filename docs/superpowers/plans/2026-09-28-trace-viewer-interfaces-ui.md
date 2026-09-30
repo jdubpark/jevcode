@@ -591,6 +591,8 @@ export interface TraceIndex {
   stepIndexAtOrAfter(seq: number): number;
   /** "ch:<anchorSeq>", anchorSeq = min over factSeqs and step firstSeqs (spec §7.5). */
   chapterKey(id: UnitStableId): `ch:${number}` | undefined;
+  /** The anchorSeq in chapterKey (tv/canvas-live-tick: layoutCanvas and routing reuse it rather than re-deriving it per link). */
+  chapterAnchor(id: UnitStableId): number | undefined;
   chapterByAnchor(anchorSeq: number): UnitStableId | undefined;
   /** The current chapter whose step span holds seq (latest anchor wins). */
   chapterAtSeq(seq: number): Chapter | undefined;
