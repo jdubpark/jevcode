@@ -142,7 +142,11 @@ describe("buildOutlineRows", () => {
       expect(row.hint).toBe("Full\u27E8U+202E\u27E9 one");
       expect(row.label.startsWith("Full\u27E8U+202E\u27E9 one")).toBe(true);
     }
-    const noShort = { ...base, chapters: base.chapters.map(({ shortTitle: _drop, ...chapter }) => ({ ...chapter, title: "Full title" })) };
+    const noShort = { ...base, chapters: base.chapters.map((chapter) => {
+      const copy = { ...chapter, title: "Full title" };
+      delete copy.shortTitle;
+      return copy;
+    }) };
     const plain = itemsOf(buildOutlineRows(noShort, ALL_OPEN), "story").filter((row) => row.chapterId !== null && row.icon !== "fork" && !row.muted);
     expect(plain.every((row) => row.title === "Full title" && row.hint === undefined)).toBe(true);
   });
