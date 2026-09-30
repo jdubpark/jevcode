@@ -1,6 +1,6 @@
 import { CodeDiff } from "@jevcode/ui-catalog/components/CodeDiff";
 
-import type { TraceRow } from "@jevcode/contracts";
+import { DecisionOptionSchema, TRACE_PAYLOADS_MAX, type DecisionOption, type TraceRow } from "@jevcode/contracts";
 
 import type { SelectionId } from "../../layout/trace-index.js";
 import { displayUntrusted, exitLabel, type Chapter, type Step, type TraceSession } from "../../model/index.js";
@@ -28,6 +28,10 @@ function diffOf(row: TraceRow | undefined): DiffPayload | null {
     truncated: diff.truncated === true,
     redactions: typeof diff.redactions === "number" ? diff.redactions : 0,
   };
+}
+
+function utf8Length(text: string): number {
+  return typeof TextEncoder === "undefined" ? text.length : new TextEncoder().encode(text).length;
 }
 
 function kb(bytes: number): string {
@@ -96,7 +100,7 @@ function EditEvidence({ step }: { step: Step }) {
     <section className={styles.section}>
       {header}
       {diff.truncated ? (
-        <p className={styles.label}>{`Truncated at hunk boundary · showing ${kb(diff.text.length)} of ${kb(diff.bytes)}`}</p>
+        <p className={styles.label}>{`Truncated at hunk boundary · showing ${kb(utf8Length(diff.text))} of ${kb(diff.bytes)}`}</p>
       ) : null}
       {diff.redactions > 0 ? (
         <p className={styles.label}>{`${diff.redactions} ${diff.redactions === 1 ? "secret" : "secrets"} redacted`}</p>
@@ -134,17 +138,47 @@ function OutputEvidence({ step }: { step: Step }) {
   );
 }
 
+/** Options with descriptions from the latest `decision` row; each option is parsed on its own. */
+function decisionOptions(rows: readonly TraceRow[]): DecisionOption[] | null {
+  const row = [...rows].reverse().find((candidate) => candidate.type === "decision");
+  const options = record(row?.payload).options;
+  if (!Array.isArray(options)) return null;
+  const parsed: DecisionOption[] = [];
+  for (const option of options) {
+    const result = DecisionOptionSchema.safeParse(option);
+    if (!result.success) return null;
+    parsed.push(result.data);
+  }
+  return parsed;
+}
+
 function DecisionEvidence({ step }: { step: Step }) {
-  const options = step.decision?.options ?? [];
-  const chosen = options.filter((option) => option.chosen);
+  const { state, retry } = usePayloadRows(step.seqs);
+  const model = step.decision?.options ?? [];
+  const chosen = model.filter((option) => option.chosen);
+  if (state.status === "error") {
+    return (
+      <section className={styles.section}>
+        <PayloadError message={state.message} onRetry={retry} />
+      </section>
+    );
+  }
+  const described = state.status === "ready" ? decisionOptions(state.rows) : null;
+  const descriptions = new Map((described ?? []).map((option) => [option.id, option]));
+  const options = described === null ? model : model.length > 0 ? model : described.map((o) => ({ id: o.id, label: o.label, chosen: false }));
   return (
     <section className={styles.section}>
       <ul className={styles.list}>
-        {options.map((option) => (
-          <li key={option.id} className={option.chosen ? styles.chosen : undefined}>
-            <span>{displayUntrusted(option.label)}</span>
-          </li>
-        ))}
+        {options.map((option) => {
+          const detail = descriptions.get(option.id);
+          const description = detail?.description ?? "";
+          return (
+            <li key={option.id} className={option.chosen ? styles.chosen : undefined}>
+              <span>{displayUntrusted(detail?.label ?? option.label)}</span>
+              {description === "" ? null : <span className={styles.muted}>{displayUntrusted(description)}</span>}
+            </li>
+          );
+        })}
       </ul>
       <p className={styles.meta}>
         {chosen.length > 0 ? `Answer: ${chosen.map((option) => displayUntrusted(option.label)).join(", ")}` : "No answer yet"}
@@ -160,11 +194,14 @@ function ChapterEvidence({ chapter, session }: { chapter: Chapter; session: Trac
     if (members.has(step.id) && step.edit !== undefined) latestByPath.set(step.edit.path, step);
   }
   if (latestByPath.size === 0) return <p className={styles.muted}>No evidence for this item</p>;
+  const steps = [...latestByPath.values()];
+  const shown = steps.slice(0, TRACE_PAYLOADS_MAX);
   return (
     <>
-      {[...latestByPath.values()].map((step) => (
+      {shown.map((step) => (
         <EditEvidence key={step.id} step={step} />
       ))}
+      {steps.length > shown.length ? <p className={styles.muted}>{`${steps.length - shown.length} more`}</p> : null}
     </>
   );
 }
