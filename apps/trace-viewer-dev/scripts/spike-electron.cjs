@@ -5,6 +5,7 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..");
 const OUT = path.join(ROOT, ".spike");
 const BENCH = process.env.SPIKE_BENCH ?? "60x300";
+// Note: appendSwitch is ignored on this machine (DPR stays 2); pass --force-device-scale-factor=1 on the Electron command line for the DPR 1 run.
 if (process.env.SPIKE_DPR) app.commandLine.appendSwitch("force-device-scale-factor", process.env.SPIKE_DPR);
 
 const js = (win, code) => win.webContents.executeJavaScript(code, true);

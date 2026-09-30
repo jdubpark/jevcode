@@ -138,6 +138,7 @@ export default tseslint.config(
       "fixtures/**",
       "scripts/**",
       "apps/**/scripts/**",
+      "apps/trace-viewer-dev/dist-spike/**",
     ],
   },
   js.configs.recommended,
