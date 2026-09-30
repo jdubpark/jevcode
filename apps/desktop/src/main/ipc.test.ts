@@ -53,11 +53,14 @@ function makeDeps(db: JevcodeDb, runtime: PipelineRuntime, state: AppState): Ipc
     requestRepoPath: async () => null,
     log: () => {},
     trace: {} as unknown as IpcDeps["trace"],
+    senderKind: () => "main",
+    traceWindows: {} as unknown as IpcDeps["traceWindows"],
   };
 }
 
 const TRUSTED_EVENT = {
   senderFrame: { url: "file:///index.html" },
+  sender: { id: 1 },
 } as unknown as IpcMainInvokeEvent;
 
 type Handler = (event: IpcMainInvokeEvent, raw: unknown) => unknown;

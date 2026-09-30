@@ -27,6 +27,8 @@ export const RendererToMainLocalChannels = {
   traceListSessions: "trace:listSessions",
   traceRows: "trace:rows",
   tracePayloads: "trace:payloads",
+  traceOpen: "trace:open",
+  traceRequestChanges: "trace:requestChanges",
 } as const;
 
 export const MainToRendererLocalChannels = {
@@ -34,6 +36,7 @@ export const MainToRendererLocalChannels = {
   repoSessions: "repo:sessions",
   debugTelemetry: "debug:telemetry",
   preferencesUpdated: "preferences:updated",
+  composerPrefill: "composer:prefill",
 } as const;
 
 export type RendererToMainLocalChannelName =
@@ -233,6 +236,31 @@ export const TracePayloadsPayloadSchema = z.object({
   seqs: z.array(z.number().int().positive()).min(1).max(TRACE_PAYLOADS_MAX),
 });
 
+// Trace window (spec §5.4, M5). trace:open is main-window only; trace:requestChanges
+// is trace-window only (main/trace-allowlist.ts). Both respond with nothing.
+export const TRACE_NOTE_MAX_CHARS = 8_000;
+
+/** Spec §7.8 stable-id pattern for the selected step, unit or decision. */
+export const TraceStableIdSchema = z.string().regex(/^(step:\d+|unit:.+|decision:.+)$/s);
+
+export const TraceOpenPayloadSchema = z.object({ sessionId: z.string().min(1) });
+
+export const TraceRequestChangesPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  selected: TraceStableIdSchema,
+  text: z.string().min(1).max(TRACE_NOTE_MAX_CHARS),
+});
+
+export type TraceRequestChangesPayload = z.infer<typeof TraceRequestChangesPayloadSchema>;
+
+/** main → main renderer: append to the composer draft; never sent as an instruction (spec §8.5). */
+export const ComposerPrefillPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  text: z.string().min(1).max(TRACE_NOTE_MAX_CHARS),
+});
+
+export type ComposerPrefillPayload = z.infer<typeof ComposerPrefillPayloadSchema>;
+
 export const localToMain = {
   [RendererToMainChannels.sessionStart]: SessionStartPayloadSchema,
   [RendererToMainLocalChannels.repoBrowse]: RepoBrowsePayloadSchema,
@@ -251,6 +279,8 @@ export const localToMain = {
   [RendererToMainLocalChannels.traceListSessions]: TraceListSessionsPayloadSchema,
   [RendererToMainLocalChannels.traceRows]: TraceRowsPayloadSchema,
   [RendererToMainLocalChannels.tracePayloads]: TracePayloadsPayloadSchema,
+  [RendererToMainLocalChannels.traceOpen]: TraceOpenPayloadSchema,
+  [RendererToMainLocalChannels.traceRequestChanges]: TraceRequestChangesPayloadSchema,
 } as const;
 
 export const localFromMain = {
@@ -259,4 +289,5 @@ export const localFromMain = {
   [MainToRendererLocalChannels.debugTelemetry]: DebugTelemetryPayloadSchema,
   [MainToRendererLocalChannels.preferencesUpdated]:
     PreferencesUpdatedPayloadSchema,
+  [MainToRendererLocalChannels.composerPrefill]: ComposerPrefillPayloadSchema,
 } as const;
