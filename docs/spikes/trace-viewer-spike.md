@@ -171,3 +171,69 @@ Probe: headless Chrome 1440×900 (software compositing), Vite dev server, soak b
 | Elements under the viewport | 11,895 (26 paths, 20 separators) | 11,769 (1 path, 0 separators in range) |
 
 The remaining zoom long frames are mostly Chrome `Layerize` work (about 16 ms per long task in a trace). Hiding the overlay halves them (58 → 30), because its labels re-layout on every change of k (their `max-width` scales with k). This is headless software compositing. C3-12's Electron pinch measurement is the gate (Step pinch ≤ 5% dropped).
+
+## M4b exit (C3-12)
+
+Date: 2026-10-01. Lane C3b (`tv/c3b-canvas-view`). Reference machine: as named in the M4a exit section (Mac15,11, Apple M3 Max, 36 GiB, macOS 27.0.1, Node 22.23.1, Google Chrome 154.0.8037.92, Electron 33.4.11). The built-in panel ran at 120 Hz (idle rAF median 8.3 ms), DPR 2. Load average (1-minute) was 7 to 8 during every measurement below, on a shared machine.
+
+| Criterion (spec §12 M4b) | Result | Evidence |
+|---|---|---|
+| Spike risks 2, 3, 6, 7 pass or ruled | Risk 2 provisional pass with the fallback applied (`CULL_FRAMES = true`), 60 Hz rerun PENDING. Risk 3 fallback applied (`CANVAS_SETTLE_ROUND_K = 64`), off-grid look PENDING. Risks 6 and 7 pass. The spike harness rerun today gave the same rows (risk 3 k 2: 1.512%, risk 6 and 7 pass). | this doc, "M4b gate (C3-5)" |
+| oauth in Canvas matches the spec §7.5 table | pass | `canvas-layout.test.ts` "matches the spec §7.5 table from a fresh layout" (C3-2) |
+| Switch tests pass | pass | `view-switch.test.tsx` (C3-11, plus the C3-12 pre-step cases for a level change and a Live append while hidden) |
+| Both smokes green | `SMOKE_OK 4 screenshots` | `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid,canvas --skip-build --port 4183` |
+| View switch restored in the toggle's frame; never a 0 × 0 fit | 20 switches, 0 misses | same smoke, `?selftest=switch` |
+| Canvas pinch at Step level ≤ 5% frames dropped (Electron 33, 60 Hz) | Provisional pass at the spec's 60 Hz arithmetic; FAIL for the spike scene when rescored at the panel's measured 120 Hz (see the budget table). 60 Hz rerun PENDING. | spike harness `spike-electron.cjs`; scratch rescoring and real-Canvas drivers (below) |
+| `layoutCanvas` fresh ≤ 2 ms / sticky ≤ 0.5 ms (benchmark, not a gate) | 0.361 ms / 0.356 ms (means; C3-4 recorded 0.413 / 0.426) | `vitest bench --run src/layout/canvas-layout.bench.ts`, 2026-10-01 |
+| Canvas anchor drift ≤ 1 px (smoke) | 0.000016 px | same smoke, Canvas `?selftest=drip` |
+
+### M4b budgets, measured against target
+
+| Budget (spec §10) | Target | Measured | Pass |
+|---|---|---|---|
+| Canvas pinch at Step level, spike scene (60 chapters at Step level, 300 edges), sweep 0.35 → 2 over 3 s, spec arithmetic (60 Hz intervals) | ≤ 5% dropped, p95 ≤ 1 interval | without `will-change`: 0%, p95 1, 330 frames; with gesture-time `will-change`: 3.468%, p95 1 | yes (provisional: panel at 120 Hz) |
+| Same sweep rescored at the measured 8.33 ms interval (3 runs) | ≤ 5% dropped, p95 ≤ 1 | without `will-change`: 35.73 to 37.29%, p95 2 (226 to 231 frames); with gesture-time `will-change`: 6.65 to 7.50%, p95 1 (332 to 336 frames) | no |
+| Canvas pinch at Step level, the real Canvas view on the soak bundle (105 frames and 9,928 elements mounted at k 0.34), ctrl-wheel sweep 0.35 ↔ 2 over 3 s, 3 runs each way | ≤ 5% dropped, p95 ≤ 1 | 60 Hz arithmetic: 0 to 0.86%; at the measured 8.33 ms interval: 0 to 4.17% (0.35 → 2) and 0% (2 → 0.35); p95 1 in all six runs; raw interval median 8.3 ms, p95 9.5 to 10.0 ms | yes |
+| View switch: restore painted in the toggle's frame, never a 0 × 0 fit | 0 misses in 20 switches | 20 switches, 0 misses (`?selftest=switch`, real time over the DevTools protocol) | yes |
+| Anchor drift, Canvas `?selftest=drip` on oauth | ≤ 1 px | 0.000016 px (world coordinates) | yes |
+
+Methods and caveats:
+
+- The spike rows come from `pnpm --filter jevcode-desktop exec electron apps/trace-viewer-dev/scripts/spike-electron.cjs` after `vite build --config vite.spike.config.ts`. The rescored rows come from a scratch driver (not committed) that records rAF stamps during `window.__spikeRun.sweep(false|true)` in the same page and rounds them at the measured interval. The spike harness loads a static page, so no native-module ABI switch was needed.
+- The real-Canvas rows come from a scratch Electron driver (not committed) against `vite preview` of the dev host with `?bundle=soak`, view Canvas, level Step. It dispatches one ctrl `WheelEvent` per animation frame on the viewport center, sized so k follows 0.35 × (2 / 0.35)^(t / 3 s), and records rAF stamps. Synthetic wheel events skip the browser's input pipeline, so a trackpad pinch adds input latency this does not measure.
+- The spike scene rescored at 120 Hz misses even with `will-change`; the real Canvas view (compositor-only camera frames, C3-10; culling, `CULL_FRAMES`) passes at 120 Hz. The spec budget is defined at 60 Hz, where both pass. If the 60 Hz rerun misses, the next remedy is to hide frame labels during a pinch below the readable zoom band (C3-10 re-review), before any other change.
+- The drip probe measures the anchored frame's move in world coordinates, scaled by k. A camera move is not drift, as the spine probe does not count a scroll it can explain. Review keeping the camera still under appends is asserted in `canvas-view.test.tsx`.
+
+Screenshots: `apps/trace-viewer-dev/.smoke/canvas-1440.png`, `apps/trace-viewer-dev/.smoke/canvas-1000.png` (git-ignored; regenerate with the smoke). Mockup comparison (Step 7, not a human sign-off): at 1440 px the four columns match the mockup's order (Intent; Plan over Package, Auth architecture, Migration · identities and Lockfile; Account-linking policy over Code · users, a second Account-linking policy chapter and Tests · oauth; Final claim), the trunk runs along the top row, the red `≠` connector with the word "contradicts" joins Tests · oauth and Final claim, the floating toolbar has no comment tool, the minimap sits at the bottom right, and "Claim contradicts tests" is selected in the Inspector. Findings beyond the listed deviations:
+
+1. Before the two C3-12 camera fixes (b68fe4a, 30e434d) oauth opened at k 1 with the claim centered and the Intent column off screen; it now opens at the brush fit.
+2. The title bar zoom label reads 100% in both screenshots while the fit is below 1. It is a capture artifact: `--screenshot` runs in virtual time and catches the show tween before it ends. Read in real time over the DevTools protocol 3 s after open, the label is 83% at k 0.8346 (1440 px, viewport 944 px) and 45% at k 0.4488 (1000 px, viewport 552 px), both equal to (width − 96) / 1016.
+3. The minimap outlines seven frames in red (its `criticalKeys`: frames with a critical anchored finding). In the main view only Tests · oauth and Final claim show red; the other five show neutral shield (guardrail) icons, so the two surfaces disagree on which frames read as critical.
+4. The "contradicts" word overlaps the second Account-linking policy chapter's label at both widths ("Account-linking pc" at 1440 px).
+5. The noise pair renders as a "Lockfile · +0:21" frame in the Plan column rather than the mockup's "Noise ×2" stack label.
+6. At 1000 px the Final claim card is clipped by the Inspector edge in the capture, which is the same mid-tween frame as item 2; at the settled 45% fit the content spans the viewport width.
+
+### PENDING human checks (deferred by the person on 2026-09-30; revisit before the M4b exit)
+
+| Check | Status | Steps |
+|---|---|---|
+| Risk 2 rerun at 60 Hz | PENDING — deferred by the person on 2026-09-30; revisit before the M4b exit | Set the display to 60 Hz: System Settings, Displays, Refresh rate "60 Hertz" (ProMotion off). Run block A below from the repo root. Read the row "2 (dpr2)". Pass: dropped ≤ 5% and p95 1, both without and with `will-change`. Record the numbers in this section, then restore ProMotion. |
+| Risk 3 off-grid text look | PENDING — deferred by the person on 2026-09-30; revisit before the M4b exit | Run block B, open `http://localhost:4179/?bundle=oauth` in desktop Chrome, press `1` for Canvas. Ctrl+scroll (or pinch) to an off-grid zoom such as 83% or 137% (title bar label), stop, wait 1 s. Compare the frame titles with the same titles at 100% (the title bar's zoom menu). Pass: titles look as sharp as at 100%, with no blur or shimmer after the settle. Record pass or fail and the zooms tried. |
+| VoiceOver, Canvas, oauth | PENDING — deferred by the person on 2026-09-30; revisit before the M4b exit | With block B serving, open the oauth URL above at 1440 px or wider and press `1`. Cmd+F5 (VoiceOver on). Tab from the address bar: the title bar's View radio group is one stop and reads Canvas as the selected radio button of two; Right arrow switches to Hybrid and Left back. Tab on: Outline, then one stop in `main` on the selected frame, then the Inspector. In `main`, VoiceOver reads the selected frame's name, "Final claim, Claim contradicts tests, +0:43"; `j` and `k` move to the next and previous frame and each is read; Enter expands and collapses a chapter frame. Cmd+F5 off. Record pass or fail per item with what VoiceOver said. |
+| M4b product review (Canvas) | PENDING — deferred by the person on 2026-09-30; revisit before the M4b exit | With block B serving, the person reviews oauth, api-break and `?bundle=soak` in Canvas at Session, Chapter and Step levels against spec §1, §7.5 and `docs/superpowers/specs/2026-09-28-trace-viewer-mockups/canvas-1440.png`, including findings 3 to 5 above, and records the verdict and notes here. |
+
+Block A (risk 2 at 60 Hz):
+
+```bash
+pnpm --filter jevcode-trace-viewer-dev exec vite build --config vite.spike.config.ts
+pnpm --filter jevcode-desktop exec electron "$PWD/apps/trace-viewer-dev/scripts/spike-electron.cjs"
+```
+
+Block B (serve the dev host with the oauth and soak bundles):
+
+```bash
+node apps/trace-viewer-dev/scripts/smoke.mjs --views canvas
+pnpm --filter jevcode-trace-viewer-dev exec vite preview --port 4179 --strictPort
+```
+
+The smoke writes `public/bundles/oauth.json`; the soak bundle must be present at `apps/trace-viewer-dev/public/bundles/soak.json` (regenerate as in the M4a exit H5 row), and `pnpm --filter jevcode-trace-viewer-dev build` must run after copying it.

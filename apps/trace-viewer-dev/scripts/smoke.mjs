@@ -82,6 +82,71 @@ function chrome(profile, args) {
   return result.stdout;
 }
 
+/**
+ * Real-time run over the DevTools protocol (spec §11 allows it when virtual time is flaky): opens `url`, polls
+ * `<pre id="selftest">` until it holds text, returns it parsed. The view-switch selftest needs it: under
+ * `--virtual-time-budget` its paint wait (rAF, then a MessageChannel post) stalls after the third switch.
+ */
+async function chromeSelftest(profile, url, timeoutMs) {
+  rmSync(profile, { recursive: true, force: true });
+  const browser = spawn(
+    CHROME,
+    [
+      "--headless=new",
+      "--disable-gpu",
+      "--hide-scrollbars",
+      "--no-first-run",
+      "--no-default-browser-check",
+      `--user-data-dir=${profile}`,
+      "--window-size=1440,900",
+      "--remote-debugging-port=0",
+      url,
+    ],
+    { stdio: "ignore" },
+  );
+  const deadline = Date.now() + timeoutMs;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let socket;
+  try {
+    const portFile = path.join(profile, "DevToolsActivePort");
+    while (!existsSync(portFile)) {
+      if (Date.now() > deadline) throw new Error("chrome wrote no DevToolsActivePort");
+      await sleep(100);
+    }
+    const port = Number(readFileSync(portFile, "utf8").split("\n")[0]);
+    const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    const page = targets.find((target) => target.type === "page");
+    if (page === undefined) throw new Error("chrome has no page target");
+    socket = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      socket.onopen = resolve;
+      socket.onerror = () => reject(new Error("DevTools socket failed"));
+    });
+    const replies = new Map();
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data));
+      replies.get(message.id)?.(message);
+      replies.delete(message.id);
+    };
+    let id = 0;
+    const evaluate = (expression) =>
+      new Promise((resolve) => {
+        id += 1;
+        replies.set(id, (message) => resolve(message.result?.result?.value));
+        socket.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+      });
+    for (;;) {
+      const text = await evaluate('document.querySelector("pre#selftest")?.textContent ?? ""');
+      if (typeof text === "string" && text.trim() !== "") return JSON.parse(text);
+      if (Date.now() > deadline) throw new Error("the selftest wrote no result");
+      await sleep(250);
+    }
+  } finally {
+    socket?.close();
+    browser.kill("SIGKILL");
+  }
+}
+
 function locationHash(sessionId, view) {
   return `#${encodeURIComponent(JSON.stringify({ v: 1, sessionId, view, level: "chapter", brush: { kind: "session" } }))}`;
 }
@@ -177,6 +242,20 @@ async function main() {
       if (!(result.maxDriftPx <= 1)) problems.push(`drift ${result.maxDriftPx}px`);
       if (problems.length > 0) throw new Error(`${view} selftest: ${problems.join("; ")}`);
       console.log(`${view}: selftest ok (rows ${result.rows}, max drift ${result.maxDriftPx}px)`);
+    }
+    if (options.views.includes("canvas")) {
+      // C3-12 (spec §10 "View switch"): 20 presses of 1/2 must restore the Canvas camera in the switch's frame.
+      const switchResult = await chromeSelftest(
+        path.join(tmp, "chrome-switch"),
+        `${ORIGIN}/?bundle=oauth&selftest=switch${locationHash(sessionId, "canvas")}`,
+        60_000,
+      );
+      if (switchResult.switches !== 20 || switchResult.misses !== 0) {
+        throw new Error(
+          `view switch missed ${switchResult.misses} of ${switchResult.switches}: ${switchResult.details.join("; ")}`,
+        );
+      }
+      console.log(`view switch: ${switchResult.switches} switches, 0 misses`);
     }
     console.log(`SMOKE_OK ${shots} screenshots`);
   } finally {
