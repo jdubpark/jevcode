@@ -172,10 +172,14 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
   const gutterW = narrow ? GUTTER_W_NARROW : GUTTER_W;
   const widthPx = Math.max(0, containerW - gutterW);
 
+  // Starts from the last overview built: marks and bands whose inputs did not change are kept (any earlier overview
+  // works, so a discarded render costs only speed).
+  const lastOverview = useRef<OverviewIndex | undefined>(undefined);
   const overview = useMemo(
-    () => (session === null ? null : buildOverviewIndex(session, index, scale)),
+    () => (session === null ? null : buildOverviewIndex(session, index, scale, lastOverview.current)),
     [session, index, scale],
   );
+  lastOverview.current = overview ?? undefined;
   const limits = useMemo(() => overviewLimits(scale.endU, widthPx), [scale, widthPx]);
 
   const [camera, setCamera] = useState<XOnlyCamera | null>(null);

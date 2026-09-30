@@ -166,6 +166,8 @@ interface IndexState {
   joins: Joins | null;
   /** A later build took the joins. */
   consumed: boolean;
+  /** What this build changed from the index it started from; null for a fresh build. */
+  readonly changes: { readonly entries: ReadonlySet<string>; readonly anchors: ReadonlySet<UnitStableId> } | null;
 }
 
 type CoreState = Omit<IndexState, "turns" | "findingsBySeq" | "findingsById">;
@@ -286,6 +288,7 @@ function freshState(session: TraceSession, work: IndexWork): CoreState {
     incremental: entries.size === steps.length + session.chapters.length,
     joins: null,
     consumed: false,
+    changes: null,
   };
 }
 
@@ -365,6 +368,8 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
   const chapters = session.chapters;
   const entries = prev.entries.fork();
   const anchorOf = prev.anchorOf.fork();
+  /** Ids whose entry this build set or removed: every other entry is the previous index's object. */
+  const changed = new Set<string>();
 
   // Steps: new, moved or replaced objects get a new entry below; a changed firstSeq or lastSeq (or a step that
   // appeared or went) reaches every chapter that lists the step.
@@ -380,12 +385,14 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
       }
       // The position must be current before any chapter reads it; the rest is filled in below.
       entries.set(step.id, { id: step.id, kind: "step", t0: 0, t1: 0, firstSeq: 0, lastSeq: 0, parent: null, position });
+      changed.add(step.id);
     });
     if (kept < before.steps.length) {
       const present = new Set<string>(steps.map((step) => step.id));
       for (const was of before.steps) {
         if (present.has(was.id)) continue;
         entries.delete(was.id);
+        changed.add(was.id);
         seqMoved.push(was.id);
         for (const id of was.chapterIds) dropJoin(stepsOfChapter, id, was.id);
       }
@@ -424,6 +431,7 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
       for (const was of before.chapters) {
         if (present.has(was.id)) continue;
         entries.delete(was.id);
+        changed.add(was.id);
         moveAnchor(was.id, undefined);
         for (const id of was.stepIds) dropJoin(chaptersOfStep, id, was.id);
       }
@@ -441,6 +449,7 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
     const built = chapterEntry(chapter, position, steps, entries, work);
     moveAnchor(chapter.id, built.anchor);
     entries.set(chapter.id, built.entry);
+    changed.add(chapter.id);
   }
 
   // Steps whose parent can change: their own object changed, or a chapter they list moved its anchor.
@@ -452,7 +461,9 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
   }
   for (const position of dirtySteps) {
     const step = steps[position];
-    if (step !== undefined) entries.set(step.id, stepEntry(step, position, anchorOf, work));
+    if (step === undefined) continue;
+    entries.set(step.id, stepEntry(step, position, anchorOf, work));
+    changed.add(step.id);
   }
 
   // byAnchor: the first chapter (by position) at an anchor; currentByAnchor: the current ones by id. Chapters no
@@ -505,6 +516,7 @@ function nextState(prev: IndexState, session: TraceSession, work: IndexWork): Co
     incremental: entries.size === steps.length + chapters.length,
     joins,
     consumed: false,
+    changes: { entries: changed, anchors: anchorMoved },
   };
 }
 
@@ -533,7 +545,24 @@ export function buildTraceIndex(session: TraceSession, previous?: TraceIndex): T
   const index = indexOf(state);
   STATES.set(index, state);
   WORK.set(index, work);
+  if (usable && state.changes !== null && previous !== undefined) CHANGES.set(index, { from: previous, ...state.changes });
   return index;
+}
+
+export interface TraceIndexChanges {
+  /** The index this one was built from. */
+  readonly from: TraceIndex;
+  /** Ids whose entry differs from `from`'s (set or removed); every other id reads the same IndexEntry object. */
+  readonly entries: ReadonlySet<string>;
+  /** Chapters whose anchor (and so chapterKey) differs from `from`'s, or that appeared or went. */
+  readonly anchors: ReadonlySet<UnitStableId>;
+}
+
+const CHANGES = new WeakMap<TraceIndex, TraceIndexChanges>();
+
+/** How `index` differs from the index it was built from; undefined for a fresh build. */
+export function traceIndexChanges(index: TraceIndex): TraceIndexChanges | undefined {
+  return CHANGES.get(index);
 }
 
 function indexOf(state: IndexState): TraceIndex {
