@@ -12,7 +12,7 @@ import { RecordingContext } from "../../../../test-support/recording-context.js"
 import { oauthLikeSession } from "../../../../test-support/session-builder.js";
 import { LIGHT_TOKENS } from "../../../tokens/tokens.js";
 import { OverviewCanvas } from "./OverviewCanvas.js";
-import { laneCenter, paintOverview, STRIP_TOP, type PaintInput } from "./paint.js";
+import { laneCenter, LANES_BOTTOM, paintOverview, STRIP_TOP, type PaintInput } from "./paint.js";
 
 const originalDpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
 const originalMatchMedia = window.matchMedia;
@@ -97,6 +97,55 @@ describe("paintOverview", () => {
     expect(ctx.fillRects(LIGHT_TOKENS.accentSoft).some((op) => op.args[0] === 100 && op.args[1] === STRIP_TOP)).toBe(true);
     expect(ctx.fillRects(LIGHT_TOKENS.accent).some((op) => op.args[0] === 250 && op.args[2] === 1)).toBe(true);
     expect(ctx.ops.filter((op) => op.op === "arc" && op.args[2] === 11)).toHaveLength(2);
+  });
+});
+
+describe("paintOverview bands and strip", () => {
+  const band = (key: string, x0: number, x1: number, tier: 0 | 1 | null) =>
+    ({ key, id: null, x0, x1, title: key, tier, iconOnly: false }) as const;
+
+  it("rounds bands to 6 px and starts each below its label tier", () => {
+    const layout: OverviewLayout = {
+      ...emptyLayout([]),
+      bands: [band("a", 10, 100, 0), band("b", 40, 60, 1), band("c", 200, 300, null)],
+    };
+    const ctx = new RecordingContext();
+    paintOverview(ctx, input(layout));
+    const rounded = ctx.ops.filter((op) => op.op === "roundRect").map((op) => op.args);
+    expect(rounded).toEqual([
+      [10, 18, 90, LANES_BOTTOM - 18, 6],
+      [40, 36, 20, LANES_BOTTOM - 36, 6],
+      [200, 18, 100, LANES_BOTTOM - 18, 6],
+    ]);
+    expect(ctx.fillRects(LIGHT_TOKENS.fill)).toHaveLength(0);
+  });
+
+  it("fills overlapping bands once per tone, so neither fill nor fill-2 stacks", () => {
+    const layout: OverviewLayout = {
+      ...emptyLayout([]),
+      bands: [band("a", 10, 100, 0), band("b", 50, 150, null), band("c", 80, 120, 1), band("sel", 90, 200, null)],
+    };
+    const ctx = new RecordingContext();
+    paintOverview(ctx, input(layout, { emphasizedBands: new Set(["sel"]) }));
+    const fills = ctx.ops.filter((op) => op.op === "fill");
+    expect(fills.filter((op) => op.fillStyle === LIGHT_TOKENS.fill)).toHaveLength(1);
+    expect(fills.filter((op) => op.fillStyle === LIGHT_TOKENS.fill2)).toHaveLength(1);
+    // The plain fill is clipped away from the emphasized band: fill-2 is the only layer there.
+    const clip = ctx.ops.findIndex((op) => op.op === "clip:evenodd");
+    const plain = ctx.ops.findIndex((op) => op.op === "fill" && op.fillStyle === LIGHT_TOKENS.fill);
+    expect(clip).toBeGreaterThanOrEqual(0);
+    expect(clip).toBeLessThan(plain);
+    expect(ctx.ops.slice(0, clip).some((op) => op.op === "roundRect" && op.args[0] === 90)).toBe(true);
+  });
+
+  it("keeps the session strip subtle: no track fill, no outline when the viewport shows everything", () => {
+    const whole = new RecordingContext();
+    paintOverview(whole, input(emptyLayout([]), { strip: { brush: null, playheadX: null, viewport: { x0: 0, x1: 600 } } }));
+    expect(whole.ops.some((op) => op.op === "fillRect" && op.args[1] === STRIP_TOP && op.args[2] === 600)).toBe(false);
+    expect(whole.ops.some((op) => op.op === "strokeRect" && op.args[1] === STRIP_TOP + 0.5)).toBe(false);
+    const part = new RecordingContext();
+    paintOverview(part, input(emptyLayout([]), { strip: { brush: null, playheadX: null, viewport: { x0: 100, x1: 300 } } }));
+    expect(part.ops.some((op) => op.op === "strokeRect" && op.args[1] === STRIP_TOP + 0.5)).toBe(true);
   });
 });
 
