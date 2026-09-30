@@ -39,6 +39,26 @@ export class RecordingContext implements PaintContext {
     this.record("beginPath", []);
   }
 
+  roundRect(x: number, y: number, w: number, h: number, radius: number): void {
+    this.record("roundRect", [x, y, w, h, radius]);
+  }
+
+  rect(x: number, y: number, w: number, h: number): void {
+    this.record("rect", [x, y, w, h]);
+  }
+
+  clip(fillRule: CanvasFillRule = "nonzero"): void {
+    this.record(`clip:${fillRule}`, []);
+  }
+
+  save(): void {
+    this.record("save", []);
+  }
+
+  restore(): void {
+    this.record("restore", []);
+  }
+
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number): void {
     this.record("arc", [x, y, radius, startAngle, endAngle]);
   }

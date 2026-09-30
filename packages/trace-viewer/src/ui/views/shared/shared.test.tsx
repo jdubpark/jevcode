@@ -7,6 +7,7 @@ import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../.
 import { LevelControl } from "./LevelControl.js";
 import { NewBadge } from "./NewBadge.js";
 import { idleLabel, Ruler } from "./Ruler.js";
+import { rulerLabel, rulerTicks } from "./ruler-ticks.js";
 
 let layout: LayoutStub;
 beforeEach(() => {
@@ -19,15 +20,47 @@ afterEach(() => {
 });
 
 describe("Ruler", () => {
-  it("labels ticks at least 64 px apart with real offsets and hatches past the loaded seq", () => {
+  it("labels about every 120 px without a plus sign and hatches past the loaded seq", () => {
     const scale = buildTimeScale({ originMs: 0, work: [[0, 45_000]], awaitingFrom: [] });
     const map: XMap = { xOf: (t) => t / 100, tOf: (x) => x * 100 };
     renderHarness(<Ruler map={map} scale={scale} widthPx={450} loadedThroughT={30_000} />, null);
     const labels = Array.from(screen.getByTestId("ruler").querySelectorAll("[data-tick]")).map((node) => node.textContent);
-    expect(labels).toEqual(["+0:00", "+0:10", "+0:20", "+0:30", "+0:40"]);
+    // 10 px per second: 10 s steps would sit 100 px apart, so the ruler labels every 15 s (150 px), as the mockup does.
+    expect(labels).toEqual(["0:00", "0:15", "0:30", "0:45"]);
     const hatch = screen.getByTestId("ruler-hatch");
     expect(hatch.style.left).toBe("300px");
     expect(hatch.style.width).toBe("150px");
+  });
+
+  it("adds fine unlabeled minor ticks that divide the labeled step", () => {
+    const scale = buildTimeScale({ originMs: 0, work: [[0, 45_000]], awaitingFrom: [] });
+    const map: XMap = { xOf: (t) => t / 100, tOf: (x) => x * 100 };
+    const { ticks } = rulerTicks(map, scale, { x0: 0, x1: 450 });
+    const labeled = ticks.filter((tick) => tick.labeled);
+    const minor = ticks.filter((tick) => !tick.labeled);
+    expect(labeled.map((tick) => tick.tMs)).toEqual([0, 15_000, 30_000, 45_000]);
+    // One tick per second (10 px) between the labels.
+    expect(minor).toHaveLength(46 - 4);
+    expect(ticks.map((tick) => tick.tMs)).toEqual(Array.from({ length: 46 }, (_, i) => i * 1_000));
+    for (let i = 1; i < ticks.length; i += 1) expect((ticks[i]?.x ?? 0) - (ticks[i - 1]?.x ?? 0)).toBeGreaterThanOrEqual(8);
+  });
+
+  it("keeps labels at least 120 px apart at any zoom", () => {
+    const scale = buildTimeScale({ originMs: 0, work: [[0, 3_600_000]], awaitingFrom: [] });
+    for (const pxPerSecond of [0.05, 0.3, 1.3, 7, 9.5, 23, 61]) {
+      const map: XMap = { xOf: (t) => (t / 1_000) * pxPerSecond, tOf: (x) => (x / pxPerSecond) * 1_000 };
+      const labeled = rulerTicks(map, scale, { x0: 0, x1: 1_200 }).ticks.filter((tick) => tick.labeled);
+      expect(labeled.length).toBeGreaterThan(0);
+      for (let i = 1; i < labeled.length; i += 1) {
+        expect((labeled[i]?.x ?? 0) - (labeled[i - 1]?.x ?? 0)).toBeGreaterThanOrEqual(120 - 1e-6);
+      }
+    }
+  });
+
+  it("formats ruler labels as plain offsets", () => {
+    expect(rulerLabel(0)).toBe("0:00");
+    expect(rulerLabel(45_000)).toBe("0:45");
+    expect(rulerLabel(3_723_000)).toBe("1:02:03");
   });
 
   it("formats idle breaks", () => {

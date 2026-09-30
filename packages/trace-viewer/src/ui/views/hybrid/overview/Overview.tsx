@@ -14,11 +14,10 @@ import {
   type BandPlacement,
   type OverviewLayout,
 } from "../../../../layout/overview-layout.js";
-import { computeTicks } from "../../../../layout/ticks.js";
 import { xOnlyXMap } from "../../../../layout/time-scale.js";
 import { brushSeqRange, type TraceIndex } from "../../../../layout/trace-index.js";
 import { fitRange, uToScreenX, type XOnlyCamera, type ZoomLimits } from "../../../../layout/viewport.js";
-import { LANES, type Level, type TraceSession } from "../../../../model/index.js";
+import { displayUntrusted, LANES, type Level, type TraceSession } from "../../../../model/index.js";
 import { Icon } from "../../../icons/Icon.js";
 import { CATEGORY_ICON, LANE_ICON, LANE_LABEL } from "../../../icons/kind-icons.js";
 import { PERF } from "../../../shell/perf.js";
@@ -29,6 +28,7 @@ import { LIGHT_TOKENS } from "../../../tokens/tokens.js";
 import { createViewportController, type ViewportController } from "../../../viewport/controller.js";
 import { LevelControl } from "../../shared/LevelControl.js";
 import { Ruler } from "../../shared/Ruler.js";
+import { rulerTicks } from "../../shared/ruler-ticks.js";
 import { Brush, stepIndexAtX } from "./Brush.js";
 import styles from "./Overview.module.css";
 import { OverviewCanvas, type CanvasSurface } from "./OverviewCanvas.js";
@@ -78,6 +78,63 @@ function elementPerformance(element: Element | null): Performance | null {
   return perf !== undefined && typeof perf.now === "function" ? perf : null;
 }
 
+/** Gap kept between two labels of one tier (matches the layout's label gap). */
+const LABEL_GAP_PX = 8;
+
+/**
+ * Max width per labelled band: a label may run past its own band into free tier space, up to the next label of its
+ * tier (or the lane edge). The layout decides which bands get a label and in which tier (§7.6.1); this only keeps
+ * the DOM from clipping a name the layout said fits.
+ */
+export function bandLabelWidths(bands: readonly BandPlacement[], widthPx: number): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const tier of [0, 1] as const) {
+    const row = bands.filter((band) => band.tier === tier).sort((a, b) => a.x0 - b.x0);
+    row.forEach((band, i) => {
+      const next = row[i + 1];
+      const end = next === undefined ? widthPx : next.x0 - LABEL_GAP_PX;
+      out.set(band.key, Math.max(20, end - Math.max(0, band.x0)));
+    });
+  }
+  return out;
+}
+
+interface FrameKey {
+  overview: OverviewIndex;
+  u0: number;
+  k: number;
+  widthPx: number;
+  level: Level;
+}
+
+/** One layout per (data, camera, width, level): the canvas paint and the DOM overlay share it (perf fix 3). */
+function createFrameCache(): (key: FrameKey) => OverviewLayout {
+  let last: { key: FrameKey; layout: OverviewLayout } | null = null;
+  return (key) => {
+    const hit =
+      last !== null &&
+      last.key.overview === key.overview &&
+      last.key.u0 === key.u0 &&
+      last.key.k === key.k &&
+      last.key.widthPx === key.widthPx &&
+      last.key.level === key.level;
+    if (hit && last !== null) return last.layout;
+    const layout = layoutOverview({
+      overview: key.overview,
+      camera: { mode: "xOnly", u0: key.u0, k: key.k },
+      widthPx: key.widthPx,
+      level: key.level,
+    });
+    last = { key, layout };
+    return layout;
+  };
+}
+
+/** The Shell root: the container whose width sets the 1180 px breakpoint (§7.1 grid, §7.2 gutter). */
+function shellRootOf(element: Element): Element | null {
+  return element.closest("[data-trace-viewer]");
+}
+
 let paintSamples = 0;
 function measurePaint(perf: Performance | null, started: number): void {
   if (perf === null) return;
@@ -108,7 +165,10 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
   const lanesRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
-  const narrow = containerW > 0 && containerW < NARROW_CONTAINER_PX;
+  const [shellW, setShellW] = useState(0);
+  // The gutter follows the Shell container, not the overview: the overview is the Shell minus both side panels.
+  const breakpointW = shellW > 0 ? shellW : containerW;
+  const narrow = breakpointW > 0 && breakpointW < NARROW_CONTAINER_PX;
   const gutterW = narrow ? GUTTER_W_NARROW : GUTTER_W;
   const widthPx = Math.max(0, containerW - gutterW);
 
@@ -134,23 +194,28 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
     // Only whether a seam exists matters; the ref carries the current function.
     [createContext === undefined],
   );
+  const frameOf = useMemo(createFrameCache, []);
   const live = useRef({ overview, scale, level, widthPx, limits, onSettle, brush, playheadSeq, session, index });
   live.current = { overview, scale, level, widthPx, limits, onSettle, brush, playheadSeq, session, index };
 
   useEffect(() => {
     const element = containerRef.current;
     if (element === null) return undefined;
-    const apply = (width: number): void => {
-      if (width > 0) setContainerW(Math.round(width));
+    const shell = shellRootOf(element);
+    const apply = (target: Element, width: number): void => {
+      if (width <= 0) return;
+      if (target === element) setContainerW(Math.round(width));
+      else if (target === shell) setShellW(Math.round(width));
     };
-    apply(element.getBoundingClientRect().width);
+    apply(element, element.getBoundingClientRect().width);
+    if (shell !== null) apply(shell, shell.getBoundingClientRect().width);
     const Observer = element.ownerDocument.defaultView?.ResizeObserver;
     if (typeof Observer !== "function") return undefined;
     const observer = new Observer((entries) => {
-      const entry = entries[0];
-      apply(entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect.width ?? 0);
+      for (const entry of entries) apply(entry.target, entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width);
     });
     observer.observe(element);
+    if (shell !== null) observer.observe(shell);
     return () => observer.disconnect();
   }, []);
 
@@ -180,8 +245,8 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
     if (surface === null || current === null || model === null || s === null) return;
     const perf = elementPerformance(containerRef.current);
     const started = perf?.now() ?? 0;
-    const frame = layoutOverview({ overview: model, camera: current, widthPx: surface.widthPx, level: currentLevel });
-    const ticks = computeTicks(xOnlyXMap(currentScale, current), currentScale, { x0: 0, x1: surface.widthPx }).ticks;
+    const frame = frameOf({ overview: model, u0: current.u0, k: current.k, widthPx: surface.widthPx, level: currentLevel });
+    const ticks = rulerTicks(xOnlyXMap(currentScale, current), currentScale, { x0: 0, x1: surface.widthPx }).ticks;
     const toStrip = (u: number): number => (u / Math.max(currentScale.endU, 1)) * surface.widthPx;
     const range = brushSeqRange(currentBrush, ix);
     const selected = store.get().selection;
@@ -207,7 +272,7 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
       paintPins: PINS_PAINTED_ON_CANVAS,
     });
     measurePaint(perf, started);
-  }, [store]);
+  }, [store, frameOf]);
 
   const moveOverlay = useCallback((next: XOnlyCamera): void => {
     const rendered = renderedRef.current;
@@ -333,9 +398,15 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
   );
 
   const renderLayout = useMemo<OverviewLayout | null>(
-    () => (overview === null || camera === null || widthPx <= 0 ? null : layoutOverview({ overview, camera, widthPx, level })),
-    [overview, camera, widthPx, level],
+    () => (overview === null || camera === null || widthPx <= 0 ? null : frameOf({ overview, u0: camera.u0, k: camera.k, widthPx, level })),
+    [overview, camera, widthPx, level, frameOf],
   );
+  const labelWidths = useMemo(
+    () => (renderLayout === null ? new Map<string, number>() : bandLabelWidths(renderLayout.bands, widthPx)),
+    [renderLayout, widthPx],
+  );
+  const selectedChapter =
+    selection === null ? null : selection.startsWith("unit:") ? selection : (index.entry(selection)?.parent ?? null);
   // `overview` and `widthPx` are not read in the callback body: presetCamera reads them through a ref, so it keeps a
   // stable identity, and these deps re-run it when the data or the width changes. A react-hooks exhaustive-deps lint would flag them as unnecessary.
   const presetK = useMemo(() => presetCamera(level)?.k ?? null, [presetCamera, level, overview, widthPx]);
@@ -399,20 +470,24 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
                 .filter((band) => band.tier !== null)
                 .map((band) => {
                   const chapter = band.id === null ? undefined : session.chapters.find((item) => item.id === band.id);
+                  // Chapter titles embed agent-written paths: neutralise bidi and control characters (lane review I-1).
+                  const title = displayUntrusted(band.title);
                   return (
                     <button
                       key={band.key}
                       type="button"
                       tabIndex={-1}
                       data-overlay-node=""
+                      data-band-label=""
+                      data-on={band.id !== null && band.id === selectedChapter ? "" : undefined}
                       className={styles.bandLabel}
-                      style={{ left: band.x0, top: band.tier === 1 ? 18 : 0, maxWidth: Math.max(20, band.x1 - band.x0) }}
-                      title={band.title}
-                      aria-label={band.title}
+                      style={{ left: band.x0, top: band.tier === 1 ? 18 : 0, maxWidth: labelWidths.get(band.key) ?? 20 }}
+                      title={title}
+                      aria-label={title}
                       onDoubleClick={() => focusBand(band)}
                     >
                       <Icon name={chapter === undefined ? "flag" : CATEGORY_ICON[chapter.category]} size={12} />
-                      {band.iconOnly ? null : <span className={styles.bandTitle}>{band.title}</span>}
+                      {band.iconOnly ? null : <span className={styles.bandTitle}>{title}</span>}
                     </button>
                   );
                 })}

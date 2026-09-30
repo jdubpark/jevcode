@@ -11,6 +11,7 @@ import { useSessionView } from "../session-context.js";
 import {
   buildOutlineRows,
   DEFAULT_OPEN_SECTIONS,
+  fileTitleBudget,
   searchMatches,
   type OutlineRow,
   type OutlineSection,
@@ -42,20 +43,42 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const [query, setQuery] = useState(search?.query ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
+  const [columnW, setColumnW] = useState(0);
+  const fileTitleMax = fileTitleBudget(columnW);
+
+  // Files basenames are cut in the middle to what the column holds (216 px, 200 px under 1180 px).
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return undefined;
+    const apply = (width: number): void => {
+      if (width > 0) setColumnW(Math.round(width));
+    };
+    apply(element.getBoundingClientRect().width);
+    const Observer = element.ownerDocument.defaultView?.ResizeObserver;
+    if (typeof Observer !== "function") return undefined;
+    const observer = new Observer((entries) => {
+      const entry = entries[0];
+      apply(entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect.width ?? 0);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (search === null) setQuery("");
   }, [search]);
 
   const rows = useMemo<OutlineRow[]>(
-    () => (session === null ? [] : buildOutlineRows(session, { open, showAll })),
-    [session, open, showAll],
+    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax })),
+    [session, open, showAll, fileTitleMax],
   );
   const searchIndex = useMemo(() => (session === null ? null : buildSearchIndex(session)), [session]);
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
   const currentChapter = session === null ? undefined : index.chapterAtSeq(playheadSeq)?.id;
 
-  const selectedKey = rows.find((row) => row.t === "item" && row.selId === selection)?.key;
+  const isSelected = (row: OutlineRow): boolean =>
+    row.t === "item" && selection !== null && (row.selId === selection || row.alsoSelects === selection);
+  const selectedKey = rows.find(isSelected)?.key;
   const tabKey =
     focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
 
@@ -64,7 +87,9 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const pinned = useMemo(() => {
     const positions: number[] = [];
     rows.forEach((row, position) => {
-      if (row.key === tabKey || (row.t === "item" && row.selId === selection)) positions.push(position);
+      if (row.key === tabKey || (row.t === "item" && (row.selId === selection || row.alsoSelects === selection))) {
+        positions.push(position);
+      }
     });
     return positions;
   }, [rows, tabKey, selection]);
@@ -268,17 +293,22 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   role="treeitem"
                   aria-level={row.depth + 2}
                   aria-label={row.label}
-                  aria-selected={row.selId === selection}
+                  aria-selected={isSelected(row)}
                   aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
                   data-depth={row.depth}
-                  data-match={matches.has(row.selId) ? "" : undefined}
+                  data-match={
+                    matches.has(row.selId) || (row.alsoSelects !== undefined && matches.has(row.alsoSelects)) ? "" : undefined
+                  }
                   className={styles.row}
                   onClick={() => activate(row)}
                 >
                   <span className={styles.icon}>
                     <Icon name={row.icon} size={14} />
                   </span>
-                  <span className={`${styles.title} ${row.mono ? styles.mono : ""} ${row.muted ? styles.muted : ""}`}>
+                  <span
+                    className={`${styles.title} ${row.mono ? styles.mono : ""} ${row.muted ? styles.muted : ""}`}
+                    title={row.hint}
+                  >
                     {row.title}
                   </span>
                   {row.flag === "x" ? (
@@ -297,7 +327,11 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                       <Icon name="shield" size={12} />
                     </span>
                   ) : null}
-                  {row.graphic === null ? null : <Graphic spec={row.graphic} size="xs" />}
+                  {row.graphic === null ? null : (
+                    <span className={row.section === "files" ? styles.slot : styles.graphic}>
+                      <Graphic spec={row.graphic} size="xs" />
+                    </span>
+                  )}
                   {row.section === "story" ? <span className={styles.offset}>{formatOffset(row.tMs)}</span> : null}
                 </div>
               );
