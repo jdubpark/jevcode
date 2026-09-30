@@ -490,3 +490,61 @@ describe("Spine decision rows", () => {
     expect(article(step?.id ?? "")?.textContent).toContain("Use⟨U+202E⟩ redis");
   });
 });
+
+describe("Spine anchor drift (selftest metric)", () => {
+  /** Articles report their virtual position minus the scroll offset, as a browser would. */
+  function positionedArticles(): () => void {
+    const proto = Element.prototype;
+    const base = proto.getBoundingClientRect;
+    proto.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+      const rect = base.call(this);
+      if (!(this instanceof HTMLElement) || this.tagName !== "ARTICLE") return rect;
+      const y = Number(/translateY\((-?[\d.]+)px\)/.exec(this.style.transform)?.[1] ?? 0) - scroller().scrollTop;
+      return { ...rect, top: y, y, bottom: y + rect.height } as DOMRect;
+    };
+    return () => {
+      proto.getBoundingClientRect = base;
+    };
+  }
+
+  async function driftAfterAppend(readerInput: boolean): Promise<number[]> {
+    layout = stubLayout({ height: 200 });
+    const unpatch = positionedArticles();
+    try {
+      const drifts: number[] = [];
+      const diagnostics = { enabled: true, reportDrift: (px: number) => drifts.push(px), reportError: () => undefined, flush: () => undefined };
+      const apiRef: { current: SpineApi | null } = { current: null };
+      const body = () => <p>finding body</p>;
+      // A fresh element per render: the harness mutates its context value in place.
+      const node = () => (
+        <FindingBodyContext.Provider value={body}>
+          <Spine active apiRef={apiRef} />
+        </FindingBodyContext.Provider>
+      );
+      const h = renderHarness(node(), commandRun(80), { state: { level: "step" }, diagnostics });
+      await settle();
+      drifts.length = 0;
+      if (readerInput) fireEvent.wheel(scroller(), { deltaY: 300 });
+      applySession(h, node(), commandRun(81));
+      // A scroll after the append commits and before the next frame: the reader's own when readerInput, else the viewer's.
+      act(() => {
+        scroller().scrollTop = 300;
+        fireEvent.scroll(scroller());
+      });
+      await settle();
+      return drifts;
+    } finally {
+      unpatch();
+    }
+  }
+
+  it("counts a scroll the viewer made during an append as drift", async () => {
+    const drifts = await driftAfterAppend(false);
+    expect(Math.max(0, ...drifts)).toBeGreaterThan(1);
+  });
+
+  it("does not count a scroll the reader made", async () => {
+    const drifts = await driftAfterAppend(true);
+    expect(Math.max(0, ...drifts)).toBeLessThanOrEqual(1);
+  });
+});
