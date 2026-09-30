@@ -243,7 +243,7 @@ describe("Inspector", () => {
     const tests = session.chapters.find((chapter) => chapter.shortTitle === "Tests · oauth");
     const decision = session.steps.find((step) => step.decision !== undefined)?.decision;
     if (tests === undefined || decision === undefined) throw new Error("fixture changed");
-    renderHarness(<Inspector host={{}} />, session, { state: { selection: claimStepId() } });
+    renderHarness(<Inspector host={{}} />, session, { state: { selection: claimStepId() as `step:${number}` } });
     const rows = [...section("Related").querySelectorAll("button")];
     const chapterRow = rows.find((row) => row.textContent?.startsWith("Tests · oauth"));
     expect(chapterRow?.getAttribute("aria-label")?.startsWith(tests.title)).toBe(true);
