@@ -163,28 +163,30 @@ export function overviewIndexWork(overview: OverviewIndex): OverviewWork | undef
   return WORK.get(overview);
 }
 
-function sameSegment(a: ScaleSegment | undefined, b: ScaleSegment | undefined): boolean {
+/** Two segments that map time to u the same way (toU reads t0, u0, the idle-ness and the span, not the idle reason). */
+function sameMapping(a: ScaleSegment | undefined, b: ScaleSegment | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
-  return (
-    a.t0 === b.t0 && a.t1 === b.t1 && a.u0 === b.u0 && a.u1 === b.u1 &&
-    (a.idle === null ? b.idle === null : b.idle !== null && a.idle.reason === b.idle.reason && a.idle.ms === b.idle.ms)
-  );
+  return a.t0 === b.t0 && a.t1 === b.t1 && a.u0 === b.u0 && a.u1 === b.u1 && (a.idle === null) === (b.idle === null);
 }
 
 /**
- * A time below which both scales map every t to the same u: the start of the first segment where they differ (or the
- * end of the shorter one), or that segment's nearer end when only its end moved. A live scale grows only at its
- * tail, so marks and bands before it keep their u.
+ * A time below which both scales map every t to the same u: the start of the first segment where they differ, or
+ * that segment's nearer end when only its end moved (a live end grows the last gap), or +∞ when they map alike.
+ * Marks and bands that read only times below it keep their u.
  */
 export function stableBeforeT(a: TimeScale, b: TimeScale): number {
   if (a === b) return Number.POSITIVE_INFINITY;
   const n = Math.min(a.segments.length, b.segments.length);
   let k = 0;
-  while (k < n && sameSegment(a.segments[k], b.segments[k])) k += 1;
+  while (k < n && sameMapping(a.segments[k], b.segments[k])) k += 1;
   const sa = a.segments[k];
   const sb = b.segments[k];
-  // The same start and kind: both map t in [t0, the nearer end) by the same formula (a live end grows the last gap).
+  if (sa === undefined && sb === undefined) {
+    // Same segments: past the end, toU is endU + (t − endT).
+    return a.endT === b.endT && a.endU === b.endU ? Number.POSITIVE_INFINITY : Math.min(a.endT, b.endT);
+  }
+  // The same start and kind: both map t in [t0, the nearer end) by the same formula.
   if (sa !== undefined && sb !== undefined && sa.t0 === sb.t0 && sa.u0 === sb.u0 && (sa.idle === null) === (sb.idle === null)) {
     return Math.min(sa.t1, sb.t1);
   }
