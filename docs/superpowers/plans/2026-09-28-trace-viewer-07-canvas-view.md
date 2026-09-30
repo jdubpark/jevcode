@@ -3867,6 +3867,20 @@ Replace the three `<…>` values in the second `-m` with the numbers Step 7 prin
 
 # Part B: lane C3b (wave W3): Canvas view and view switch (M4b)
 
+## Hand-offs from C3a (lane review)
+
+Source: lane review of C3a (`298d3ed..f55a4b9`) and its follow-up commits. Binding for C3-5..C3-12.
+
+- **Live drips place chapters late.** Units arrive after their facts, so under a drip most chapter frames are `late` and sit at the bottom of their time column. The final drip layout matches the spec table by column, not by slot. The oauth table holds only for a fresh layout (open, Tidy, level switch). C3-12's smoke and screenshots must use a fresh load; `?selftest=drip` asserts drift only.
+- **Edge stability is bounded.** Routes are a function of the layout (P5). Edges age by slot placement order (append order in sticky state): an appended edge touching a newly placed frame, late-arrival frames included, never moves an existing edge. An edge added between two already placed frames may re-lane younger edges, and a frame that becomes a hole can change a stacked/rail shape (oauth drip: `decides:decision:dec-oauth-0001>ch:16` rail/1 to stacked). C3-10's "an append leaves every placed frame's rect unchanged" is guaranteed by P6. Assert edge `d` stability only for appends that touch a newly placed frame.
+- **Minimap edges come in world coordinates**, while frames, separators, viewport and strip are already in minimap coordinates. Draw edges under `scale(s) translate(-origin)` with `vector-effect: non-scaling-stroke`.
+- **Edges with `d: null`** (decides/validates without a lane, `stats.hiddenEdges`) are drawn only for the selection via `directPath(a.card, b.card)`. Contradicts always has `d`, including `shape: "direct"`, drawn above the frames with the 3 px halo. `shape: "rail"` with `lane: null` occurs at Session level, which has no decides/validates rail lanes.
+- **`homeFrameKey` rebuilds the context per call** (0.055 ms at 5k steps). Memoize `frameForSelection` per (layout, selection) rather than calling it in the render body on every camera tick, and never call it per step.
+- **Separators carry `turn`.** A queued instruction whose step `tMs` precedes its turn's `tMs` is placed, per spec, in the previous turn's column (item turn = last turn with `tMs <= start`). Label story frames from the frame's own item, not from the column's turn.
+- **Levels and `prev`.** Pass `prev` only for the same level and session; a level switch or Tidy calls `layoutCanvas` without `prev`. Rerun only when `loadedThroughSeq` changes (spec §7.5 complexity note).
+- **Trunk endpoints follow placement order.** A trunk's `from`/`to` are its first and last placed frames, not its (col, row) extremes; ids stay `trunk:turn:N`. Do not derive trunk geometry from `from`/`to` column positions.
+- **Open C3a follow-ups (not blocking):** rails in column 0 draw at x < 0 (`railX` uses gutterLeft = -colGap) while bounds start at x 0, so Fit and the minimap clip them; P9's per-finding edge count assumes no cross-finding dedupe (assert per (from, to)); carried minors: `turnLocator` returns turn 0 before the first turn, `frameBySel` is first-frame-wins, P8's `frameByKey.has(key)` check is tautological, the bench has no frame-count guard, `edge.d ?? ""` in the minimap is dead code.
+
 ### Task C3-5: M4b spike gate: risks 2, 3, 6, 7 passed or ruled; apply rulings
 
 **Files:**
