@@ -204,7 +204,11 @@ describe("Overview band labels", () => {
     const base = foldFixture("oauth");
     const session = {
       ...base,
-      chapters: base.chapters.map(({ shortTitle: _drop, ...chapter }) => ({ ...chapter, title: "a\u202Eb" })),
+      chapters: base.chapters.map((chapter) => {
+        const copy = { ...chapter, title: "a\u202Eb" };
+        delete copy.shortTitle;
+        return copy;
+      }),
     };
     await renderOverview({ state: { level: "session" } }, session);
     const labels = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]"));
