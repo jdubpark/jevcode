@@ -5,7 +5,16 @@ import { buildChapter } from "./fold-chapters.js";
 import { buildEntity } from "./fold-evidence.js";
 import { clockTs, type DisplayClock, type FoldState, type StepDraft, type TurnDraft } from "./fold-state.js";
 import { normalizeCommand, stepHeadline } from "./format.js";
-import { computeCoverage, evaluateSignals, isPlanText, isSuccessClaim, turnMarks, type SignalIndex } from "./signals.js";
+import {
+  buildSignalScan,
+  computeCoverage,
+  evaluateSignals,
+  isPlanText,
+  isSuccessClaim,
+  turnMarks,
+  type SignalIndex,
+  type SignalScan,
+} from "./signals.js";
 import {
   TRACE_SCHEMA_VERSION,
   fileStableId,
@@ -30,7 +39,8 @@ import {
 // since the previous call can change: the steps they touched, the chapters whose joins they reach
 // (by unit id, fact id, call id, validation id, decision id or edited path), and the session-wide
 // fields those feed (step.chapterIds, the validation-only runs, noise, entities, gaps). Signals
-// re-run over the whole session, O(steps) with cheap per-step work. The result always deep-equals
+// re-run over the steps each rule reads (buildSignalScan keeps each kept step's category), so a
+// call reads the changed steps and the runs, edits, claims and guardrails, not every step. The result always deep-equals
 // a fresh fold of the same rows (fold.incremental.test.ts), and:
 //
 // - Nothing a finalize returned is mutated later.
@@ -287,10 +297,12 @@ export interface FinalizeWork {
   /** Chapters whose validation-only runs were re-derived. */
   validationOnly: number;
   entities: number;
+  /** Steps the signal rules categorized anew (buildSignalScan): the others kept their category. */
+  signalSteps: number;
 }
 
 class Derived {
-  work: FinalizeWork = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0 };
+  work: FinalizeWork = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0 };
   readonly steps = new Map<StepDraft, StepRecord>();
   readonly stepsById = new Map<StepId, StepRecord>();
   /** Records in FoldState.steps order. */
@@ -337,6 +349,8 @@ class Derived {
   outSteps: Step[] = [];
   preChapters: Chapter[] = [];
   outChapters: Chapter[] = [];
+  /** The rules' step positions for the previous preSteps: a kept Step keeps its category. */
+  signalScan: SignalScan | undefined = undefined;
 
   constructor(
     readonly live: boolean,
@@ -393,7 +407,7 @@ class Finalizer {
   run(): TraceSession {
     const s = this.s;
     const d = this.d;
-    d.work = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0 };
+    d.work = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0 };
     const live = this.options.live;
     const turnStates = this.turnStates();
     this.removeSteps();
@@ -1157,7 +1171,9 @@ class Finalizer {
     const previous = d.session?.findings;
     const byId = new Map<FindingId, Finding>();
     let changed = previous === undefined;
-    const findings = evaluateSignals({ session: partial, index }, coverage).map((finding, position) => {
+    d.signalScan = buildSignalScan(partial.steps, d.signalScan);
+    d.work.signalSteps = d.signalScan.categorized;
+    const findings = evaluateSignals({ session: partial, index, scan: d.signalScan }, coverage).map((finding, position) => {
       const kept = keep(d.findingById.get(finding.id), finding);
       byId.set(kept.id, kept);
       if (kept !== previous?.[position]) changed = true;

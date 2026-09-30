@@ -9,6 +9,7 @@ import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { accumulateAll, createTraceState, finalize, foldRows, type FinalizeOptions, type TraceState } from "./fold.js";
 import { lastFinalizeWork } from "./fold-finalize.js";
 import type { FoldState } from "./fold-state.js";
+import { buildSignalScan, evaluateSignals, type SignalScan } from "./signals.js";
 import type { TraceSession } from "./types.js";
 
 // finalize is incremental (fold-finalize.ts): it keeps derived state between calls and re-derives
@@ -41,6 +42,7 @@ function checkIncremental(
   const state = createTraceState(meta);
   const returned: { session: TraceSession; copy: TraceSession }[] = [];
   let seen = 0;
+  let scan: SignalScan | undefined;
   batches(rows, cuts).forEach((batch, index) => {
     accumulateAll(state, batch);
     seen += batch.length;
@@ -48,6 +50,9 @@ function checkIncremental(
     const session = finalize(state, options);
     expect(session).toStrictEqual(foldRows(meta, rows.slice(0, seen), options));
     returned.push({ session, copy: structuredClone(session) });
+    // The rules over a scan chained through the previous batch's steps equal the rules over every step.
+    scan = buildSignalScan(session.steps, scan);
+    expect(evaluateSignals({ session, scan }, session.coverage)).toStrictEqual(evaluateSignals({ session }, session.coverage));
   });
   for (const { session, copy } of returned) expect(session).toStrictEqual(copy);
 }
@@ -199,8 +204,8 @@ describe("incremental finalize: identity and work", () => {
     const large = work(1_000);
     // The drip re-emits cu_7 and adds cu_new1: two chapters, two new steps (the edit its hunk
     // joins, the message), one new entity. cu_new1 cites no shared run, so no other chapter or step
-    // is touched, however long the session.
+    // is touched, however long the session. The signal rules categorize only the two new steps.
     expect(large).toEqual(small);
-    expect(large).toEqual({ steps: 2, stepFields: 2, chapters: 2, validationOnly: 2, entities: 1 });
+    expect(large).toEqual({ steps: 2, stepFields: 2, chapters: 2, validationOnly: 2, entities: 1, signalSteps: 2 });
   });
 });
