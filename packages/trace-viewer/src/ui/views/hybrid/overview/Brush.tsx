@@ -131,12 +131,12 @@ export function Brush(props: BrushProps) {
     const maxDx = Math.max(0, stepEndX(session, scale, camera, last) - x1);
     const raw = x - startX;
     const width = toIndex - fromIndex;
-    if (maxDx > 0 && raw >= maxDx) {
+    if (raw > 0 && raw >= maxDx) {
       const from = steps[Math.max(0, last - width)]?.firstSeq ?? 1;
       props.onBrush({ kind: "range", fromSeq: from, toSeq: steps[last]?.firstSeq ?? from });
       return;
     }
-    if (minDx < 0 && raw <= minDx) {
+    if (raw < 0 && raw <= minDx) {
       const from = steps[0]?.firstSeq ?? 1;
       props.onBrush({ kind: "range", fromSeq: from, toSeq: steps[Math.min(last, width)]?.firstSeq ?? from });
       return;
