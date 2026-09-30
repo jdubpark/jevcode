@@ -107,6 +107,21 @@ describe("spine rows on the oauth-like session", () => {
   });
 });
 
+describe("expanded row size estimate follows the anchor rule", () => {
+  it("sizes an expanded evidence row by its own finding, not by the claim that cites it", () => {
+    const session = oauthLikeSession();
+    const claimFinding = session.findings.find((f) => f.ruleId === "claim_contradicted");
+    const run = session.steps.findIndex((s) => s.kind === "test");
+    const runStep = session.steps[run];
+    if (claimFinding === undefined || runStep === undefined) throw new Error("fixture changed");
+    const row: SpineRow = { t: "step", key: runStep.id, step: run, expanded: true };
+    const own = estimateSpineRowSize(row, session);
+    // The fold attaches the claim to its evidence step too (signals.ts); the builder attaches anchors only.
+    runStep.findingIds.push(claimFinding.id);
+    expect(estimateSpineRowSize(row, session)).toBe(own);
+  });
+});
+
 describe("Jev review groups at Chapter level (visual audit 1-1)", () => {
   // The oauth tail: warning clamps with findings interleaved with attention and info-only clamps.
   const tail: StepSeed[] = [

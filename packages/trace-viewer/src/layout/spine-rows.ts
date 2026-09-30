@@ -1,10 +1,10 @@
 import {
   LANES,
-  type Finding, type Lane, type Level, type NoiseReason, type Severity, type SignalId, type Step, type StepId, type StepKind,
+  type Finding, type FindingId, type Lane, type Level, type NoiseReason, type Severity, type SignalId, type Step, type StepId, type StepKind,
   type TraceSession, type UnitStableId,
 } from "../model/index.js";
 import { BREAK_MIN_MS, type IdleReason, type TimeScale } from "./time-scale.js";
-import { stepTone, worstSeverity, type Tone } from "./tone.js";
+import { anchoredFindings, stepTone, worstSeverity, type Tone } from "./tone.js";
 import { brushSeqRange, isStepExpanded, type Brush, type SelectionId, type TraceIndex } from "./trace-index.js";
 
 export type SpineRow =
@@ -55,9 +55,6 @@ const FINDING_ROW_PX: { readonly [K in SignalId]: number } = {
 };
 const EXPANDED_ROW_PX = 96;
 const SEVERITY_RANK: { readonly [S in Severity]: number } = { info: 0, warning: 1, critical: 2 };
-const RULE_RANK: { readonly [K in SignalId]: number } = {
-  claim_contradicted: 0, destructive_command: 1, failing_tests: 2, guardrail_clamp: 3, recovery_arc: 4,
-};
 
 const EDIT_ADJECTIVE: Partial<Record<NoiseReason, string>> = {
   lockfile: "lockfile", formatting: "formatting", superseded: "superseded", duplicate_poll: "repeated",
@@ -380,14 +377,16 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
   return out;
 }
 
+const findingsByIdCache = new WeakMap<TraceSession, ReadonlyMap<FindingId, Finding>>();
+
+/** The finding an expanded step row renders: its first anchored finding (StepRow's rule, via anchoredFindings). */
 function firstFinding(step: Step, session: TraceSession): Finding | undefined {
-  let best: Finding | undefined;
-  for (const finding of session.findings) {
-    if (!step.findingIds.includes(finding.id)) continue;
-    if (best === undefined || SEVERITY_RANK[finding.severity] > SEVERITY_RANK[best.severity]
-      || (finding.severity === best.severity && RULE_RANK[finding.ruleId] < RULE_RANK[best.ruleId])) best = finding;
+  let byId = findingsByIdCache.get(session);
+  if (byId === undefined) {
+    byId = new Map(session.findings.map((finding) => [finding.id, finding]));
+    findingsByIdCache.set(session, byId);
   }
-  return best;
+  return anchoredFindings(step, byId)[0];
 }
 
 /** 32 for step/chapter/noise/elided, 24 for separators, per signal for expanded finding rows (124 for claim_contradicted). */
