@@ -119,7 +119,7 @@ The full soak takes about 11 minutes; run it in the background.
 
 ## Trace viewer (spec §10, R26), recorded at the M5 exit
 
-Reference machine: Mac15,11, Apple M3 Max, 36 GiB (38,654,705,664 bytes), macOS 27.0.1, Node v22.23.1, Electron 33.4.11, display at 60 Hz. Single-run budgets: median of 5 runs after 1 discarded warm-up. p95 budgets: at least 300 samples. M4a values are copied from `docs/spikes/trace-viewer-spike.md` ("M4a exit"; headless Chrome on a machine with load average 4 to 8, so provisional pending H5). M4b exit: PENDING (lane C3b); the orchestrator refreshes the M4b rows at merge. The M5 soak-open runs below ran with 1-minute load averages of 4.9 to 6.6 (`uptime` before and after each run) on a shared machine.
+Reference machine: Mac15,11, Apple M3 Max, 36 GiB (38,654,705,664 bytes), macOS 27.0.1, Node v22.23.1, Electron 33.4.11, display at 60 Hz. Single-run budgets: median of 5 runs after 1 discarded warm-up. p95 budgets: at least 300 samples. M4a values are copied from `docs/spikes/trace-viewer-spike.md` ("M4a exit"; headless Chrome on a machine with load average 4 to 8, so provisional pending H5). M4b exit: PENDING (lane C3b); the orchestrator refreshes the M4b rows at merge. The M5 soak-open runs below ran on a shared machine: the D-8 runs at 1-minute load averages of 4.9 to 6.6, and the runs after the full-load fix at 5.72 to 7.21 (`uptime` before and after each run).
 
 | Budget | Target | Gate | Measured | Status | Measured by |
 |---|---|---|---|---|---|
@@ -134,12 +134,12 @@ Reference machine: Mac15,11, Apple M3 Max, 36 GiB (38,654,705,664 bytes), macOS 
 | Canvas pinch at Step level | ≤ 5% frames dropped | M4b | M4b exit: PENDING (lane C3b) | PENDING | spike harness, spike doc "M4b exit" |
 | View switch | restored in the toggle's frame; never a 0 × 0 fit | M4b | M4b exit: PENDING (lane C3b) | PENDING | HUD, spike doc "M4b exit" |
 | Live tick (poll apply + selectors + commit) | p95 ≤ 16 ms | M5 | PENDING — deferred by the person on 2026-09-30; revisit before the M5 exit (steps below) | PENDING | dev host `?bundle=soak&perf=1&drip=20,1000,-2000`, plus the mock-adapter trace window (`JEVCODE_TRACE_PERF=1`) |
-| Soak open in the Electron trace window, first paint (trace profile) | ≤ 500 ms | M5 | 218 ms, median of runs 1 to 5 (231, 216, 218, 220, 217; run 0 warm-up 234) | PASS | `JEVCODE_SMOKE=1 JEVCODE_SMOKE_TRACE=1 JEVCODE_DB=<copy of the kept soak DB>` |
-| Soak open in the Electron trace window, full load (trace profile) | ≤ 3,000 ms | M5 | 4,571 ms, median of runs 1 to 5 (4,618, 4,571, 4,579, 4,232, 4,268; run 0 warm-up 4,242) | FAIL (1,571 ms over budget; every run 4,232 to 4,618 ms) | same |
+| Soak open in the Electron trace window, first paint (trace profile) | ≤ 500 ms | M5 | 294 ms, median of runs 1 to 5 (294, 288, 280, 294, 294; run 0 warm-up 289), after the full-load fix; 218 ms at D-8 before it | PASS | `JEVCODE_SMOKE=1 JEVCODE_SMOKE_TRACE=1 JEVCODE_DB=<copy of the kept soak DB>` |
+| Soak open in the Electron trace window, full load (trace profile) | ≤ 3,000 ms | M5 | 2,858 ms, median of runs 1 to 5 (2,860, 2,840, 2,858, 2,729, 2,875; run 0 warm-up 2,681), after the full-load fix; 4,571 ms at D-8 before it | PASS (142 ms under budget at load average 5.7 to 7.2; every run 2,729 to 2,875 ms) | same |
 
 Soak bundle: `traceRows` 110,962, `consumedRows` 110,962 (the export holds 110,962 rows; the soak's own JSON line was lost to the brief's `| tail -1`, which kept only the "kept the database" line, so `traceRows` is the exported bundle's row count and `consumedRows` equals it by `scripts/soak.mjs`). The kept database is 674,414,592 bytes and the bundle 217,837,514 bytes. Soak run: 2026-10-01, 00:35 to 00:53.
 
-Soak-open runs (each an Electron boot on a fresh copy of the kept database):
+Soak-open runs (each an Electron boot on a fresh copy of the kept database). D-8, before the full-load fix:
 
 ```
 run 0: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=234 full_load_ms=4242
@@ -150,7 +150,27 @@ run 4: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=220 full_load
 run 5: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=217 full_load_ms=4268
 ```
 
-Every run ended with `SMOKE_OK` and no `SMOKE_FAIL`. `rows` is the count folded at `TRACE_READY` (the first committed page), not the session total. The full-load miss blocks the M5 exit (spec §10 "Gate"); it is escalated with this record. Spec §10's first remedy is incremental appends in the selectors. The desktop path pays the IPC page round trips and structured clones for 110,962 rows on top of the dev host's 965 ms bundle parse and fold (the dev host's clock starts at `tv:bundle-parsed`); the Electron `tv:full-load` mark starts at navigation.
+After the full-load fix (2026-10-01, 01:21 to 01:23; 1-minute load average before each run 6.85, 6.42, 6.29, 5.80, 6.44, 7.21, and 6.43 after the last):
+
+```
+run 0: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=289 full_load_ms=2681
+run 1: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=294 full_load_ms=2860
+run 2: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=288 full_load_ms=2840
+run 3: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=280 full_load_ms=2858
+run 4: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=294 full_load_ms=2729
+run 5: SMOKE_TRACE session=sess-soak-0001 rows=3905 first_paint_ms=294 full_load_ms=2875
+```
+
+Every run ended with `SMOKE_OK` and no `SMOKE_FAIL`. `rows` is the count folded at `TRACE_READY` (the first committed page), not the session total. The Electron `tv:full-load` mark starts at navigation; the dev host's clock starts at `tv:bundle-parsed`.
+
+Why the trace window was slower than the dev host, measured with temporary timers and a Chromium trace (details in the lane's `full-load-investigation.md`):
+
+- **Page count.** The reader's 2 MiB payload bound, not the 5,000-row limit, sets the page size: the soak session arrives in 100 pages (632 to 4,652 rows each), about 210 MB after clipping. The dev host's static source has no byte bound and serves 23 pages.
+- **Serial round trips.** Each page cost about 21 ms: about 10 ms in main (reader 5, `toTraceRow` 3, serialize 2), then about 9 ms in the renderer before the next request could go out (structured-clone deserialize about 2.5 ms, contextBridge copy about 5 to 6 ms). Main and renderer each sat idle while the other worked: 100 pages x 21 ms is about 2.1 s. The renderer waited 3.1 to 3.3 s in total on `trace:rows` although main needed only about 1.0 s.
+- **Re-deriving per commit.** Each commit runs `finalize` over the whole fold (about 185 ms at 110,962 rows), then the Shell's index, overview and outline rows and React render. At 4 commits per second over a 4 s load that was 10 to 12 commits and about 1.4 s. Commits scale with rows x load time, not rows x pages. Without progressive commits (one experiment) the old path still took 3.0 s.
+- `tv:full-load` is marked at the right point (the paint after the commit with `loadedFraction` 1), and the caught-up commit waited 0 to 4 ms on the throttle.
+
+The fix, in three parts: the DataController requests the next page as soon as a page arrives, before it folds, commits and yields (one request ahead; generation checks and the untrusted-row guards unchanged); main's `trace:rows` handler reads the page after a full page once the reply is posted and serves it to the matching request within one poll period (`createRowsReadAhead`, 99 of 99 hits on the soak); and while catching up a progressive commit waits at least 4 times the previous `finalize` (still at most 4 per second), while the caught-up commit waits only the 250 ms cap and replaces a pending progressive one. Commits fell to 6. First paint rose from 218 to 294 ms (the next page now arrives while the first commit renders) and stays under its 500 ms budget.
 
 PENDING human checks for the M5 exit (all deferred by the person on 2026-09-30; revisit before the M5 exit). The automated preparation is done: the soak bundle is copied to `apps/trace-viewer-dev/public/bundles/soak.json` (git-ignored) and the dev host is built; the scratch repository exists at `$TMPDIR/jevcode-m5-repo`.
 
