@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { layoutCanvas, type CanvasFrame } from "../../../layout/canvas-layout.js";
+import { buildMinimap } from "../../../layout/canvas-minimap.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { describeGraphic, type Step, type TraceSession } from "../../../model/index.js";
 import { buildCanvasSession, canvasScale, oauthCanvasSession, oauthReplaySession } from "../../../test-support/canvas-arbitraries.js";
 import {
   buildFrameContext,
   CARD_FILE_ROWS,
+  criticalFrameKeys,
   fillRowCount,
   frameApprox,
   frameEnd,
@@ -302,6 +304,16 @@ describe("a shared validation run (replay-shaped oauth, lane review I-1, I-2)", 
   it("is red only in the owning chapter and the contradicted claim", () => {
     const bad = replayLayout.frames.filter((candidate) => frameTone(candidate, replayCtx) === "bad");
     expect(bad.map((candidate) => candidate.item === "claim" ? "claim" : candidate.selId).toSorted()).toEqual(["claim", OWNER]);
+  });
+
+  it("marks only the owning chapter and the claim critical in the minimap (its strip reads the same set)", () => {
+    const critical = criticalFrameKeys(replayLayout, replayCtx);
+    const claim = replayLayout.frames.find((candidate) => candidate.item === "claim");
+    expect([...critical].toSorted()).toEqual([claim?.key, replayFrame(OWNER).key].toSorted());
+    const minimap = buildMinimap(replayLayout, { viewportWorld: replayLayout.bounds, selectedKey: null, criticalKeys: critical });
+    const marks = new Map(minimap.frames.map((mini) => [mini.key, mini.mark]));
+    expect(marks.get(replayFrame(PACKAGE).key)).toBe("frame");
+    expect(marks.get(replayFrame(OWNER).key)).toBe("critical");
   });
 
   it("stays out of another chapter's fill rows, step count and time span", () => {

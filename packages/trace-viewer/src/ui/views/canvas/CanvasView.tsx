@@ -4,7 +4,6 @@ import type React from "react";
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
 import type { CanvasEdge } from "../../../layout/canvas-routes.js";
 import type { TimeScale } from "../../../layout/time-scale.js";
-import { worstSeverity } from "../../../layout/tone.js";
 import type { SelectionId, TraceIndex } from "../../../layout/trace-index.js";
 import { screenToWorld, setCenter, worldToScreen, type Point, type Size, type UniformCamera } from "../../../layout/viewport.js";
 import type { Level, TraceSession } from "../../../model/index.js";
@@ -33,7 +32,7 @@ import {
 import { canvasReadingOrder, createCanvasPort, frameForSelection, tailFrame } from "./canvas-port.js";
 import { CanvasRuler } from "./CanvasRuler.js";
 import styles from "./CanvasView.module.css";
-import { buildFrameContext, frameEnd, frameRunning, frameStart, frameSteps, zoomBand } from "./frame-label.js";
+import { buildFrameContext, criticalFrameKeys, frameEnd, frameRunning, frameStart, zoomBand } from "./frame-label.js";
 import { Minimap } from "./Minimap.js";
 import { Overlay } from "./Overlay.js";
 import { CANVAS_SETTLE_ROUND_K, CULL_FRAMES, INV_K_EVERY_FRAME } from "./spike-rulings.js";
@@ -673,15 +672,11 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   );
   const selectedKey = selectedFrame?.key ?? null;
 
-  // Anchor rule (lessons W2): a frame is critical only through findings anchored at its steps.
-  const criticalKeys = useMemo(() => {
-    const keys = new Set<string>();
-    if (layout === null || ctx === null) return keys;
-    for (const frame of layout.frames) {
-      if (frameSteps(frame, ctx).some((step) => worstSeverity(step, ctx.findingsById) === "critical")) keys.add(frame.key);
-    }
-    return keys;
-  }, [layout, ctx]);
+  // The minimap's critical outlines and strip ticks are the frames the main view paints red (lane review I-1).
+  const criticalKeys = useMemo(
+    () => (layout === null || ctx === null ? new Set<string>() : criticalFrameKeys(layout, ctx)),
+    [layout, ctx],
+  );
 
   const problemTs = useMemo(() => {
     if (session === null) return [];

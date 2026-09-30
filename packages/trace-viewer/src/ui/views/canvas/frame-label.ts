@@ -183,6 +183,16 @@ function toneOf(ctx: FrameContext, own: readonly Step[]): "bad" | "neutral" {
 }
 
 /**
+ * The minimap's critical outlines and strip ticks (lane review I-1): exactly the frames the main view paints red, so
+ * a shared failed run marks only the chapter that owns it. One pass per (layout, ctx); the caller memoizes it.
+ */
+export function criticalFrameKeys(layout: { readonly frames: readonly CanvasFrame[] }, ctx: FrameContext): Set<string> {
+  const keys = new Set<string>();
+  for (const frame of layout.frames) if (frameTone(frame, ctx) === "bad") keys.add(frame.key);
+  return keys;
+}
+
+/**
  * "shield" is always neutral: a bad clamp (a guardrail problem, layout/tone.ts) makes a member step bad, and a bad
  * frame reads "failed" first. Warning and info clamps stay neutral, as in the Outline.
  */
