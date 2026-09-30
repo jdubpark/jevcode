@@ -1,0 +1,198 @@
+.app {
+  display: grid;
+  grid-template-rows: 36px 1fr;
+  height: 100vh;
+  font: 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: #16181D;
+  background: #FFFFFF;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  box-shadow: 0 1px 0 rgb(16 24 40 / 0.07);
+}
+
+.bar button {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(16 24 40 / 0.04);
+  color: #16181D;
+}
+
+.bar button[aria-pressed="true"] {
+  background: rgb(47 107 255 / 0.10);
+  color: #1F5EF0;
+}
+
+.meta { font-size: 12px; color: #676D78; }
+
+.canvasRoot {
+  display: grid;
+  grid-template-rows: 28px 1fr;
+  min-height: 0;
+}
+
+.ruler {
+  position: relative;
+  overflow: hidden;
+  background: #FFFFFF;
+  box-shadow: 0 1px 0 rgb(16 24 40 / 0.07);
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 28px;
+  padding-left: 4px;
+  border-left: 1px solid #9AA0AB;
+  font-size: 12px;
+  line-height: 28px;
+  color: #676D78;
+  white-space: nowrap;
+}
+
+.viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  background-color: #F4F5F7;
+  background-image: radial-gradient(#9AA0AB 1px, transparent 1px);
+  background-size: 24px 24px;
+  outline: none;
+}
+
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.edge { fill: none; stroke: #9AA0AB; stroke-width: calc(1.5px * var(--tv-inv-k, 1)); }
+.edgeBad { fill: none; stroke: #E5484D; stroke-width: calc(1.5px * var(--tv-inv-k, 1)); }
+
+.frame, .story {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05);
+  outline: none;
+}
+
+.frame:focus-visible, .story:focus-visible { box-shadow: 0 0 0 2px #2F6BFF; }
+
+.title {
+  display: inline-block;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 18px;
+  color: #16181D;
+}
+
+.rows {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rows li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  height: 24px;
+}
+
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #7C828E; }
+
+.mono {
+  overflow: hidden;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: #5B616E;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference {
+  position: fixed;
+  top: 48px;
+  right: 24px;
+  display: inline-block;
+  padding: 0;
+  background: #FFFFFF;
+  font-weight: 500;
+  color: #16181D;
+  white-space: nowrap;
+}
+
+.overview {
+  position: relative;
+  height: 288px;
+  overflow: hidden;
+  background: #F4F5F7;
+}
+
+.overviewCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 288px;
+}
+
+.pin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05);
+  font-size: 12px;
+  color: #5B616E;
+}
+
+.pinBad { color: #CE2C31; }
+
+.switch {
+  display: grid;
+  grid-template-rows: 36px 1fr;
+  min-height: 0;
+}
+
+.dummy {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  background: #F4F5F7;
+}
+
+.marker {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  width: 2px;
+  height: 120px;
+  background: #2F6BFF;
+}
