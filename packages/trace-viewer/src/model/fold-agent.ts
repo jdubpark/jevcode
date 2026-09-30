@@ -5,6 +5,7 @@ import {
   addRowToStep,
   createStep,
   currentTurn,
+  indexCallId,
   openTurn,
   setKind,
   touchTurn,
@@ -183,7 +184,7 @@ function closeCall(
   if (!observed) step.provenance = "inferred";
   if (callId !== undefined && step.callId === undefined) {
     step.callId = callId;
-    state.stepsByCallId.set(callId, step);
+    indexCallId(state, callId, step);
   }
   if (event.type === "tool_completed") {
     step.status = "ok";
@@ -207,7 +208,7 @@ function foldClaim(
     existing.actor = "agent";
     if (event.callId !== undefined && existing.callId === undefined) {
       existing.callId = event.callId;
-      state.stepsByCallId.set(event.callId, existing);
+      indexCallId(state, event.callId, existing);
     }
     return;
   }

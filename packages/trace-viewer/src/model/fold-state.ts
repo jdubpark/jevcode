@@ -191,8 +191,12 @@ export class FoldState {
   readonly clock: DisplayClock;
   readonly steps: StepDraft[] = [];
   readonly stepById = new Map<StepId, StepDraft>();
-  /** Every step that carries a callId (open or closed). */
+  /** callId -> the latest step that took it (open or closed); used for start/complete pairing and
+   *  evidence attach. */
   readonly stepsByCallId = new Map<string, StepDraft>();
+  /** callId -> every step that took it, in fold order. A Codex file_change item gives the same
+   *  callId to one file_changed per path, so a chapter join needs all of them (spec §6.6 join). */
+  readonly allStepsByCallId = new Map<string, StepDraft[]>();
   /** The latest user message since the last decision row: a candidate decision answer (R25). */
   pendingAnswer: PendingAnswer | null = null;
   /** User instruction steps that no agent_started has delivered yet, oldest first (spec §6.6). */
@@ -330,8 +334,16 @@ export function createStep(state: FoldState, turn: TurnDraft, ctx: RowContext, i
   state.steps.push(step);
   state.stepById.set(step.id, step);
   turn.stepIds.push(step.id);
-  if (init.callId !== undefined) state.stepsByCallId.set(init.callId, step);
+  if (init.callId !== undefined) indexCallId(state, init.callId, step);
   return step;
+}
+
+/** Records that a step took a callId: the latest step for pairing, and every step for joins. */
+export function indexCallId(state: FoldState, callId: string, step: StepDraft): void {
+  state.stepsByCallId.set(callId, step);
+  const list = state.allStepsByCallId.get(callId);
+  if (list === undefined) state.allStepsByCallId.set(callId, [step]);
+  else if (!list.includes(step)) list.push(step);
 }
 
 /** Folds one more row into a step. Rows arrive in ascending seq, so seqs stay sorted. */
