@@ -68,9 +68,59 @@ function validationOnlyOf(frame: CanvasFrame, ctx: FrameContext): ReadonlySet<st
  * time nor tone it, as the Hybrid band footprint skips it (spec §6.6, §7.6.1). Every per-frame surface reads this.
  */
 export function ownSteps(frame: CanvasFrame, ctx: FrameContext): Step[] {
-  const steps = frameSteps(frame, ctx);
+  // frameSteps less validationOnly, without first collecting the shared runs: a soak noise stack's ~120 members link
+  // ~4,000 steps, 31 of each member's 33 validation-only.
   const validationOnly = validationOnlyOf(frame, ctx);
-  return validationOnly.size === 0 ? steps : steps.filter((step) => !validationOnly.has(step.id));
+  const out: Step[] = [];
+  const seen = new Set<string>();
+  for (const selId of frame.memberSelIds) {
+    const chapter = ctx.chapterById.get(selId);
+    for (const id of chapter === undefined ? [selId] : chapter.stepIds) {
+      if (validationOnly.has(id) || seen.has(id)) continue;
+      const step = ctx.stepById.get(id);
+      if (step === undefined) continue;
+      seen.add(id);
+      out.push(step);
+    }
+  }
+  return out.sort((a, b) => a.firstSeq - b.firstSeq);
+}
+
+/** Per-context step sets for the whole-layout passes (criticalFrameKeys, the running check): one pass over the steps. */
+interface StepSets {
+  bad: ReadonlySet<string>;
+  running: ReadonlySet<string>;
+}
+
+const stepSetsCache = new WeakMap<FrameContext, StepSets>();
+
+function stepSets(ctx: FrameContext): StepSets {
+  const cached = stepSetsCache.get(ctx);
+  if (cached !== undefined) return cached;
+  const bad = new Set<string>();
+  const running = new Set<string>();
+  for (const step of ctx.stepById.values()) {
+    if (stepTone(step, ctx.findingsById) === "bad") bad.add(step.id);
+    if (step.endTMs === null) running.add(step.id);
+  }
+  const sets = { bad, running };
+  stepSetsCache.set(ctx, sets);
+  return sets;
+}
+
+/** True when one of the frame's own steps (ownSteps) is in `ids`, without listing them. */
+function hasOwnStepIn(frame: CanvasFrame, ctx: FrameContext, ids: ReadonlySet<string>): boolean {
+  if (ids.size === 0) return false;
+  let validationOnly: ReadonlySet<string> | undefined;
+  for (const selId of frame.memberSelIds) {
+    const chapter = ctx.chapterById.get(selId);
+    for (const id of chapter === undefined ? [selId] : chapter.stepIds) {
+      if (!ids.has(id) || ctx.stepById.get(id) === undefined) continue;
+      validationOnly ??= validationOnlyOf(frame, ctx);
+      if (!validationOnly.has(id)) return true;
+    }
+  }
+  return false;
 }
 
 export function frameStart(frame: CanvasFrame, ctx: FrameContext): number {
@@ -177,7 +227,7 @@ export function frameIcon(frame: CanvasFrame, ctx: FrameContext): IconName {
  * and neither does a test run the chapter reaches only through a shared validation (Chapter.validationOnlyStepIds).
  */
 export function frameTone(frame: CanvasFrame, ctx: FrameContext): "bad" | "neutral" {
-  return toneOf(ctx, ownSteps(frame, ctx));
+  return hasOwnStepIn(frame, ctx, stepSets(ctx).bad) ? "bad" : "neutral";
 }
 
 function toneOf(ctx: FrameContext, own: readonly Step[]): "bad" | "neutral" {
@@ -267,7 +317,7 @@ function labelOf(
 
 /** True when an own step is still running: only such a frame needs the 1 Hz `nowMs` tick (C3-7, C3-10). */
 export function frameRunning(frame: CanvasFrame, ctx: FrameContext): boolean {
-  return ownSteps(frame, ctx).some((step) => step.endTMs === null);
+  return hasOwnStepIn(frame, ctx, stepSets(ctx).running);
 }
 
 /** A problem by the anchor rule: the step is bad, or anchors a finding. A finding it only cites does not count. */
