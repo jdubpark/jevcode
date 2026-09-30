@@ -623,7 +623,7 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 | Trace read: full soak session in main / one `trace:rows` call | ≤1.5s / ≤50ms p95 |
 | Trace model: fold of 75k rows / one appended row (benchmark) | ≤500ms / ≤2ms |
 | Trace viewer (dev host): soak first paint / full load | ≤300ms / ≤2s |
-| Trace viewer: `j` to painted | ≤16.7ms p95 of work |
+| Trace viewer: `j` to painted (keydown to next painted frame) | ≤16.7ms p95 |
 | Trace viewer: overview layout + paint at Session level | ≤4ms p95, ≤150 overlay nodes |
 | Trace viewer: anchor drift on append | ≤1px |
 | Trace viewer: canvas layout fresh / sticky (benchmark) | ≤2ms / ≤0.5ms |
@@ -632,7 +632,7 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 | Trace viewer: live tick (poll apply + selectors + commit) | ≤16ms p95 |
 | Trace window: soak open, first paint / full load | ≤500ms / ≤3s |
 
-Measured values and their methods live in `docs/perf.md`. Trace window soak open, 2026-10-01: first paint 294 ms / full load 2,858 ms (median of runs 1 to 5 on the 110,962-row soak session, 1-minute load average 5.7 to 7.2), PASS; 218 ms / 4,571 ms before the full-load fix.
+Measured values and their methods live in `docs/perf.md`.
 
 ## 14. Telemetry & Calibration (`packages/telemetry`)
 

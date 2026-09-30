@@ -5,7 +5,7 @@ import path from "node:path";
 import type { TraceRow, TraceRowsPage, TraceSessionSummary } from "@jevcode/contracts";
 import { openDb, openTraceReader } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IpcError } from "../shared/errors.js";
 import { parseToMain } from "../shared/ipc-registry.js";
@@ -260,7 +260,8 @@ describe("trace:rows read-ahead", () => {
     expect(last.rows.map((row) => row.seq)).toEqual([5]);
     // A last page (nextAfterSeq null) reads nothing ahead: a caught-up viewer polls instead.
     expect(f.deferred).toHaveLength(0);
-    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2, 4]);
+    // The read-ahead at 4 found a short page, which is not held, so the request reads it fresh.
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2, 4, 4]);
   });
 
   it("reads directly for any other request, a held page older than one poll period, or a second ask", () => {
@@ -301,5 +302,43 @@ describe("trace:rows read-ahead", () => {
     expect(() => g.runDeferred()).not.toThrow();
     g.control.failAt = 2;
     expect(() => g.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 })).toThrow("database is locked");
+  });
+  it("keeps one slot per sender, so two loaders do not evict each other", () => {
+    const f = fakeService();
+    f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 }, 1);
+    f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 }, 2);
+    f.runDeferred();
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 0, 2, 2]);
+    expect(f.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 }, 1).rows.map((row) => row.seq)).toEqual([3, 4]);
+    expect(f.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 }, 2).rows.map((row) => row.seq)).toEqual([3, 4]);
+    // Both were served from their own slot: no direct read of afterSeq 2 beyond the two read-aheads.
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 0, 2, 2]);
+  });
+
+  it("frees a held page after one poll period even if no request arrives", () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeService();
+      f.rows({ sessionId: SESSION, afterSeq: 0, limit: 2 }, 1);
+      f.runDeferred();
+      vi.advanceTimersByTime(1_000);
+      // The injected clock never moved, so only the timer can have dropped the slot.
+      f.rows({ sessionId: SESSION, afterSeq: 2, limit: 2 }, 1);
+      expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 2, 2]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds only full pages, so a short last page is always read fresh", () => {
+    const f = fakeService();
+    // Page [1,2,3] is full; the read-ahead at afterSeq 3 returns the short page [4,5].
+    f.rows({ sessionId: SESSION, afterSeq: 0, limit: 3 });
+    f.runDeferred();
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 3]);
+    f.control.lastSeq = 9;
+    const last = f.rows({ sessionId: SESSION, afterSeq: 3, limit: 3 });
+    expect(last.lastSeq).toBe(9);
+    expect(f.reads.map((read) => read.afterSeq)).toEqual([0, 3, 3]);
   });
 });
