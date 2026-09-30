@@ -136,6 +136,7 @@ export const NOISE_REASONS = [
   "formatting",
   "duplicate_poll",
   "lifecycle",
+  "pipeline",
   "superseded",
   "passing_test",
 ] as const;
