@@ -144,22 +144,27 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
       const pre = preClampAttention(input);
 
       if (pre.forced.shouldSurface === false) {
-        const log = buildJevDecisionRecord({
-          sessionId: deps.sessionId,
-          changeUnitId: unit.id,
-          inputHash: hashInput(input),
-          output: {
-            shouldSurface: false,
+        // The client did answer this unit; the guardrail overrode it. Log who
+        // answered and how sure it was, not a synthetic degrade at 1.0.
+        const log: JevDecisionLog = {
+          ...buildJevDecisionRecord({
+            sessionId: deps.sessionId,
+            changeUnitId: unit.id,
+            inputHash: hashInput(input),
+            output: {
+              shouldSurface: false,
+              clamps: pre.clamps,
+              guardrailSuppression: true,
+            },
+            confidence: result.confidence,
+            probabilities: undefined,
+            latencyMs: latencyOf(started),
+            clientKind: clientKindOf(result),
             clamps: pre.clamps,
-            guardrailSuppression: true,
-          },
-          confidence: 1,
-          probabilities: undefined,
-          latencyMs: latencyOf(started),
-          clientKind: "degrade",
-          clamps: pre.clamps,
-          ts: deps.nowIso(),
-        });
+            ts: deps.nowIso(),
+          }),
+          pass: "A",
+        };
         db.upsertJevDecision(log);
         logs.push(log);
         deps.onJevLog?.(log);
@@ -174,18 +179,21 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
 
       const clamped = clampAttention(input, result.value, pre);
       const attention = clamped.value;
-      const attentionLog = buildJevDecisionRecord({
-        sessionId: deps.sessionId,
-        changeUnitId: unit.id,
-        inputHash: hashInput(input),
-        output: attention,
-        confidence: result.confidence,
-        probabilities: attention.probabilities,
-        latencyMs: latencyOf(started),
-        clientKind: clientKindOf(result),
-        clamps: clamped.clamps,
-        ts: deps.nowIso(),
-      });
+      const attentionLog: JevDecisionLog = {
+        ...buildJevDecisionRecord({
+          sessionId: deps.sessionId,
+          changeUnitId: unit.id,
+          inputHash: hashInput(input),
+          output: attention,
+          confidence: result.confidence,
+          probabilities: attention.probabilities,
+          latencyMs: latencyOf(started),
+          clientKind: clientKindOf(result),
+          clamps: clamped.clamps,
+          ts: deps.nowIso(),
+        }),
+        pass: "A",
+      };
       db.upsertJevDecision(attentionLog);
       logs.push(attentionLog);
       deps.onJevLog?.(attentionLog);
@@ -212,18 +220,21 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         heuristic: projection.heuristic,
       });
       const intent = policy.value;
-      const projectionLog = buildJevDecisionRecord({
-        sessionId: deps.sessionId,
-        changeUnitId: unit.id,
-        inputHash: hashInput({ ...input, attention }),
-        output: intent,
-        confidence: policy.confidence,
-        probabilities: policy.probabilities,
-        latencyMs: latencyOf(projectionStarted),
-        clientKind: clientKindOf(policy),
-        clamps: clampedProjection.clamps,
-        ts: deps.nowIso(),
-      });
+      const projectionLog: JevDecisionLog = {
+        ...buildJevDecisionRecord({
+          sessionId: deps.sessionId,
+          changeUnitId: unit.id,
+          inputHash: hashInput({ ...input, attention }),
+          output: intent,
+          confidence: policy.confidence,
+          probabilities: policy.probabilities,
+          latencyMs: latencyOf(projectionStarted),
+          clientKind: clientKindOf(policy),
+          clamps: clampedProjection.clamps,
+          ts: deps.nowIso(),
+        }),
+        pass: "B",
+      };
       db.upsertJevDecision(projectionLog);
       logs.push(projectionLog);
       deps.onJevLog?.(projectionLog);

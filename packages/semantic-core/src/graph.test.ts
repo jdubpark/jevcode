@@ -225,6 +225,61 @@ describe("graph projection", () => {
     expect(graph.edges.some((edge) => edge.type === "EVIDENCED_BY")).toBe(true);
   });
 
+  it("keys AgentEvent nodes by callId, so same-type same-ts calls stay apart", () => {
+    const ts = tsOf(0, 1);
+    const graph = graphFor([], {
+      agentEvents: [
+        { type: "command_started", sessionId: SESSION, callId: "turn_a:item_1", command: "pnpm lint", ts },
+        { type: "command_started", sessionId: SESSION, callId: "turn_a:item_2", command: "pnpm test", ts },
+        { type: "agent_message", sessionId: SESSION, role: "assistant", text: "a", ts },
+        { type: "agent_message", sessionId: SESSION, role: "assistant", text: "b", ts },
+      ],
+    });
+    const agentNodes = graph.nodes.filter((node) => node.type === "AgentEvent");
+    expect(agentNodes.map((node) => node.data?.["callId"])).toEqual([
+      "turn_a:item_1",
+      "turn_a:item_2",
+      undefined,
+    ]);
+  });
+
+  it("puts the domain id in every entity node's data", () => {
+    const facts: SequencedFact[] = [
+      seq({ fact: fileChanged("tests/a.test.ts", "added", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({
+        fact: testResult(tsOf(0, 1), {
+          passed: 1,
+          failed: 1,
+          failures: [{ file: "tests/a.test.ts", testName: "run works", message: "boom" }],
+        }),
+        factId: "f2",
+        seq: 2,
+        batchId: 0,
+      }),
+    ];
+    const graph = graphFor(facts, {
+      decisions: [
+        {
+          id: "dec-1",
+          sessionId: SESSION,
+          title: "t",
+          context: "c",
+          severity: "optional",
+          options: [],
+          affectedChangeUnits: [],
+          evidence: [],
+          status: "open",
+        },
+      ],
+    });
+    const byType = (type: string) => graph.nodes.filter((node) => node.type === type);
+    for (const node of byType("ChangeUnit")) expect(node.data?.["unitId"]).toMatch(/^cu_/);
+    expect(byType("File").map((node) => node.data?.["path"])).toEqual(["tests/a.test.ts"]);
+    expect(byType("Decision").map((node) => node.data?.["decisionId"])).toEqual(["dec-1"]);
+    expect(byType("Validation")[0]?.data?.["validationId"]).toMatch(/^val_/);
+    expect(byType("Failure")[0]?.data?.["failureId"]).toMatch(/^fail_/);
+  });
+
   it("is deterministic for identical inputs", () => {
     const facts: SequencedFact[] = [
       seq({ fact: fileChanged("src/a.ts", "added", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),

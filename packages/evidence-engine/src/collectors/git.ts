@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 
 import type { EvidenceFact } from "@jevcode/contracts";
 
+import { diffHash, notCapturedDiff, type PrepareDiff } from "../diff.js";
 import {
   isConfigPath,
   isFormattingOnlyDiff,
@@ -111,6 +112,8 @@ export function isSafeRelativePath(filePath: string): boolean {
 export interface GitCollectorOptions extends CollectorOptions {
   execGit?: GitExec;
   readFile?: (absPath: string) => Promise<string>;
+  // Builds git_hunk.diff from the raw diff. Default: notCapturedDiff (no text).
+  prepareDiff?: PrepareDiff;
 }
 
 export interface GitCollector {
@@ -136,6 +139,10 @@ export function createGitCollector(
 
   const git = (args: string[], allowFailure = false): Promise<string> =>
     execGit(args, { cwd: repoPath, allowFailure });
+  const prepareDiff = opts.prepareDiff ?? notCapturedDiff;
+  // diffHash of the last emitted diff per file. A poll emits a file only when
+  // its hash changed, so an unchanged dirty file is not re-emitted every 5 s.
+  const lastEmittedHash = new Map<string, string>();
 
   async function diffFor(
     file: string,
@@ -185,11 +192,18 @@ export function createGitCollector(
     async collect(): Promise<EvidenceFact[]> {
       const statusOutput = await git(["status", "--porcelain"]);
       const changes = parsePorcelain(statusOutput);
+      // Forget files that left `git status`, so a file that returns emits again.
+      for (const file of [...lastEmittedHash.keys()]) {
+        if (!changes.has(file)) lastEmittedHash.delete(file);
+      }
       const emitted: EvidenceFact[] = [];
       for (const [file, status] of changes) {
         if (file.endsWith("/")) continue;
         const diff = await diffFor(file, status);
         if (!diff) continue;
+        const hash = diffHash(diff.diffText);
+        if (lastEmittedHash.get(file) === hash) continue;
+        lastEmittedHash.set(file, hash);
         const fact: EvidenceFact = {
           type: "git_hunk",
           repoId: ctx.repoId,
@@ -200,6 +214,7 @@ export function createGitCollector(
           isFormattingOnly: isFormattingOnlyDiff(diff.diffText),
           isConfigOnly: isConfigPath(file),
           isLockfile: isLockfilePath(file),
+          diff: prepareDiff(file, diff.diffText),
           ts: cfg.now(),
         };
         cfg.sink.push(fact);

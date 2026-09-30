@@ -102,6 +102,9 @@ interface ActiveSession {
   syncChain: Promise<void>;
   ingestFailures: number;
   stopping: boolean;
+  // Stopped with `teardown: false`: registered but inert (`stopping` set,
+  // evidence paused) until unpark() runs.
+  parked: boolean;
   pinned: Set<string>;
   dismissed: Set<string>;
   playbackLabels: PlaybackLabels | null;
@@ -238,6 +241,7 @@ export class PipelineRuntime {
       syncChain: Promise.resolve(),
       ingestFailures: 0,
       stopping: false,
+      parked: false,
       pinned: new Set(),
       dismissed: new Set(),
       playbackLabels: input.playbackLabels ?? null,
@@ -420,29 +424,62 @@ export class PipelineRuntime {
     }
   }
 
-  async stopSession(sessionId: string): Promise<void> {
+  /**
+   * Stops a session's agent. A live session is paused, not ended (D10): the
+   * runtime records `agent_interrupted {reason: "stop"}`, stores `paused` and
+   * keeps the execution claim. With `teardown: false` (the user's Stop) a
+   * paused session stays registered with its adapter, which keeps the Codex
+   * thread id, so `resume()` can relaunch it; its evidence collection pauses
+   * until then. `teardown: true`, the default (repo close, the replay CLI and
+   * soak), releases the session as before.
+   */
+  async stopSession(
+    sessionId: string,
+    opts: { teardown?: boolean } = {},
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
+    // D10: stopping a live session pauses it (resumable). Record why before
+    // `stopping` makes ingestRecord drop records.
+    const pausing =
+      session.agentState !== "completed" && session.agentState !== "failed";
+    const keep = pausing && opts.teardown === false;
+    if (pausing) {
+      this.ingestRecord(sessionId, {
+        type: "agent_interrupted",
+        sessionId,
+        reason: "stop",
+        ts: this.nowIso(),
+      });
+    }
     session.stopping = true;
     if (session.syncTimer !== null) {
       clearTimeout(session.syncTimer);
       session.syncTimer = null;
     }
+    // Paused rather than left polling: `stopping` drops facts, and the git
+    // collector would never re-emit a diff it saw while stopped.
     await session.evidence?.stop();
     await session.adapter?.stop();
-    this.sessions.delete(sessionId);
-    // Preserve a terminal state: a session that already failed or completed
-    // keeps that state instead of being rewritten to "completed".
-    const terminalState =
-      session.agentState === "failed" || session.agentState === "completed"
-        ? session.agentState
-        : "completed";
-    this.opts.db.setSessionState(sessionId, terminalState);
-    this.opts.db.setSessionEnded(sessionId);
-    this.opts.db.setExecutionClaim(sessionId, null);
+    if (keep) {
+      session.parked = true;
+    } else {
+      this.sessions.delete(sessionId);
+    }
+    if (pausing) {
+      // Paused, not ended: endedAt stays unset and the execution claim is
+      // kept, so the boot sweep keeps the session resumable for 24 h.
+      session.agentState = "paused";
+      this.opts.db.setSessionState(sessionId, "paused");
+    } else {
+      // A session that already failed or completed keeps that state.
+      this.opts.db.setSessionState(sessionId, session.agentState);
+      this.opts.db.setSessionEnded(sessionId);
+      this.opts.db.setExecutionClaim(sessionId, null);
+    }
     this.emitAgentState(session);
     this.emitSessionState(sessionId);
-    this.log(`session ${sessionId} stopped (state ${terminalState})`);
+    this.log(`session ${sessionId} stopped (state ${session.agentState})`);
   }
 
   async interrupt(sessionId: string): Promise<void> {
@@ -465,12 +502,16 @@ export class PipelineRuntime {
       this.opts.db.setSessionState(sessionId, "failed");
       this.opts.db.setSessionEnded(sessionId);
       this.opts.db.setExecutionClaim(sessionId, null);
-      this.opts.emit(MainToRendererChannels.agentEvent, {
+      const failed: NormalizedAgentEvent = {
         type: "agent_failed",
         sessionId,
         error: "resume budget exhausted",
         ts: this.nowIso(),
-      });
+      };
+      // Persist first: the trace must show why the session ended. Not through
+      // ingestRecord, which would rerun the terminal transition.
+      this.opts.db.appendAgentEvent(sessionId, failed);
+      this.opts.emit(MainToRendererChannels.agentEvent, failed);
       this.opts.terminal?.data(
         sessionId,
         "[agent] failed: resume budget exhausted",
@@ -479,6 +520,7 @@ export class PipelineRuntime {
       this.emitSessionState(sessionId);
       return;
     }
+    this.unpark(session);
     this.refreshThreadId(session);
     await session.adapter?.resume();
     session.agentState = "running";
@@ -493,6 +535,7 @@ export class PipelineRuntime {
     instruction: AgentInstruction,
   ): Promise<InstructionDeliveryResult> {
     const session = this.requireSession(sessionId);
+    this.unpark(session);
     this.refreshThreadId(session);
     if (session.adapter === null) return "declined";
     const result: unknown = await session.adapter.sendInstruction(instruction);
@@ -545,9 +588,16 @@ export class PipelineRuntime {
       evidence: params.evidence ?? decision.evidence,
       instruction: buildDecisionInstruction(decision, params.decision),
     };
+    this.unpark(session);
     this.refreshThreadId(session);
     await session.adapter?.sendDecision(structured);
-    const answered: Decision = { ...decision, status: "answered", answer: structured };
+    // ts: when the status changed (R4); readers fall back to the row ts.
+    const answered: Decision = {
+      ...decision,
+      status: "answered",
+      answer: structured,
+      ts: this.nowIso(),
+    };
     this.opts.db.upsertDecision(answered);
     session.coordinator.ingest(answered);
     session.openDecisions.delete(decision.id);
@@ -581,8 +631,14 @@ export class PipelineRuntime {
       instruction:
         "The developer delegated this decision to you. Choose the option you judge best and continue.",
     };
+    this.unpark(session);
     await session.adapter?.sendDecision(structured);
-    const delegated: Decision = { ...decision, status: "delegated", answer: structured };
+    const delegated: Decision = {
+      ...decision,
+      status: "delegated",
+      answer: structured,
+      ts: this.nowIso(),
+    };
     this.opts.db.upsertDecision(delegated);
     session.coordinator.ingest(delegated);
     session.openDecisions.delete(decision.id);
@@ -747,9 +803,9 @@ export class PipelineRuntime {
   ): void {
     if (session.evidence === null) return;
     if (event.type === "command_completed") {
-      session.evidence.observeCommand(event.command, event.exitCode);
+      session.evidence.observeCommand(event.command, event.exitCode, event.callId);
       if (event.stdout.trim().length > 0) {
-        session.evidence.observeTestOutput(event.command, event.stdout);
+        session.evidence.observeTestOutput(event.command, event.stdout, event.callId);
       }
     }
   }
@@ -783,6 +839,16 @@ export class PipelineRuntime {
           this.opts.db.setSessionState(session.sessionId, "failed");
           this.opts.db.setSessionEnded(session.sessionId);
           this.opts.db.setExecutionClaim(session.sessionId, null);
+          this.emitAgentState(session);
+          this.emitSessionState(session.sessionId);
+        }
+        break;
+      case "agent_interrupted":
+        // D10: interrupt and stop pause the session; it is never failed or
+        // ended. A steer relaunches the agent at once, so the state stays.
+        if (event.reason !== "steer" && session.agentState !== "paused") {
+          session.agentState = "paused";
+          this.opts.db.setSessionState(session.sessionId, "paused");
           this.emitAgentState(session);
           this.emitSessionState(session.sessionId);
         }
@@ -832,6 +898,23 @@ export class PipelineRuntime {
       this.emitAgentState(session);
       this.emitSessionState(session.sessionId);
     }
+  }
+
+  /**
+   * Ends a paused stop (`stopSession` with `teardown: false`) before the
+   * agent may run again: records are ingested again and evidence collection
+   * restarts, so the git collector reports what changed while stopped. Every
+   * call that can relaunch the agent or send it a user message (resume, an
+   * instruction, a decision answer or delegation) runs this first; otherwise
+   * a relaunched agent's events would be dropped.
+   */
+  private unpark(session: ActiveSession): void {
+    if (!session.parked) return;
+    session.parked = false;
+    session.stopping = false;
+    void session.evidence?.start().catch((error: unknown) => {
+      this.log(`evidence restart failed: ${String(error)}`);
+    });
   }
 
   private refreshThreadId(session: ActiveSession): void {
@@ -1302,6 +1385,12 @@ function formatAgentEventForTerminal(event: NormalizedAgentEvent): string | null
       return "[agent] completed";
     case "agent_failed":
       return `[agent] failed: ${event.error}`;
+    case "agent_interrupted":
+      return event.reason === "stop"
+        ? "[agent] stopped"
+        : event.reason === "steer"
+          ? "[agent] redirected"
+          : "[agent] paused";
     case "approval_requested":
       return `[approval] ${event.command}`;
     default:

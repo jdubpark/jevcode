@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,7 +17,7 @@ import { parseReplayLine } from "@jevcode/semantic-core";
 import type { PipelineRecord } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
@@ -490,7 +490,7 @@ describe("PipelineRuntime with MockAgentAdapter over fixtures", () => {
         ),
       ).toBe(true);
       expect(
-        JSON.stringify(spec).includes("expected 7 to be null"),
+        JSON.stringify(spec).includes("expected null to be 7"),
       ).toBe(true);
 
       const summaries = Object.values(spec.elements)
@@ -704,6 +704,15 @@ describe("MockAgentAdapter decision flow (scripted)", () => {
         "resumed agent message",
       );
       expect(collected.channels.get("decision:resolved")?.length ?? 0).toBeGreaterThan(0);
+      const decisionRows = db
+        .listEvents(sessionId)
+        .filter((event) => event.type === "decision")
+        .map((event) => JSON.parse(event.payloadJson) as Decision);
+      const answered = decisionRows.find(
+        (row) => row.id === "dec-mock-0001" && row.status === "answered",
+      );
+      expect(answered?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(decisionRows.find((row) => row.status === "open")?.ts).toBeUndefined();
       const agentStates = collected.channels.get("agent:state") ?? [];
       expect(
         agentStates.some((entry) => (entry as { state: string }).state === "waiting_decision"),
@@ -1013,6 +1022,9 @@ describe("PipelineRuntime stability fixes", () => {
       );
       await runtime.stopSession(sessionId);
       expect(db.getSession(sessionId)?.state).toBe("failed");
+      expect(
+        db.listAgentEvents(sessionId).some((event) => event.type === "agent_interrupted"),
+      ).toBe(false);
     } finally {
       db.close();
     }
@@ -1080,6 +1092,301 @@ describe("PipelineRuntime stability fixes", () => {
           .get("agent:state")
           ?.some((entry) => (entry as { state: string }).state === "failed"),
       ).toBe(true);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+});
+
+describe("PipelineRuntime honest lifecycle (D10)", () => {
+  async function startScripted(
+    name: string,
+    entries: MockScriptEntry[],
+  ): Promise<{
+    db: JevcodeDb;
+    runtime: PipelineRuntime;
+    sessionId: string;
+    terminal: string[];
+  }> {
+    const dir = path.join(repoRoot, `apps/desktop/.test-tmp/${name}`);
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = `sess-${name}`;
+    db.upsertRepository({
+      id: "repo-lifecycle",
+      path: dir,
+      gitRoot: dir,
+      branch: "test",
+      baseCommit: "test",
+    });
+    db.createSession({ id: sessionId, repoId: "repo-lifecycle", prompt: "demo" });
+    const terminal: string[] = [];
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      terminal: {
+        data: (_sessionId, data) => {
+          terminal.push(data);
+        },
+        ensure: () => {},
+      },
+    });
+    await runtime.startSession({
+      sessionId,
+      repoId: "repo-lifecycle",
+      repoPath: dir,
+      prompt: "demo",
+      agentMode: "mock",
+      mockScript: { sessionId, repoPath: dir, cwd: dir, prompt: "demo", entries },
+    });
+    return { db, runtime, sessionId, terminal };
+  }
+
+  it("stopping a running session records one agent_interrupted, leaves it paused and releases it by default", async () => {
+    const { db, runtime, sessionId, terminal } = await startScripted("stop-pauses", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      // Drain the coordinator's debounced rebuild before the db closes.
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+
+      const events = db.listAgentEvents(sessionId);
+      const interrupted = events.filter((event) => event.type === "agent_interrupted");
+      expect(interrupted).toHaveLength(1);
+      expect(interrupted[0]).toMatchObject({ reason: "stop", sessionId });
+      expect(events.some((event) => event.type === "agent_failed")).toBe(false);
+      const stored = db.getSession(sessionId);
+      expect(stored?.state).toBe("paused");
+      expect(stored?.endedAt).toBeNull();
+      expect(stored?.executionClaimTs).not.toBeNull();
+      expect(terminal).toContain("[agent] stopped");
+      // teardown defaults to true (repo close, replay CLI, soak).
+      expect(runtime.hasSession(sessionId)).toBe(false);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+
+  function userMessage(sessionId: string, text: string): NormalizedAgentEvent {
+    return { type: "agent_message", sessionId, role: "user", text, ts: new Date().toISOString() };
+  }
+
+  function messageTexts(db: JevcodeDb, sessionId: string): string[] {
+    return db
+      .listAgentEvents(sessionId)
+      .flatMap((event) => (event.type === "agent_message" ? [event.text] : []));
+  }
+
+  it("a stop without teardown keeps the session registered, and resume relaunches the agent", async () => {
+    const { db, runtime, sessionId } = await startScripted("stop-resume", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId, { teardown: false });
+
+      expect(runtime.hasSession(sessionId)).toBe(true);
+      expect(db.getSession(sessionId)?.state).toBe("paused");
+      expect(db.getSession(sessionId)?.endedAt).toBeNull();
+      // Stopped: nothing is recorded until the session is resumed.
+      runtime.ingestPipelineRecord(sessionId, userMessage(sessionId, "while stopped"));
+
+      const adapter = runtime.getAdapter(sessionId);
+      if (adapter === null) throw new Error("mock adapter missing");
+      const resume = vi.spyOn(adapter, "resume");
+      await runtime.resume(sessionId);
+
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(db.getSession(sessionId)?.state).toBe("running");
+      runtime.ingestPipelineRecord(sessionId, userMessage(sessionId, "after resume"));
+      expect(messageTexts(db, sessionId)).toEqual(["after resume"]);
+      expect(
+        db.listAgentEvents(sessionId).filter((event) => event.type === "agent_interrupted"),
+      ).toHaveLength(1);
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+
+  it("an instruction to a session stopped without teardown is recorded", async () => {
+    const { db, runtime, sessionId } = await startScripted("stop-instruct", []);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
+        8000,
+        "agent_started stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId, { teardown: false });
+
+      await runtime.sendInstruction(sessionId, {
+        id: "instr-after-stop",
+        sessionId,
+        mode: "queue",
+        text: "add the missing test",
+      });
+      expect(messageTexts(db, sessionId)).toEqual(["add the missing test"]);
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+
+  it("an agent_interrupted from the adapter pauses the session without ending it", async () => {
+    const { db, runtime, sessionId } = await startScripted("interrupt-pauses", [
+      {
+        kind: "agent",
+        event: {
+          type: "agent_interrupted",
+          sessionId: "sess-interrupt-pauses",
+          reason: "interrupt",
+          ts: "2026-09-28T10:00:00.000Z",
+        },
+      },
+    ]);
+    try {
+      await waitFor(
+        () => db.getSession(sessionId)?.state === "paused",
+        8000,
+        "paused after agent_interrupted",
+      );
+      expect(db.getSession(sessionId)?.endedAt).toBeNull();
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+
+  it("a steer interruption keeps the session state while the agent relaunches", async () => {
+    const { db, runtime, sessionId } = await startScripted("steer-keeps-state", [
+      {
+        kind: "agent",
+        event: {
+          type: "agent_interrupted",
+          sessionId: "sess-steer-keeps-state",
+          reason: "steer",
+          ts: "2026-09-28T10:00:00.000Z",
+        },
+      },
+      {
+        kind: "agent",
+        event: {
+          type: "agent_message",
+          sessionId: "sess-steer-keeps-state",
+          role: "assistant",
+          text: "working on the steer",
+          ts: "2026-09-28T10:00:01.000Z",
+        },
+      },
+    ]);
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_message"),
+        8000,
+        "message after steer",
+      );
+      expect(db.getSession(sessionId)?.state).not.toBe("paused");
+      expect(db.getSession(sessionId)?.state).not.toBe("failed");
+    } finally {
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+});
+
+describe("PipelineRuntime evidence provenance (R2)", () => {
+  it("stamps a command completion's callId on its command_executed and test_result facts", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/source-call-id");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    // The evidence session watches repoPath; keep the database out of it.
+    const repoDir = path.join(dir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    const sessionId = "sess-source-call";
+    db.upsertRepository({
+      id: "repo-source-call",
+      path: repoDir,
+      gitRoot: repoDir,
+      branch: "test",
+      baseCommit: "test",
+    });
+    db.createSession({ id: sessionId, repoId: "repo-source-call", prompt: "demo" });
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      jevClient: new DegradeClient(),
+      log: () => {},
+    });
+    await runtime.startSession({
+      sessionId,
+      repoId: "repo-source-call",
+      repoPath: repoDir,
+      prompt: "demo",
+      agentMode: "mock",
+      mockScript: {
+        sessionId,
+        repoPath: repoDir,
+        cwd: repoDir,
+        prompt: "demo",
+        entries: [
+          {
+            kind: "agent",
+            event: {
+              type: "command_completed",
+              sessionId,
+              callId: "turn_a:item_7",
+              command: "pnpm test",
+              exitCode: 1,
+              stdout: "Test Files  1 failed (1)\nTests  1 failed | 2 passed (3)\n",
+              stderr: "",
+              ts: "2026-09-28T10:00:00.000Z",
+            },
+          },
+        ],
+      },
+    });
+    try {
+      const facts = (): EvidenceFact[] =>
+        db
+          .listEvents(sessionId)
+          .filter((event) => event.type === "evidence_fact")
+          .map((event) => JSON.parse(event.payloadJson) as EvidenceFact);
+      await waitFor(
+        () => facts().some((fact) => fact.type === "test_result"),
+        8000,
+        "test_result fact stored",
+      );
+      // Drain the coordinator's debounced rebuild before the db closes.
+      await runtime.syncAll();
+      expect(facts().find((fact) => fact.type === "command_executed")).toMatchObject({
+        command: "pnpm test",
+        exitCode: 1,
+        sourceCallId: "turn_a:item_7",
+      });
+      expect(facts().find((fact) => fact.type === "test_result")).toMatchObject({
+        runner: "vitest",
+        passed: 2,
+        failed: 1,
+        sourceCallId: "turn_a:item_7",
+      });
     } finally {
       await runtime.stopSession(sessionId);
       db.close();

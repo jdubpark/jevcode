@@ -111,5 +111,26 @@ in `events.jsonl`.
 
 Run `node scripts/validate-fixtures.mjs` from the repo root. It validates events against
 the contracts schemas, referenced paths against `repo/` + `changes/`, golden-spec
-structure, label schemas and slug cross-references, and expected-unit facts. Exit code is
-non-zero on any failure.
+structure, label schemas and slug cross-references, expected-unit facts, that every
+`git_hunk` diff matches its `added`/`removed` counts, and that every derived command or
+test fact cites a `callId` in the stream. Exit code is non-zero on any failure.
+
+## Provenance fields (trace viewer)
+
+Every agent event carries `turnId: "turn-<scenario>-1"`: each fixture is one Codex process.
+A command or tool start and its completion share `callId: "turn-<scenario>-1:item_<n>"`,
+with `n` counting calls in line order. Each derived `command_executed` and `test_result`
+fact carries `sourceCallId`, the `callId` of the command that produced it. Every `git_hunk`
+carries `diff` (`{hash, bytes, text, truncated, redactions}`): the unified diff of
+`repo/<file>` → `changes/<file>` after the desktop redaction policy, so the text shows
+`[REDACTED:<kind>]` where a rule matched (for example `token: string` parameters in oauth).
+A file the policy withholds would carry `withheld: "secret_path"` and no `text`; no
+fixture has one. `added`/`removed` equal that diff's `+`/`-` lines. Each decision row
+carries `ts`, the source time of its status: the open row takes the time of the record
+before it, and the answered row the time of the user's decision message. oauth has one
+`agent_reasoning` line before the final "all checks pass" claim. All of these fields are
+optional in the contracts; streams without them still validate.
+
+After editing `repo/`, `changes/` or a stream, rebuild
+(`pnpm --filter "jevcode-desktop^..." build && pnpm --filter jevcode-desktop build`), run
+`node scripts/fixture-diffs.mjs` (idempotent), then `node scripts/validate-fixtures.mjs`.

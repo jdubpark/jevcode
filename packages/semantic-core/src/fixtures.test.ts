@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { parseReplayLine, PipelineCoordinator } from "./coordinator.js";
+import { canonicalJson } from "@jevcode/contracts";
 import type { ChangeUnit, EvidenceFact } from "@jevcode/contracts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,4 +115,32 @@ describe("fixture replay through coordinator + clustering", () => {
       );
     });
   }
+});
+
+describe("fixture records survive zod parsing unchanged (no-strip guard)", () => {
+  // A field the schemas do not declare is stripped silently on parse, and
+  // canonical fact ids would then differ between the stream and storage.
+  for (const scenario of SCENARIOS) {
+    it(`keeps every field of ${scenario}/events.jsonl`, () => {
+      const lines = readFileSync(path.join(FIXTURES_DIR, scenario, "events.jsonl"), "utf8")
+        .split("\n")
+        .filter((line) => line.trim() !== "");
+      const stripped: number[] = [];
+      for (const [index, line] of lines.entries()) {
+        const parsed = parseReplayLine(line);
+        if (canonicalJson(parsed) !== canonicalJson(JSON.parse(line))) stripped.push(index + 1);
+      }
+      expect(stripped).toEqual([]);
+    });
+  }
+});
+
+describe("fixture provenance (agent call joins)", () => {
+  it("links oauth units to the agent calls that produced their evidence", () => {
+    const { units } = runFixture("oauth");
+    const testUnit = units.find((unit) => sameFileSet(unit.files, ["tests/auth/oauth.test.ts"]));
+    expect(testUnit?.agentCallIds).toContain("turn-oauth-1:item_3");
+    const manifestUnit = units.find((unit) => sameFileSet(unit.files, ["package.json"]));
+    expect(manifestUnit?.agentCallIds).toContain("turn-oauth-1:item_2");
+  });
 });

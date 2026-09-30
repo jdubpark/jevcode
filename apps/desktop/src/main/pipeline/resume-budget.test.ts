@@ -107,6 +107,13 @@ describe("resume budget", () => {
       "[agent] failed: resume budget exhausted",
     );
 
+    // The failure is in the event log, not only on the renderer channel.
+    const stored = db
+      .listAgentEvents(sessionId)
+      .filter((event) => event.type === "agent_failed");
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ error: "resume budget exhausted", sessionId });
+
     db.close();
   });
 });

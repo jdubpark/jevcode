@@ -12,6 +12,8 @@ import {
   type FactSink,
 } from "@jevcode/evidence-engine";
 
+import { prepareDiffForStorage } from "./redactor.js";
+
 const execFileAsync = promisify(execFile);
 
 export interface EvidenceSessionOptions {
@@ -28,8 +30,9 @@ export interface EvidenceSessionOptions {
 export interface EvidenceSession {
   start(): Promise<void>;
   stop(): Promise<void>;
-  observeCommand(command: string, exitCode: number): void;
-  observeTestOutput(command: string, output: string): void;
+  // sourceCallId: command_completed.callId of the agent call (R2).
+  observeCommand(command: string, exitCode: number, sourceCallId?: string): void;
+  observeTestOutput(command: string, output: string, sourceCallId?: string): void;
   observeReset(files: readonly string[]): void;
   collectGit(): Promise<EvidenceFact[]>;
 }
@@ -89,7 +92,10 @@ export function createEvidenceSession(
     sessionId: options.sessionId,
     sink: bridgeSink,
   };
-  const gitCollector = createGitCollector(options.repoPath, options.baseCommit, collectorOptions);
+  const gitCollector = createGitCollector(options.repoPath, options.baseCommit, {
+    ...collectorOptions,
+    prepareDiff: prepareDiffForStorage,
+  });
   const fileWatcher = createFileWatcher(options.repoPath, collectorOptions);
   const commandCollector = createCommandCollector(options.repoPath, collectorOptions);
   const revertDetector = createRevertDetector(options.repoPath, collectorOptions);
@@ -104,30 +110,32 @@ export function createEvidenceSession(
   let stopped = false;
 
   return {
+    // Also restarts a stopped session (a paused stop, then resume). The git
+    // collector keeps its last emitted hashes, so the first collect reports
+    // only diffs that changed meanwhile.
     async start(): Promise<void> {
+      if (pollTimer !== null) return;
+      stopped = false;
+      // Collectors push every fact into bridgeSink themselves; re-pushing the
+      // returned facts would deliver each one twice.
       try {
-        const initialFacts = await gitCollector.collect();
+        await gitCollector.collect();
         collectTracker.success();
-        for (const fact of initialFacts) bridgeSink.push(fact);
       } catch (error) {
         collectTracker.failure("initial git collect", error);
       }
+      // stop() ran during the initial collect: start nothing.
+      if (stopped || pollTimer !== null) return;
       fileWatcher.start();
       pollTimer = setInterval(() => {
         if (stopped) return;
         void gitCollector
           .collect()
-          .then((facts) => {
-            collectTracker.success();
-            for (const fact of facts) bridgeSink.push(fact);
-          })
+          .then(() => collectTracker.success())
           .catch((error: unknown) => collectTracker.failure("git collect", error));
         void revertDetector
           .check()
-          .then((fact) => {
-            checkTracker.success();
-            if (fact !== null) bridgeSink.push(fact);
-          })
+          .then(() => checkTracker.success())
           .catch((error: unknown) => checkTracker.failure("revert check", error));
       }, options.pollGitMs ?? 5000);
     },
@@ -139,11 +147,11 @@ export function createEvidenceSession(
       }
       await fileWatcher.stop();
     },
-    observeCommand(command: string, exitCode: number): void {
-      commandCollector.observe(command, exitCode);
+    observeCommand(command: string, exitCode: number, sourceCallId?: string): void {
+      commandCollector.observe(command, exitCode, sourceCallId);
     },
-    observeTestOutput(command: string, output: string): void {
-      testCollector.collect(output, command);
+    observeTestOutput(command: string, output: string, sourceCallId?: string): void {
+      testCollector.collect(output, command, undefined, sourceCallId);
     },
     observeReset(files: readonly string[]): void {
       revertDetector.observeReset(files);

@@ -190,8 +190,13 @@ describe("CodexAdapter instruction delivery semantics", () => {
 
     await adapter.sendInstruction({ id: "q-keep", sessionId: session.sessionId, text: "survive the interrupt", mode: "queue" });
     await adapter.interrupt();
-    await waitFor(() => adapter.getState() === "failed", 5000, "failed after interrupt");
-    expect(events.some((e) => e.type === "agent_failed")).toBe(true);
+    await waitFor(
+      () => events.some((e) => e.type === "agent_interrupted"),
+      5000,
+      "agent_interrupted after interrupt",
+    );
+    expect(adapter.getState()).toBe("paused");
+    expect(events.some((e) => e.type === "agent_failed")).toBe(false);
 
     expect(adapter.pendingInstructions().map((i) => i.id)).toEqual(["q-keep"]);
   });

@@ -72,11 +72,23 @@ describe("stopSession terminal-state preservation", () => {
     db.close();
   });
 
-  it("marks a running session completed on stop", () => {
+  it("pauses a running session on stop and keeps its execution claim", () => {
     const db = createDb();
     db.setSessionState("sess_a", "running");
+    db.setExecutionClaim("sess_a", "2026-09-28T10:00:00.000Z");
     const state = stopSession(db, "sess_a");
-    expect(state.state).toBe("completed");
+    expect(state.state).toBe("paused");
+    expect(db.getSession("sess_a")?.state).toBe("paused");
+    expect(db.getSession("sess_a")?.endedAt).toBeNull();
+    expect(db.getSession("sess_a")?.executionClaimTs).toBe("2026-09-28T10:00:00.000Z");
+    db.close();
+  });
+
+  it("keeps a session paused by the runtime paused", () => {
+    const db = createDb();
+    db.setSessionState("sess_a", "paused");
+    expect(stopSession(db, "sess_a").state).toBe("paused");
+    expect(db.getSession("sess_a")?.endedAt).toBeNull();
     db.close();
   });
 });

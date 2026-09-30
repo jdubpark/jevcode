@@ -1,12 +1,20 @@
 import type { EvidenceFact } from "@jevcode/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { diffHash, notCapturedDiff } from "../diff.js";
 import {
   createGitCollector,
   isSafeRelativePath,
   parsePorcelain,
   type GitExec,
 } from "./git.js";
+
+// The real diffHash wrapped in a spy, so a test can count the collector's hashes.
+// Calls made inside diff.ts itself (notCapturedDiff) reach the unwrapped function.
+vi.mock("../diff.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../diff.js")>();
+  return { ...actual, diffHash: vi.fn(actual.diffHash) };
+});
 
 type GitHunkFact = Extract<EvidenceFact, { type: "git_hunk" }>;
 
@@ -189,8 +197,108 @@ describe("createGitCollector", () => {
     });
     expect(byFile.get("src/renamed.ts")).toMatchObject({ added: 2, removed: 0 });
     expect(byFile.get("new file.ts")).toMatchObject({ added: 1, removed: 0 });
+    // Without an injected prepareDiff no diff text is ever stored.
+    for (const fact of facts) {
+      expect(fact.diff).toMatchObject({ withheld: "not_captured", truncated: false, redactions: 0 });
+      expect(fact.diff?.text).toBeUndefined();
+      expect(fact.diff?.hash).toMatch(/^[0-9a-f]{16}$/);
+    }
 
     expect(collector.facts).toHaveLength(7);
+  });
+
+  it("emits a file only when its diff changes", async () => {
+    const responses: Record<string, string> = { ...RESPONSES };
+    const collector = createGitCollector("/repo", "HEAD", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      execGit: fakeGit(responses),
+    });
+    expect(await collector.collect()).toHaveLength(7);
+
+    // An unchanged re-poll emits nothing.
+    expect(await collector.collect()).toEqual([]);
+
+    // An edit to one file emits exactly that file.
+    responses["diff HEAD -- src/foo.ts"] = `diff --git a/src/foo.ts b/src/foo.ts
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1,2 +1,3 @@
+-  const a=1;
++const a = 1;
+-  const b=2;
++const b = 2;
++const c = 3;
+`;
+    responses["diff --numstat HEAD -- src/foo.ts"] = "2\t1\tsrc/foo.ts";
+    const afterEdit = (await collector.collect()) as GitHunkFact[];
+    expect(afterEdit.map((fact) => fact.file)).toEqual(["src/foo.ts"]);
+    expect(afterEdit[0]).toMatchObject({ added: 2, removed: 1 });
+    expect(collector.facts).toHaveLength(8);
+  });
+
+  it("emits again for a file that left git status and came back unchanged", async () => {
+    const responses: Record<string, string> = {
+      ...RESPONSES,
+      "status --porcelain": "?? src/new.ts\n",
+    };
+    const collector = createGitCollector("/repo", "HEAD", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      execGit: fakeGit(responses),
+    });
+    expect(await collector.collect()).toHaveLength(1);
+
+    responses["status --porcelain"] = "";
+    expect(await collector.collect()).toEqual([]);
+
+    responses["status --porcelain"] = "?? src/new.ts\n";
+    const returned = (await collector.collect()) as GitHunkFact[];
+    expect(returned.map((fact) => fact.file)).toEqual(["src/new.ts"]);
+  });
+
+  it("passes each file and its raw diff to an injected prepareDiff", async () => {
+    const seen: [string, string][] = [];
+    const collector = createGitCollector("/repo", "HEAD", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      execGit: fakeGit({ ...RESPONSES, "status --porcelain": " M src/foo.ts\n" }),
+      prepareDiff: (file, rawDiff) => {
+        seen.push([file, rawDiff]);
+        return {
+          hash: "0123456789abcdef",
+          bytes: rawDiff.length,
+          text: "prepared",
+          truncated: false,
+          redactions: 0,
+        };
+      },
+    });
+    const facts = (await collector.collect()) as GitHunkFact[];
+    expect(seen).toEqual([["src/foo.ts", RESPONSES["diff HEAD -- src/foo.ts"]]]);
+    expect(facts[0]?.diff).toMatchObject({ text: "prepared", hash: "0123456789abcdef" });
+  });
+
+  it("hashes an unchanged diff once per poll and never prepares it again", async () => {
+    const hash = vi.mocked(diffHash);
+    const prepareDiff = vi.fn(notCapturedDiff);
+    const collector = createGitCollector("/repo", "HEAD", {
+      repoId: "repo-1",
+      sessionId: "sess-1",
+      execGit: fakeGit({ ...RESPONSES, "status --porcelain": " M src/foo.ts\n" }),
+      prepareDiff,
+    });
+    hash.mockClear();
+    expect(await collector.collect()).toHaveLength(1);
+    expect(hash).toHaveBeenCalledTimes(1);
+    expect(prepareDiff).toHaveBeenCalledTimes(1);
+
+    // Spec §12 M1b exit: an unchanged diff costs one hash and no prepareDiff call.
+    hash.mockClear();
+    prepareDiff.mockClear();
+    expect(await collector.collect()).toEqual([]);
+    expect(hash.mock.calls).toEqual([[RESPONSES["diff HEAD -- src/foo.ts"]]]);
+    expect(prepareDiff).not.toHaveBeenCalled();
   });
 
   it("emits package.json hunks as config-only", async () => {

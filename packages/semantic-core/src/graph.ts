@@ -83,7 +83,11 @@ export function projectGraph(input: GraphInput): GraphProjection {
   for (const unit of input.units) {
     const id = nodeId("node", sessionId, unit.id);
     unitNodeIds.set(unit.id, id);
-    addNode("ChangeUnit", id, unit.title, { category: unit.category, status: unit.status });
+    addNode("ChangeUnit", id, unit.title, {
+      unitId: unit.id,
+      category: unit.category,
+      status: unit.status,
+    });
     if (nodeSet.has(taskId)) addEdge("IMPLEMENTS", id, taskId);
     if (nodeSet.has(taskId)) addEdge("AFFECTS", taskId, id);
   }
@@ -96,7 +100,7 @@ export function projectGraph(input: GraphInput): GraphProjection {
       if (fileNode === undefined) {
         fileNode = nodeId("file", sessionId, file);
         fileNodeIds.set(file, fileNode);
-        addNode("File", fileNode, file);
+        addNode("File", fileNode, file, { path: file });
       }
       addEdge("MODIFIES", unitNode, fileNode);
     }
@@ -207,6 +211,7 @@ export function projectGraph(input: GraphInput): GraphProjection {
   for (const validation of input.validations) {
     const validationNode = nodeId("val", sessionId, validation.id);
     addNode("Validation", validationNode, validation.command, {
+      validationId: validation.id,
       status: validation.status,
       passed: validation.passed,
       failed: validation.failed,
@@ -221,7 +226,10 @@ export function projectGraph(input: GraphInput): GraphProjection {
 
   for (const failure of input.failures) {
     const failureNode = nodeId("fail", sessionId, failure.id);
-    addNode("Failure", failureNode, failure.testName, { file: failure.file });
+    addNode("Failure", failureNode, failure.testName, {
+      failureId: failure.id,
+      file: failure.file,
+    });
     const hosts = input.failureUnitIds.get(failure.id) ?? [];
     for (const hostId of hosts) {
       const unitNode = unitNodeIds.get(hostId) ?? "";
@@ -234,7 +242,11 @@ export function projectGraph(input: GraphInput): GraphProjection {
 
   for (const decision of input.decisions) {
     const decisionNode = nodeId("dec", sessionId, decision.id);
-    addNode("Decision", decisionNode, decision.title, { severity: decision.severity, status: decision.status });
+    addNode("Decision", decisionNode, decision.title, {
+      decisionId: decision.id,
+      severity: decision.severity,
+      status: decision.status,
+    });
     for (const unit of input.units) {
       if (!unit.relatedDecisions.includes(decision.id)) continue;
       const unitNode = unitNodeIds.get(unit.id) ?? "";
@@ -251,8 +263,20 @@ export function projectGraph(input: GraphInput): GraphProjection {
   }
 
   for (const event of input.agentEvents) {
-    const eventNode = nodeId("evt", sessionId, event.type + event.ts);
-    addNode("AgentEvent", eventNode, event.type, { ts: event.ts });
+    // Keyed by callId when present: two calls of one type at the same ts are
+    // two nodes. Legacy events keep the type + ts key (and its collapse).
+    const callId = "callId" in event ? event.callId : undefined;
+    const eventNode = nodeId(
+      "evt",
+      sessionId,
+      callId !== undefined ? `${event.type}\u0000${callId}` : event.type + event.ts,
+    );
+    addNode(
+      "AgentEvent",
+      eventNode,
+      event.type,
+      callId !== undefined ? { ts: event.ts, callId } : { ts: event.ts },
+    );
     const windowUnit = findUnitContainingTs(event.ts, input.units);
     if (windowUnit !== null) {
       const unitNode = unitNodeIds.get(windowUnit) ?? "";
