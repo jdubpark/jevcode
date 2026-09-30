@@ -620,6 +620,17 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 | Per-file incremental parse | ≤300ms |
 | Renderer main-thread blocked | never (analysis in worker) |
 | Event store growth cap | 1M events/session, then archive |
+| Trace read: full soak session in main / one `trace:rows` call | ≤1.5s / ≤50ms p95 |
+| Trace model: fold of 75k rows / one appended row (benchmark) | ≤500ms / ≤2ms |
+| Trace viewer (dev host): soak first paint / full load | ≤300ms / ≤2s |
+| Trace viewer: `j` to painted | ≤16.7ms p95 of work |
+| Trace viewer: overview layout + paint at Session level | ≤4ms p95, ≤150 overlay nodes |
+| Trace viewer: anchor drift on append | ≤1px |
+| Trace viewer: canvas layout fresh / sticky (benchmark) | ≤2ms / ≤0.5ms |
+| Trace viewer: canvas pinch at Step level (Electron 33) | ≤5% frames dropped |
+| Trace viewer: view switch | restored in the toggle's frame |
+| Trace viewer: live tick (poll apply + selectors + commit) | ≤16ms p95 |
+| Trace window: soak open, first paint / full load | ≤500ms / ≤3s |
 
 ## 14. Telemetry & Calibration (`packages/telemetry`)
 
