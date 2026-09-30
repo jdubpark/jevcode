@@ -369,12 +369,18 @@ export function buildChapters(
   // together with the run's own test_result fact and call id) belongs only to the chapters that own
   // its outcome; for the rest it is validation-only, and the overview band footprint skips it
   // (spec §6.6, §7.6.1).
-  const current = new Set(result.filter((chapter) => chapter.current).map((chapter) => chapter.id));
+  // Counted once per run: a validation every unit cites is in every chapter's stepIds, so a
+  // per-chapter count would be O(chapters²) per shared run.
+  const currentChapters = new Map<StepId, number>();
+  for (const chapter of result) {
+    if (!chapter.current) continue;
+    for (const stepId of chapter.stepIds) currentChapters.set(stepId, (currentChapters.get(stepId) ?? 0) + 1);
+  }
   for (const chapter of result) {
     chapter.validationOnlyStepIds = chapter.stepIds.filter((stepId) => {
       const step = stepById.get(stepId);
       if (step === undefined || (step.kind !== "test" && step.kind !== "check")) return false;
-      const shared = step.chapterIds.filter((id) => current.has(id)).length > 1;
+      const shared = (currentChapters.get(stepId) ?? 0) > 1;
       return shared && !ownsRunOutcome(chapter, step);
     });
   }
