@@ -178,6 +178,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   const suppressTimer = useRef<number | null>(null);
   const userScroll = useRef(false);
   const userTimer = useRef<number | null>(null);
+  /** Reader input arrived since the last drift sample (lane review I-3); consumed by the sampler. */
+  const readerMovedSinceSample = useRef(false);
   /** focusRev of the selection the spine itself wrote; consumed by the reveal effect. */
   const ownRev = useRef(-1);
   const frame = useRef<number | null>(null);
@@ -211,6 +213,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   const markUserScroll = (): void => {
     endProgrammatic();
     userScroll.current = true;
+    readerMovedSinceSample.current = true;
     clearTimer(userTimer);
     userTimer.current = viewOf()?.setTimeout(() => {
       userTimer.current = null;
@@ -412,10 +415,10 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       const node = Array.from(element.querySelectorAll<HTMLElement>("[data-key]")).find((item) => item.dataset.key === before.key);
       if (node === undefined) return;
       const top = node.getBoundingClientRect().top - element.getBoundingClientRect().top;
-      // Movement the scroll offset explains (a reader's scroll) or that the anchor's compensation
-      // removed (top unchanged) is not drift; the smaller of the two residues is the unexplained part.
-      const scrolled = element.scrollTop - before.scroll;
-      diagnostics.reportDrift(Math.min(Math.abs(top - before.top), Math.abs(top - before.top + scrolled)));
+      // Any movement of the anchored row is drift, including a scroll the viewer made (a stray follow, a reveal after
+      // an append, a wrong anchor compensation). Only the reader's own input since the last sample re-baselines it.
+      if (readerMovedSinceSample.current) readerMovedSinceSample.current = false;
+      else diagnostics.reportDrift(Math.abs(top - before.top));
       anchor.current = { key: before.key, top, scroll: element.scrollTop };
     });
     return () => view.cancelAnimationFrame(id);

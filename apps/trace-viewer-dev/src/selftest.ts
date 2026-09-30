@@ -35,9 +35,13 @@ export interface Selftest {
   stop(): void;
 }
 
+/** The reader scrolls the spine to its middle: a wheel event first, so the spine counts the scroll as the reader's
+ *  and re-baselines its drift sample instead of reporting it (lane review I-3). */
 function scrollSpineToMiddle(): void {
   const feed = document.querySelector<HTMLElement>('[role="feed"]');
-  if (feed !== null) feed.scrollTop = Math.max(0, (feed.scrollHeight - feed.clientHeight) / 2);
+  if (feed === null) return;
+  feed.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true, cancelable: true }));
+  feed.scrollTop = Math.max(0, (feed.scrollHeight - feed.clientHeight) / 2);
 }
 
 export function createSelftest(options: {
