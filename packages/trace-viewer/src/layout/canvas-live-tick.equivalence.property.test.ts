@@ -22,7 +22,7 @@ import {
   type FrameMarks,
 } from "../ui/views/canvas/frame-label.js";
 import { LEVEL_SPECS } from "./canvas-levels.js";
-import { collectItems, layoutCanvas, type CanvasLayout } from "./canvas-layout.js";
+import { canvasLayoutWork, collectItems, layoutCanvas, type CanvasLayout } from "./canvas-layout.js";
 import { homeFrameKey, routeEdges, type RouteInput } from "./canvas-routes.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
 import { anchoredFindings, stepTone } from "./tone.js";
@@ -35,16 +35,17 @@ const levels = fc.constantFrom<Level>("session", "chapter", "step");
 
 interface SharedRunShape {
   runs: readonly { failed: boolean }[];
-  units: readonly { noise: boolean; cites: readonly boolean[] }[];
+  units: readonly { noise: boolean; tests: boolean; cites: readonly boolean[] }[];
   openCommand: boolean;
 }
 
 const arbSharedRunShape: fc.Arbitrary<SharedRunShape> = fc.record({
   runs: fc.array(fc.record({ failed: fc.boolean() }), { minLength: 1, maxLength: 4 }),
-  units: fc.array(fc.record({ noise: fc.boolean(), cites: fc.array(fc.boolean(), { minLength: 4, maxLength: 4 }) }), {
-    minLength: 2,
-    maxLength: 8,
-  }),
+  // Up to 20 units, so a shared run can sit in more chapters than a short list scan covers (canvas-routes homes).
+  units: fc.array(
+    fc.record({ noise: fc.boolean(), tests: fc.boolean(), cites: fc.array(fc.boolean(), { minLength: 4, maxLength: 4 }) }),
+    { minLength: 2, maxLength: 20 },
+  ),
   openCommand: fc.boolean(),
 });
 
@@ -63,11 +64,17 @@ function sharedRunSession(shape: SharedRunShape): TraceSession {
     validations.push(`val_${r}`);
     results.push(`fact_tr_${r}`);
   });
-  shape.units.forEach(({ noise, cites }, i) => {
+  shape.units.forEach(({ noise, tests, cites }, i) => {
     const file = `src/m${i}.ts`;
     b.fact({ type: "git_hunk", file, added: 2, removed: 1, isFormattingOnly: noise, isConfigOnly: false, isLockfile: false }, `fact_${i}`);
     const pick = <T>(list: readonly T[]): T[] => list.filter((_, r) => cites[r] ?? false);
-    b.unit({ id: `cu_${i}`, files: [file], evidence: [`fact_${i}`, ...pick(results)], validationResults: pick(validations) });
+    b.unit({
+      id: `cu_${i}`,
+      files: [file],
+      evidence: [`fact_${i}`, ...pick(results)],
+      validationResults: pick(validations),
+      category: tests ? "tests" : "implementation",
+    });
   });
   if (shape.openCommand) b.agent({ type: "command_started", command: "pnpm dev" });
   const rows = b.rows;
@@ -87,9 +94,9 @@ describe("Canvas live-tick optimizations equal their reference definitions", () 
     const session = sharedRunSession({
       runs: [{ failed: true }, { failed: false }],
       units: [
-        { noise: false, cites: [true, true] },
-        { noise: true, cites: [true, true] },
-        { noise: true, cites: [true, false] },
+        { noise: false, tests: false, cites: [true, true] },
+        { noise: true, tests: false, cites: [true, true] },
+        { noise: true, tests: true, cites: [true, false] },
       ],
       openCommand: true,
     });
@@ -290,6 +297,33 @@ describe("Canvas derivations built from the previous commit equal fresh ones aft
     );
   }, 600_000);
 
+  it("shared test runs under edits (categories, anchors, drops): homes kept from the previous commit stay the lowest", () => {
+    fc.assert(
+      fc.property(
+        arbSharedRunShape.map(sharedRunSession),
+        fc.array(fc.array(arbEdit, { maxLength: 4 }), { minLength: 1, maxLength: 5 }),
+        levels,
+        (session, rounds, level) => {
+          const chain = [session];
+          for (const edits of rounds) chain.push(editSession(chain[chain.length - 1] ?? session, edits));
+          checkCanvasChain(chain, level);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  }, 600_000);
+
+  it("a chapter that does not list a shared run never becomes its home, however low its anchor moves", () => {
+    const units = Array.from({ length: 20 }, (_, i) => ({ noise: false, tests: i % 3 === 0, cites: [i < 18, true, false, false] }));
+    const session = sharedRunSession({ runs: [{ failed: true }, { failed: false }], units, openCommand: false });
+    const run = session.steps.find((step) => step.chapterIds.length > 16);
+    if (run === undefined) throw new Error("no widely shared run");
+    const outsider = session.chapters.findIndex((chapter) => chapter.current && !chapter.stepIds.includes(run.id));
+    expect(outsider).toBeGreaterThanOrEqual(0);
+    const moved = editSession(session, [{ op: "chapterFacts", at: outsider, seq: 0 }]);
+    for (const level of ["session", "chapter", "step"] as const) checkCanvasChain([session, moved], level);
+  });
+
   it("a claim's ≠ flag follows its finding even when the claim step object is kept", () => {
     // A warning, so moving it flips no step bad and only the claim's own findings tell.
     const original = oauthCanvasSession();
@@ -358,6 +392,23 @@ describe("Canvas marks from the previous commit: work", () => {
     expect(large?.derived).toBe(small?.derived);
     expect(large?.derived).toBeLessThanOrEqual(3);
     expect(large?.links).toBe(0);
+  });
+
+  it("a drip routes from the previous layout's homes and validation sources, however long the session", () => {
+    const work = (units: number) => {
+      const { layoutBefore, layoutAfter } = soakDrip(units);
+      return { before: canvasLayoutWork(layoutBefore)?.route, after: canvasLayoutWork(layoutAfter)?.route };
+    };
+    const small = work(60);
+    const large = work(240);
+    // A fresh layout reads every shared run's chapter list and every chapter's validations: O(units · runs).
+    expect(large.before?.homeLinks).toBeGreaterThan(3 * (small.before?.homeLinks ?? 0));
+    expect(large.before?.validationLinks).toBeGreaterThan(3 * (small.before?.validationLinks ?? 0));
+    // The drip re-emits one unit: only its frame's validations are re-read, and each shared run's kept home is
+    // checked against the few placed chapters that changed.
+    expect(large.after).toEqual(small.after);
+    expect(large.after?.validationLinks).toBeLessThanOrEqual(6);
+    expect(large.after?.homeLinks).toBeLessThan(60);
   });
 
   it("the same layout and context re-derive nothing", () => {

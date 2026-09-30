@@ -4,6 +4,8 @@
 // list a chapter that does not list it back, ids can dangle, and items move, appear and go.
 import fc from "fast-check";
 
+import type { ChangeCategory } from "@jevcode/contracts";
+
 import type { Chapter, Finding, Severity, Step, StepId, StepKind, TraceSession, UnitStableId } from "../model/index.js";
 import { LANE_OF_KIND } from "./session-builder.js";
 
@@ -23,6 +25,7 @@ export type SessionEdit =
   | { op: "chapterCurrent"; at: number }
   | { op: "chapterValidationOnly"; at: number; keep: number }
   | { op: "chapterTitle"; at: number; title: string | null }
+  | { op: "chapterCategory"; at: number; category: ChangeCategory }
   | { op: "dropChapter"; at: number }
   | { op: "swapChapters"; at: number; with: number }
   | { op: "addChapter"; at: number; seq: number; add: number };
@@ -48,6 +51,7 @@ export const arbEdit: fc.Arbitrary<SessionEdit> = fc.oneof(
   fc.record({ op: fc.constant("chapterCurrent" as const), at: fc.nat() }),
   fc.record({ op: fc.constant("chapterValidationOnly" as const), at: fc.nat(), keep: fc.nat() }),
   fc.record({ op: fc.constant("chapterTitle" as const), at: fc.nat(), title: fc.option(fc.constantFrom("Auth", "Rate limit"), { nil: null }) }),
+  fc.record({ op: fc.constant("chapterCategory" as const), at: fc.nat(), category: fc.constantFrom<ChangeCategory>("tests", "implementation", "configuration") }),
   fc.record({ op: fc.constant("dropChapter" as const), at: fc.nat() }),
   fc.record({ op: fc.constant("swapChapters" as const), at: fc.nat(), with: fc.nat() }),
   fc.record({ op: fc.constant("addChapter" as const), at: fc.nat(), seq: fc.nat({ max: 40 }), add: fc.nat() }),
@@ -141,6 +145,9 @@ export function editSession(session: TraceSession, edits: readonly SessionEdit[]
           const { shortTitle: _drop, ...rest } = c;
           return e.title === null ? rest : { ...rest, shortTitle: e.title };
         });
+        break;
+      case "chapterCategory":
+        setChapter(e.at, (c) => ({ ...c, category: e.category }));
         break;
       case "dropChapter":
         if (chapters.length > 0) chapters.splice(e.at % chapters.length, 1);

@@ -1,5 +1,5 @@
 import type { Finding, FindingId, Level, Step, TraceSession, Turn, UnitStableId } from "../model/index.js";
-import { routeEdges, type CanvasEdge } from "./canvas-routes.js";
+import { routeEdges, type CanvasEdge, type RouteMemo, type RouteWork } from "./canvas-routes.js";
 import {
   LABEL_ROW_PX,
   LEVEL_SPECS,
@@ -516,12 +516,33 @@ function frameKindOf(item: CanvasItemKind): CanvasFrame["kind"] {
   return "loose";
 }
 
+/**
+ * What a layout derived beyond its public fields, for the next layout chained through it (same level and session). It
+ * holds this layout's objects only, never an earlier memo, so a Live chain keeps one generation.
+ */
+interface LayoutMemo {
+  route: RouteMemo;
+}
+
+/** Work a layout did: a regression gauge for tests. */
+export interface CanvasLayoutWork {
+  route: RouteWork;
+}
+
+const MEMOS = new WeakMap<CanvasLayout, LayoutMemo>();
+const WORK = new WeakMap<CanvasLayout, CanvasLayoutWork>();
+
+export function canvasLayoutWork(layout: CanvasLayout): CanvasLayoutWork | undefined {
+  return WORK.get(layout);
+}
+
 function finalize(
   run: Run,
   session: TraceSession,
   itemByKey: ReadonlyMap<string, CanvasItem>,
   stepOf: (id: string) => Step | undefined,
   chapterAnchor: (id: UnitStableId) => number | undefined,
+  memo: LayoutMemo | undefined,
 ): CanvasLayout {
   const { st, spec } = run;
   const frames: CanvasFrame[] = [];
@@ -576,11 +597,11 @@ function finalize(
   const frameByKey = new Map(frames.map((frame) => [frame.key, frame]));
   // st.slots is in first-placement order, which sticky state preserves, so route age follows append order.
   const order = new Map(st.slots.map((slot, i) => [slot.id, i] as const));
-  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf, chapterAnchor });
+  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf, chapterAnchor, previous: memo?.route });
   const edges: readonly CanvasEdge[] = routed.edges;
   const junctions: readonly Point[] = routed.junctions;
   const hiddenEdges = routed.hiddenEdges;
-  return {
+  const layout: CanvasLayout = {
     level: st.level,
     sessionId: st.sessionId,
     frames,
@@ -607,6 +628,9 @@ function finalize(
     },
     state: packState(st),
   };
+  MEMOS.set(layout, { route: routed.memo });
+  WORK.set(layout, { route: routed.work });
+  return layout;
 }
 
 /** Pure, deterministic and sticky (spec §7.5; P1–P10). A different level or session lays out fresh. */
@@ -619,10 +643,9 @@ export function layoutCanvas(
 ): CanvasLayout {
   const spec = LEVEL_SPECS[level];
   const sessionId = session.meta.sessionId;
-  const st =
-    prev !== undefined && prev.level === level && prev.sessionId === sessionId
-      ? cloneState(unpackState(prev.state))
-      : emptyState(level, sessionId);
+  const chained = prev !== undefined && prev.level === level && prev.sessionId === sessionId;
+  const st = chained ? cloneState(unpackState(prev.state)) : emptyState(level, sessionId);
+  const memo = chained ? MEMOS.get(prev) : undefined;
   const run: Run = { st, spec, scale, slotById: new Map(st.slots.map((slot) => [slot.id, slot])) };
   const stepOf = stepFinder(session.steps);
   const items = collectItems(session, index, stepOf);
@@ -642,7 +665,7 @@ export function layoutCanvas(
       if (col !== undefined) putItem(run, col, item, true);
     }
   }
-  return finalize(run, session, itemByKey, stepOf, (id) => index.chapterAnchor(id));
+  return finalize(run, session, itemByKey, stepOf, (id) => index.chapterAnchor(id), memo);
 }
 
 /** World x ↔ display time over the breakpoints, linear in toU between them, pps past the last. */
