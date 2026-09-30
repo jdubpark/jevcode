@@ -175,6 +175,30 @@ describe("validation-only steps", () => {
     // cu_t holds the failing test's file, so the run is part of its own story.
     expect(byUnit.get("cu_t")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [] });
   });
+
+  it("keeps a shared run in the chapter a finding falls back to when no chapter owns the outcome", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    b.fact({ type: "git_hunk", file: "src/b.ts", added: 2, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_b");
+    const run = b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    // The failing test's file belongs to no chapter, and neither unit failed.
+    const failures = [{ file: "tests/other.test.ts", testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 1, skipped: 0, failures }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 3, failed: 1, skipped: 0 });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a", "fact_tr"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], evidence: ["fact_b", "fact_tr"], validationResults: ["val_1"] });
+    const session = fold(b);
+    const finding = session.findings.find((candidate) => candidate.ruleId === "failing_tests");
+    expect(finding?.chapterIds).toHaveLength(1);
+    const owner = finding?.chapterIds[0];
+    // The finding's chapter band covers the run it is about; every other sharing chapter skips it.
+    for (const chapter of session.chapters) {
+      expect(chapter.validationStepIds, chapter.id).toContain(`step:${run}`);
+      expect(chapter.validationOnlyStepIds, chapter.id).toEqual(chapter.id === owner ? [] : [`step:${run}`]);
+    }
+  });
 });
 
 describe("decisions and Jev", () => {
