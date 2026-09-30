@@ -171,10 +171,26 @@ describe("overview band labels (spec §7.6.1, visual audit 0-5)", () => {
     expect(layout.bands.map((b) => [b.tier, b.iconOnly, b.x0, b.labelX])).toEqual([[0, false, -500, 0]]);
   });
 
-  it("falls back to an icon when no visible span fits the name, then to nothing under 20 px", () => {
-    const overview = bandsOverview([band("ch:1", 0, 60, "Identity layer"), band("ch:2", 100, 115, "Migration")], 1_000);
+  it("runs a name past its own band into free space; it collides only with labels in its tier", () => {
+    // "Identity layer" = 22 + 14 × 7 = 120 px on a 60 px band; "Migration" (85 px) starts 40 px later.
+    const overview = bandsOverview([band("ch:1", 0, 60, "Identity layer"), band("ch:2", 40, 70, "Migration")], 1_000);
     const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
-    expect(layout.bands.map((b) => [b.key, b.tier, b.iconOnly])).toEqual([["ch:1", 0, true], ["ch:2", null, false]]);
+    expect(layout.bands.map((b) => [b.key, b.tier, b.iconOnly])).toEqual([["ch:1", 0, false], ["ch:2", 1, false]]);
+  });
+
+  it("labels a chapter on its first visible piece of at least 20 px, else on its widest piece", () => {
+    const overview = bandsOverview([
+      band("ch:1", 0, 10, "Package"), band("ch:1", 200, 230, "Package"), band("ch:1", 500, 800, "Package"),
+      band("ch:2", 300, 302, "Lockfile"), band("ch:2", 330, 345, "Lockfile"), band("ch:2", 400, 410, "Lockfile"),
+    ], 1_000);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    expect(layout.bands.filter((b) => b.tier !== null).map((b) => [b.key, b.labelX])).toEqual([["ch:1#1", 200], ["ch:2#1", 330]]);
+  });
+
+  it("shows only the icon when the name would run past the right edge", () => {
+    const overview = bandsOverview([band("ch:1", 970, 1_200, "Linking policy")], 1_200);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    expect(layout.bands.map((b) => [b.tier, b.iconOnly, b.labelX])).toEqual([[0, true, 970]]);
   });
 
   it("places names greedily in two tiers and leaves out a label whose start finds no free tier", () => {
