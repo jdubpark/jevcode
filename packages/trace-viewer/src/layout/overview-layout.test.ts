@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { TraceSession } from "../model/index.js";
+import type { TraceSession, UnitStableId } from "../model/index.js";
 import { foldRows } from "../model/fold.js";
-import { buildSession, largeSession, OAUTH_CLAIM_TEXT, oauthLikeSession } from "../test-support/session-builder.js";
+import { bandsOverview, buildSession, largeSession, OAUTH_CLAIM_TEXT, oauthLikeSession } from "../test-support/session-builder.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
-import { buildOverviewIndex } from "./overview-index.js";
+import { buildOverviewIndex, type BandSpan } from "./overview-index.js";
 import { K_MAX, layoutOverview, MAX_OVERLAY_NODES, overviewPreset } from "./overview-layout.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
 import { buildTraceIndex } from "./trace-index.js";
@@ -151,5 +151,44 @@ describe("chapter band footprints (orchestrator ruling M6)", () => {
     for (const band of overview.bands) expect(band.u1).toBeLessThan(testU);
     // Band labels use the chapter's short title (ruling M2).
     expect(overview.bands.map((band) => band.title)).toEqual(["Code · a", "Code · b"]);
+  });
+});
+
+describe("overview band labels (spec §7.6.1, visual audit 0-5)", () => {
+  const camera = { mode: "xOnly" as const, u0: 0, k: 1 };
+  const band = (key: `ch:${number}`, u0: number, u1: number, title: string): BandSpan => ({ key, id: `unit:${key}` as UnitStableId, u0, u1, title });
+
+  it("labels a chapter on a later piece when its first piece is too narrow for the name", () => {
+    // "Tests · oauth" = 22 + 13 × 7 = 113 px. The first piece is 10 px (too narrow even for the icon).
+    const overview = bandsOverview([band("ch:1", 0, 10, "Tests · oauth"), band("ch:1", 200, 400, "Tests · oauth")], 1_000);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    expect(layout.bands.map((b) => [b.key, b.tier, b.iconOnly, b.labelX])).toEqual([["ch:1", null, false, 0], ["ch:1#1", 0, false, 200]]);
+  });
+
+  it("labels a band that starts left of the viewport at x = 0 when its visible span fits", () => {
+    const overview = bandsOverview([band("ch:1", -500, 300, "Package")], 1_000);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    expect(layout.bands.map((b) => [b.tier, b.iconOnly, b.x0, b.labelX])).toEqual([[0, false, -500, 0]]);
+  });
+
+  it("falls back to an icon when no visible span fits the name, then to nothing under 20 px", () => {
+    const overview = bandsOverview([band("ch:1", 0, 60, "Identity layer"), band("ch:2", 100, 115, "Migration")], 1_000);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    expect(layout.bands.map((b) => [b.key, b.tier, b.iconOnly])).toEqual([["ch:1", 0, true], ["ch:2", null, false]]);
+  });
+
+  it("places names greedily in two tiers and leaves out a label whose start finds no free tier", () => {
+    const overview = bandsOverview([
+      band("ch:1", 0, 400, "Package"), band("ch:2", 10, 400, "Migration"), band("ch:3", 90, 400, "Linking policy"),
+    ], 1_000);
+    const layout = layoutOverview({ overview, camera, widthPx: 1_000, level: "chapter" });
+    // Tier 0 ends at 22 + 7·7 = 71 (+8 gap), tier 1 at 10 + 22 + 9·7 = 95 (+8): at 90 the name
+    // (22 + 14·7 = 120 px) needs tier 0 free from 79: it is, so ch:3 takes tier 0 in full.
+    expect(layout.bands.map((b) => [b.key, b.tier, b.iconOnly])).toEqual([["ch:1", 0, false], ["ch:2", 1, false], ["ch:3", 0, false]]);
+    const crowded = bandsOverview([
+      band("ch:1", 0, 400, "Package"), band("ch:2", 10, 400, "Migration"), band("ch:3", 20, 400, "Linking policy"),
+    ], 1_000);
+    expect(layoutOverview({ overview: crowded, camera, widthPx: 1_000, level: "chapter" }).bands.map((b) => [b.key, b.tier, b.iconOnly]))
+      .toEqual([["ch:1", 0, false], ["ch:2", 1, false], ["ch:3", null, false]]);
   });
 });

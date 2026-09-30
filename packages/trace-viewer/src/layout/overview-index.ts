@@ -190,7 +190,7 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     if (from !== undefined && to !== undefined) links.push({ findingId: finding.id, fromStep: from, toStep: to });
   }
 
-  return {
+  const overview: OverviewIndex = {
     endU: scale.endU,
     lanes,
     pins,
@@ -198,4 +198,54 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     turns: session.turns.map((turn) => ({ index: turn.index, u: scale.toU(turn.tMs), trigger: turn.trigger })),
     links,
   };
+  bandGroupsOf(overview);
+  return overview;
+}
+
+/** One band key's pieces, sorted by u0, with overlapping or touching pieces merged (they merge at
+ *  every k). The merged piece keeps its first piece's id and title. u0 and u1 both ascend. */
+export interface BandGroup {
+  readonly key: BandSpan["key"];
+  readonly id: readonly (UnitStableId | null)[];
+  readonly title: readonly string[];
+  readonly u0: Float64Array;
+  readonly u1: Float64Array;
+}
+
+const BAND_GROUPS = new WeakMap<OverviewIndex, readonly BandGroup[]>();
+
+/** The camera-independent half of band placement, computed once per OverviewIndex: soak-sized
+ *  sessions have ~10^5 band pieces over a few hundred keys (spec §7.6.1, §10). */
+export function bandGroupsOf(overview: OverviewIndex): readonly BandGroup[] {
+  const cached = BAND_GROUPS.get(overview);
+  if (cached !== undefined) return cached;
+  const byKey = new Map<BandSpan["key"], BandSpan[]>();
+  for (const band of overview.bands) {
+    const list = byKey.get(band.key);
+    if (list === undefined) byKey.set(band.key, [band]);
+    else list.push(band);
+  }
+  const groups: BandGroup[] = [];
+  for (const [key, pieces] of byKey) {
+    // Stable: equal u0 keeps the index order, as the per-frame sort did.
+    const sorted = [...pieces].sort((a, b) => a.u0 - b.u0);
+    const id: (UnitStableId | null)[] = [];
+    const title: string[] = [];
+    const u0: number[] = [];
+    const u1: number[] = [];
+    for (const piece of sorted) {
+      const last = u1.length - 1;
+      if (last >= 0 && piece.u0 <= (u1[last] ?? Number.NEGATIVE_INFINITY)) {
+        u1[last] = Math.max(u1[last] ?? piece.u1, piece.u1);
+        continue;
+      }
+      id.push(piece.id);
+      title.push(piece.title);
+      u0.push(piece.u0);
+      u1.push(piece.u1);
+    }
+    groups.push({ key, id, title, u0: Float64Array.from(u0), u1: Float64Array.from(u1) });
+  }
+  BAND_GROUPS.set(overview, groups);
+  return groups;
 }
