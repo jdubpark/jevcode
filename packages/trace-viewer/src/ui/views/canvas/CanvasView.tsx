@@ -707,14 +707,14 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   // The minimap's critical outlines and strip ticks are the frames the main view paints red (lane review I-1).
   const criticalKeys = marks?.critical ?? NO_KEYS;
 
+  // The context already maps every step: no second map per commit.
   const problemTs = useMemo(() => {
-    if (session === null) return [];
-    const stepById = new Map(session.steps.map((step) => [step.id, step]));
+    if (session === null || ctx === null) return [];
     return session.findings
       .filter((finding) => finding.severity === "critical")
-      .map((finding) => stepById.get(finding.anchorStepId)?.tMs)
+      .map((finding) => ctx.stepById.get(finding.anchorStepId)?.tMs)
       .filter((t): t is number => t !== undefined);
-  }, [session]);
+  }, [session, ctx]);
 
   // Live running bars (C1a hand-off M-1): a 1 Hz tick while Live and not terminal, only when a frame is running.
   const hasRunning = (marks?.running.size ?? 0) > 0;
