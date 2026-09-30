@@ -20,9 +20,9 @@ const ALL_OPEN = { open: new Set<OutlineSection>(["story", "files", "commands", 
 
 describe("buildOutlineRows", () => {
   it("lists Intent, chapters and decisions in time order, one noise row, then the final claim", () => {
-    // The oauth fixture has no noise chapters, so mark its first two as noise to exercise the row.
-    const base = foldFixture("oauth");
-    const session = { ...base, chapters: base.chapters.map((chapter, i) => (i < 2 ? { ...chapter, noise: true } : chapter)) };
+    // The oauth lockfile and formatting chapters are noise once the shared pnpm test validation no
+    // longer names every chapter in the failing-test findings (orchestrator ruling M1).
+    const session = foldFixture("oauth");
     const rows = buildOutlineRows(session, { open: DEFAULT_OPEN_SECTIONS, showAll: new Set() });
     expect(rows.some((row) => row.t === "turn")).toBe(false);
     const story = itemsOf(rows, "story");
