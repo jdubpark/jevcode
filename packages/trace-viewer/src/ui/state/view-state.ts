@@ -326,8 +326,11 @@ function applySession(state: ViewState, action: Extract<ViewAction, { type: "ses
   }
   if (expanded !== s.expanded || collapsed !== s.collapsed || anchors !== s.unitAnchors) s = { ...s, expanded, collapsed, unitAnchors: anchors };
 
+  // lastSeenSeq advances while following, including the terminal apply that ends Live, and through the
+  // initial load, so rows present when loading ends are never "new" (spec §7.10).
+  const wasFollowing = s.follow;
   if (action.terminal && !s.terminal) s = { ...leaveLive(s, index), terminal: true };
-  if (s.follow && action.loadedThroughSeq > s.lastSeenSeq) s = { ...s, lastSeenSeq: action.loadedThroughSeq };
+  if ((wasFollowing || !state.loaded) && action.loadedThroughSeq > s.lastSeenSeq) s = { ...s, lastSeenSeq: action.loadedThroughSeq };
 
   if (action.loadComplete && !s.loaded) {
     s = { ...s, loaded: true };

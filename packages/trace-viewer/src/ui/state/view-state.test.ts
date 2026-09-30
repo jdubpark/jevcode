@@ -228,13 +228,40 @@ describe("expansion, esc and live bookkeeping", () => {
     expect(s.cameras.canvas).toEqual({ mode: "uniform", tx: 1, ty: 2, k: 1, syncedRev: rev });
   });
 
-  it("switching views there and back is the identity; lastSeenSeq and N new", () => {
+  it("switching views there and back is the identity; seen never lowers lastSeenSeq", () => {
     const s = run(initialViewState({ live: false }), [applied(index, { initialSelection: claim.id })]);
     expect(run(s, [{ type: "view/switch", view: "canvas" }, { type: "view/switch", view: "hybrid" }])).toEqual(s);
-    expect(selectNewCount(s, index)).toBe(oauth.steps.length);
-    const seen = reduce(s, { type: "seen", seq: 20 }, index);
+    const fresh = initialViewState({ live: false });
+    expect(selectNewCount(fresh, index)).toBe(oauth.steps.length);
+    const seen = reduce(fresh, { type: "seen", seq: 20 }, index);
     expect(reduce(seen, { type: "seen", seq: 5 }, index).lastSeenSeq).toBe(20);
     expect(selectNewCount(seen, index)).toBe(oauth.steps.filter((st) => st.firstSeq > 20).length);
     expect(locationOf(s, "sess-oauth-0001")).toMatchObject({ v: 1, sessionId: "sess-oauth-0001", view: "hybrid", selected: claim.id, brush: { kind: "session" } });
+  });
+
+  it("rows present when a Review open finishes loading are not new; later rows are (spec §7.10)", () => {
+    const pages = run(initialViewState({ live: false }), [
+      applied(index, { loadedThroughSeq: 20, loadComplete: false }),
+      applied(index, { terminal: true }),
+    ]);
+    expect(pages).toMatchObject({ follow: false, loaded: true, lastSeenSeq: oauth.loadedThroughSeq });
+    expect(selectNewCount(pages, index)).toBe(0);
+    // A paused session keeps polling in Review: what arrives after the load counts as new.
+    const paused = run(initialViewState({ live: false }), [applied(index, { loadedThroughSeq: 20 })]);
+    expect(paused.lastSeenSeq).toBe(20);
+    const grown = reduce(paused, applied(index), index);
+    expect(grown.lastSeenSeq).toBe(20);
+    expect(selectNewCount(grown, index)).toBe(oauth.steps.filter((st) => st.firstSeq > 20).length);
+  });
+
+  it("the terminal apply after following Live marks the final batch seen", () => {
+    const steps: StepSeed[] = Array.from({ length: 6 }, (_, i) => ({ kind: "command", tMs: i * 2_000, target: `step ${i + 1}` }));
+    const early = buildTraceIndex(buildSession({ steps: steps.slice(0, 4), state: "running" }));
+    const final = buildTraceIndex(buildSession({ steps, state: "completed" }));
+    let s = run(initialViewState({ live: true }), [applied(early)], early);
+    expect(s.lastSeenSeq).toBe(early.loadedThroughSeq);
+    s = reduce(s, applied(final, { terminal: true }), final);
+    expect(s).toMatchObject({ follow: false, terminal: true, lastSeenSeq: final.loadedThroughSeq });
+    expect(selectNewCount(s, final)).toBe(0);
   });
 });
