@@ -232,10 +232,14 @@
 /* A titled finding row: title and header extras (the claim chain) share one line from the graphic column on. */
 .head {
   display: flex;
-  grid-column: 3 / 5;
+  grid-column: 4 / 5;
   align-items: center;
   gap: 14px;
   min-width: 0;
+}
+
+.head[data-wide] {
+  grid-column: 3 / 5;
 }
 
 .findingTitle {
