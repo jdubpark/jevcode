@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
+  agentStateLabel,
   displayUntrusted,
   formatDuration,
   formatOffset,
@@ -16,6 +17,7 @@ import { Icon } from "../icons/Icon.js";
 import { CATEGORY_ICON, KIND_ICON, SIGNAL_ICON } from "../icons/kind-icons.js";
 import type { ViewerHost } from "../shell/host.js";
 import { ErrorBoundary } from "../shell/ErrorBoundary.js";
+import { displaySpanMs } from "../shell/TitleBar.js";
 import { useAnnounce } from "../shell/LiveRegion.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../state/store.js";
@@ -92,6 +94,13 @@ function Header({
           <h2 className={styles.title} data-slot="title">
             Session
           </h2>
+          {session === null ? null : (
+            <p className={styles.metaLine}>
+              <Icon name="clock" size={12} className={styles.icon} />
+              <span>{formatDuration(displaySpanMs(session))}</span>
+              <span>{`· ${agentStateLabel(session.meta.state)}`}</span>
+            </p>
+          )}
         </div>
       </div>
     );
