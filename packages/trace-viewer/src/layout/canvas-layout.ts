@@ -1,4 +1,4 @@
-import type { Finding, FindingId, Level, Step, TraceSession, Turn } from "../model/index.js";
+import type { Finding, FindingId, Level, Step, TraceSession, Turn, UnitStableId } from "../model/index.js";
 import { routeEdges, type CanvasEdge } from "./canvas-routes.js";
 import {
   LABEL_ROW_PX,
@@ -73,6 +73,8 @@ function compareItems(a: CanvasItem, b: CanvasItem): number {
   return a.start - b.start || a.anchorSeq - b.anchorSeq || compareText(a.key, b.key);
 }
 
+const NO_STEP_IDS: ReadonlySet<string> = new Set();
+
 /** Spec §7.5 "Items": story items per turn, decisions, current chapters and loose finding steps. */
 export function collectItems(
   session: TraceSession,
@@ -84,11 +86,19 @@ export function collectItems(
     session.chapters.filter((chapter) => chapter.current).map((chapter) => chapter.id),
   );
   const turnAt = turnLocator(session.turns);
+  // First step (session order) holding each seq; built only if a turn's startSeq is not in the step at or before it.
+  let stepBySeq: Map<number, Step> | undefined;
   const stepContaining = (seq: number): Step | undefined => {
     const at = index.stepIndexAtOrBefore(seq);
     const step = session.steps[at];
     if (step !== undefined && step.seqs.includes(seq)) return step;
-    return session.steps.find((candidate) => candidate.seqs.includes(seq));
+    if (stepBySeq === undefined) {
+      stepBySeq = new Map();
+      for (const candidate of session.steps) {
+        for (const held of candidate.seqs) if (!stepBySeq.has(held)) stepBySeq.set(held, candidate);
+      }
+    }
+    return stepBySeq.get(seq);
   };
   const firstStepOf = (turn: Turn): Step | undefined => {
     for (const id of turn.stepIds) {
@@ -134,28 +144,30 @@ export function collectItems(
     story("decision", `decision:${step.target ?? String(step.firstSeq)}`, step, step.tMs, step.firstSeq);
   }
 
+  // Steps that anchor a finding (anchor rule), found once: few steps carry findings, while the soak bundle links every
+  // chapter to ~33 steps (31 shared test runs), so a per-link stepOf and anchoredFindings pass cost ~50 ms a layout.
+  const anchoring = new Set<string>();
+  for (const step of session.steps) {
+    if (step.findingIds.length > 0 && anchoredFindings(step, findingsById).length > 0) anchoring.add(step.id);
+  }
+
   for (const chapter of session.chapters) {
     if (!chapter.current) continue;
     const key = index.chapterKey(chapter.id);
-    if (key === undefined) continue;
-    const own = chapter.stepIds.flatMap((id) => stepOf(id)?.firstSeq ?? []);
-    const seqs = [...chapter.factSeqs, ...own];
-    // Same rule as trace-index: min over factSeqs and step firstSeqs (spec §7.5).
-    let anchorSeq = chapter.firstSeq;
-    if (seqs.length > 0) {
-      anchorSeq = Infinity;
-      for (const seq of seqs) if (seq < anchorSeq) anchorSeq = seq;
-    }
+    // Same rule as trace-index, which already computed it: min over factSeqs and step firstSeqs (spec §7.5).
+    const anchorSeq = index.chapterAnchor(chapter.id);
+    if (key === undefined || anchorSeq === undefined) continue;
     // Spec §7.5: a noise chapter stays in its stack unless a finding names it or one of its own steps anchors one. A
     // shared test run it reaches only through a validation (validationOnlyStepIds) is not its own (lane review I-3), and
     // a finding that merely cites a step does not count (anchor rule).
-    const validationOnly = new Set(chapter.validationOnlyStepIds ?? []);
+    const validationOnly: ReadonlySet<string> =
+      chapter.validationOnlyStepIds === undefined || chapter.validationOnlyStepIds.length === 0
+        ? NO_STEP_IDS
+        : new Set(chapter.validationOnlyStepIds);
     const flagged =
       chapter.findingIds.length > 0 ||
-      chapter.stepIds.some((id) => {
-        const step = stepOf(id);
-        return step !== undefined && !validationOnly.has(id) && anchoredFindings(step, findingsById).length > 0;
-      });
+      (anchoring.size > 0 &&
+        chapter.stepIds.some((id) => anchoring.has(id) && !validationOnly.has(id) && stepOf(id)?.id === id));
     items.push({
       key,
       selId: chapter.id,
@@ -509,6 +521,7 @@ function finalize(
   session: TraceSession,
   itemByKey: ReadonlyMap<string, CanvasItem>,
   stepOf: (id: string) => Step | undefined,
+  chapterAnchor: (id: UnitStableId) => number | undefined,
 ): CanvasLayout {
   const { st, spec } = run;
   const frames: CanvasFrame[] = [];
@@ -563,7 +576,7 @@ function finalize(
   const frameByKey = new Map(frames.map((frame) => [frame.key, frame]));
   // st.slots is in first-placement order, which sticky state preserves, so route age follows append order.
   const order = new Map(st.slots.map((slot, i) => [slot.id, i] as const));
-  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf });
+  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf, chapterAnchor });
   const edges: readonly CanvasEdge[] = routed.edges;
   const junctions: readonly Point[] = routed.junctions;
   const hiddenEdges = routed.hiddenEdges;
@@ -629,7 +642,7 @@ export function layoutCanvas(
       if (col !== undefined) putItem(run, col, item, true);
     }
   }
-  return finalize(run, session, itemByKey, stepOf);
+  return finalize(run, session, itemByKey, stepOf, (id) => index.chapterAnchor(id));
 }
 
 /** World x ↔ display time over the breakpoints, linear in toU between them, pps past the last. */
