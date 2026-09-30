@@ -53,18 +53,34 @@ function turnLocator(turns: readonly Turn[]): (t: number) => number {
   };
 }
 
-/** Equal keys keep the first (by selection id) and suffix the rest with .1, .2, … */
+/**
+ * Equal keys keep the first (by selection id) and suffix the rest with .1, .2, … Keys are almost always unique, so a
+ * group list is made only for a key seen twice; the output order does not matter (the caller sorts by a total order).
+ */
 function disambiguate(items: CanvasItem[]): CanvasItem[] {
-  const groups = new Map<string, CanvasItem[]>();
+  const first = new Map<string, CanvasItem>();
+  let groups: Map<string, CanvasItem[]> | null = null;
   for (const item of items) {
+    const seen = first.get(item.key);
+    if (seen === undefined) {
+      first.set(item.key, item);
+      continue;
+    }
+    groups ??= new Map();
     const group = groups.get(item.key);
-    if (group === undefined) groups.set(item.key, [item]);
+    if (group === undefined) groups.set(item.key, [seen, item]);
     else group.push(item);
   }
+  if (groups === null) return items;
   const out: CanvasItem[] = [];
-  for (const [key, group] of groups) {
+  for (const [key, item] of first) {
+    const group = groups.get(key);
+    if (group === undefined) {
+      out.push(item);
+      continue;
+    }
     group.sort((a, b) => compareText(a.selId, b.selId) || compareText(a.kind, b.kind));
-    group.forEach((item, index) => out.push(index === 0 ? item : { ...item, key: `${key}.${index}` }));
+    group.forEach((member, index) => out.push(index === 0 ? member : { ...member, key: `${key}.${index}` }));
   }
   return out;
 }
