@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import styles from "./Shell.module.css";
 
 export const SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]> = [
@@ -20,11 +22,15 @@ export const SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]> =
 ];
 
 export function ShortcutSheet({ onClose }: { onClose(): void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, []);
   return (
     <div role="dialog" aria-modal="false" aria-label="Keyboard shortcuts" className={styles.sheet}>
       <div className={styles.sheetHeader}>
         <h2 className={styles.sheetTitle}>Keyboard shortcuts</h2>
-        <button type="button" className={styles.button} onClick={onClose}>
+        <button ref={closeRef} type="button" className={styles.button} onClick={onClose}>
           Close
         </button>
       </div>

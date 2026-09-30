@@ -15,13 +15,28 @@ export function nextRegion(current: Region | null, dir: 1 | -1): Region {
   return REGIONS[(position + dir + REGIONS.length) % REGIONS.length] ?? "outline";
 }
 
-/** Focuses the region's roving tab stop, else the region element itself. */
-export function focusRegion(root: ParentNode, region: Region): void {
-  const container = root.querySelector<HTMLElement>(`[data-region="${region}"]`);
-  const target = container?.querySelector<HTMLElement>('[tabindex="0"]') ?? container;
-  target?.focus({ preventScroll: true });
+/**
+ * Whether an element can take focus for now. jsdom has no layout (getClientRects is always empty), so this walks the
+ * ancestors and rejects `hidden`, `inert` and computed `display: none` (what a hidden Activity subtree applies).
+ */
+export function isFocusable(element: HTMLElement): boolean {
+  for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
+    if (node.hidden || node.hasAttribute("inert")) return false;
+    const view = node.ownerDocument.defaultView;
+    if (view !== null && view.getComputedStyle(node).display === "none") return false;
+  }
+  return true;
 }
 
+/** Focuses the region's first visible roving tab stop, else the region element; false when the region is absent. */
+export function focusRegion(root: ParentNode, region: Region): boolean {
+  const container = root.querySelector<HTMLElement>(`[data-region="${region}"]`);
+  if (container === null || !isFocusable(container)) return false;
+  const stops = container.querySelectorAll<HTMLElement>('[tabindex="0"]');
+  const target = Array.from(stops).find(isFocusable) ?? container;
+  target.focus({ preventScroll: true });
+  return true;
+}
 export function isEditableTarget(target: Element | null): boolean {
   if (target === null) return false;
   if (target.closest("input, textarea, select") !== null) return true;
