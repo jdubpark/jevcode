@@ -98,6 +98,7 @@
 }
 
 .label {
+  contain: layout style;
   position: absolute;
   left: 0;
   top: 0;
@@ -118,7 +119,8 @@
     calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px),
     calc(var(--tv-ty, 0px) + var(--cy) * var(--tv-k, 1) * 1px - 22px)
   );
-  max-width: calc(var(--w) * var(--tv-k, 1) * 1px);
+  /* --tv-kw follows --tv-k at rest only, so a zoom frame does not re-lay out the label text. */
+  max-width: calc(var(--w) * var(--tv-kw, 1) * 1px);
 }
 
 .labelIcon {
@@ -154,6 +156,7 @@
 }
 
 .handle {
+  contain: layout style;
   position: absolute;
   left: 0;
   top: 0;
@@ -168,6 +171,7 @@
 }
 
 .timeChip {
+  contain: layout style;
   position: absolute;
   left: 0;
   top: 0;
@@ -188,6 +192,7 @@
 }
 
 .sepLabel {
+  contain: layout style;
   position: absolute;
   left: 0;
   top: 6px;
@@ -202,6 +207,7 @@
 
 /* The ≠ mark sits centered on the badge point with the word to its left (canvas mockup). */
 .badge {
+  contain: layout style;
   position: absolute;
   left: 0;
   top: 0;

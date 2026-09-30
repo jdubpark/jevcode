@@ -253,6 +253,21 @@ describe("viewport controller", () => {
     expect(measure).toHaveBeenCalledTimes(3);
   });
 
+  it("a zoom wheel that is a no-op at the zoom limit leaves no cached origin behind", () => {
+    const h = setup();
+    void h.controller.set({ mode: "uniform", tx: 0, ty: 0, k: 4 });
+    h.flush();
+    vi.advanceTimersByTime(SETTLE_MS);
+    const measure = vi.mocked(h.element.getBoundingClientRect);
+    measure.mockClear();
+    wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 400, clientY: 300 });
+    expect(h.controller.isGesturing()).toBe(false);
+    // The panel moved; the next real gesture must measure the new position, not reuse the no-op's rect.
+    wheel(h.element, { deltaY: 10, ctrlKey: true, clientX: 400, clientY: 300 });
+    expect(h.controller.isGesturing()).toBe(true);
+    expect(measure).toHaveBeenCalledTimes(2);
+  });
+
   it("destroy removes the wheel listener and stops frames", () => {
     const h = setup();
     const remove = vi.spyOn(h.element, "removeEventListener");

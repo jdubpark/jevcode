@@ -198,7 +198,11 @@ export function createViewportCore<C extends Camera>(options: ViewportController
 
   /** Wheel input that would not move the camera starts no gesture, so it never leaves Live. */
   function wheelTo(next: C, kind: "pan" | "zoom"): void {
-    if (sameCamera(clampToContent(next), camera)) return;
+    if (sameCamera(clampToContent(next), camera)) {
+      // A no-op at a zoom limit starts no gesture, so the rect measured for it must not outlive it.
+      if (!gesturing) origin = null;
+      return;
+    }
     gestureTo(next, kind);
   }
 
