@@ -269,7 +269,12 @@ export function createDataController(options: DataControllerOptions): DataContro
   async function load(gen: number): Promise<void> {
     let summary: TraceSessionSummary;
     // The first page does not depend on the summary: request both together.
-    const firstPage = source.rows({ afterSeq: cursor, limit: pageSize });
+    let firstPage: Promise<TraceRowsPage>;
+    try {
+      firstPage = source.rows({ afterSeq: cursor, limit: pageSize });
+    } catch (error) {
+      firstPage = Promise.reject(error); // a source that throws synchronously fails like one that rejects
+    }
     firstPage.catch(() => undefined); // a summary failure abandons it; a page failure resurfaces through page()
     try {
       summary = await source.summary();
