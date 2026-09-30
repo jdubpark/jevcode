@@ -4,7 +4,7 @@ import { Icon } from "../icons/Icon.js";
 import styles from "./graphics.module.css";
 import { graphicA11y, type GraphicBaseProps } from "./scales.js";
 import { TestDots } from "./TestDots.js";
-import { displayUntrusted } from "./untrusted.js";
+import { displayUntrusted } from "../../model/index.js";
 
 export interface ClaimVsObservedProps extends GraphicBaseProps {
   claim: { text: string; span?: readonly [number, number]; tMs: number };

@@ -2,7 +2,7 @@ import { memo, type JSX } from "react";
 
 import styles from "./graphics.module.css";
 import { compactCount, diffSidePx, graphicA11y, type GraphicBaseProps, type GraphicSize } from "./scales.js";
-import { displayUntrusted } from "./untrusted.js";
+import { displayUntrusted } from "../../model/index.js";
 
 export interface DiffBarProps extends GraphicBaseProps {
   added: number;
