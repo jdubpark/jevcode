@@ -1,10 +1,11 @@
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { foldRows } from "./fold.js";
-import { describeGraphic, pickGraphic } from "./format.js";
-import type { Chapter, GraphicSpec, Step, TraceSession } from "./types.js";
+import { describeGraphic, entityPositions, pickGraphic, stepPositions } from "./format.js";
+import type { Chapter, Entity, GraphicSpec, Step, TraceSession } from "./types.js";
 
 function hunk(file: string, added: number, removed: number) {
   return { type: "git_hunk" as const, file, added, removed, isFormattingOnly: false, isConfigOnly: false, isLockfile: false };
@@ -292,5 +293,84 @@ describe("describeGraphic", () => {
     ],
   ])("describes %j", (spec, text) => {
     expect(describeGraphic(spec)).toBe(text);
+  });
+});
+
+// ------------------------------------------------------------ lookups from the previous session
+
+/** A list edit: replace in place (same or another key), append, remove or swap. */
+type ListEdit = { op: "replace"; at: number; key: number } | { op: "append"; key: number } | { op: "remove"; at: number } | { op: "swap"; at: number; with: number };
+
+const arbListEdit: fc.Arbitrary<ListEdit> = fc.oneof(
+  fc.record({ op: fc.constant("replace" as const), at: fc.nat(), key: fc.nat({ max: 6 }) }),
+  fc.record({ op: fc.constant("append" as const), key: fc.nat({ max: 6 }) }),
+  fc.record({ op: fc.constant("remove" as const), at: fc.nat() }),
+  fc.record({ op: fc.constant("swap" as const), at: fc.nat(), with: fc.nat() }),
+);
+
+/** Chains of lists, each an edit of the last: kept items stay the same objects, as a finalize keeps them. */
+function editChain<T>(first: T[], rounds: readonly (readonly ListEdit[])[], make: (key: number, was: T | undefined) => T): T[][] {
+  const chain = [first];
+  for (const edits of rounds) {
+    const list = [...(chain[chain.length - 1] ?? [])];
+    for (const e of edits) {
+      const n = Math.max(1, list.length);
+      if (e.op === "replace" && list.length > 0) list[e.at % n] = make(e.key, list[e.at % n]);
+      if (e.op === "append") list.push(make(e.key, undefined));
+      if (e.op === "remove" && list.length > 0) list.splice(e.at % n, 1);
+      if (e.op === "swap" && list.length > 1) {
+        const [i, j] = [e.at % n, e.with % n];
+        const [a, b] = [list[i], list[j]];
+        if (a !== undefined && b !== undefined) [list[i], list[j]] = [b, a];
+      }
+    }
+    chain.push(list);
+  }
+  return chain;
+}
+
+const roundsArb = fc.array(fc.array(arbListEdit, { maxLength: 4 }), { minLength: 1, maxLength: 6 });
+
+describe("graphic lookups built from the previous session's equal fresh ones", () => {
+  it("entity positions per path, after every edit of the entity list", () => {
+    fc.assert(
+      fc.property(fc.array(fc.nat({ max: 6 }), { maxLength: 8 }), roundsArb, (keys, rounds) => {
+        const entity = (key: number): Entity => ({ path: `src/f${key}.ts` }) as Entity;
+        let previous: ReturnType<typeof entityPositions> | undefined;
+        for (const list of editChain(keys.map((key) => entity(key)), rounds, (key) => entity(key))) {
+          const snapshot = previous === undefined ? undefined : structuredClone(previous.byPath);
+          const next = entityPositions(list, previous);
+          expect(next.byPath).toEqual(entityPositions(list).byPath);
+          // An earlier session keeps its own lookups: building from them never changes them.
+          if (previous !== undefined) expect(previous.byPath).toEqual(snapshot);
+          previous = next;
+        }
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it("step positions and deciding steps, after every edit of the step list", () => {
+    fc.assert(
+      fc.property(fc.array(fc.nat({ max: 6 }), { maxLength: 8 }), roundsArb, (keys, rounds) => {
+        // Keys 0-2 are decision steps (decided or not); a replace keeps the id half the time with a new decision.
+        const step = (key: number, was?: Step): Step =>
+          ({
+            id: was !== undefined && key % 2 === 0 ? was.id : `step:${key}`,
+            ...(key < 3 ? { decision: { decisionId: `d${key % 2}`, ...(key === 1 ? {} : { decidedBy: "supervisor" }) } } : {}),
+          }) as Step;
+        let previous: ReturnType<typeof stepPositions> | undefined;
+        for (const list of editChain(keys.map((key) => step(key)), rounds, (key, was) => step(key, was))) {
+          const snapshot = previous === undefined ? undefined : structuredClone({ ...previous, steps: [] });
+          const next = stepPositions(list, previous);
+          if (previous !== undefined) expect({ ...previous, steps: [] }).toEqual(snapshot);
+          const fresh = stepPositions(list);
+          expect(next.stepPosition).toEqual(fresh.stepPosition);
+          expect(next.decidedStep).toEqual(fresh.decidedStep);
+          previous = next;
+        }
+      }),
+      { numRuns: 500 },
+    );
   });
 });

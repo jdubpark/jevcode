@@ -7,6 +7,7 @@ import {
   normalizeCommand,
   pickGraphic,
   searchSteps,
+  sessionStep,
   shortenTitle,
   truncateMiddle,
   type Chapter,
@@ -275,7 +276,6 @@ function storyRows(session: TraceSession): OutlineRow[] {
   const out: OutlineRow[] = [];
   const multi = session.turns.length > 1;
   const depth: 0 | 1 = multi ? 1 : 0;
-  const stepById = new Map<StepId, Step>(session.steps.map((step) => [step.id, step]));
   const findingById = new Map<FindingId, Finding>(session.findings.map((finding) => [finding.id, finding]));
   const byTurn = chaptersByTurn(session);
   for (const turn of session.turns) {
@@ -284,7 +284,7 @@ function storyRows(session: TraceSession): OutlineRow[] {
       out.push({ t: "turn", key: `turn:${turn.index}`, turn: turn.index, label: `Turn ${turn.index + 1} · ${turn.trigger}`, tMs: turn.tMs });
     }
     const items: OutlineItemRow[] = [];
-    const steps = turn.stepIds.map((id) => stepById.get(id)).filter(isPresent);
+    const steps = turn.stepIds.map((id) => sessionStep(session, id)).filter(isPresent);
     const intent = steps.find((step) => step.kind === "instruction");
     if (intent !== undefined) items.push(stepItem(intent, depth, "Intent", "person", null));
     const chapters = turnChapters.filter((chapter) => chapter.current && !chapter.noise);
@@ -326,7 +326,7 @@ function storyRows(session: TraceSession): OutlineRow[] {
         openEvidence: false,
       });
     }
-    const claim = turn.claimStepId === undefined ? undefined : stepById.get(turn.claimStepId);
+    const claim = turn.claimStepId === undefined ? undefined : sessionStep(session, turn.claimStepId);
     if (claim !== undefined) {
       const contradicted = claim.findingIds.some((id) => findingById.get(id)?.ruleId === "claim_contradicted");
       items.push(stepItem(claim, depth, "Final claim", "quote", contradicted ? "neq" : null, contradicted ? "contradicts tests" : undefined));
