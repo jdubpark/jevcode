@@ -24,8 +24,8 @@ function workSlope(map: XMap, scale: TimeScale, t0: number, t1: number): number 
 export interface TickOptions {
   /** Minimum px between labeled ticks (default MIN_TICK_LABEL_GAP_PX); it also picks the label step. */
   labelGapPx?: number;
-  /** With it, unlabeled minor ticks at the smallest step at least this many px apart. Without it,
-   *  every tick is a labeled one. */
+  /** With it, unlabeled minor ticks at the smallest step that is at least this many px apart and
+   *  divides the label step (none when no such step is finer). Without it, every tick is labeled. */
   minorGapPx?: number;
 }
 
@@ -46,7 +46,9 @@ export function computeTicks(
   const labelGap = options.labelGapPx ?? MIN_TICK_LABEL_GAP_PX;
   const stepFor = (gapPx: number): number => TICK_STEPS_MS.find((s) => s * slope >= gapPx) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1] ?? 3_600_000;
   const labelStep = stepFor(labelGap);
-  const step = options.minorGapPx === undefined ? labelStep : Math.min(labelStep, stepFor(options.minorGapPx));
+  const minorGap = options.minorGapPx;
+  const step =
+    minorGap === undefined ? labelStep : (TICK_STEPS_MS.find((s) => s * slope >= minorGap && labelStep % s === 0) ?? labelStep);
   const minGap = Math.min(MIN_TICK_GAP_PX, options.minorGapPx ?? MIN_TICK_GAP_PX);
   const ticks: Tick[] = [];
   let lastLabeledX = Number.NEGATIVE_INFINITY;
@@ -59,8 +61,14 @@ export function computeTicks(
       continue;
     }
     const x = map.xOf(t);
-    if (x >= x0 - 1e-9 && x <= x1 + 1e-9 && x - lastX >= minGap) {
-      const labeled = t % labelStep === 0 && x - lastLabeledX >= labelGap - 1e-9;
+    const inRange = x >= x0 - 1e-9 && x <= x1 + 1e-9;
+    const labeled = t % labelStep === 0 && x - lastLabeledX >= labelGap - 1e-9;
+    // A label beats a minor tick crowding it from the far side of a break.
+    if (inRange && labeled && x - lastX < minGap && ticks.at(-1)?.labeled === false) {
+      ticks.pop();
+      lastX = ticks.at(-1)?.x ?? Number.NEGATIVE_INFINITY;
+    }
+    if (inRange && x - lastX >= minGap) {
       ticks.push({ tMs: t, x, labeled });
       lastX = x;
       if (labeled) lastLabeledX = x;
