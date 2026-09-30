@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import type { TraceRow, TraceRowsPage, TraceSessionSummary } from "@jevcode/contracts";
 import { openTraceReader } from "@jevcode/storage";
+import { createDataController } from "@jevcode/trace-viewer/data-controller";
 import { foldRows } from "@jevcode/trace-viewer/model";
 import type { TraceSession } from "@jevcode/trace-viewer/model";
 import {
@@ -20,6 +21,8 @@ import type { JevcodeApi } from "../shared/api.js";
 import { parseToMain } from "../shared/ipc-registry.js";
 import { runReplay } from "./replay/cli-entry.js";
 import { redactBundleValue } from "./trace-bundle.js";
+import { registerTraceHandlers } from "./trace-ipc.js";
+import type { IpcHandle } from "./trace-ipc.js";
 import { createTraceService } from "./trace-service.js";
 import type { TraceService } from "./trace-service.js";
 
@@ -142,4 +145,53 @@ describe("trace parity: IPC source versus exported trace.json", () => {
       120_000,
     );
   }
+});
+
+describe("trace parity: DataController over the real trace handlers", () => {
+  it(
+    "oauth: pipelining and read-ahead over IPC fold to the bundle's TraceSession",
+    async () => {
+      const outDir = tempDir();
+      const result = await runReplay(path.join(repoRoot, "fixtures", "oauth"), outDir);
+      const reader = openTraceReader(path.join(outDir, "replay.db"));
+      closers.push(() => reader.close());
+      const service = createTraceService(reader);
+
+      // The real handlers, with the real read-ahead (setImmediate), behind the zod parse.
+      const handlers = new Map<string, (raw: unknown) => unknown>();
+      const handle: IpcHandle = (channel, fn) => {
+        handlers.set(channel, (raw) => fn(parseToMain(channel, raw), { senderId: 1 }));
+      };
+      registerTraceHandlers(handle, service);
+      const viaHandlers: TraceService = {
+        ...service,
+        rows: (request) => handlers.get("trace:rows")?.(request) as TraceRowsPage,
+      };
+      const { bridge } = bridgeOver(viaHandlers, os.homedir());
+      const source = createIpcTraceSource(bridge, result.sessionId);
+
+      const controller = createDataController({
+        source,
+        pollMs: 60_000,
+        pageSize: IPC_PAGE_SIZE,
+        isHidden: () => false,
+      });
+      const finished = new Promise<TraceSession>((resolve, reject) => {
+        controller.subscribe((snapshot) => {
+          if (snapshot.status.kind === "error") reject(new Error(snapshot.status.message));
+          else if (snapshot.session !== null && snapshot.loadedFraction === 1) resolve(snapshot.session);
+        });
+      });
+      controller.start();
+      const viaController = await finished;
+      controller.stop();
+
+      const parsed = parseTraceBundle(JSON.parse(readFileSync(result.bundlePath, "utf8")));
+      if (!parsed.ok) throw new Error(parsed.message);
+      const viaBundle = await readAllTraceRows(createStaticBundleSource(parsed.bundle));
+      expect(viaController.steps.length).toBeGreaterThan(0);
+      expect(viaController).toEqual(foldLoaded(viaBundle));
+    },
+    120_000,
+  );
 });
