@@ -67,6 +67,13 @@
 }
 
 /* Rows keep to a 780 px reading column (plus the 16/24 px row padding), as in the mockup. */
+/* Sessions of an hour or more widen the time gutter to 60 px: the line, frames and bodies move with column 3. */
+.sizer[data-hour]::before { left: 99px; }
+.sizer[data-hour] .frame { left: 114px; }
+.sizer[data-hour] .body,
+.sizer[data-hour] .separator { padding-left: 124px; }
+.sizer[data-hour] .group { grid-template-columns: 60px 24px 120px minmax(0, 1fr) fit-content(40%); }
+
 .slot {
   position: absolute;
   top: 0;
