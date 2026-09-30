@@ -191,7 +191,27 @@ export function CanvasHarness({ scene, settleRoundK }: { scene: SpikeScene; sett
       await waitFrames(2);
       return { k: settledK, dpr: window.devicePixelRatio, frame: rectOf(title.getBoundingClientRect()), reference: rectOf(reference.getBoundingClientRect()) };
     };
+    // Phase-aligned crop support (C3-5): pin the reference to the title's exact (fractional) origin so both
+    // renders share one sub-pixel phase, then capture each in turn with the same device-pixel crop.
+    run.alignReference = async () => {
+      const first = scene.frames.find((frame) => !frame.story);
+      const title = first === undefined ? null : frameEls[first.index]?.querySelector<HTMLElement>("[data-title]");
+      if (title === null || title === undefined) throw new Error("frame title missing");
+      const t = title.getBoundingClientRect();
+      reference.style.right = "auto";
+      reference.style.left = `${t.x}px`;
+      reference.style.top = `${t.y}px`;
+      reference.hidden = true;
+      await waitFrames(2);
+      return { frame: rectOf(title.getBoundingClientRect()), reference: rectOf(reference.getBoundingClientRect()) };
+    };
+    run.showOnly = async (which) => {
+      reference.hidden = which !== "reference";
+      world.style.visibility = which === "reference" ? "hidden" : "";
+      await waitFrames(2);
+    };
     run.hideReference = async () => {
+      world.style.visibility = "";
       reference.hidden = true;
       await waitFrames(1);
     };
