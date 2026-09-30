@@ -47,10 +47,13 @@ async function runKeys(): Promise<void> {
   }
 }
 
+const MISSING_LANES = JSON.stringify({ error: "overview lanes are not mounted; the sweep did not run" });
+
 /** Spec §10 "Overview layout + paint": a scripted pan and zoom sweep at Session level. */
-async function runSweep(): Promise<void> {
+/** Resolves false when the overview lanes are not mounted, so the caller can say so. */
+async function runSweep(): Promise<boolean> {
   const lanes = document.querySelector<HTMLElement>("[data-overview-lanes]");
-  if (lanes === null) return;
+  if (lanes === null) return false;
   press("Digit1", "1", { altKey: true });
   await nextFrame();
   await nextFrame();
@@ -73,6 +76,7 @@ async function runSweep(): Promise<void> {
     );
     await nextFrame();
   }
+  return true;
 }
 
 function overlayNodes(): number {
@@ -96,10 +100,13 @@ export function PerfHud({ autorun }: { autorun: boolean }) {
     return () => clearInterval(id);
   }, []);
 
-  const run = async (task: () => Promise<void>): Promise<void> => {
+  const run = async (task: () => Promise<void | boolean>): Promise<void> => {
     setBusy(true);
-    await task();
-    setBusy(false);
+    try {
+      if ((await task()) === false) setResult(MISSING_LANES);
+    } finally {
+      setBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -112,9 +119,10 @@ export function PerfHud({ autorun }: { autorun: boolean }) {
         const sampler = setInterval(() => {
           maxOverlay = Math.max(maxOverlay, overlayNodes());
         }, 50);
-        await runSweep();
+        const swept = await runSweep();
         clearInterval(sampler);
-        if (!cancelled) setResult(JSON.stringify({ stats: readStats(), maxOverlayNodes: maxOverlay }));
+        if (cancelled) return;
+        setResult(swept ? JSON.stringify({ stats: readStats(), maxOverlayNodes: maxOverlay }) : MISSING_LANES);
       })();
     }, 2_500);
     return () => {

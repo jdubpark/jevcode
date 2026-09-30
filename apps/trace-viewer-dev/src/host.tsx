@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import type { TraceBundle } from "@jevcode/contracts";
 import {
@@ -67,6 +67,10 @@ async function loadBundle(name: string): Promise<Loaded> {
   }
 }
 
+/**
+ * Owns the source's lifetime: it is created in an effect and disposed on cleanup, so StrictMode's
+ * double init leaves no drip timer running for a discarded source.
+ */
 function Viewer({
   bundle,
   drip,
@@ -80,12 +84,37 @@ function Viewer({
   selftest: boolean;
   openProbe: boolean;
 }) {
-  const [source] = useState<StaticBundleSource>(() =>
-    createStaticBundleSource(
+  const [source, setSource] = useState<StaticBundleSource | null>(null);
+  useEffect(() => {
+    const created = createStaticBundleSource(
       bundle,
       selftest ? { drip: selftestDrip(bundle) } : drip === undefined ? undefined : { drip: resolveDrip(drip, bundle) },
-    ),
-  );
+    );
+    setSource(created);
+    return () => {
+      created.dispose();
+      setSource(null);
+    };
+  }, [bundle, drip, selftest]);
+  if (source === null) return null;
+  return <ViewerBody source={source} bundle={bundle} drip={drip} hash={hash} selftest={selftest} openProbe={openProbe} />;
+}
+
+function ViewerBody({
+  source,
+  bundle,
+  drip,
+  hash,
+  selftest,
+  openProbe,
+}: {
+  source: StaticBundleSource;
+  bundle: TraceBundle;
+  drip: DripOptions | undefined;
+  hash: string;
+  selftest: boolean;
+  openProbe: boolean;
+}) {
   const [result, setResult] = useState<SelftestResult | null>(null);
   const [test] = useState(() =>
     selftest ? createSelftest({ source, total: bundle.rows.length, write: setResult }) : null,
@@ -140,19 +169,22 @@ function Viewer({
 export function DevHost({ search, hash }: { search: string; hash: string }) {
   const params = useMemo(() => new URLSearchParams(search), [search]);
   const bundleName = params.get("bundle") ?? "oauth";
-  const drip = parseDrip(params.get("drip"));
+  const drip = useMemo(() => parseDrip(params.get("drip")), [params]);
   const perf = params.get("perf") === "1";
   const selftest = params.get("selftest") === "drip";
   const openProbe = params.get("selftest") === "open";
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
+  // Each bundle request (a ?bundle= fetch or a drop) takes a token; only the latest may write.
+  const requestToken = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const token = (requestToken.current += 1);
     void loadBundle(bundleName).then((next) => {
-      if (!cancelled) setLoaded(next);
+      if (requestToken.current === token) setLoaded(next);
     });
     return () => {
-      cancelled = true;
+      // A later token (a drop or a new bundle name) supersedes this fetch.
+      if (requestToken.current === token) requestToken.current += 1;
     };
   }, [bundleName]);
 
@@ -160,14 +192,19 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
     event.preventDefault();
     const file = event.dataTransfer.files[0];
     if (file === undefined) return;
+    const token = (requestToken.current += 1);
     if (file.size > MAX_DROPPED_BYTES) {
-      setLoaded({ kind: "error", message: "Not a jevcode trace" });
+      setLoaded({ kind: "error", message: `File too large (max ${MAX_DROPPED_BYTES / 1024 / 1024} MiB)` });
       return;
     }
     file
       .text()
-      .then((text) => setLoaded(parseBundleText(text)))
-      .catch(() => setLoaded({ kind: "error", message: "Could not read the dropped file" }));
+      .then((text) => {
+        if (requestToken.current === token) setLoaded(parseBundleText(text));
+      })
+      .catch(() => {
+        if (requestToken.current === token) setLoaded({ kind: "error", message: "Could not read the dropped file" });
+      });
   };
 
   return (

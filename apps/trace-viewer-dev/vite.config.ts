@@ -66,5 +66,6 @@ function serveViewerSource(): Plugin {
 export default defineConfig({
   base: "./",
   plugins: [react(), forbidNodeBuiltins(), electronCsp(), serveViewerSource()],
+  // assetsInlineLimit: 0 keeps assets as files: the Electron CSP (default-src 'self') blocks data: URIs.
   build: { outDir: "dist", emptyOutDir: true, assetsInlineLimit: 0 },
 });
