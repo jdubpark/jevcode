@@ -183,15 +183,13 @@ function decisionRow(
   flag: OutlineFlag,
 ): OutlineItemRow {
   const graphic = pickGraphic(step, session);
-  const tMs = Math.min(step.tMs, chapter.tMs);
   return {
     ...stepItem(step, depth, title, "fork", flag),
-    tMs,
     failed: flag === "x",
     graphic,
     chapterId: chapter.id,
     alsoSelects: chapter.id,
-    label: joinLabel([title, graphic === null ? null : describeGraphic(graphic), formatOffset(tMs)]),
+    label: joinLabel([title, graphic === null ? null : describeGraphic(graphic), formatOffset(step.tMs)]),
   };
 }
 

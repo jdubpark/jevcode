@@ -80,6 +80,11 @@ describe("Outline", () => {
     });
     const row = document.querySelector(`[data-key="story:${decision?.id ?? ""}"]`);
     expect(row?.getAttribute("aria-selected")).toBe("true");
+    // A search hit on the folded chapter marks the row that now stands for it.
+    act(() => {
+      h.store.dispatch({ type: "search/set", query: "x", matchIds: [born?.id ?? "unit:none"] });
+    });
+    expect(document.querySelector(`[data-key="story:${decision?.id ?? ""}"]`)?.hasAttribute("data-match")).toBe(true);
   });
 
   it("shows ✕ and the word failed on a failed command row", async () => {
