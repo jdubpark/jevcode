@@ -149,3 +149,54 @@ describe("ipc channel registry", () => {
     }
   });
 });
+
+function codeOf(run: () => unknown): string | undefined {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof IpcError ? error.code : "not an IpcError";
+  }
+  return undefined;
+}
+
+describe("trace window channels", () => {
+  it("accepts trace:open, trace:requestChanges and composer:prefill", () => {
+    expect(parseToMain("trace:open", { sessionId: "s1" })).toEqual({ sessionId: "s1" });
+    for (const selected of ["step:48", "unit:u1", "decision:dec-oauth-0001"]) {
+      expect(
+        parseToMain("trace:requestChanges", { sessionId: "s1", selected, text: "Re: trace s1" }),
+      ).toEqual({ sessionId: "s1", selected, text: "Re: trace s1" });
+    }
+    expect(
+      parseToMain("trace:requestChanges", {
+        sessionId: "s1",
+        selected: "step:1",
+        text: "a".repeat(8_000),
+      }),
+    ).toMatchObject({ selected: "step:1" });
+    expect(parseFromMain("composer:prefill", { sessionId: "s1", text: "note" })).toEqual({
+      sessionId: "s1",
+      text: "note",
+    });
+  });
+
+  it("rejects empty, oversized and non-step trace window payloads", () => {
+    const rejected: Array<[string, unknown]> = [
+      ["trace:open", {}],
+      ["trace:open", { sessionId: "" }],
+      ["trace:requestChanges", { sessionId: "s1", selected: "step:48", text: "" }],
+      ["trace:requestChanges", { sessionId: "s1", selected: "step:48", text: "a".repeat(8_001) }],
+      ["trace:requestChanges", { sessionId: "s1", selected: "file:src/a.ts", text: "x" }],
+      ["trace:requestChanges", { sessionId: "s1", selected: "step:abc", text: "x" }],
+      ["trace:requestChanges", { sessionId: "", selected: "step:48", text: "x" }],
+    ];
+    for (const [channel, payload] of rejected) {
+      expect(codeOf(() => parseToMain(channel, payload)), `${channel} ${JSON.stringify(payload).slice(0, 60)}`).toBe(
+        "INVALID_PAYLOAD",
+      );
+    }
+    expect(
+      codeOf(() => parseFromMain("composer:prefill", { sessionId: "s1", text: "a".repeat(8_001) })),
+    ).toBe("INVALID_PAYLOAD");
+  });
+});
