@@ -1373,6 +1373,17 @@ The Da lane review (2026-09-30) found no blocking issue. Part Db must know four 
 3. **`IpcHandle` changed.** `fn` takes a second `context: IpcHandleContext` argument (`{ senderId }`). One-parameter handlers still typecheck; a test harness that calls `fn` directly must pass `{ senderId }`. D-7's `bridgeOver` calls the service directly and is not affected.
 4. **`TraceWindowRegistry` gained `sessionForSender(webContentsId)`.** A hand-written fake registry in Db tests must implement it. The Db plan has none today.
 
+### Hand-offs from C2 (fix wave)
+
+Source: the C2 lane review ("Hand-offs W3 must know"), its fix-wave re-review ("W3 hand-offs") and the C2 ledger (`.superpowers/sdd/2026-09-28-trace-viewer-06-viewer-shell-hybrid/`). Binding for D-3..D-8.
+
+1. **Commits are progressive.** The DataController yields one macrotask between pages. `onReady` still fires once, after the first committed fold, and its `rows` is the count folded so far (one page of a large session, not the total). Wait for the `tv:full-load` mark for "loaded".
+2. **Key the viewer by session id.** `TraceViewer` captures `source`, `pollMs` and the store in `useState`, so a new `source` prop does nothing. Key it by `sessionId` (or keep one window per session) and pass a stable `host` object: the Shell's `onLocation` and diagnostics effects re-run when `host` identity changes.
+3. **Mark `tv:bundle-parsed` in `trace/main.tsx`.** `markAfterPaint(PERF.fullLoad, PERF.bundleParsed)` always records the `tv:full-load` mark, but the measure exists only when something marked `tv:bundle-parsed`. `tv:live-tick` is measured after the full load either way.
+4. **Final state.** The title bar reads the final state from `session.meta.state`, the latest page's state, so a live window whose session ends shows the terminal state. The lane review's "shows Running" caveat is closed.
+5. **Review note.** `requestChanges` receives `{ sessionId: session.meta.sessionId, selected, text: note.firstLine }`; `text` escapes bidi characters in chapter and decision titles. `sessionId` must equal the `?session=` id (Da hand-off 1).
+6. **Visibility.** The DataController does not emit while the document is hidden and flushes the latest snapshot on show; the poll keeps running while hidden.
+
 ---
 
 ## Part Db: trace window, live follow, parity and M5 exit (lane 08b, wave W3)
@@ -3549,7 +3560,7 @@ Reference machine: <model>, <CPU>, <memory>, macOS <version>, Node <version>, El
 | `trace:rows` call in main (trace profile) | p95 ≤ 50 ms | M2 | | | soak.mjs trace phase, per page |
 | Fold of 75k rows / one appended row | ≤ 500 ms / ≤ 2 ms | Benchmark | | | `pnpm --filter @jevcode/trace-viewer bench` |
 | Soak first paint / full load (dev host) | ≤ 300 ms / ≤ 2 s | M4a | | | HUD, spike doc "M4a exit" |
-| `j` to painted | p95 ≤ 16.7 ms of work | M4a | | | HUD, spike doc "M4a exit" |
+| `j` to painted | p95 ≤ 16.7 ms, keydown to next painted frame (zero-work baseline beside it) | M4a | | | HUD, spike doc "M4a exit" |
 | Overview layout + paint, Session level | p95 ≤ 4 ms; ≤ 150 overlay nodes | M4a | | | HUD, spike doc "M4a exit" |
 | Anchor drift (spine and canvas) | ≤ 1 px | Smoke | | | `?selftest=drip`, spike doc |
 | `layoutCanvas` fresh / sticky | ≤ 2 ms / ≤ 0.5 ms | Benchmark | | | `canvas-layout.bench.ts` |

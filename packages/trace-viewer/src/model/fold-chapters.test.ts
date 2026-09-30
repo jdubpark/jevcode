@@ -140,6 +140,67 @@ describe("chapters", () => {
   });
 });
 
+describe("chapter short titles", () => {
+  it("sets shortTitle from the latest unit version", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.unit({ id: "cu_1", files: ["tests/auth/oauth.test.ts"], category: "tests", title: "Changed 1 file: tests/auth/oauth.test.ts" });
+    b.unit({ id: "cu_2", files: ["src/a.ts"], title: "Google OAuth identity layer" });
+    const byUnit = new Map(fold(b).chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    expect(byUnit.get("cu_1")).toMatchObject({ title: "Changed 1 file: tests/auth/oauth.test.ts", shortTitle: "Tests · oauth" });
+    expect(byUnit.get("cu_2")?.shortTitle).toBe("Google OAuth identity…");
+  });
+});
+
+describe("validation-only steps", () => {
+  it("lists a shared run for every chapter that does not own its outcome", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    b.fact({ type: "git_hunk", file: "tests/a.test.ts", added: 9, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_t");
+    const run = b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    const failures = [{ file: "tests/a.test.ts", testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 1, skipped: 0, failures }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 3, failed: 1, skipped: 0 });
+    const lint = b.agent({ type: "command_started", command: "pnpm lint" });
+    b.agent({ type: "command_completed", command: "pnpm lint", exitCode: 0, stdout: "", stderr: "" });
+    b.validation({ id: "val_2", kind: "lint", command: "pnpm lint", status: "passed", passed: 0, failed: 0, skipped: 0 });
+    // As on oauth, every unit cites the run's test_result fact as well as its validation.
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a", "fact_tr"], validationResults: ["val_1", "val_2"] });
+    b.unit({ id: "cu_t", files: ["tests/a.test.ts"], evidence: ["fact_t", "fact_tr"], validationResults: ["val_1"] });
+    const byUnit = new Map(fold(b).chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    // cu_a does not own the failure; its own lint run is not shared, so it stays in its footprint.
+    expect(byUnit.get("cu_a")).toMatchObject({ validationStepIds: [`step:${run}`, `step:${lint}`], validationOnlyStepIds: [`step:${run}`] });
+    // cu_t holds the failing test's file, so the run is part of its own story.
+    expect(byUnit.get("cu_t")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [] });
+  });
+
+  it("keeps a shared run in the chapter a finding falls back to when no chapter owns the outcome", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    b.fact({ type: "git_hunk", file: "src/b.ts", added: 2, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_b");
+    const run = b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    // The failing test's file belongs to no chapter, and neither unit failed.
+    const failures = [{ file: "tests/other.test.ts", testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 1, skipped: 0, failures }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 3, failed: 1, skipped: 0 });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a", "fact_tr"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], evidence: ["fact_b", "fact_tr"], validationResults: ["val_1"] });
+    const session = fold(b);
+    const finding = session.findings.find((candidate) => candidate.ruleId === "failing_tests");
+    expect(finding?.chapterIds).toHaveLength(1);
+    const owner = finding?.chapterIds[0];
+    // The finding's chapter band covers the run it is about; every other sharing chapter skips it.
+    for (const chapter of session.chapters) {
+      expect(chapter.validationStepIds, chapter.id).toContain(`step:${run}`);
+      expect(chapter.validationOnlyStepIds, chapter.id).toEqual(chapter.id === owner ? [] : [`step:${run}`]);
+    }
+  });
+});
+
 describe("decisions and Jev", () => {
   it("folds every row of one decision id into one step", () => {
     const b = new TraceBuilder();
@@ -179,6 +240,34 @@ describe("decisions and Jev", () => {
     expect(session.chapters[0]?.decisionIds).toEqual(["decision:dec-oauth-0001"]);
     // The answer is absorbed into the decision step (R25): no instruction step of its own.
     expect(session.steps.some((candidate) => candidate.kind === "instruction" && candidate.firstSeq === message)).toBe(false);
+  });
+
+  it("ends a decision's wait at its answer row; a later re-emit of the id does not extend it", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
+    b.agent({ type: "agent_message", role: "assistant", text: "a", ts: TraceBuilder.at(2) });
+    const first = b.decision({ id: "dec-1" });
+    const message = b.agent({ type: "agent_message", role: "user", text: "Use B.", ts: TraceBuilder.at(6) });
+    const answered = { decisionId: "dec-1", decision: { policy: "b" }, evidence: [] };
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    b.agent({ type: "agent_message", role: "assistant", text: "done", ts: TraceBuilder.at(20) });
+    // The Jev projection pass re-emits the answered decision at the end of the session.
+    const reemit = b.decision({ id: "dec-1", status: "answered", answer: answered });
+    const step = stepAt(fold(b), first);
+    expect(step.decision?.answerSeq).toBe(message);
+    expect(step.seqs).toContain(reemit);
+    expect(step).toMatchObject({ tMs: 2_000, endTMs: 6_000, durationMs: 4_000, endTs: TraceBuilder.at(6) });
+  });
+
+  it("ends a decision closed without an answer message at its closing row", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
+    const first = b.decision({ id: "dec-1" });
+    b.agent({ type: "agent_message", role: "assistant", text: "a", ts: TraceBuilder.at(5) });
+    b.decision({ id: "dec-1", status: "delegated" });
+    b.agent({ type: "agent_message", role: "assistant", text: "b", ts: TraceBuilder.at(30) });
+    b.decision({ id: "dec-1", status: "delegated" });
+    expect(stepAt(fold(b), first)).toMatchObject({ tMs: 0, endTMs: 5_000, durationMs: 5_000 });
   });
 
   it("reads a decision running while open and unknown once expired (spec §6.6 Status)", () => {

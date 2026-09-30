@@ -1,5 +1,6 @@
 import { AttentionDecisionSchema, type ChangeUnit, type Decision, type JevDecisionLog } from "@jevcode/contracts";
 
+import { ownsRunOutcome } from "./classify.js";
 import {
   addRowToStep,
   createStep,
@@ -12,6 +13,7 @@ import {
   type UnitAttention,
 } from "./fold-state.js";
 import { clampMeta } from "./registry.js";
+import { chapterShortTitle } from "./short-title.js";
 import {
   decisionStableId,
   unitStableId,
@@ -79,14 +81,19 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   const existing = state.chapters.decisionSteps.get(decision.id);
   if (existing !== undefined) {
     const answerSeq = existing.decision?.answerSeq;
+    // Only the row that closes the decision ends its wait; the Jev projection pass re-emits
+    // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
+    const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(existing, ctx, false);
     existing.decision = decisionDetail(decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    let end: { t: number; sourceTs: string } = ctx;
     if (closes && answer !== null) {
       removeStep(state, answer.step);
       existing.seqs.push(...answer.step.seqs);
       existing.seqs.sort((a, b) => a - b);
       existing.decision.answerSeq = answer.seq;
+      end = answer;
       const relaunched = state.turns[answer.step.turnIndex];
       if (relaunched !== undefined && relaunched.instruction === answer.step) {
         // The answer was delivered as a steer: its relaunch opens a turn without an instruction
@@ -98,9 +105,11 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
       }
     }
     existing.status = decisionStatus(decision);
-    existing.endTs = ctx.sourceTs;
-    existing.endTMs = ctx.t;
-    existing.durationMs = ctx.t - existing.tMs;
+    if (closing) {
+      existing.endTs = end.sourceTs;
+      existing.endTMs = Math.max(existing.tMs, end.t);
+      existing.durationMs = existing.endTMs - existing.tMs;
+    }
     return;
   }
   const step = createStep(state, turn, ctx, {
@@ -319,13 +328,15 @@ export function buildChapters(
         for (const seq of step.evidenceSeqs) factSeqs.add(seq);
       }
     }
-    const stepIds = [...linked].sort((a, b) => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0));
+    const bySeq = (a: StepId, b: StepId): number => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0);
+    const stepIds = [...linked].sort(bySeq);
     for (const stepId of stepIds) stepById.get(stepId)?.chapterIds.push(id);
     const tMs = offset(origin, unit.createdAt);
     result.push({
       id,
       changeUnitId: unit.id,
       title: unit.title,
+      shortTitle: chapterShortTitle(unit),
       ...(unit.intent !== undefined ? { intent: unit.intent } : {}),
       category: unit.category,
       status: unit.status,
@@ -345,14 +356,32 @@ export function buildChapters(
       factSeqs: [...factSeqs].sort((a, b) => a - b),
       decisionIds,
       validationIds: [...unit.validationResults],
-      validationStepIds: [...validationSteps].sort(
-        (a, b) => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0),
-      ),
+      validationStepIds: [...validationSteps].sort(bySeq),
+      validationOnlyStepIds: [],
       clampIds,
       triad: triadOf(unit, chapters.attentionByUnit.get(unit.id)),
       schemaChanges: unit.schemaChanges.map((change) => ({ ...change })),
       dependencyChanges: unit.dependencyChanges.map((change) => ({ ...change })),
       findingIds: [],
+    });
+  }
+  // A test or check run that several current chapters join (one validation cited by every unit,
+  // together with the run's own test_result fact and call id) belongs only to the chapters that own
+  // its outcome; for the rest it is validation-only, and the overview band footprint skips it
+  // (spec §6.6, §7.6.1).
+  // Counted once per run: a validation every unit cites is in every chapter's stepIds, so a
+  // per-chapter count would be O(chapters²) per shared run.
+  const currentChapters = new Map<StepId, number>();
+  for (const chapter of result) {
+    if (!chapter.current) continue;
+    for (const stepId of chapter.stepIds) currentChapters.set(stepId, (currentChapters.get(stepId) ?? 0) + 1);
+  }
+  for (const chapter of result) {
+    chapter.validationOnlyStepIds = chapter.stepIds.filter((stepId) => {
+      const step = stepById.get(stepId);
+      if (step === undefined || (step.kind !== "test" && step.kind !== "check")) return false;
+      const shared = (currentChapters.get(stepId) ?? 0) > 1;
+      return shared && !ownsRunOutcome(chapter, step);
     });
   }
   const byPath = new Map(entities.map((entity) => [entity.path, entity]));

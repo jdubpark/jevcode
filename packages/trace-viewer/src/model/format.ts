@@ -328,10 +328,45 @@ function linesChanged(entity: Entity): number {
   return entity.added + entity.removed;
 }
 
+/** Per-session lookups for chapter graphics, so an Outline of n chapters costs O(n · own data), not
+ *  O(n · (entities + steps)). A finalized TraceSession never changes (spec §6.4). */
+interface GraphicLookups {
+  /** Entity positions per path, ascending. */
+  entitiesByPath: Map<string, number[]>;
+  stepPosition: Map<string, number>;
+  /** decisionId → position of the first step deciding it (decidedBy set). */
+  decidedStep: Map<string, number>;
+}
+
+const LOOKUPS = new WeakMap<TraceSession, GraphicLookups>();
+
+function lookupsOf(session: TraceSession): GraphicLookups {
+  const cached = LOOKUPS.get(session);
+  if (cached !== undefined) return cached;
+  const entitiesByPath = new Map<string, number[]>();
+  session.entities.forEach((entity, position) => {
+    const list = entitiesByPath.get(entity.path);
+    if (list === undefined) entitiesByPath.set(entity.path, [position]);
+    else list.push(position);
+  });
+  const stepPosition = new Map<string, number>();
+  const decidedStep = new Map<string, number>();
+  session.steps.forEach((step, position) => {
+    stepPosition.set(step.id, position);
+    const decision = step.decision;
+    if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
+  });
+  const lookups = { entitiesByPath, stepPosition, decidedStep };
+  LOOKUPS.set(session, lookups);
+  return lookups;
+}
+
 /** The chapter's file entities, in first-edit order (buildEntities builds them in step order). */
 function chapterEntities(chapter: Chapter, session: TraceSession): Entity[] {
-  const files = new Set(chapter.files);
-  return session.entities.filter((entity) => files.has(entity.path));
+  const { entitiesByPath } = lookupsOf(session);
+  const positions = new Set<number>();
+  for (const file of chapter.files) for (const position of entitiesByPath.get(file) ?? []) positions.add(position);
+  return [...positions].sort((a, b) => a - b).flatMap((position) => session.entities[position] ?? []);
 }
 
 /** Chapter.schema (spec §6.6): one entry per table named by a table/model item or by the prefix
@@ -381,10 +416,13 @@ function flowSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
 /** TestDots for a tests chapter: the latest run with a test result among the steps its
  *  validations attached to and its joined steps. */
 function chapterTestsSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
-  const ids = new Set<string>([...chapter.validationStepIds, ...chapter.stepIds]);
-  let latest: Step | undefined;
-  for (const step of session.steps) if (ids.has(step.id) && step.tests !== undefined) latest = step;
-  const tests = latest?.tests;
+  const { stepPosition } = lookupsOf(session);
+  let latest = -1;
+  for (const id of [...chapter.validationStepIds, ...chapter.stepIds]) {
+    const position = stepPosition.get(id) ?? -1;
+    if (position > latest && session.steps[position]?.tests !== undefined) latest = position;
+  }
+  const tests = session.steps[latest]?.tests;
   return tests === undefined
     ? null
     : { kind: "tests", passed: tests.passed, failed: tests.failed, skipped: tests.skipped };
@@ -401,14 +439,11 @@ function forkSpec(decision: DecisionDetail): GraphicSpec {
 /** ForkGlyph for a chapter with an answered or delegated decision. */
 function chapterForkSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
   if (chapter.decisionIds.length === 0) return null;
-  const ids = new Set(chapter.decisionIds.map((id) => id.slice("decision:".length)));
-  const step = session.steps.find(
-    (candidate) =>
-      candidate.decision !== undefined &&
-      ids.has(candidate.decision.decisionId) &&
-      candidate.decision.decidedBy !== undefined,
-  );
-  return step?.decision === undefined ? null : forkSpec(step.decision);
+  const { decidedStep } = lookupsOf(session);
+  let first = Number.POSITIVE_INFINITY;
+  for (const id of chapter.decisionIds) first = Math.min(first, decidedStep.get(id.slice("decision:".length)) ?? Number.POSITIVE_INFINITY);
+  const decision = session.steps[first]?.decision;
+  return decision === undefined ? null : forkSpec(decision);
 }
 
 /** DiffBar list: totals over the chapter's files, the top 4 by lines changed (ties by path), and

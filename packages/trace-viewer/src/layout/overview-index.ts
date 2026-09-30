@@ -1,10 +1,10 @@
 import {
   LANES,
-  type Finding, type FindingId, type Lane, type Severity, type SignalId, type Step, type StepKind, type TraceSession,
+  type Finding, type FindingId, type Lane, type Step, type StepKind, type TraceSession,
   type TurnTrigger, type UnitStableId,
 } from "../model/index.js";
 import type { TimeScale } from "./time-scale.js";
-import { stepTone, worstSeverity, type Tone } from "./tone.js";
+import { anchoredFindings, stepTone, worstSeverity, type Tone } from "./tone.js";
 import type { TraceIndex } from "./trace-index.js";
 
 export type Glyph = "dot" | "ring" | "bar" | "hist" | "wait";
@@ -26,8 +26,10 @@ export const PLACEMENT: { readonly [K in StepKind]: { glyph: Glyph; pin: PinRule
   dependency: { glyph: "hist", pin: "finding" },
   revert: { glyph: "hist", pin: "finding" },
   read: { glyph: "ring", pin: "never" },
-  guardrail: { glyph: "dot", pin: "always" },
-  attention: { glyph: "dot", pin: "finding" },
+  // A warning-or-worse clamp anchors a guardrail_clamp finding; info clamps are pipeline noise and
+  // attention rows never pin, so the lane's pins are real guardrail hits only (visual audit 2-10).
+  guardrail: { glyph: "dot", pin: "finding" },
+  attention: { glyph: "dot", pin: "never" },
 };
 
 export const GLYPH_CODE: { readonly [G in Glyph]: number } = { dot: 0, ring: 1, bar: 2, hist: 3, wait: 4 };
@@ -70,20 +72,10 @@ export interface OverviewIndex {
 
 interface Row { u0: number; u1: number; step: number; glyph: number; tone: number; added: number; removed: number; problem: number; noise: number }
 
-const SEVERITY_RANK: { readonly [S in Severity]: number } = { info: 0, warning: 1, critical: 2 };
-const RULE_RANK: { readonly [K in SignalId]: number } = {
-  claim_contradicted: 0, destructive_command: 1, failing_tests: 2, guardrail_clamp: 3, recovery_arc: 4,
-};
 
+/** The pin's own finding: the first anchored finding in FINDING_ORDER; one that only cites the step never names it. */
 function mostSevere(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): FindingId | null {
-  let best: Finding | null = null;
-  for (const id of step.findingIds) {
-    const f = findingsById.get(id);
-    if (f === undefined) continue;
-    if (best === null || SEVERITY_RANK[f.severity] > SEVERITY_RANK[best.severity]
-      || (f.severity === best.severity && RULE_RANK[f.ruleId] < RULE_RANK[best.ruleId])) best = f;
-  }
-  return best?.id ?? null;
+  return anchoredFindings(step, findingsById)[0]?.id ?? null;
 }
 
 function toMarks(rows: Row[]): LaneMarks {
@@ -152,7 +144,13 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     for (const chapter of current) {
       const key = index.chapterKey(chapter.id);
       if (key === undefined) continue;
+      // A run the chapter reaches only through a (often shared) validation is not its footprint:
+      // otherwise every band stacks over the one test run all units cite (ruling M6).
+      const validationOnly = new Set(chapter.validationOnlyStepIds ?? []);
+      // Band labels are short (§7.6.1); placeholder unit titles do not fit any band (ruling M2).
+      const title = chapter.shortTitle ?? chapter.title;
       const spans = chapter.stepIds
+        .filter((id) => !validationOnly.has(id))
         .map((id) => index.entry(id))
         .filter((e): e is NonNullable<typeof e> => e !== undefined)
         .map((e): [number, number] => [scale.toU(e.t0), scale.toU(e.t1)])
@@ -162,11 +160,11 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
       for (const span of spans) {
         if (piece !== null && span[0] <= piece[1]) piece[1] = Math.max(piece[1], span[1]);
         else {
-          if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title: chapter.title });
+          if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title });
           piece = [span[0], span[1]];
         }
       }
-      if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title: chapter.title });
+      if (piece !== null) bands.push({ key, id: chapter.id, u0: piece[0], u1: piece[1], title });
     }
   } else {
     for (const turn of session.turns) {
@@ -184,7 +182,7 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     if (from !== undefined && to !== undefined) links.push({ findingId: finding.id, fromStep: from, toStep: to });
   }
 
-  return {
+  const overview: OverviewIndex = {
     endU: scale.endU,
     lanes,
     pins,
@@ -192,4 +190,54 @@ export function buildOverviewIndex(session: TraceSession, index: TraceIndex, sca
     turns: session.turns.map((turn) => ({ index: turn.index, u: scale.toU(turn.tMs), trigger: turn.trigger })),
     links,
   };
+  bandGroupsOf(overview);
+  return overview;
+}
+
+/** One band key's pieces, sorted by u0, with overlapping or touching pieces merged (they merge at
+ *  every k). The merged piece keeps its first piece's id and title. u0 and u1 both ascend. */
+export interface BandGroup {
+  readonly key: BandSpan["key"];
+  readonly id: readonly (UnitStableId | null)[];
+  readonly title: readonly string[];
+  readonly u0: Float64Array;
+  readonly u1: Float64Array;
+}
+
+const BAND_GROUPS = new WeakMap<OverviewIndex, readonly BandGroup[]>();
+
+/** The camera-independent half of band placement, computed once per OverviewIndex: soak-sized
+ *  sessions have ~10^5 band pieces over a few hundred keys (spec §7.6.1, §10). */
+export function bandGroupsOf(overview: OverviewIndex): readonly BandGroup[] {
+  const cached = BAND_GROUPS.get(overview);
+  if (cached !== undefined) return cached;
+  const byKey = new Map<BandSpan["key"], BandSpan[]>();
+  for (const band of overview.bands) {
+    const list = byKey.get(band.key);
+    if (list === undefined) byKey.set(band.key, [band]);
+    else list.push(band);
+  }
+  const groups: BandGroup[] = [];
+  for (const [key, pieces] of byKey) {
+    // Stable: equal u0 keeps the index order, as the per-frame sort did.
+    const sorted = [...pieces].sort((a, b) => a.u0 - b.u0);
+    const id: (UnitStableId | null)[] = [];
+    const title: string[] = [];
+    const u0: number[] = [];
+    const u1: number[] = [];
+    for (const piece of sorted) {
+      const last = u1.length - 1;
+      if (last >= 0 && piece.u0 <= (u1[last] ?? Number.NEGATIVE_INFINITY)) {
+        u1[last] = Math.max(u1[last] ?? piece.u1, piece.u1);
+        continue;
+      }
+      id.push(piece.id);
+      title.push(piece.title);
+      u0.push(piece.u0);
+      u1.push(piece.u1);
+    }
+    groups.push({ key, id, title, u0: Float64Array.from(u0), u1: Float64Array.from(u1) });
+  }
+  BAND_GROUPS.set(overview, groups);
+  return groups;
 }

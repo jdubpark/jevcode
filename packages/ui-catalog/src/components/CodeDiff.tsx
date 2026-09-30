@@ -2,10 +2,17 @@ import { html as diffToHtml } from "diff2html";
 
 import type { CodeDiffProps } from "@jevcode/contracts";
 
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
+
 function normalizeDiff(diff: string, file: string): string {
   const lines = diff.split("\n");
   const hasFileHeader = /^--- .+/.test(lines[0] ?? "") && /^\+\+\+ .+/.test(lines[1] ?? "");
   const bodyLines = hasFileHeader ? lines.slice(2) : lines;
+  const header = hasFileHeader ? `${lines[0]}\n${lines[1]}` : `--- ${file}\n+++ ${file}`;
+  if (bodyLines.some((line) => HUNK_HEADER.test(line))) {
+    // Real hunk headers carry the true line numbers (trace viewer spec §7.1 Evidence); keep them.
+    return `${header}\n${bodyLines.join("\n")}`;
+  }
   const body = bodyLines.filter((line) => !/^@@ /.test(line));
   if (body.length === 0) {
     return hasFileHeader ? diff : `--- ${file}\n+++ ${file}\n`;
@@ -22,9 +29,6 @@ function normalizeDiff(diff: string, file: string): string {
       newCount += 1;
     }
   }
-  const header = hasFileHeader
-    ? `${lines[0]}\n${lines[1]}`
-    : `--- ${file}\n+++ ${file}`;
   return `${header}\n@@ -1,${Math.max(oldCount, 1)} +1,${Math.max(newCount, 1)} @@\n${body.join("\n")}`;
 }
 

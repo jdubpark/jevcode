@@ -25,7 +25,7 @@
 - The viewer reads only through `TraceSource` and writes nothing. `ViewerHost.requestChanges` is the only outbound call, and only the Electron host implements it.
 - No UI lane edits any `package.json` dependency block, any `exports` map, `pnpm-lock.yaml` or `eslint.config.mjs`. Every such need is in section 1 and lands in W0. A UI task that finds another missing dependency stops and escalates.
 - Tests: `layout/*.property.test.ts` and `ui/state/*.property.test.ts` use fast-check; component tests start with `// @vitest-environment jsdom`, stub their own `getBoundingClientRect` and `ResizeObserver` per test, and install no global fakes; `paint.ts` runs against a recording 2D context. Expected values come from the spec's tables and the fixtures' known content (oauth's failed `pnpm test` 14/1/0, the claim at +0:43), never from the implementation.
-- Budgets (spec §10, R26), measured per spec §10 "Method": soak first paint ≤ 300 ms and full load ≤ 2 s (M4a); `j` to painted p95 ≤ 16.7 ms of work (M4a); overview layout + paint at Session level p95 ≤ 4 ms with ≤ 150 overlay nodes (M4a); anchor drift ≤ 1 px (smoke); `layoutCanvas` fresh ≤ 2 ms and sticky ≤ 0.5 ms (benchmark); canvas pinch at Step level ≤ 5% frames dropped in Electron 33 (M4b); view switch restored in the toggle's frame, never a 0 × 0 fit (M4b); live tick p95 ≤ 16 ms and soak open in the trace window first paint ≤ 500 ms, full load ≤ 3 s (M5).
+- Budgets (spec §10, R26), measured per spec §10 "Method": soak first paint ≤ 300 ms and full load ≤ 2 s (M4a); `j` to painted p95 ≤ 16.7 ms from the keydown's `timeStamp` to the next painted frame, presses from a macrotask at a random frame phase, with the zero-work baseline `tv:key-to-paint-baseline` (dev host only) reported beside it (M4a); overview layout + paint at Session level p95 ≤ 4 ms with ≤ 150 overlay nodes (M4a); anchor drift ≤ 1 px (smoke); `layoutCanvas` fresh ≤ 2 ms and sticky ≤ 0.5 ms (benchmark); canvas pinch at Step level ≤ 5% frames dropped in Electron 33 (M4b); view switch restored in the toggle's frame, never a 0 × 0 fit (M4b); live tick p95 ≤ 16 ms and soak open in the trace window first paint ≤ 500 ms, full load ≤ 3 s (M5).
 - Commits: one conventional commit per task (`feat(trace-viewer): …`, `test(trace-viewer): …`, `feat(desktop): …`, `fix(ui-catalog): …`), listing the task's files explicitly in `git add`. Never add a `Claude-Session:` trailer. Never run `git stash`; set work aside with a WIP commit.
 
 ## Review Focus
@@ -536,9 +536,18 @@ export const TICK_STEPS_MS: readonly number[];   // 1e3, 2e3, 5e3, 1e4, 15e3, 3e
 export const MIN_TICK_LABEL_GAP_PX = 64;
 export interface Tick { tMs: number; x: number; labeled: boolean }
 export interface BreakMark { x0: number; x1: number; ms: number }
-/** Ticks inside [x0, x1]; none inside breaks; the Ruler formats labels with formatOffset(tMs). */
-export function computeTicks(map: XMap, scale: TimeScale, range: { x0: number; x1: number }): { ticks: Tick[]; breaks: BreakMark[] };
+export interface TickOptions {
+  /** Minimum px between labeled ticks (default MIN_TICK_LABEL_GAP_PX); it also picks the label step. */
+  labelGapPx?: number;
+  /** Unlabeled minor ticks at the finest step ≥ this many px apart that divides the label step. */
+  minorGapPx?: number;
+}
+/** Ticks inside [x0, x1]; none inside breaks. A tick is labeled only on a multiple of the label step and ≥ labelGapPx
+ *  after the previous label; a label replaces a minor tick that would crowd it across a break. */
+export function computeTicks(map: XMap, scale: TimeScale, range: { x0: number; x1: number }, options?: TickOptions): { ticks: Tick[]; breaks: BreakMark[] };
 ```
+
+The shared `Ruler` (C2-9, `ui/views/shared/Ruler.tsx`) keeps `RulerProps = { map, scale, widthPx, loadedThroughT, className? }` and gets its ticks from `rulerTicks` (`ruler-ticks.ts`), which is `computeTicks(…, { labelGapPx: RULER_LABEL_GAP_PX /* 120 */, minorGapPx: RULER_MINOR_GAP_PX /* 8 */ })`. `rulerLabel(tMs)` is `formatOffset` without the plus sign ("0:15"). C3b's `CanvasRuler` wraps this Ruler and draws `playheadT`, the band and `problemTs` itself in its own overlay (orchestrator ruling, W3 Ruler); the Ruler gains no props for them.
 
 #### `layout/trace-index.ts` and `layout/tone.ts` (C1-10)
 
@@ -595,11 +604,23 @@ export function effectivePlayheadSeq(playhead: Playhead, selection: SelectionId 
 
 // layout/tone.ts (spec §6.8 toneOf, placed here per section 1.6)
 export type Tone = "neutral" | "bad" | "good";
-/** bad: failed test/check, agent_failed, a guardrail problem, or anchoring a critical finding; good: passed test/check; a command with exit > 0 stays neutral. */
+/** The anchor rule (spec §7.1, §7.6.3), one implementation: step.findingIds holds findings anchored at the step and
+ *  findings that only cite it. Only anchored ones title, tone, fill or open the step's surfaces; citing ones show as
+ *  Related or evidence. Both lists in FINDING_ORDER. */
+export function anchoredFindings(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Finding[];
+export function citingFindings(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Finding[];
+/** bad: failed test/check, agent_failed, a guardrail problem (critical clamp only), or anchoring a critical finding;
+ *  good: passed test/check; a command with exit > 0 and a warning or info clamp stay neutral. Anchored findings only. */
 export function stepTone(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Tone;
 /** critical → bad, else neutral. */
 export function findingTone(finding: Finding): Tone;
+/** Worst severity of the findings anchored at the step; a finding that only cites it does not count. */
 export function worstSeverity(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Severity | null;
+
+// layout/trace-index.ts (C2 fix wave, A1 ruling)
+/** The step's anchored critical findings that open its row by themselves; none while another critical finding cites
+ *  the step (that finding's card already shows it: a claim over its failing test run). View-state collapse uses the same set. */
+export function autoExpandingFindings(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Finding[];
 ```
 
 #### `layout/overview-index.ts` and `layout/overview-layout.ts` (C1-13)
@@ -608,6 +629,7 @@ export function worstSeverity(step: Step, findingsById: ReadonlyMap<FindingId, F
 // layout/overview-index.ts
 export type Glyph = "dot" | "ring" | "bar" | "hist" | "wait";
 export type PinRule = "always" | "finding" | "never";
+/** C2 fix wave: guardrail pins only with a finding (pin: "finding"); attention never pins (pin: "never"). */
 export const PLACEMENT: { readonly [K in StepKind]: { glyph: Glyph; pin: PinRule; echo?: Lane } };
 export const GLYPH_CODE: { readonly [G in Glyph]: number };
 export const TONE_CODE: { readonly [T in Tone]: number };
@@ -640,6 +662,16 @@ export interface OverviewIndex {
   readonly links: readonly { findingId: FindingId; fromStep: number; toStep: number }[];
 }
 export function buildOverviewIndex(session: TraceSession, index: TraceIndex, scale: TimeScale): OverviewIndex;
+/** One band key's pieces, sorted by u0, overlapping or touching pieces merged; a merged piece keeps its first id and title. */
+export interface BandGroup {
+  readonly key: BandSpan["key"];
+  readonly id: readonly (UnitStableId | null)[];
+  readonly title: readonly string[];
+  readonly u0: Float64Array;
+  readonly u1: Float64Array;
+}
+/** The camera-independent half of band placement, cached per OverviewIndex (WeakMap). */
+export function bandGroupsOf(overview: OverviewIndex): readonly BandGroup[];
 
 // layout/overview-layout.ts
 export const OVERVIEW_H = 288;
@@ -671,7 +703,12 @@ export type MarkOp =
   | { op: "noise"; lane: Lane; x0: number; x1: number }
   | { op: "problem"; lane: Lane; x: number };
 export interface PinPlacement { key: string; lane: Lane; x: number; kind: PinKind; critical: boolean; stepIndexes: readonly number[]; cluster: boolean; findingId: FindingId | null }
-export interface BandPlacement { key: string; id: UnitStableId | null; x0: number; x1: number; title: string; tier: 0 | 1 | null; iconOnly: boolean }
+export interface BandPlacement {
+  key: string; id: UnitStableId | null; x0: number; x1: number;
+  /** Where the placed label starts: the labeled piece's visible left edge, max(x0, 0). */
+  labelX: number;
+  title: string; tier: 0 | 1 | null; iconOnly: boolean;
+}
 export interface OverviewLayout {
   marks: readonly MarkOp[];
   pins: readonly PinPlacement[];
@@ -699,11 +736,24 @@ export function overviewPreset(input: OverviewPresetInput): { camera: XOnlyCamer
 export type SpineRow =
   | { t: "step"; key: StepId; step: number; expanded: boolean }
   | { t: "chapter"; key: `ch:${number}`; chapter: number }
-  | { t: "noise"; key: `noise:${number}`; steps: number[]; label: string }
+  | {
+      t: "noise"; key: `noise:${number}`; steps: number[]; label: string;
+      /** Chapter level only: consecutive Jev-lane rows folded into one "Jev review" row. A renderer that ignores it
+       *  shows a noise row with its label. */
+      jev?: JevGroup;
+    }
   | { t: "elided"; key: `elided:${number}`; steps: number[]; byLane: Record<Lane, number>; spanMs: number }
   | { t: "turn"; key: `turn:${number}`; turn: number }
   | { t: "idle"; key: `idle:${number}`; ms: number; reason: IdleReason }
   | { t: "gap"; key: `gap:${number}`; gap: number };
+export interface JevGroup {
+  /** Guardrail rows with a warning guardrail_clamp finding ("Jev review · 3 guardrails"). */
+  guardrails: number;
+  /** Worst member stepTone. */
+  tone: Tone;
+  /** Worst member finding severity; never critical (a critical finding keeps its own row). */
+  severity: Severity | null;
+}
 export const SPINE_ROW_PX = 32;
 export const SPINE_SEPARATOR_PX = 24;
 export const ELIDE_ABOVE_ROWS = 11;
@@ -722,7 +772,8 @@ export interface SpineRowsInput {
 }
 /** Binary-searches steps by firstSeq for the brushed range; keys survive refolds, churn and live ticks (spec §7.6.3). */
 export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: TimeScale, input: SpineRowsInput): SpineRow[];
-/** 32 for step/chapter/noise/elided, 24 for separators, per signal for expanded finding rows (124 for claim_contradicted). */
+/** 32 for step/chapter/noise/elided, 24 for separators, per signal for expanded finding rows: claim_contradicted 104,
+ *  failing_tests 134, destructive_command 96, guardrail_clamp 88, recovery_arc 96 (the measured cards); 96 otherwise. */
 export function estimateSpineRowSize(row: SpineRow, session: TraceSession): number;
 /** Index of the row holding seq, or −1. */
 export function spineRowIndexForSeq(rows: readonly SpineRow[], session: TraceSession, seq: number): number;
@@ -1290,7 +1341,9 @@ export interface DataController {
   get(): DataSnapshot;
   payloads(seqs: readonly number[]): Promise<TraceRow[]>;
 }
-/** Folds with createTraceState/accumulateAll/finalize({live: !terminal, state, throughSeq: cursorAfter(page), nowMs: source.now()}); tags requests with a monotonic token and drops stale responses. */
+/** Folds with createTraceState/accumulateAll/finalize({live: !terminal, state, throughSeq: cursorAfter(page), nowMs: source.now()}); tags requests with a monotonic token and drops stale responses.
+ *  Yields one macrotask (scheduler.setTimeout(0)) between pages, so commits are progressive and the first page paints
+ *  before the last one loads; host.onReady still fires after the first fold and tv:full-load marks "loaded". */
 export function createDataController(options: DataControllerOptions): DataController;
 
 // ui/shell/session-context.ts (C2-3)
@@ -1330,6 +1383,22 @@ export const FINDING_TITLE = {
   claim_contradicted: "Claim contradicts tests", failing_tests: "Tests failed", destructive_command: "Destructive command",
   guardrail_clamp: "Guardrail clamp", recovery_arc: "Recovered after a failure",
 } as const satisfies Record<SignalId, string>;
+/** Anchored findings (tone.ts anchoredFindings); citing ones for Related. topFindingOf is the first anchored one. */
+export function findingsOf(session: TraceSession, step: Step): Finding[];
+export function citingFindingsOf(session: TraceSession, step: Step): Finding[];
+export function topFindingOf(session: TraceSession, step: Step): Finding | null;
+/** The finding a spine row shows: its top anchored finding; titled when it is one of autoExpandingFindings (it takes
+ *  the title slot and node), else a badge; null when none is anchored. */
+export interface RowFinding { finding: Finding; titled: boolean }
+export function rowFindingOf(session: TraceSession, step: Step, findingsById: ReadonlyMap<FindingId, Finding>): RowFinding | null;
+/** Inspector header, review-note line 1, Brush aria-valuetext, diagnostics title; sanitized with displayUntrusted. */
+export function selectionTitle(session: TraceSession, index: TraceIndex, id: SelectionId): string;
+// ui/views/hybrid/spine/Spine.tsx: the finding body a view injects through FindingBodyContext
+export interface FindingBodyProps {
+  finding: Finding; step: Step; session: TraceSession; onJump(stepId: StepId): void;
+  /** "header": the signal's inline header extras next to the row title; default "body". A Canvas frame that reuses FindingBody passes it. */
+  part?: "header" | "body";
+}
 // ui/inspector/review-note.ts (C2-6)
 export interface ReviewNote { markdown: string; firstLine: string }
 /** Spec §7.1 "Review note" format; null when nothing is selected. */
@@ -1376,6 +1445,10 @@ export interface ViewPortRegistry {
 export function createViewPortRegistry(): ViewPortRegistry;
 export const ViewPortRegistryContext: React.Context<ViewPortRegistry | null>;
 export function useRegisterViewPort(kind: ViewKind, port: ViewPort): void;
+// Hybrid port behavior (C2 fix wave): zoom.label() divides the camera k by the level's preset k, cached per
+// (level, overview model, width) and not per playhead, so moving the selection is not a zoom; HybridView calls
+// registry.notify() once a remounted overview has a camera. reveal() is queued to the next commit and dropped when
+// the playhead effect already revealed that row in the same commit, so one j press scrolls the spine at most once.
 
 // ui/views/registry.ts (C2-14 creates with [hybrid]; C3-11 adds canvas)
 export interface ViewProps { active: boolean }

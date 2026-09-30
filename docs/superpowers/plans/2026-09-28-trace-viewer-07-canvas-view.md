@@ -3881,6 +3881,26 @@ Source: lane review of C3a (`298d3ed..f55a4b9`) and its follow-up commits. Bindi
 - **Trunk endpoints follow placement order.** A trunk's `from`/`to` are its first and last placed frames, not its (col, row) extremes; ids stay `trunk:turn:N`. Do not derive trunk geometry from `from`/`to` column positions.
 - **Open C3a follow-ups (not blocking):** rails in column 0 draw at x < 0 (`railX` uses gutterLeft = -colGap) while bounds start at x 0, so Fit and the minimap clip them; P9's per-finding edge count assumes no cross-finding dedupe (assert per (from, to)); carried minors: `turnLocator` returns turn 0 before the first turn, `frameBySel` is first-frame-wins, P8's `frameByKey.has(key)` check is tautological, the bench has no frame-count guard, `edge.d ?? ""` in the minimap is dead code.
 
+## Hand-offs from C2 (fix wave)
+
+Source: the C2 lane review ("Hand-offs W3 must know"), its fix-wave re-review ("W3 hand-offs") and the orchestrator rulings in the C2 ledger (`.superpowers/sdd/2026-09-28-trace-viewer-06-viewer-shell-hybrid/`). Binding for C3-5..C3-12. interfaces-ui §2.1 and §2.4 hold the signatures.
+
+- **Ruler (orchestrator ruling, W3 Ruler).** `CanvasRuler` wraps the shared `Ruler` and draws `playheadT`, the band and `problemTs` itself, in its own overlay. The shared `RulerProps` stay `{ map, scale, widthPx, loadedThroughT, className? }`; `loadedThroughT` is the hatch start (deviation 16's `hatchFromT`). The shared Ruler labels about every 120 px without "+" and adds minor ticks at least 8 px apart, through one `computeTicks` call.
+- **Anchor rule.** Frame titles and tones read anchored findings only: `anchoredFindings`, `topFindingOf`, `stepTone`, `worstSeverity`. A finding that only cites a step goes to Related (`citingFindings`). The cited-row collapse rule is `autoExpandingFindings`.
+- **Rerun the C3a canvas suites after the rebase.** `canvas-layout.ts` picks loose frames with `worstSeverity`, which now counts anchored findings only, so a step that only cites a warning or critical finding no longer earns a loose frame. P8 still holds, because the predicate is the same function.
+- **Labels.** Frame labels show `shortTitle ?? title` through `displayUntrusted`. The full title is the tooltip and the accessible name; take the name from real (visually hidden) text, never from `aria-label` on a generic element.
+- **Reveal.** The KeyboardLayer calls `port.reveal` after `j`/`k`. Queue it to the next commit and drop it when the Canvas's own playhead reveal already moved to that frame in the same commit, as Hybrid does, and read offsets without forcing layout.
+- **`NoiseReason` has `pipeline`.** Any exhaustive `Record<NoiseReason, …>` must list it.
+- **`FindingBody` reuse.** A Canvas frame that reuses `FindingBody` passes `part` (`"header"` for the inline header extras; default `"body"`).
+- **From the lane review, still binding:**
+  - Set `data-pannable` on the canvas viewport. Space pans when focus is in `main` or the pointer is over `[data-pannable]` (`KeyboardLayer.tsx`).
+  - Release the gesture on hide or unmount: the cleanup dispatches `{ type: "gesture", gesture: null }`. The Shell holds data applies while a gesture is set, so a view hidden mid-gesture otherwise freezes every apply. `Overview.tsx` and `Brush.tsx` `finish` are the pattern.
+  - Register with `useRegisterViewPort("canvas", port)` and memoize `port` with `useMemo`. An unstable port re-registers on every render and re-renders the title bar. Call `registry.notify()` when the zoom label changes.
+  - Reuse `<LevelControl by="canvas" />` instead of building a second radiogroup.
+  - `PERF.viewSwitch` is never marked by C2; C3-11 owns it.
+  - View-originated writes use `by: "canvas"`, which leaves Live. Under `<Activity hidden>` effects clean up, so apply a level changed while hidden on activation (HybridView's `appliedLevel`). Canvas drift goes through `useDiagnostics().reportDrift`. Enter stays with `OWNS_ENTER` controls; Canvas frames with `role="group"` toggle expand on Enter.
+  - Additive C2 contracts that interfaces-ui does not list yet: `ViewPortRegistry.version()`, `ViewDefinitionsContext`, `useViewPortRegistry`, `useActiveViewPort`, `useAnnounce()`/`LiveRegionContext` (announce through it; no second live region) and the `NewBadge` props. Import `ViewProps` and `ViewDefinition` as types only; a runtime import creates a registry and view cycle.
+
 ### Task C3-5: M4b spike gate: risks 2, 3, 6, 7 passed or ruled; apply rulings
 
 **Files:**

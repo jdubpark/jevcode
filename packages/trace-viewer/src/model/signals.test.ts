@@ -195,6 +195,75 @@ describe("failing_tests", () => {
   });
 });
 
+describe("finding chapters under a shared validation (orchestrator ruling M1)", () => {
+  // Every unit cites the one `pnpm test` validation, as every oauth unit does, so the run belongs to
+  // every chapter. Only the chapters that own the failure may become finding chapters.
+  function sharedValidation(failureFile: string | null, failedUnit: boolean) {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "pnpm-lock.yaml", added: 40, removed: 2, isFormattingOnly: false, isConfigOnly: false, isLockfile: true }, "fact_lock");
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 5, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    b.fact({ type: "git_hunk", file: "src/b.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_b");
+    b.fact({ type: "git_hunk", file: "tests/a.test.ts", added: 9, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_t");
+    const run = b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    const failures = failureFile === null ? [] : [{ file: failureFile, testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 4, failed: 1, skipped: 0, failures });
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 4, failed: 1, skipped: 0 });
+    const claim = b.agent({ type: "agent_message", role: "assistant", text: "All tests pass." });
+    b.agent({ type: "agent_completed" });
+    const shared = { validationResults: ["val_1"], status: "validated" as const };
+    b.unit({ id: "cu_lock", files: ["pnpm-lock.yaml"], evidence: ["fact_lock"], ...shared });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a"], ...shared });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], evidence: ["fact_b"], ...shared, ...(failedUnit ? { status: "failed" as const } : {}) });
+    b.unit({ id: "cu_tests", files: ["tests/a.test.ts"], evidence: ["fact_t"], ...shared });
+    const session = fold(b);
+    const byUnit = new Map(session.chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    return { session, byUnit, run, claim };
+  }
+
+  it("names only chapters that failed or hold a failing test's file", () => {
+    const { session, byUnit, run } = sharedValidation("/repo/tests/a.test.ts", true);
+    // The join itself is unchanged: the shared run still belongs to all four chapters.
+    expect(session.steps.find((step) => step.firstSeq === run)?.chapterIds).toHaveLength(4);
+    for (const ruleId of ["claim_contradicted", "failing_tests"] as const) {
+      const [finding] = findingsOf(session, ruleId);
+      expect(finding?.chapterIds).toEqual(["unit:cu_b", "unit:cu_tests"]);
+    }
+    expect(byUnit.get("cu_a")?.findingIds).toEqual([]);
+    // A lockfile-only chapter stays noise: the shared validation does not clear it.
+    expect(byUnit.get("cu_lock")).toMatchObject({ noise: true, findingIds: [] });
+  });
+
+  it("falls back to the latest chapter that holds the run when none owns the failure", () => {
+    const { session, byUnit } = sharedValidation(null, false);
+    for (const ruleId of ["claim_contradicted", "failing_tests"] as const) {
+      expect(findingsOf(session, ruleId)[0]?.chapterIds).toEqual(["unit:cu_tests"]);
+    }
+    expect(byUnit.get("cu_lock")).toMatchObject({ noise: true, findingIds: [] });
+  });
+
+  it("scopes a recovery arc over shared validations the same way", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact({ type: "git_hunk", file: "pnpm-lock.yaml", added: 40, removed: 2, isFormattingOnly: false, isConfigOnly: false, isLockfile: true }, "fact_lock");
+    const failures = [{ file: "tests/a.test.ts", testName: "links", message: "boom" }];
+    b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 4, failed: 1, skipped: 0, failures });
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 4, failed: 1, skipped: 0 });
+    b.fact({ type: "git_hunk", file: "tests/a.test.ts", added: 2, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_t");
+    testRun(b, 5, 0);
+    b.validation({ id: "val_2", kind: "test", command: "pnpm test", status: "passed", passed: 5, failed: 0, skipped: 0 });
+    const shared = { validationResults: ["val_1", "val_2"], status: "validated" as const };
+    b.unit({ id: "cu_lock", files: ["pnpm-lock.yaml"], evidence: ["fact_lock"], ...shared });
+    b.unit({ id: "cu_tests", files: ["tests/a.test.ts"], evidence: ["fact_t"], ...shared });
+    const session = fold(b);
+    expect(findingsOf(session, "recovery_arc")[0]?.chapterIds).toEqual(["unit:cu_tests"]);
+    expect(session.chapters.find((chapter) => chapter.changeUnitId === "cu_lock")).toMatchObject({ noise: true, findingIds: [] });
+  });
+});
+
 describe("destructive_command", () => {
   it("fires on a matched pattern and names it", () => {
     const b = new TraceBuilder();
@@ -245,7 +314,7 @@ describe("guardrail_clamp", () => {
         kind: "guardrail",
         problems: [],
         findingIds: [],
-        noise: "lifecycle",
+        noise: "pipeline",
       });
     }
     expect(session.chapters[0]?.findingIds).toEqual([]);

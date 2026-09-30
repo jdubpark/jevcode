@@ -1,6 +1,6 @@
 import type { Level, UnitStableId } from "../../model/index.js";
 import {
-  brushSeqRange, effectivePlayheadSeq, isKeyExpanded,
+  autoExpandingFindings, brushSeqRange, effectivePlayheadSeq, isKeyExpanded,
   type Brush, type Playhead, type SelectionId, type TraceIndex,
 } from "../../layout/trace-index.js";
 import type { ViewerLocation } from "./location.js";
@@ -274,9 +274,8 @@ function setExpanded(state: ViewState, key: string, want: boolean, index: TraceI
   if (key.startsWith("step:")) {
     const entry = index.entry(key);
     const step = entry === undefined ? undefined : index.session?.steps[entry.position];
-    for (const id of step?.findingIds ?? []) {
-      if (index.findingsById.get(id)?.severity === "critical") collapsed = withKey(collapsed, id);
-    }
+    // Only the findings that open this row; a claim that cites the step keeps its own expansion.
+    for (const finding of step === undefined ? [] : autoExpandingFindings(step, index.findingsById)) collapsed = withKey(collapsed, finding.id);
   }
   return { ...state, expanded: withoutKey(state.expanded, key), collapsed };
 }

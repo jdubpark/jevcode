@@ -1,2 +1,4 @@
 dist-spike/
 .spike/
+public/bundles/
+.smoke/

@@ -231,6 +231,22 @@ export function effectivePlayheadSeq(playhead: Playhead, selection: SelectionId 
   return entry === undefined ? index.loadedThroughSeq : entry.firstSeq;
 }
 
+/**
+ * The step's critical findings that open its row by themselves: only findings anchored on the step (one that merely
+ * cites it never does), and none while another critical finding cites the step as evidence, because that finding's
+ * card already shows it (a claim over its failing test run).
+ */
+export function autoExpandingFindings(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Finding[] {
+  const own: Finding[] = [];
+  for (const id of step.findingIds) {
+    const finding = findingsById.get(id);
+    if (finding?.severity !== "critical") continue;
+    if (finding.anchorStepId !== step.id) return [];
+    own.push(finding);
+  }
+  return own;
+}
+
 export function isStepExpanded(
   step: Step,
   findingsById: ReadonlyMap<FindingId, Finding>,
@@ -238,7 +254,7 @@ export function isStepExpanded(
   collapsed: ReadonlySet<string>,
 ): boolean {
   if (expanded.has(step.id)) return true;
-  return step.findingIds.some((id) => findingsById.get(id)?.severity === "critical" && !collapsed.has(id));
+  return autoExpandingFindings(step, findingsById).some((finding) => !collapsed.has(finding.id));
 }
 
 export function isKeyExpanded(key: string, index: TraceIndex, expanded: ReadonlySet<string>, collapsed: ReadonlySet<string>): boolean {

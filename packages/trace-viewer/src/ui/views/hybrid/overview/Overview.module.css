@@ -1,0 +1,271 @@
+.overview {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background-color: var(--tv-canvas);
+  background-image: radial-gradient(var(--tv-fill-2) 1px, transparent 1px);
+  background-size: 12px 12px;
+  box-shadow: inset 0 -1px 0 var(--tv-hair);
+}
+
+.gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.laneLabel {
+  position: absolute;
+  left: 0;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--tv-ink-2);
+}
+
+.laneName {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.lanes {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.lanes[data-tool="hand"] {
+  cursor: grab;
+}
+
+.canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.ruler {
+  top: 36px;
+}
+
+.underline {
+  position: absolute;
+  top: 50px;
+  height: 2px;
+  background: var(--tv-ink-4);
+  pointer-events: none;
+}
+
+.track {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  right: 0;
+  height: 190px;
+  z-index: 1;
+}
+
+.brushBody {
+  position: absolute;
+  top: 52px;
+  height: 174px;
+  z-index: 2;
+  background: var(--tv-accent-soft);
+  cursor: grab;
+}
+
+.edge {
+  position: absolute;
+  top: 52px;
+  width: 8px;
+  height: 174px;
+  z-index: 4;
+  cursor: ew-resize;
+}
+
+.edge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--tv-accent);
+}
+
+.playheadLine {
+  position: absolute;
+  top: 36px;
+  width: 1px;
+  height: 190px;
+  z-index: 5;
+  background: var(--tv-accent);
+  pointer-events: none;
+}
+
+.playheadHandle {
+  position: absolute;
+  top: 30px;
+  width: 13px;
+  height: 14px;
+  z-index: 5;
+  border-radius: 3px 3px 7px 7px;
+  background: var(--tv-accent);
+  cursor: ew-resize;
+}
+
+.edge:focus-visible,
+.playheadHandle:focus-visible,
+.pin:focus-visible,
+.bandLabel:focus-visible,
+.tool:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 2px;
+}
+
+.pin {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--tv-panel);
+  color: var(--tv-ink-2);
+  box-shadow: var(--tv-shadow);
+  cursor: pointer;
+}
+
+.pin[data-critical] {
+  background: var(--tv-bad);
+  color: var(--tv-panel);
+}
+
+.pin[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--tv-accent);
+}
+
+.pin[data-painted] {
+  background: transparent;
+  box-shadow: none;
+  color: transparent;
+}
+
+.pinCount {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.link {
+  fill: none;
+  stroke: var(--tv-bad);
+  stroke-width: 1.5px;
+}
+
+.neq {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--tv-bad);
+  color: var(--tv-panel);
+  pointer-events: none;
+}
+
+.bandLabel {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--tv-ink-3);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.bandLabel[data-on] {
+  color: var(--tv-ink-2);
+}
+
+.bandTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  transform: translateX(-50%);
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  cursor: pointer;
+}
+
+.tool[aria-pressed="true"] {
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
