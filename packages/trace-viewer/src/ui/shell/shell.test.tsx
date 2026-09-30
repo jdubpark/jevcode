@@ -28,6 +28,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   layout.restore();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -180,6 +181,64 @@ describe("Shell", () => {
     expect(h.announcements).toEqual(["Live follow paused", "3 new steps"]);
     expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
     expect(screen.getByRole("status").textContent).toBe("3 new steps");
+  });
+
+  describe("trailing throttle", () => {
+    function grabAnnounce() {
+      const ref: { announce: ReturnType<typeof useAnnounce> } = { announce: () => undefined };
+      function Grab(): null {
+        ref.announce = useAnnounce();
+        return null;
+      }
+      return { ref, Grab };
+    }
+    const options = { key: "new", minIntervalMs: 10_000 };
+
+    it("speaks the update held inside the window when the window ends", () => {
+      vi.useFakeTimers();
+      const { ref, Grab } = grabAnnounce();
+      const h = renderHarness(<Grab />, null);
+      act(() => ref.announce("3 new steps", options));
+      vi.advanceTimersByTime(2_000);
+      act(() => ref.announce("3 new steps, 1 problem", options));
+      expect(h.announcements).toEqual(["3 new steps"]);
+      vi.advanceTimersByTime(7_999);
+      expect(h.announcements).toEqual(["3 new steps"]);
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(h.announcements).toEqual(["3 new steps", "3 new steps, 1 problem"]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("keeps only the latest of several updates inside the window", () => {
+      vi.useFakeTimers();
+      const { ref, Grab } = grabAnnounce();
+      const h = renderHarness(<Grab />, null);
+      act(() => ref.announce("a", options));
+      for (const text of ["b", "c", "d"]) {
+        vi.advanceTimersByTime(1_000);
+        act(() => ref.announce(text, options));
+      }
+      expect(vi.getTimerCount()).toBe(1);
+      act(() => {
+        vi.advanceTimersByTime(20_000);
+      });
+      expect(h.announcements).toEqual(["a", "d"]);
+    });
+
+    it("clears the pending timer on unmount", () => {
+      vi.useFakeTimers();
+      const { ref, Grab } = grabAnnounce();
+      const h = renderHarness(<Grab />, null);
+      act(() => ref.announce("a", options));
+      act(() => ref.announce("b", options));
+      expect(vi.getTimerCount()).toBe(1);
+      h.result.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(20_000);
+      expect(h.announcements).toEqual(["a"]);
+    });
   });
 
   it("does not re-run the open logic when a parent passes a new but equal location", async () => {
