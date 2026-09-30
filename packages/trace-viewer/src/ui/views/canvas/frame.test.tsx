@@ -251,7 +251,7 @@ describe("Frame", () => {
     const session: TraceSession = structuredClone(oauthCanvasSession());
     const chapter = session.chapters.find((candidate) => candidate.id === "unit:oauth-dependency");
     if (chapter === undefined) throw new Error("no chapter");
-    chapter.clampIds = ["clamp-1"];
+    chapter.clampIds = ["security_path"];
     const { view } = renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency", { level: "session" });
     const shield = view.container.querySelector('[data-flag="shield"]');
     expect(shield).not.toBeNull();
@@ -271,6 +271,15 @@ describe("Frame", () => {
     const card = renderFrame(replay, (frame) => frame.selId === "unit:cu_78093dbe9212089d");
     expect(card.view.container.textContent ?? "").toContain("3 steps");
     expect(card.view.container.textContent ?? "").not.toContain("pnpm test");
+  });
+
+  it("shows no shield for a chapter whose only clamps are info-level suppressions (lane review minor 3)", () => {
+    const session: TraceSession = structuredClone(oauthCanvasSession());
+    const chapter = session.chapters.find((candidate) => candidate.id === "unit:oauth-dependency");
+    if (chapter === undefined) throw new Error("no chapter");
+    chapter.clampIds = ["suppress_lockfile", "decision_presence_floor"];
+    const { view } = renderFrame(session, (frame) => frame.selId === "unit:oauth-dependency", { level: "session" });
+    expect(view.container.querySelector('[data-flag="shield"]')).toBeNull();
   });
 
   it("lists the plan's items", () => {
