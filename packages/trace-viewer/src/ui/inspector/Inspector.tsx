@@ -22,6 +22,8 @@ import { useDispatch, useView, useViewStore } from "../state/store.js";
 import type { InspectorTab } from "../state/view-state.js";
 import { selectionTitle, topFindingOf } from "./finding-copy.js";
 import styles from "./Inspector.module.css";
+import { Evidence } from "./Evidence.js";
+import { Raw } from "./Raw.js";
 import { buildReviewNote } from "./review-note.js";
 import { Summary } from "./Summary.js";
 
@@ -121,7 +123,8 @@ function TabBody({
   if (tab === "summary") {
     return <Summary session={session} index={index} selection={selection} onRelatedSelect={onRelatedSelect} />;
   }
-  return <p className={styles.muted}>No evidence for this item</p>;
+  if (tab === "evidence") return <Evidence selection={selection} />;
+  return <Raw selection={selection} />;
 }
 
 function InspectorBody({ host }: InspectorProps) {

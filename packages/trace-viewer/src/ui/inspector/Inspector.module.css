@@ -277,3 +277,100 @@
   background: var(--tv-fill-2);
   color: var(--tv-ink-3);
 }
+
+.label {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.inlineButton {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.raw {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rawRow {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--tv-fill);
+}
+
+.diff {
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--tv-panel);
+  box-shadow: inset 0 0 0 1px var(--tv-hair);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.diff :global(.d2h-file-header),
+.diff :global(.d2h-file-list-wrapper) {
+  display: none;
+}
+
+.diff :global(.d2h-diff-table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.diff :global(.d2h-code-linenumber) {
+  width: 1%;
+  padding: 0 6px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.diff :global(.d2h-code-line) {
+  padding: 0 8px;
+  color: var(--tv-ink);
+  white-space: pre;
+}
+
+.diff :global(.d2h-code-line-prefix) {
+  color: var(--tv-ink-3);
+}
+
+.diff :global(.d2h-ins) {
+  background: var(--tv-fill-2);
+}
+
+.diff :global(.d2h-del) {
+  background: var(--tv-panel);
+}
+
+.diff :global(.d2h-info) {
+  background: var(--tv-fill);
+  color: var(--tv-ink-3);
+}
+
+.diff :global(.d2h-code-line ins),
+.diff :global(.d2h-code-line del) {
+  background: transparent;
+  text-decoration: none;
+}
