@@ -21,8 +21,21 @@ function workSlope(map: XMap, scale: TimeScale, t0: number, t1: number): number 
   return Math.max(1e-12, (map.xOf(t0 + probe) - map.xOf(t0)) / probe);
 }
 
+export interface TickOptions {
+  /** Minimum px between labeled ticks (default MIN_TICK_LABEL_GAP_PX); it also picks the label step. */
+  labelGapPx?: number;
+  /** With it, unlabeled minor ticks at the smallest step at least this many px apart. Without it,
+   *  every tick is a labeled one. */
+  minorGapPx?: number;
+}
+
 /** Ticks inside [x0, x1]; none inside breaks; the Ruler formats labels with formatOffset(tMs). */
-export function computeTicks(map: XMap, scale: TimeScale, range: { x0: number; x1: number }): { ticks: Tick[]; breaks: BreakMark[] } {
+export function computeTicks(
+  map: XMap,
+  scale: TimeScale,
+  range: { x0: number; x1: number },
+  options: TickOptions = {},
+): { ticks: Tick[]; breaks: BreakMark[] } {
   const x0 = Math.min(range.x0, range.x1);
   const x1 = Math.max(range.x0, range.x1);
   const t0 = Math.max(0, map.tOf(x0));
@@ -30,7 +43,11 @@ export function computeTicks(map: XMap, scale: TimeScale, range: { x0: number; x
   const breakSegs: ScaleSegment[] = scale.segments.filter((s) => s.idle !== null && s.idle.ms >= BREAK_MIN_MS && s.t1 > t0 && s.t0 < t1);
   const breaks = breakSegs.map((s) => ({ x0: map.xOf(s.t0), x1: map.xOf(s.t1), ms: s.idle?.ms ?? 0 }));
   const slope = workSlope(map, scale, t0, t1);
-  const step = TICK_STEPS_MS.find((s) => s * slope >= MIN_TICK_LABEL_GAP_PX) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1] ?? 3_600_000;
+  const labelGap = options.labelGapPx ?? MIN_TICK_LABEL_GAP_PX;
+  const stepFor = (gapPx: number): number => TICK_STEPS_MS.find((s) => s * slope >= gapPx) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1] ?? 3_600_000;
+  const labelStep = stepFor(labelGap);
+  const step = options.minorGapPx === undefined ? labelStep : Math.min(labelStep, stepFor(options.minorGapPx));
+  const minGap = Math.min(MIN_TICK_GAP_PX, options.minorGapPx ?? MIN_TICK_GAP_PX);
   const ticks: Tick[] = [];
   let lastLabeledX = Number.NEGATIVE_INFINITY;
   let lastX = Number.NEGATIVE_INFINITY;
@@ -42,8 +59,8 @@ export function computeTicks(map: XMap, scale: TimeScale, range: { x0: number; x
       continue;
     }
     const x = map.xOf(t);
-    if (x >= x0 - 1e-9 && x <= x1 + 1e-9 && x - lastX >= MIN_TICK_GAP_PX) {
-      const labeled = x - lastLabeledX >= MIN_TICK_LABEL_GAP_PX - 1e-9;
+    if (x >= x0 - 1e-9 && x <= x1 + 1e-9 && x - lastX >= minGap) {
+      const labeled = t % labelStep === 0 && x - lastLabeledX >= labelGap - 1e-9;
       ticks.push({ tMs: t, x, labeled });
       lastX = x;
       if (labeled) lastLabeledX = x;

@@ -14,6 +14,7 @@ import {
 import type { z } from "zod";
 
 import { applyNoise, applyProblems, flagMissingEvidence } from "./classify.js";
+import { exactGuard } from "./exact-guard.js";
 import { foldAgentEvent } from "./fold-agent.js";
 import { buildChapters, foldChangeUnit, foldDecision, foldJevDecision } from "./fold-chapters.js";
 import { buildEntities, foldEvidenceFact, foldValidation } from "./fold-evidence.js";
@@ -83,8 +84,20 @@ function inheritedContext(state: FoldState, row: TraceRow): RowContext {
   return { seq: row.seq, sourceTs: clockTs(state.clock, t, row.ts), t };
 }
 
+/** change_unit rows are re-emitted on every unit update (85k of 111k soak rows) and carry long id
+ *  lists, so zod's per-node parse dominated the fold. The exact guard accepts only payloads zod
+ *  would parse to an equal copy; everything else still goes through zod (verdict and message). The
+ *  payload is then used as is, which is safe because the fold never mutates a parsed unit. */
+const isExactChangeUnit = exactGuard(ChangeUnitSchema);
+
 /** The parsed payload, or null after recording an invalid_row gap (the fold continues). */
-function parseOrGap<T>(state: FoldState, row: TraceRow, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T | null {
+function parseOrGap<T>(
+  state: FoldState,
+  row: TraceRow,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  fast?: (value: unknown) => boolean,
+): T | null {
+  if (fast?.(row.payload) === true) return row.payload as T;
   const parsed = schema.safeParse(row.payload);
   if (parsed.success) return parsed.data;
   const detail = parsed.error.issues[0];
@@ -143,7 +156,7 @@ export function accumulate(state: TraceState, row: TraceRow): TraceState {
       break;
     }
     case "change_unit": {
-      const unit = parseOrGap(s, row, ChangeUnitSchema);
+      const unit = parseOrGap(s, row, ChangeUnitSchema, isExactChangeUnit);
       if (unit !== null) foldChangeUnit(s, unit, inheritedContext(s, row));
       break;
     }

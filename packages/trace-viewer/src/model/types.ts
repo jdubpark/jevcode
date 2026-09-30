@@ -136,6 +136,7 @@ export const NOISE_REASONS = [
   "formatting",
   "duplicate_poll",
   "lifecycle",
+  "pipeline",
   "superseded",
   "passing_test",
 ] as const;
@@ -329,6 +330,9 @@ export interface Chapter {
   id: UnitStableId;
   changeUnitId: string;
   title: string;
+  /** At most 24 graphemes, from chapterShortTitle (format.ts): category and focus file stem for a
+   *  placeholder title, else the title's first clause. Set by the fold; absent on hand-built sessions. */
+  shortTitle?: string;
   intent?: string;
   category: ChangeCategory;
   status: ChangeUnitStatus;
@@ -358,6 +362,11 @@ export interface Chapter {
   validationIds: string[];
   /** Steps that the unit's validation results attached to, in seq order (R25). */
   validationStepIds: StepId[];
+  /** Test and check steps, in seq order, that another current chapter also joins and whose outcome
+   *  this chapter does not own (ownsRunOutcome). One validation cited by every unit reaches every
+   *  chapter; the overview band footprint skips these steps (spec §6.6, §7.6.1). Absent on
+   *  hand-built sessions. */
+  validationOnlyStepIds?: StepId[];
   clampIds: string[];
   triad: { importance?: number; relevance?: number; interruption?: number; clientKind?: JevClientKind };
   schemaChanges: SchemaChange[];
