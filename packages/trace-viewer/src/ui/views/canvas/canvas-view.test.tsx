@@ -479,6 +479,27 @@ describe("CanvasView camera writes", () => {
     expect(numericCamera().k).toBe(1.5);
   });
 
+  it("opens at the show fit when the first data and the selection land in one commit (C3-12 smoke)", () => {
+    const { frames } = setup(900, 600);
+    stubReducedMotion(false);
+    const harness = renderWithViewer(<CanvasView active />, { session: null, state: { follow: false } });
+    act(() => frames.flush());
+    const session = oauthCanvasSession();
+    // oauth's claim step (+0:43), in the last column: outside the 48 px inset of the pre-fit camera (k 1).
+    const claim = session.findings.find((finding) => finding.ruleId === "claim_contradicted")?.anchorStepId;
+    if (claim === undefined) throw new Error("oauth has no claim_contradicted finding");
+    // The first data and the initial selection land in one commit, as at open: the show tween starts, then the
+    // selection's reveal runs while the controller still holds the pre-fit camera.
+    act(() => {
+      harness.setSession(session);
+      harness.store.dispatch({ type: "select", id: claim, by: "shell" });
+    });
+    act(() => frames.flush());
+    // Spec §7.8 item 3: the whole-session brush (1016 px) fits horizontally, k = (900 − 2 · 48) / 1016, and the
+    // selection is revealed inside that fit; a reveal computed from the pre-fit camera (k 1) must not replace it.
+    expect(numericCamera().k).toBeCloseTo((900 - 96) / 1016, 6);
+  });
+
   it("releases the gesture when the view is hidden mid-gesture", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { frames } = setup();

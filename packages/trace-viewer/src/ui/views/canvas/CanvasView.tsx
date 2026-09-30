@@ -340,6 +340,9 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     if (controller === null || current === null || s === null || viewport.w <= 0 || viewport.h <= 0) return;
     pendingShowRef.current = false;
     const state = store.get();
+    // The show reveals this selection itself. A selection that lands in the same commit as the first layout (open)
+    // must not be revealed again from the pre-fit camera, which would replace the fit (C3-12 smoke).
+    lastSelectionRef.current = state.selection;
     const selected = state.selection === null ? undefined : frameForSelection(current, s, state.selection);
     const target = showCamera({
       layout: current,
