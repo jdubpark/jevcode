@@ -162,10 +162,32 @@ describe("trace parity: DataController over the real trace handlers", () => {
       const handle: IpcHandle = (channel, fn) => {
         handlers.set(channel, (raw) => fn(parseToMain(channel, raw), { senderId: 1 }));
       };
-      registerTraceHandlers(handle, service);
+      // Counters: each request is served from the held read-ahead (no service
+      // read) or by a direct read, and each read-ahead is one service read.
+      let requests = 0;
+      let readAheads = 0;
+      let serviceReads = 0;
+      const counted: TraceService = {
+        ...service,
+        rows: (request) => {
+          serviceReads += 1;
+          return service.rows(request);
+        },
+      };
+      registerTraceHandlers(handle, counted, {
+        defer: (fn) =>
+          void setImmediate(() => {
+            readAheads += 1;
+            fn();
+          }),
+        now: () => Date.now(),
+      });
       const viaHandlers: TraceService = {
         ...service,
-        rows: (request) => handlers.get("trace:rows")?.(request) as TraceRowsPage,
+        rows: (request) => {
+          requests += 1;
+          return handlers.get("trace:rows")?.(request) as TraceRowsPage;
+        },
       };
       const { bridge } = bridgeOver(viaHandlers, os.homedir());
       const source = createIpcTraceSource(bridge, result.sessionId);
@@ -191,6 +213,10 @@ describe("trace parity: DataController over the real trace handlers", () => {
       const viaBundle = await readAllTraceRows(createStaticBundleSource(parsed.bundle));
       expect(viaController.steps.length).toBeGreaterThan(0);
       expect(viaController).toEqual(foldLoaded(viaBundle));
+      // requests = hits + direct reads and service reads = direct reads + read-aheads,
+      // so hits = requests + readAheads - serviceReads. The load spans many pages.
+      expect(requests).toBeGreaterThan(3);
+      expect(requests + readAheads - serviceReads).toBeGreaterThanOrEqual(1);
     },
     120_000,
   );

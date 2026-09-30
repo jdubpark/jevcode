@@ -55,8 +55,12 @@ export interface ComposerState {
   draft: string;
   /** A note for another session, waiting for the user's own switch. Latest only. */
   held: HeldNote | null;
-  /** Increments when the composer should take focus (after a user action). */
-  focus: number;
+  /**
+   * True from a user action that should focus the composer until the view
+   * focuses it (`focusDone`). The textarea is disabled during a send, so the
+   * request outlives that send instead of being lost.
+   */
+  focusPending: boolean;
 }
 
 export type ComposerEvent =
@@ -64,10 +68,11 @@ export type ComposerEvent =
   | { type: "prefill"; payload: ComposerPrefill }
   | { type: "sessionChanged"; sessionId: string | null }
   | { type: "sent"; text: string }
-  | { type: "dismiss" };
+  | { type: "dismiss" }
+  | { type: "focusDone" };
 
 export function initialComposer(sessionId: string | null): ComposerState {
-  return { sessionId, draft: "", held: null, focus: 0 };
+  return { sessionId, draft: "", held: null, focusPending: false };
 }
 
 function withNote(draft: string, text: string): string {
@@ -85,7 +90,7 @@ export function composerReducer(state: ComposerState, event: ComposerEvent): Com
     case "prefill": {
       const { payload } = event;
       if (state.sessionId !== null && payload.sessionId === state.sessionId) {
-        return { ...state, draft: withNote(state.draft, payload.text), focus: state.focus + 1 };
+        return { ...state, draft: withNote(state.draft, payload.text), focusPending: true };
       }
       const prior = state.held?.note;
       if (prior !== undefined && prior.sessionId === payload.sessionId && prior.text === payload.text) {
@@ -98,7 +103,7 @@ export function composerReducer(state: ComposerState, event: ComposerEvent): Com
       const base = { ...state, sessionId: event.sessionId, draft: "" };
       const held = state.held;
       if (held !== null && event.sessionId !== null && held.note.sessionId === event.sessionId) {
-        return { ...base, draft: held.note.text, held: null, focus: state.focus + 1 };
+        return { ...base, draft: held.note.text, held: null, focusPending: true };
       }
       return base;
     }
@@ -106,5 +111,7 @@ export function composerReducer(state: ComposerState, event: ComposerEvent): Com
       return { ...state, draft: clearSent(state.draft, event.text) };
     case "dismiss":
       return { ...state, held: null };
+    case "focusDone":
+      return state.focusPending ? { ...state, focusPending: false } : state;
   }
 }

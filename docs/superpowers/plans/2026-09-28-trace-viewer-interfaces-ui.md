@@ -102,6 +102,8 @@ and in `devDependencies` add `"@types/d3-selection": "3.0.12"` and `"@types/d3-z
 
 Why: R17 removes `@xyflow/react` from the viewer (it stays locked through ui-catalog, so the single-version grep output is unchanged). `d3-zoom` 3.0.0 is the R17 fallback for spike risk 1 (C1-7F), and no UI lane may add it later; `d3-selection` 3.0.0 is its required peer for `select(el).call(zoom)`. All four versions are already in `pnpm-lock.yaml` (`d3-zoom@3.0.0` :1348, `d3-selection@3.0.0` :1334, `@types/d3-zoom@3.0.8` :961, `@types/d3-selection@3.0.12` in the store), so no new tarball appears. `./sources` lets `apps/desktop` tests import `createStaticBundleSource` and `readAllTraceRows` without loading the React barrel and its `.module.css` imports (D-7). Lane 01 W0-1's lockfile numstat expectation (`125 0 pnpm-lock.yaml`) must be re-measured after this edit; the "only new tarballs" sentence stays true.
 
+Ruling (2026-10-01, lane Db review I-1): the exports map also carries `@jevcode/trace-viewer/data-controller` → `createDataController` (`./dist/ui/shell/data-controller.js`). Its only consumer is the desktop `trace-parity` test, which runs in Node and cannot import the root barrel (React, CSS Modules). Additive: no dependency or lockfile change.
+
 Add one verification step to W0-1 after `pnpm install`:
 
 ```bash
