@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildTraceIndex } from "../../../layout/trace-index.js";
-import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../../test-support/ui-harness.js";
+import {
+  createHarness,
+  foldFixture,
+  renderHarness,
+  stubLayout,
+  type LayoutStub,
+} from "../../../test-support/ui-harness.js";
+import { SessionContext } from "../session-context.js";
 import { Outline } from "./Outline.js";
 
 let layout: LayoutStub;
@@ -79,5 +86,90 @@ describe("Outline", () => {
     await act(async () => undefined);
     const tree = screen.getByRole("tree", { name: "Outline" });
     expect(tree.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+  });
+  it("announces each row's position in the flat tree", async () => {
+    renderHarness(<Outline hiddenRows={0} />, foldFixture("oauth"));
+    await act(async () => undefined);
+    const items = screen.getAllByRole("treeitem");
+    expect(items.length).toBeGreaterThan(3);
+    const total = items[0]?.getAttribute("aria-setsize");
+    expect(Number(total)).toBeGreaterThanOrEqual(items.length);
+    expect(items.map((item) => item.getAttribute("aria-posinset"))).toEqual(
+      items.map((item) => String(Number(item.getAttribute("data-index")) + 1)),
+    );
+    expect(new Set(items.map((item) => item.getAttribute("aria-setsize"))).size).toBe(1);
+  });
+
+  it("moves the roving row with ArrowDown, ArrowUp, End and Home", async () => {
+    renderHarness(<Outline hiddenRows={0} />, foldFixture("oauth"));
+    await act(async () => undefined);
+    const tree = screen.getByRole("tree", { name: "Outline" });
+    const keys = (): string[] => Array.from(tree.querySelectorAll<HTMLElement>("[data-key]")).map((el) => el.dataset.key ?? "");
+    const all = keys();
+    const press = async (key: string): Promise<void> => {
+      fireEvent.keyDown(document.activeElement as HTMLElement, { key });
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    };
+    const active = (): string | undefined => (document.activeElement as HTMLElement | null)?.dataset.key;
+    await act(async () => (tree.querySelector<HTMLElement>('[tabindex="0"]') as HTMLElement).focus());
+    const start = all.indexOf(active() ?? "");
+    expect(start).toBeGreaterThanOrEqual(0);
+    await press("ArrowDown");
+    expect(active()).toBe(all[start + 1]);
+    await press("ArrowUp");
+    expect(active()).toBe(all[start]);
+    await press("End");
+    expect(active()).toBe(all.at(-1));
+    expect(tree.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    await press("Home");
+    expect(active()).toBe(all[0]);
+  });
+
+  it("keeps the tab-stop row mounted after it scrolls far out of range", async () => {
+    layout.restore();
+    layout = stubLayout({ height: 100, rowHeight: 28 });
+    renderHarness(<Outline hiddenRows={0} />, foldFixture("oauth"));
+    await act(async () => undefined);
+    const tree = screen.getByRole("tree", { name: "Outline" });
+    const tab = tree.querySelector<HTMLElement>('[tabindex="0"]');
+    const tabKey = tab?.dataset.key;
+    expect(tabKey).toBeDefined();
+    await act(async () => tab?.focus());
+    await act(async () => {
+      tree.scrollTop = 100_000;
+      fireEvent.scroll(tree);
+    });
+    const mounted = Array.from(tree.querySelectorAll<HTMLElement>("[data-key]"));
+    expect(mounted.some((el) => Number(el.dataset.index) >= 10)).toBe(true);
+    const stops = tree.querySelectorAll<HTMLElement>('[tabindex="0"]');
+    expect(stops).toHaveLength(1);
+    expect(stops[0]?.dataset.key).toBe(tabKey);
+  });
+
+  it("does not move focus when the rows are rebuilt by a Live poll", async () => {
+    const session = foldFixture("oauth");
+    const h = createHarness(session);
+    const view = (next: typeof session) => (
+      h.wrap(
+        <SessionContext.Provider value={{ ...h.view, session: next }}>
+          <Outline hiddenRows={0} />
+          <button type="button">outside</button>
+        </SessionContext.Provider>,
+      )
+    );
+    const result = render(view(session));
+    await act(async () => undefined);
+    const tree = screen.getByRole("tree", { name: "Outline" });
+    await act(async () => tree.querySelectorAll<HTMLElement>("[data-key]")[2]?.focus());
+    const search = screen.getByRole("searchbox", { name: "Search steps" });
+    await act(async () => search.focus());
+    expect(document.activeElement).toBe(search);
+    result.rerender(view({ ...session }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(document.activeElement).toBe(search);
+    await act(async () => screen.getByRole("button", { name: "outside" }).focus());
+    result.rerender(view({ ...session }));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "outside" }));
   });
 });

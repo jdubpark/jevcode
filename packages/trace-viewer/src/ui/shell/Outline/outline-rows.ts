@@ -213,7 +213,7 @@ function fileRows(session: TraceSession): OutlineItemRow[] {
       depth: 0,
       selId: latest,
       icon: "file",
-      title: entity.label,
+      title: displayUntrusted(entity.label),
       mono: true,
       tMs: stepById.get(latest)?.tMs ?? 0,
       flag: entity.chapterIds.some((id) => clamped.has(id)) ? "shield" : null,
