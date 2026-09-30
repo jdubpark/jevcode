@@ -117,6 +117,17 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
     );
   });
 
+  it("a repeated id that replaces a removed one falls back to a fresh build (review m1)", () => {
+    const { meta, rows } = soakShapedRows({ units: 6, runs: 2, reemits: 1 });
+    const [session] = foldChain(meta, rows, [], true);
+    if (session === undefined || session.steps.length < 2 || session.chapters.length < 2) throw new Error("session");
+    // [..., A, B] -> [..., A, A]: every id the new list holds was there before, yet B is gone.
+    const steps = [...session.steps.slice(0, -1), session.steps[session.steps.length - 2] ?? session.steps[0]];
+    const chapters = [...session.chapters.slice(0, -1), session.chapters[session.chapters.length - 2] ?? session.chapters[0]];
+    checkChain([session, { ...session, steps: steps.filter((s) => s !== undefined) }]);
+    checkChain([session, { ...session, chapters: chapters.filter((c) => c !== undefined) }]);
+  });
+
   it("an index seeds one later build; a second build from it, or another session id, is fresh and still equal", () => {
     const { meta, rows } = soakShapedRows({ units: 12, runs: 3, reemits: 1 });
     const [a, b, c] = foldChain(meta, rows, [rows.length - 40, rows.length - 20], true);
