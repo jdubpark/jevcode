@@ -1,0 +1,295 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+
+import { buildSearchIndex, formatOffset } from "../../../model/index.js";
+import { Graphic } from "../../graphics/Graphic.js";
+import { Icon } from "../../icons/Icon.js";
+import { useDispatch, useView } from "../../state/store.js";
+import { selectEffectivePlayheadSeq } from "../../state/view-state.js";
+import { ErrorBoundary } from "../ErrorBoundary.js";
+import { useSessionView } from "../session-context.js";
+import {
+  buildOutlineRows,
+  DEFAULT_OPEN_SECTIONS,
+  searchMatches,
+  type OutlineRow,
+  type OutlineSection,
+} from "./outline-rows.js";
+import styles from "./Outline.module.css";
+
+export interface OutlineProps {
+  hiddenRows: number;
+}
+
+const ROW_PX = 28;
+
+function toggled<T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+function OutlineBody({ hiddenRows }: OutlineProps) {
+  const { session, index } = useSessionView();
+  const dispatch = useDispatch();
+  const selection = useView((state) => state.selection);
+  const search = useView((state) => state.search);
+  const playheadSeq = useView((state) => selectEffectivePlayheadSeq(state, index));
+  const [open, setOpen] = useState<ReadonlySet<OutlineSection>>(DEFAULT_OPEN_SECTIONS);
+  const [showAll, setShowAll] = useState<ReadonlySet<OutlineSection>>(new Set());
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [query, setQuery] = useState(search?.query ?? "");
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (search === null) setQuery("");
+  }, [search]);
+
+  const rows = useMemo<OutlineRow[]>(
+    () => (session === null ? [] : buildOutlineRows(session, { open, showAll })),
+    [session, open, showAll],
+  );
+  const searchIndex = useMemo(() => (session === null ? null : buildSearchIndex(session)), [session]);
+  const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
+  const currentChapter = session === null ? undefined : index.chapterAtSeq(playheadSeq)?.id;
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_PX,
+    getItemKey: (position) => rows[position]?.key ?? position,
+    overscan: 8,
+  });
+
+  const selectedKey = rows.find((row) => row.t === "item" && row.selId === selection)?.key;
+  const tabKey =
+    focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
+
+  useEffect(() => {
+    if (focusKey === null) return;
+    const position = rows.findIndex((row) => row.key === focusKey);
+    if (position < 0) return;
+    virtualizer.scrollToIndex(position, { align: "auto" });
+    const frame = requestAnimationFrame(() => {
+      const target = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("[data-key]") ?? []).find(
+        (element) => element.dataset.key === focusKey,
+      );
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusKey, rows, virtualizer]);
+
+  const activate = (row: OutlineRow): void => {
+    if (row.t === "section") setOpen((current) => toggled(current, row.section));
+    else if (row.t === "more") setShowAll((current) => toggled(current, row.section));
+    else if (row.t === "item") {
+      dispatch({ type: "select", id: row.selId, by: "shell" });
+      if (row.openEvidence) dispatch({ type: "inspector/tab", tab: "evidence" });
+    }
+  };
+
+  const onTreeKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const position = rows.findIndex((row) => row.key === tabKey);
+    const move = (to: number): void => {
+      const row = rows[Math.max(0, Math.min(rows.length - 1, to))];
+      if (row !== undefined) setFocusKey(row.key);
+    };
+    const row = rows[position];
+    switch (event.key) {
+      case "ArrowDown":
+        move(position + 1);
+        break;
+      case "ArrowUp":
+        move(position - 1);
+        break;
+      case "Home":
+        move(0);
+        break;
+      case "End":
+        move(rows.length - 1);
+        break;
+      case "ArrowRight":
+        if (row?.t === "section" && !row.open) activate(row);
+        break;
+      case "ArrowLeft":
+        if (row?.t === "section" && row.open) activate(row);
+        break;
+      case "Enter":
+        if (row !== undefined) activate(row);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  };
+
+  const onSearchChange = (value: string): void => {
+    setQuery(value);
+    if (session === null || searchIndex === null) return;
+    dispatch({ type: "search/set", query: value, matchIds: searchMatches(session, searchIndex, value) });
+  };
+
+  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      dispatch({ type: "search/next", dir: event.shiftKey ? -1 : 1 });
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      dispatch({ type: "esc" });
+      const root = event.currentTarget.closest("[data-trace-viewer]");
+      root
+        ?.querySelector<HTMLElement>('[data-region="main"] [tabindex="0"], [data-region="main"]')
+        ?.focus({ preventScroll: true });
+    }
+  };
+
+  const noMatches = query.trim() !== "" && search !== null && search.matchIds.length === 0;
+
+  return (
+    <div className={styles.outline}>
+      <div className={styles.header}>
+        <h2 className={styles.heading}>Outline</h2>
+        <label className={styles.search}>
+          <Icon name="search" size={14} />
+          <input
+            data-outline-search=""
+            type="search"
+            aria-label="Search steps"
+            placeholder="Search"
+            value={query}
+            onChange={(event) => onSearchChange(event.target.value)}
+            onKeyDown={onSearchKeyDown}
+          />
+        </label>
+      </div>
+      {noMatches ? (
+        <p className={styles.empty}>
+          {`No steps match “${query}” · `}
+          <button type="button" className={styles.clear} onClick={() => onSearchChange("")}>
+            Clear
+          </button>
+        </p>
+      ) : null}
+      <div
+        ref={scrollRef}
+        className={styles.scroll}
+        role="tree"
+        aria-label="Outline"
+        data-scroll-root=""
+        onKeyDown={onTreeKeyDown}
+      >
+        {session === null ? (
+          <div aria-hidden="true">
+            {[0, 1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className={styles.placeholder} />
+            ))}
+          </div>
+        ) : (
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const row = rows[item.index];
+              if (row === undefined) return null;
+              const common = {
+                "data-key": row.key,
+                "data-index": item.index,
+                tabIndex: row.key === tabKey ? 0 : -1,
+                style: { transform: `translateY(${item.start}px)` },
+                onFocus: () => setFocusKey(row.key),
+              };
+              if (row.t === "section") {
+                return (
+                  <div
+                    key={row.key}
+                    {...common}
+                    role="treeitem"
+                    aria-level={1}
+                    aria-expanded={row.open}
+                    className={`${styles.row} ${styles.section}`}
+                    onClick={() => activate(row)}
+                  >
+                    <Icon name={row.open ? "chev-d" : "chev-r"} size={12} />
+                    <span className={styles.title}>{row.label}</span>
+                    <span className={styles.count}>{row.count}</span>
+                  </div>
+                );
+              }
+              if (row.t === "turn") {
+                return (
+                  <div key={row.key} {...common} role="treeitem" aria-level={2} className={`${styles.row} ${styles.turn}`}>
+                    <span className={styles.title}>{row.label}</span>
+                    <span className={styles.offset}>{formatOffset(row.tMs)}</span>
+                  </div>
+                );
+              }
+              if (row.t === "more") {
+                return (
+                  <div
+                    key={row.key}
+                    {...common}
+                    role="treeitem"
+                    aria-level={2}
+                    className={`${styles.row} ${styles.more}`}
+                    onClick={() => activate(row)}
+                  >
+                    {`Show ${row.hidden} more`}
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={row.key}
+                  {...common}
+                  role="treeitem"
+                  aria-level={row.depth + 2}
+                  aria-label={row.label}
+                  aria-selected={row.selId === selection}
+                  aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
+                  data-depth={row.depth}
+                  data-match={matches.has(row.selId) ? "" : undefined}
+                  className={styles.row}
+                  onClick={() => activate(row)}
+                >
+                  <span className={styles.icon}>
+                    <Icon name={row.icon} size={14} />
+                  </span>
+                  <span className={`${styles.title} ${row.mono ? styles.mono : ""} ${row.muted ? styles.muted : ""}`}>
+                    {row.title}
+                  </span>
+                  {row.flag === "x" ? (
+                    <span className={styles.flagBad} aria-hidden="true">
+                      ✕
+                    </span>
+                  ) : null}
+                  {row.failed ? <span className={styles.failedWord}>failed</span> : null}
+                  {row.flag === "neq" ? (
+                    <span className={styles.flagBad}>
+                      <Icon name="neq" size={12} />
+                    </span>
+                  ) : null}
+                  {row.flag === "shield" ? (
+                    <span className={styles.flagIcon}>
+                      <Icon name="shield" size={12} />
+                    </span>
+                  ) : null}
+                  {row.graphic === null ? null : <Graphic spec={row.graphic} size="xs" />}
+                  {row.section === "story" ? <span className={styles.offset}>{formatOffset(row.tMs)}</span> : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {hiddenRows > 0 ? <p className={styles.footer}>{`${hiddenRows} pipeline rows hidden`}</p> : null}
+    </div>
+  );
+}
+
+/** Wraps itself in its own boundary (lane ruling): the Shell does not wrap regions. */
+export function Outline(props: OutlineProps) {
+  return (
+    <ErrorBoundary region="Outline">
+      <OutlineBody {...props} />
+    </ErrorBoundary>
+  );
+}
