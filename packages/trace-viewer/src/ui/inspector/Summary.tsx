@@ -393,8 +393,11 @@ function StepDetails({ step, session, onSelect }: { step: Step; session: TraceSe
   return <p className={styles.meta}>{displayUntrusted(step.headline)}</p>;
 }
 
+/** The Inspector shows one chapter alone, with no decision frame beside it: a decision-born chapter keeps its fork. */
+const NO_DECISION_SHOWN = { decisionShown: () => false } as const;
+
 function ChapterDetails({ chapter, session }: { chapter: Chapter; session: TraceSession }) {
-  const graphic = pickGraphic(chapter, session);
+  const graphic = pickGraphic(chapter, session, NO_DECISION_SHOWN);
   const { cited, resolved, approx } = chapter.evidenceLinks;
   const triad: ReadonlyArray<[string, number | undefined]> = [
     ["Importance", chapter.triad.importance],

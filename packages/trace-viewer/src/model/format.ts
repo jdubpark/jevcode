@@ -336,6 +336,8 @@ interface GraphicLookups {
   stepPosition: Map<string, number>;
   /** decisionId → position of the first step deciding it (decidedBy set). */
   decidedStep: Map<string, number>;
+  /** chapter id → the decision that gave birth to it (bornChapters). */
+  bornFrom: Map<string, string>;
 }
 
 const LOOKUPS = new WeakMap<TraceSession, GraphicLookups>();
@@ -356,7 +358,7 @@ function lookupsOf(session: TraceSession): GraphicLookups {
     const decision = step.decision;
     if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
   });
-  const lookups = { entitiesByPath, stepPosition, decidedStep };
+  const lookups = { entitiesByPath, stepPosition, decidedStep, bornFrom: bornChapters(session) };
   LOOKUPS.set(session, lookups);
   return lookups;
 }
@@ -436,13 +438,46 @@ function forkSpec(decision: DecisionDetail): GraphicSpec {
   };
 }
 
-/** ForkGlyph for a chapter with an answered or delegated decision. */
-function chapterForkSpec(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+/**
+ * Decision-born chapters (the Outline's one-row rule, §7.1): for each decision step in order, the earliest current,
+ * non-noise chapter of the same turn that lists the decision and starts at or after it, unless an earlier decision
+ * already took that chapter. A chapter that links the decision but starts before it (oauth's Identity layer) is not
+ * born from it.
+ */
+function bornChapters(session: TraceSession): Map<string, string> {
+  const bornFrom = new Map<string, string>();
+  for (const step of session.steps) {
+    const decisionId = step.decision?.decisionId;
+    if (step.kind !== "decision" || decisionId === undefined) continue;
+    const stableId = `decision:${decisionId}`;
+    const nextTurnT = session.turns[step.turnIndex + 1]?.tMs ?? Number.POSITIVE_INFINITY;
+    let born: Chapter | undefined;
+    for (const chapter of session.chapters) {
+      if (!chapter.current || chapter.noise || bornFrom.has(chapter.id)) continue;
+      if (chapter.tMs < step.tMs || chapter.tMs >= nextTurnT || !chapter.decisionIds.some((id) => id === stableId)) continue;
+      if (born === undefined || chapter.tMs < born.tMs) born = chapter;
+    }
+    if (born !== undefined) bornFrom.set(born.id, decisionId);
+  }
+  return bornFrom;
+}
+
+export interface PickGraphicOptions {
+  /**
+   * Spec §7.12 refinement (C3-6 ruling): whether the decision already shows its fork next to the chapter, as its own
+   * Canvas frame, Outline row or spine row at the same level. Default: yes, since every surface that lists chapters
+   * also lists decision steps. A surface that shows one chapter alone (the Inspector) passes `() => false`.
+   */
+  decisionShown?(decisionId: string): boolean;
+}
+
+/** ForkGlyph for the chapter born from an answered or delegated decision, only where the decision is not shown. */
+function chapterForkSpec(chapter: Chapter, session: TraceSession, options: PickGraphicOptions): GraphicSpec | null {
   if (chapter.decisionIds.length === 0) return null;
-  const { decidedStep } = lookupsOf(session);
-  let first = Number.POSITIVE_INFINITY;
-  for (const id of chapter.decisionIds) first = Math.min(first, decidedStep.get(id.slice("decision:".length)) ?? Number.POSITIVE_INFINITY);
-  const decision = session.steps[first]?.decision;
+  const { decidedStep, bornFrom } = lookupsOf(session);
+  const decisionId = bornFrom.get(chapter.id);
+  if (decisionId === undefined || (options.decisionShown?.(decisionId) ?? true)) return null;
+  const decision = session.steps[decidedStep.get(decisionId) ?? -1]?.decision;
   return decision === undefined ? null : forkSpec(decision);
 }
 
@@ -464,12 +499,12 @@ function diffListSpec(chapter: Chapter, session: TraceSession): GraphicSpec | nu
 }
 
 /** spec §7.12 CHAPTER_GRAPHIC: the first rule that matches; a rule without data falls through. */
-function chapterGraphic(chapter: Chapter, session: TraceSession): GraphicSpec | null {
+function chapterGraphic(chapter: Chapter, session: TraceSession, options: PickGraphicOptions): GraphicSpec | null {
   let spec: GraphicSpec | null = null;
   if (chapter.category === "schema") spec = tableSpec(chapter);
   else if (chapter.category === "architecture" || chapter.category === "api") spec = flowSpec(chapter, session);
   else if (chapter.category === "tests") spec = chapterTestsSpec(chapter, session);
-  return spec ?? chapterForkSpec(chapter, session) ?? diffListSpec(chapter, session);
+  return spec ?? chapterForkSpec(chapter, session, options) ?? diffListSpec(chapter, session);
 }
 
 function durationSpec(step: Step): GraphicSpec {
@@ -485,8 +520,8 @@ function durationSpec(step: Step): GraphicSpec {
 }
 
 /** The mini graphic (D8) that replaces prose for a step or chapter, or null when none fits. */
-export function pickGraphic(target: Step | Chapter, session: TraceSession): GraphicSpec | null {
-  if (isChapter(target)) return chapterGraphic(target, session);
+export function pickGraphic(target: Step | Chapter, session: TraceSession, options: PickGraphicOptions = {}): GraphicSpec | null {
+  if (isChapter(target)) return chapterGraphic(target, session, options);
   const step = target;
   const finding = session.findings.find(
     (candidate) => candidate.ruleId === "claim_contradicted" && candidate.claim?.claim.stepId === step.id,

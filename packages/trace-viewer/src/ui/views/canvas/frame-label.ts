@@ -1,5 +1,5 @@
 import type { CanvasFrame } from "../../../layout/canvas-layout.js";
-import { GRAPHIC_MIN_K, ICON_ONLY_K, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
+import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
 import { stepTone } from "../../../layout/tone.js";
 import {
   describeGraphic,
@@ -11,6 +11,7 @@ import {
   type Finding,
   type FindingId,
   type GraphicSpec,
+  type Level,
   type Step,
   type TraceSession,
 } from "../../../model/index.js";
@@ -60,12 +61,16 @@ export function frameStart(frame: CanvasFrame, ctx: FrameContext): number {
 }
 
 export function frameEnd(frame: CanvasFrame, ctx: FrameContext): number {
-  let end = frameStart(frame, ctx);
+  return endOf(frame, ctx, frameStart(frame, ctx), frameSteps(frame, ctx));
+}
+
+function endOf(frame: CanvasFrame, ctx: FrameContext, start: number, steps: readonly Step[]): number {
+  let end = start;
   for (const selId of frame.memberSelIds) {
     const chapter = ctx.chapterById.get(selId);
     if (chapter !== undefined) end = Math.max(end, chapter.endTMs);
   }
-  for (const step of frameSteps(frame, ctx)) end = Math.max(end, step.endTMs ?? step.tMs);
+  for (const step of steps) end = Math.max(end, step.endTMs ?? step.tMs);
   return end;
 }
 
@@ -149,19 +154,31 @@ export function frameIcon(frame: CanvasFrame, ctx: FrameContext): IconName {
  * does a test run the chapter reaches only through a shared validation (Chapter.validationOnlyStepIds).
  */
 export function frameTone(frame: CanvasFrame, ctx: FrameContext): "bad" | "neutral" {
+  return toneOf(frame, ctx, frameSteps(frame, ctx));
+}
+
+function toneOf(frame: CanvasFrame, ctx: FrameContext, steps: readonly Step[]): "bad" | "neutral" {
   const validationOnly = new Set<string>();
   for (const selId of frame.memberSelIds) {
     for (const id of ctx.chapterById.get(selId)?.validationOnlyStepIds ?? []) validationOnly.add(id);
   }
-  for (const step of frameSteps(frame, ctx)) {
+  for (const step of steps) {
     if (!validationOnly.has(step.id) && stepTone(step, ctx.findingsById) === "bad") return "bad";
   }
   return "neutral";
 }
 
+/**
+ * "shield" is always neutral: a bad clamp (a guardrail problem, layout/tone.ts) makes a member step bad, and a bad
+ * frame reads "failed" first. Warning and info clamps stay neutral, as in the Outline.
+ */
 export type FrameFlag = "neq" | "failed" | "shield" | null;
 
 export function frameFlag(frame: CanvasFrame, ctx: FrameContext): FrameFlag {
+  return flagOf(frame, ctx, frameTone(frame, ctx));
+}
+
+function flagOf(frame: CanvasFrame, ctx: FrameContext, tone: "bad" | "neutral"): FrameFlag {
   if (frame.item === "claim") {
     const step = ctx.stepById.get(frame.selId);
     const anchored = step?.findingIds.some((id) => {
@@ -170,7 +187,7 @@ export function frameFlag(frame: CanvasFrame, ctx: FrameContext): FrameFlag {
     });
     if (anchored === true) return "neq";
   }
-  if (frameTone(frame, ctx) === "bad") return "failed";
+  if (tone === "bad") return "failed";
   const guarded = frame.memberSelIds.some((selId) => (ctx.chapterById.get(selId)?.clampIds.length ?? 0) > 0);
   return guarded ? "shield" : null;
 }
@@ -199,13 +216,121 @@ export function frameApprox(frame: CanvasFrame, ctx: FrameContext): boolean {
 
 /** Accessible name (spec §7.13): full title, ≈, the contradiction, the graphic's phrase, the start offset. */
 export function frameLabel(frame: CanvasFrame, ctx: FrameContext): string {
-  const parts = [frameFullTitle(frame, ctx)];
+  return labelOf(frame, ctx, frameFullTitle(frame, ctx), frameFlag(frame, ctx), frameGraphic(frame, ctx), frameStart(frame, ctx));
+}
+
+function labelOf(
+  frame: CanvasFrame,
+  ctx: FrameContext,
+  fullTitle: string,
+  flag: FrameFlag,
+  graphic: GraphicSpec | null,
+  start: number,
+): string {
+  const parts = [fullTitle];
   if (frameApprox(frame, ctx)) parts.push("approximate join");
-  if (frameFlag(frame, ctx) === "neq") parts.push(FINDING_TITLE.claim_contradicted);
-  const graphic = frameGraphic(frame, ctx);
+  if (flag === "neq") parts.push(FINDING_TITLE.claim_contradicted);
   if (graphic !== null) parts.push(displayUntrusted(graphicPhrase(graphic)));
-  parts.push(formatOffset(frameStart(frame, ctx)));
+  parts.push(formatOffset(start));
   return parts.join(", ");
+}
+
+/** True when a member step is still running: only such a frame needs the 1 Hz `nowMs` tick (C3-7, C3-10). */
+export function frameRunning(frame: CanvasFrame, ctx: FrameContext): boolean {
+  return frameSteps(frame, ctx).some((step) => step.endTMs === null);
+}
+
+function isProblem(step: Step): boolean {
+  return step.problems.length > 0 || step.findingIds.length > 0;
+}
+
+/**
+ * Sparse frames (C3-6 ruling): up to n of the frame's steps for the compact rows that fill an otherwise empty card
+ * body, problem steps first, newest first within each group.
+ */
+export function fillSteps(steps: readonly Step[], n: number): Step[] {
+  if (n <= 0) return [];
+  const newest = [...steps].sort((a, b) => b.firstSeq - a.firstSeq);
+  return [...newest.filter(isProblem), ...newest.filter((step) => !isProblem(step))].slice(0, n);
+}
+
+/** Frame.module.css: 12 px card padding, 8 px gaps, a 16 px footer and edit summary, 20 px fill rows. */
+const PAD_PX = 12;
+const GAP_PX = 8;
+const FOOT_PX = 16;
+const EDIT_SUMMARY_PX = 16;
+const FILL_ROW_PX = 20;
+const FILL_MAX = 3;
+/** A Chapter-level chapter card (spec §7.5, 134 px) leaves 86 px for the graphic and the fill rows above its footer. */
+const BODY_PX = frameSize("chapter", "chapter").h - 2 * PAD_PX - FOOT_PX - GAP_PX;
+
+/** The px a chapter card's graphic (and the edit summary shown beside a non-diff graphic) takes; null = full. */
+function usedPx(graphic: GraphicSpec | null, hasEdits: boolean): number | null {
+  const summary = hasEdits ? EDIT_SUMMARY_PX : 0;
+  if (graphic === null) return summary;
+  const withSummary = (px: number): number => px + (hasEdits ? GAP_PX + EDIT_SUMMARY_PX : 0);
+  switch (graphic.kind) {
+    case "diff": {
+      const rows = graphic.files === undefined ? 1 : Math.min(4, graphic.files.length) + ((graphic.moreFiles ?? 0) > 0 ? 1 : 0);
+      return 18 * rows + 4 * Math.max(0, rows - 1);
+    }
+    case "fork":
+      return withSummary(18 * Math.min(3, Math.max(1, graphic.options.length)));
+    case "flow":
+      return withSummary(24);
+    default:
+      // Tests (dots, counts and the run), tables and claims fill the card.
+      return null;
+  }
+}
+
+/** How many compact step rows fit under a chapter card's graphic at Chapter level (0 to 3). */
+export function fillRowCount(graphic: GraphicSpec | null, steps: readonly Step[]): number {
+  const used = usedPx(graphic, steps.some((step) => step.edit !== undefined));
+  if (used === null) return 0;
+  const room = used === 0 ? BODY_PX : BODY_PX - used - GAP_PX;
+  return Math.max(0, Math.min(FILL_MAX, steps.length, Math.floor(room / FILL_ROW_PX)));
+}
+
+/** Everything a frame renders, derived once per (frame, ctx, level) (Frame memoizes it). */
+export interface FrameModel {
+  steps: Step[];
+  tone: "bad" | "neutral";
+  flag: FrameFlag;
+  graphic: GraphicSpec | null;
+  icon: IconName;
+  title: string;
+  fullTitle: string;
+  label: string;
+  start: number;
+  end: number;
+  running: boolean;
+  /** Chapter level only: the compact rows under a sparse chapter card's graphic. */
+  fill: Step[];
+}
+
+export function frameModel(frame: CanvasFrame, ctx: FrameContext, level: Level): FrameModel {
+  const steps = frameSteps(frame, ctx);
+  const tone = toneOf(frame, ctx, steps);
+  const flag = flagOf(frame, ctx, tone);
+  const graphic = frameGraphic(frame, ctx);
+  const { short, full } = titles(frame, ctx);
+  const start = frameStart(frame, ctx);
+  const sparse = level === "chapter" && frame.kind === "chapter" && frame.item === "chapter";
+  return {
+    steps,
+    tone,
+    flag,
+    graphic,
+    icon: frameIcon(frame, ctx),
+    title: short,
+    fullTitle: full,
+    label: labelOf(frame, ctx, full, flag, graphic, start),
+    start,
+    end: endOf(frame, ctx, start, steps),
+    running: steps.some((step) => step.endTMs === null),
+    fill: sparse ? fillSteps(steps, fillRowCount(graphic, steps)) : [],
+  };
 }
 
 export function claimSpanFor(step: Step, ctx: FrameContext): readonly [number, number] | undefined {
