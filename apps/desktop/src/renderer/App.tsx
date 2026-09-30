@@ -71,6 +71,10 @@ export function App() {
   }, [bridge, repo, sessionState?.sessionId]);
 
   useEffect(() => {
+    setTraceError(null);
+  }, [sessionState?.sessionId]);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "J") {
         event.preventDefault();
@@ -101,6 +105,7 @@ export function App() {
       setRepo(null);
       setSessionState(null);
       setActivePrompt("");
+      setTraceError(null);
     }
   }, [bridge, repo]);
 
