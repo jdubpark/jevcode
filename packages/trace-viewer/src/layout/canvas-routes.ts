@@ -1,4 +1,6 @@
-import { decisionStableId, type Chapter, type FindingId, type Step, type StepId, type TraceSession } from "../model/index.js";
+import {
+  decisionStableId, type Chapter, type FindingId, type Step, type StepId, type TraceSession, type UnitStableId,
+} from "../model/index.js";
 import type { CanvasColumn, CanvasFrame } from "./canvas-layout.js";
 import { stepFinder, type LevelSpec } from "./canvas-levels.js";
 import type { SelectionId } from "./trace-index.js";
@@ -33,6 +35,8 @@ export interface RouteInput {
   order?: ReadonlyMap<string, number>;
   /** Step lookup shared with the caller; built from `session.steps` when omitted. */
   stepOf?: (id: string) => Step | undefined;
+  /** Chapter anchor seq shared with the caller (TraceIndex.chapterAnchor); computed from the chapter when omitted. */
+  chapterAnchor?: (id: UnitStableId) => number | undefined;
 }
 
 export const RAIL_RADIUS_PX = 6;
@@ -56,14 +60,18 @@ export function laneY(spec: LevelSpec, lane: number): number {
 interface RouteContext {
   input: RouteInput;
   stepOf: (id: string) => Step | undefined;
-  chapterById: Map<string, Chapter>;
   frameBySel: Map<SelectionId, CanvasFrame>;
   order: Map<string, number>;
   byColumn: Map<number, CanvasFrame[]>;
-  /** Chapter id → anchor seq, filled on first use: homeKey sorts a step's chapters by anchor for every step. */
-  anchors: Map<string, number>;
+  /** Placed chapters (a frame holds them) with their anchors, filled on first use: homeKey orders a step's chapters. */
+  placed: Map<string, PlacedChapter> | null;
   /** Step id → home frame key, filled on first use: edges ask for the same step's home once per chapter. */
   homes: Map<string, string | undefined>;
+}
+
+interface PlacedChapter {
+  chapter: Chapter;
+  anchor: number;
 }
 
 function createContext(input: RouteInput): RouteContext {
@@ -81,33 +89,47 @@ function createContext(input: RouteInput): RouteContext {
   return {
     input,
     stepOf: input.stepOf ?? stepFinder(input.session.steps),
-    chapterById: new Map(input.session.chapters.map((chapter) => [chapter.id, chapter])),
     frameBySel,
     order,
     byColumn,
-    anchors: new Map(),
+    placed: null,
     homes: new Map(),
   };
 }
 
 function anchorOf(ctx: RouteContext, chapter: Chapter): number {
-  const cached = ctx.anchors.get(chapter.id);
-  if (cached !== undefined) return cached;
+  const shared = ctx.input.chapterAnchor?.(chapter.id);
+  if (shared !== undefined) return shared;
   let min = Infinity;
   for (const seq of chapter.factSeqs) if (seq < min) min = seq;
   for (const id of chapter.stepIds) {
     const seq = ctx.stepOf(id)?.firstSeq ?? Infinity;
     if (seq < min) min = seq;
   }
-  ctx.anchors.set(chapter.id, min);
   return min;
 }
 
 function homeKey(ctx: RouteContext, stepId: string): string | undefined {
-  if (ctx.homes.has(stepId)) return ctx.homes.get(stepId);
+  const cached = ctx.homes.get(stepId);
+  if (cached !== undefined || ctx.homes.has(stepId)) return cached;
   const key = findHomeKey(ctx, stepId);
   ctx.homes.set(stepId, key);
   return key;
+}
+
+function placedChapters(ctx: RouteContext): Map<string, PlacedChapter> {
+  if (ctx.placed !== null) return ctx.placed;
+  const placed = new Map<string, PlacedChapter>();
+  for (const chapter of ctx.input.session.chapters) {
+    if (ctx.frameBySel.has(chapter.id)) placed.set(chapter.id, { chapter, anchor: anchorOf(ctx, chapter) });
+  }
+  ctx.placed = placed;
+  return placed;
+}
+
+/** Lower anchor first, then lower id (the home order). */
+function before(a: PlacedChapter, b: PlacedChapter | undefined): boolean {
+  return b === undefined || (a.anchor - b.anchor || compareText(a.chapter.id, b.chapter.id)) < 0;
 }
 
 function findHomeKey(ctx: RouteContext, stepId: string): string | undefined {
@@ -118,21 +140,20 @@ function findHomeKey(ctx: RouteContext, stepId: string): string | undefined {
   const story = ctx.frameBySel.get(step.id);
   if (story !== undefined && story.kind === "story") return story.key;
   // The lowest-anchor placed chapter (and the lowest `tests` one) in one pass: a step can sit in thousands of chapters
-  // (soak bundle), so sorting its chapter list per step is far too slow.
-  const before = (a: Chapter, b: Chapter | undefined): boolean =>
-    b === undefined || (anchorOf(ctx, a) - anchorOf(ctx, b) || compareText(a.id, b.id)) < 0;
-  let lowest: Chapter | undefined;
-  let lowestTests: Chapter | undefined;
+  // (soak bundle), so sorting its chapter list per step is far too slow, and each link costs one map lookup.
+  const placed = placedChapters(ctx);
+  let lowest: PlacedChapter | undefined;
+  let lowestTests: PlacedChapter | undefined;
   for (const id of step.chapterIds) {
-    const chapter = ctx.chapterById.get(id);
-    if (chapter === undefined || !ctx.frameBySel.has(chapter.id)) continue;
-    if (before(chapter, lowest)) lowest = chapter;
-    if (chapter.category === "tests" && before(chapter, lowestTests)) lowestTests = chapter;
+    const candidate = placed.get(id);
+    if (candidate === undefined) continue;
+    if (before(candidate, lowest)) lowest = candidate;
+    if (candidate.chapter.category === "tests" && before(candidate, lowestTests)) lowestTests = candidate;
   }
   if ((step.kind === "test" || step.kind === "check") && lowestTests !== undefined) {
-    return ctx.frameBySel.get(lowestTests.id)?.key;
+    return ctx.frameBySel.get(lowestTests.chapter.id)?.key;
   }
-  return lowest === undefined ? undefined : ctx.frameBySel.get(lowest.id)?.key;
+  return lowest === undefined ? undefined : ctx.frameBySel.get(lowest.chapter.id)?.key;
 }
 
 export function homeFrameKey(stepId: StepId, input: RouteInput): string | undefined {
@@ -434,12 +455,19 @@ function wantedEdges(ctx: RouteContext): EdgeSpec[] {
       if (to !== undefined && to.key !== frame.key) specs.push({ kind: "decides", from: frame.key, to: to.key, findingId: null });
     }
   }
+  // Soak: 4,861 chapters × 31 shared runs lead to a handful of frame pairs, so pairs are deduplicated as they are met.
+  const validates = new Map<string, Set<string>>();
   for (const chapter of session.chapters) {
+    if (chapter.validationStepIds.length === 0) continue;
     const from = ctx.frameBySel.get(chapter.id);
     if (from === undefined) continue;
+    let seen = validates.get(from.key);
+    if (seen === undefined) validates.set(from.key, (seen = new Set()));
     for (const stepId of chapter.validationStepIds) {
       const to = homeKey(ctx, stepId);
-      if (to !== undefined && to !== from.key) specs.push({ kind: "validates", from: from.key, to, findingId: null });
+      if (to === undefined || to === from.key || seen.has(to)) continue;
+      seen.add(to);
+      specs.push({ kind: "validates", from: from.key, to, findingId: null });
     }
   }
   const unique = new Map<string, EdgeSpec>();

@@ -36,6 +36,8 @@ export interface TraceIndex {
   stepIndexAtOrAfter(seq: number): number;
   /** "ch:<anchorSeq>", anchorSeq = min over factSeqs and step firstSeqs (spec §7.5). Chapters can share it. */
   chapterKey(id: UnitStableId): `ch:${number}` | undefined;
+  /** The anchorSeq in chapterKey; undefined for an unknown chapter. */
+  chapterAnchor(id: UnitStableId): number | undefined;
   /** First of chaptersByAnchor, else a superseded chapter with that anchor. */
   chapterByAnchor(anchorSeq: number): UnitStableId | undefined;
   /**
@@ -145,6 +147,7 @@ export function buildTraceIndex(session: TraceSession): TraceIndex {
       const anchor = anchorOf.get(id);
       return anchor === undefined ? undefined : `ch:${anchor}`;
     },
+    chapterAnchor: (id) => anchorOf.get(id),
     chapterByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq)?.[0] ?? byAnchor.get(anchorSeq),
     chaptersByAnchor: (anchorSeq) => currentByAnchor.get(anchorSeq) ?? NO_CHAPTERS,
     chapterAtSeq: (seq) => {
@@ -185,6 +188,7 @@ export function emptyTraceIndex(sessionId: string): TraceIndex {
     stepIndexAtOrBefore: () => -1,
     stepIndexAtOrAfter: () => 0,
     chapterKey: () => undefined,
+    chapterAnchor: () => undefined,
     chapterByAnchor: () => undefined,
     chaptersByAnchor: () => NO_CHAPTERS,
     chapterAtSeq: () => undefined,
