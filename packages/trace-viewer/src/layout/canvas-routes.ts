@@ -37,6 +37,40 @@ export interface RouteInput {
   stepOf?: (id: string) => Step | undefined;
   /** Chapter anchor seq shared with the caller (TraceIndex.chapterAnchor); computed from the chapter when omitted. */
   chapterAnchor?: (id: UnitStableId) => number | undefined;
+  /** The memo of the previous commit's routing (same session and level): unchanged homes and sources are kept. */
+  previous?: RouteMemo | undefined;
+}
+
+/**
+ * What a routing derived that the next commit's routing may start from; never changed once returned, so any later
+ * call may read it. It holds this commit's objects only (no link to an earlier memo).
+ */
+export interface RouteMemo {
+  /** The placed chapters with their anchors, when this call needed them. */
+  readonly placed: ReadonlyMap<string, PlacedChapter> | null;
+  /** Per step asked for its home: the lowest-anchor placed chapter it lists, and the lowest `tests` one. */
+  readonly lows: ReadonlyMap<string, LowEntry>;
+  /** Per frame key: the chapters (session order) that validate from it, and their distinct validation step ids. */
+  readonly sources: ReadonlyMap<string, ValidationSources>;
+}
+
+interface LowEntry {
+  step: Step;
+  lowest: PlacedChapter | undefined;
+  lowestTests: PlacedChapter | undefined;
+}
+
+interface ValidationSources {
+  chapters: readonly Chapter[];
+  stepIds: readonly StepId[];
+}
+
+/** Chapter links a routing read: a regression gauge for tests. */
+export interface RouteWork {
+  /** step.chapterIds entries scanned for homes, plus changed chapters checked against a kept home. */
+  homeLinks: number;
+  /** chapter.validationStepIds entries read to collect validation sources. */
+  validationLinks: number;
 }
 
 export const RAIL_RADIUS_PX = 6;
@@ -67,6 +101,11 @@ interface RouteContext {
   placed: Map<string, PlacedChapter> | null;
   /** Step id → home frame key, filled on first use: edges ask for the same step's home once per chapter. */
   homes: Map<string, string | undefined>;
+  lows: Map<string, LowEntry>;
+  /** Placed chapters whose record (anchor, category) differs from the previous memo's, or that appeared or went. */
+  changed: Set<string> | null;
+  sources: Map<string, ValidationSources>;
+  work: RouteWork;
 }
 
 interface PlacedChapter {
@@ -94,6 +133,10 @@ function createContext(input: RouteInput): RouteContext {
     byColumn,
     placed: null,
     homes: new Map(),
+    lows: new Map(),
+    changed: null,
+    sources: new Map(),
+    work: { homeLinks: 0, validationLinks: 0 },
   };
 }
 
@@ -120,11 +163,94 @@ function homeKey(ctx: RouteContext, stepId: string): string | undefined {
 function placedChapters(ctx: RouteContext): Map<string, PlacedChapter> {
   if (ctx.placed !== null) return ctx.placed;
   const placed = new Map<string, PlacedChapter>();
+  const before = ctx.input.previous?.placed ?? null;
   for (const chapter of ctx.input.session.chapters) {
-    if (ctx.frameBySel.has(chapter.id)) placed.set(chapter.id, { chapter, anchor: anchorOf(ctx, chapter) });
+    if (!ctx.frameBySel.has(chapter.id)) continue;
+    const anchor = anchorOf(ctx, chapter);
+    const kept = before?.get(chapter.id);
+    placed.set(chapter.id, kept !== undefined && kept.chapter === chapter && kept.anchor === anchor ? kept : { chapter, anchor });
   }
   ctx.placed = placed;
   return placed;
+}
+
+/** Ids whose placed record differs from the previous memo's in what a home reads (anchor, category, presence). */
+function changedPlaced(ctx: RouteContext, before: ReadonlyMap<string, PlacedChapter>): Set<string> {
+  if (ctx.changed !== null) return ctx.changed;
+  const placed = placedChapters(ctx);
+  const changed = new Set<string>();
+  for (const [id, record] of placed) {
+    const old = before.get(id);
+    if (old === undefined || old.anchor !== record.anchor || old.chapter.category !== record.chapter.category) changed.add(id);
+  }
+  for (const id of before.keys()) if (!placed.has(id)) changed.add(id);
+  ctx.changed = changed;
+  return changed;
+}
+
+const CARRY_MAX_CHANGES = 64;
+
+/** step.chapterIds as a set, per step object (a shared run lists thousands of chapters). */
+const CHAPTER_ID_SETS = new WeakMap<Step, ReadonlySet<string>>();
+
+function chapterIdSet(step: Step): ReadonlySet<string> {
+  let set = CHAPTER_ID_SETS.get(step);
+  if (set === undefined) CHAPTER_ID_SETS.set(step, (set = new Set(step.chapterIds)));
+  return set;
+}
+
+/**
+ * The previous memo's entry for the same step object, brought up to date: its chapter list is unchanged, so only a
+ * changed placed chapter it lists can beat the kept minimum. Undefined (scan instead) when a kept minimum itself
+ * changed or went, or when scanning the list costs no more than checking the changes.
+ */
+function carriedLow(ctx: RouteContext, step: Step): LowEntry | undefined {
+  const previous = ctx.input.previous;
+  const kept = previous?.lows.get(step.id);
+  if (previous?.placed == null || kept === undefined || kept.step !== step) return undefined;
+  const changed = changedPlaced(ctx, previous.placed);
+  const placed = placedChapters(ctx);
+  // Many changes (a new layout's worth) against a short list: the scan is cheaper than the checks.
+  if (changed.size > CARRY_MAX_CHANGES && step.chapterIds.length <= 4 * changed.size) return undefined;
+  if (kept.lowest !== undefined && changed.has(kept.lowest.chapter.id)) return undefined;
+  if (kept.lowestTests !== undefined && changed.has(kept.lowestTests.chapter.id)) return undefined;
+  let lowest = kept.lowest === undefined ? undefined : placed.get(kept.lowest.chapter.id);
+  let lowestTests = kept.lowestTests === undefined ? undefined : placed.get(kept.lowestTests.chapter.id);
+  if (changed.size > 0) {
+    const listed = step.chapterIds.length > 16 ? chapterIdSet(step) : null;
+    ctx.work.homeLinks += changed.size;
+    for (const id of changed) {
+      const candidate = (listed === null ? step.chapterIds.includes(id as UnitStableId) : listed.has(id)) ? placed.get(id) : undefined;
+      if (candidate === undefined) continue;
+      if (before(candidate, lowest)) lowest = candidate;
+      if (candidate.chapter.category === "tests" && before(candidate, lowestTests)) lowestTests = candidate;
+    }
+  }
+  return { step, lowest, lowestTests };
+}
+
+/** The lowest-anchor placed chapter the step lists (and the lowest `tests` one), from the previous memo when it can. */
+function lowOf(ctx: RouteContext, step: Step): LowEntry {
+  const known = ctx.lows.get(step.id);
+  if (known !== undefined && known.step === step) return known;
+  let entry = carriedLow(ctx, step);
+  if (entry === undefined) {
+    // One pass: a step can sit in thousands of chapters (soak bundle), so sorting its chapter list per step is far
+    // too slow, and each link costs one map lookup.
+    const placed = placedChapters(ctx);
+    let lowest: PlacedChapter | undefined;
+    let lowestTests: PlacedChapter | undefined;
+    ctx.work.homeLinks += step.chapterIds.length;
+    for (const id of step.chapterIds) {
+      const candidate = placed.get(id);
+      if (candidate === undefined) continue;
+      if (before(candidate, lowest)) lowest = candidate;
+      if (candidate.chapter.category === "tests" && before(candidate, lowestTests)) lowestTests = candidate;
+    }
+    entry = { step, lowest, lowestTests };
+  }
+  ctx.lows.set(step.id, entry);
+  return entry;
 }
 
 /** Lower anchor first, then lower id (the home order). */
@@ -139,17 +265,7 @@ function findHomeKey(ctx: RouteContext, stepId: string): string | undefined {
   if (loose !== undefined && loose.kind === "loose") return loose.key;
   const story = ctx.frameBySel.get(step.id);
   if (story !== undefined && story.kind === "story") return story.key;
-  // The lowest-anchor placed chapter (and the lowest `tests` one) in one pass: a step can sit in thousands of chapters
-  // (soak bundle), so sorting its chapter list per step is far too slow, and each link costs one map lookup.
-  const placed = placedChapters(ctx);
-  let lowest: PlacedChapter | undefined;
-  let lowestTests: PlacedChapter | undefined;
-  for (const id of step.chapterIds) {
-    const candidate = placed.get(id);
-    if (candidate === undefined) continue;
-    if (before(candidate, lowest)) lowest = candidate;
-    if (candidate.chapter.category === "tests" && before(candidate, lowestTests)) lowestTests = candidate;
-  }
+  const { lowest, lowestTests } = lowOf(ctx, step);
   if ((step.kind === "test" || step.kind === "check") && lowestTests !== undefined) {
     return ctx.frameBySel.get(lowestTests.chapter.id)?.key;
   }
@@ -431,6 +547,12 @@ interface EdgeSpec {
   findingId: FindingId | null;
 }
 
+function sameObjects<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function wantedEdges(ctx: RouteContext): EdgeSpec[] {
   const { session, frames } = ctx.input;
   const specs: EdgeSpec[] = [];
@@ -455,19 +577,38 @@ function wantedEdges(ctx: RouteContext): EdgeSpec[] {
       if (to !== undefined && to.key !== frame.key) specs.push({ kind: "decides", from: frame.key, to: to.key, findingId: null });
     }
   }
-  // Soak: 4,861 chapters × 31 shared runs lead to a handful of frame pairs, so pairs are deduplicated as they are met.
-  const validates = new Map<string, Set<string>>();
+  // Soak: 4,861 chapters × 31 shared runs lead to a handful of frame pairs. Per from frame, the distinct validation
+  // steps of the chapters it holds are kept while those chapters are the same objects; pairs are then deduplicated.
+  // The pairs' order here does not matter: they are unique by id and sorted by a total order below.
+  const byFrame = new Map<string, Chapter[]>();
   for (const chapter of session.chapters) {
     if (chapter.validationStepIds.length === 0) continue;
     const from = ctx.frameBySel.get(chapter.id);
     if (from === undefined) continue;
-    let seen = validates.get(from.key);
-    if (seen === undefined) validates.set(from.key, (seen = new Set()));
-    for (const stepId of chapter.validationStepIds) {
+    const list = byFrame.get(from.key);
+    if (list === undefined) byFrame.set(from.key, [chapter]);
+    else list.push(chapter);
+  }
+  for (const [from, chapters] of byFrame) {
+    const kept = ctx.input.previous?.sources.get(from);
+    let source: ValidationSources;
+    if (kept !== undefined && sameObjects(kept.chapters, chapters)) {
+      source = kept;
+    } else {
+      const ids = new Set<StepId>();
+      for (const chapter of chapters) {
+        ctx.work.validationLinks += chapter.validationStepIds.length;
+        for (const id of chapter.validationStepIds) ids.add(id);
+      }
+      source = { chapters, stepIds: [...ids] };
+    }
+    ctx.sources.set(from, source);
+    const seen = new Set<string>();
+    for (const stepId of source.stepIds) {
       const to = homeKey(ctx, stepId);
-      if (to === undefined || to === from.key || seen.has(to)) continue;
+      if (to === undefined || to === from || seen.has(to)) continue;
       seen.add(to);
-      specs.push({ kind: "validates", from: from.key, to, findingId: null });
+      specs.push({ kind: "validates", from, to, findingId: null });
     }
   }
   const unique = new Map<string, EdgeSpec>();
@@ -553,7 +694,13 @@ function trunkEdges(ctx: RouteContext): { edges: CanvasEdge[]; junctions: Point[
 }
 
 /** Spec §7.5 "Edges": routes through gutters and channel lanes only; the ≠ connector is always drawn. */
-export function routeEdges(input: RouteInput): { edges: CanvasEdge[]; junctions: Point[]; hiddenEdges: number } {
+export function routeEdges(input: RouteInput): {
+  edges: CanvasEdge[];
+  junctions: Point[];
+  hiddenEdges: number;
+  memo: RouteMemo;
+  work: RouteWork;
+} {
   const ctx = createContext(input);
   const trunk = trunkEdges(ctx);
   const book = new IntervalBook();
@@ -596,5 +743,6 @@ export function routeEdges(input: RouteInput): { edges: CanvasEdge[]; junctions:
       findingId: spec.findingId,
     });
   }
-  return { edges, junctions: trunk.junctions, hiddenEdges };
+  const memo: RouteMemo = { placed: ctx.placed, lows: ctx.lows, sources: ctx.sources };
+  return { edges, junctions: trunk.junctions, hiddenEdges, memo, work: ctx.work };
 }
