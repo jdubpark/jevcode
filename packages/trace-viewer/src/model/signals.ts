@@ -471,6 +471,12 @@ export function applySignals(input: SignalInput, coverage: Coverage): Finding[] 
       if (chapter === undefined) continue;
       chapter.findingIds.push(finding.id);
       chapter.noise = false;
+      // A chapter a finding names keeps the finding's runs in its band footprint, including the
+      // latest chapter runChapters falls back to when no chapter owns a shared run (spec §6.6).
+      const validationOnly = chapter.validationOnlyStepIds;
+      if (validationOnly !== undefined && validationOnly.length > 0) {
+        chapter.validationOnlyStepIds = validationOnly.filter((stepId) => !finding.stepIds.includes(stepId));
+      }
     }
     if (finding.ruleId === "claim_contradicted" && finding.claim !== undefined) {
       const claimStep = stepById.get(finding.claim.claim.stepId);
