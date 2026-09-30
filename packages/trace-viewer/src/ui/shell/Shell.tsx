@@ -18,6 +18,8 @@ import {
 } from "../../layout/trace-index.js";
 import { compareFindings, resolveStableId, type StableId, type TraceSession } from "../../model/index.js";
 import { IconSprite } from "../icons/IconSprite.js";
+import { selectionTitle } from "../inspector/finding-copy.js";
+import { Inspector } from "../inspector/Inspector.js";
 import type { ViewerLocation } from "../state/location.js";
 import { useViewStore } from "../state/store.js";
 import { locationOf } from "../state/view-state.js";
@@ -99,15 +101,13 @@ function originOf(session: TraceSession | null, snapshot: DataSnapshot): number 
   return Number.isFinite(started) ? started : 0;
 }
 
-/* eslint-disable @typescript-eslint/no-unused-vars -- placeholder body until C2-6 fills it */
 function selectedTitleFor(
-  _session: TraceSession | null,
-  _index: TraceIndex,
-  _selection: SelectionId | null,
+  session: TraceSession | null,
+  index: TraceIndex,
+  selection: SelectionId | null,
 ): string | null {
-  return null;
+  return session === null || selection === null ? null : selectionTitle(session, index, selection);
 }
-/* eslint-enable @typescript-eslint/no-unused-vars */
 
 export const MAX_REPORTED_ERRORS = 50;
 
@@ -295,7 +295,9 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
                   <main className={styles.main} data-region="main" tabIndex={-1}>
                     <ViewSlot views={SHELL_VIEWS} keepHiddenMounted={KEEP_HIDDEN} />
                   </main>
-                  <aside className={styles.inspector} aria-label="Inspector" data-region="inspector" />
+                  <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
+                    <Inspector host={host} />
+                  </aside>
                 </div>
               </LiveRegion>
             </ViewDefinitionsContext.Provider>

@@ -1,0 +1,279 @@
+.inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 16px 8px;
+}
+
+.tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink-2);
+}
+
+.tile[data-tone="bad"] {
+  background: var(--tv-bad);
+  color: var(--tv-panel);
+}
+
+.headText {
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--tv-ink);
+}
+
+.meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0 16px 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--tv-accent-soft);
+  color: var(--tv-accent-ink);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px 8px;
+}
+
+.tab {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+}
+
+.tab:focus-visible,
+.primary:focus-visible,
+.secondary:focus-visible,
+.related:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--tv-ink);
+}
+
+.prose {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.claimSpan {
+  text-decoration: underline;
+  text-decoration-color: var(--tv-bad);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.mono {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tv-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.path {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tv-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.counts {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.badWord {
+  color: var(--tv-bad-ink);
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--tv-fill);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink);
+}
+
+.chosen {
+  font-weight: 600;
+}
+
+.bars {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tv-fill-2);
+}
+
+.barFill {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tv-mark);
+}
+
+.related {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.relatedOffset {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--tv-ink-3);
+}
+
+.muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  box-shadow: inset 0 1px 0 var(--tv-hair);
+}
+
+.primary {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--tv-accent-ink);
+  color: var(--tv-panel);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.secondary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primary:disabled,
+.secondary:disabled {
+  cursor: default;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink-3);
+}
