@@ -67,6 +67,36 @@ describe("HybridView", () => {
     expect(main.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   });
 
+  it("opens with both zoom readouts at the Chapter preset of the initial selection", async () => {
+    // A late tail event outside the claim's chapter (like the recorded bundle's Jev pipeline tail), so the Chapter
+    // preset at the session end differs from the one at the initial selection.
+    const bundle = fixtureBundle("oauth");
+    const last = bundle.rows.at(-1);
+    const tail = {
+      seq: (last?.seq ?? 0) + 1,
+      type: "agent_event",
+      ts: last?.ts ?? "2026-09-18T09:00:00.000Z",
+      payload: { type: "agent_message", sessionId: bundle.session.sessionId, ts: "2026-09-18T09:03:00.000Z", role: "assistant", text: "Tail." },
+    };
+    render(<TraceViewer source={createStaticBundleSource({ ...bundle, rows: [...bundle.rows, tail] })} />);
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="title"]')?.textContent).toBe("Claim contradicts tests"),
+    );
+    await settle();
+    // Title bar (spec §7.1): the level name at its preset; overview toolbar (spec §7.6.1): k / k_preset.
+    const titleBar = document.querySelector('header button[aria-haspopup="true"]')?.textContent;
+    const toolbar = Array.from(document.querySelectorAll<HTMLElement>("[data-overview-lanes] ~ * span, span"))
+      .map((node) => node.textContent ?? "")
+      .find((text) => /^\d+%$/.test(text));
+    expect(titleBar).toBe("Chapter");
+    expect(toolbar).toBe("100%");
+    // Moving the selection (and the playhead) out of that chapter is not a zoom: both readouts keep their value.
+    fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
+    await settle();
+    expect(document.querySelector('[data-slot="title"]')?.textContent).not.toBe("Claim contradicts tests");
+    expect(document.querySelector('header button[aria-haspopup="true"]')?.textContent).toBe("Chapter");
+  });
+
   it("registers a port whose reading order equals the spine's step keys", async () => {
     const session = foldFixture("oauth");
     const h = renderHarness(<HybridView active />, session);
