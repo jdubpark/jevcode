@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { comfortBand, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { comfortBand, extendRange, pushTarget, revealAlign, cutTopRow, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 
 const win = { offset: 1_000, height: 600 };
 
@@ -56,5 +56,18 @@ describe("scroll-sync", () => {
     expect(firstRowAtOrAfter(0, starts.length, startOf)).toBe(0);
     expect(firstRowAtOrAfter(181, starts.length, startOf)).toBe(4);
     expect(firstRowAtOrAfter(230, starts.length, startOf)).toBe(-1);
+  });
+
+  it("names the top row a settled offset cuts in half, and none on a row start", () => {
+    const items = [
+      { index: 0, start: 0, end: 32 },
+      { index: 1, start: 32, end: 136 },
+      { index: 2, start: 136, end: 168 },
+    ];
+    expect(cutTopRow(items, 40)).toBe(1);
+    expect(cutTopRow(items, 32)).toBeNull();
+    expect(cutTopRow(items, 32.3)).toBeNull();
+    expect(cutTopRow(items, 0)).toBeNull();
+    expect(cutTopRow(items, 200)).toBeNull();
   });
 });
