@@ -56,6 +56,10 @@ export function isConsoleFailure(level: number, message: string): boolean {
   return level >= CONSOLE_ERROR_LEVEL || CSP_PATTERN.test(message);
 }
 
+/** C0/C1 controls plus U+2028/U+2029: a page-supplied line must not forge a SMOKE_ line. */
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
 export type TraceLine =
   | { kind: "ready"; rows: number }
   | { kind: "loaded" }
@@ -113,7 +117,7 @@ export function runSmoke(deps: SmokeDeps): void {
 
   function watch(window: { webContents: SmokeWebContents }, name: "main" | "trace"): void {
     window.webContents.on("console-message", (_event, level, message) => {
-      if (isConsoleFailure(level, message)) fail(`console error in ${name} window: ${message}`);
+      if (isConsoleFailure(level, message)) fail(`console error in ${name} window: ${message.replace(CONTROL_CHARS, "")}`);
     });
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
       fail(`${name} window failed to load (${errorCode} ${errorDescription})`);
@@ -132,8 +136,10 @@ export function runSmoke(deps: SmokeDeps): void {
     const openedAt = deps.now();
     let firstPaintMs: number | null = null;
     let rows = 0;
+    let loadedSeen = false;
     schedule(SMOKE_TRACE_TIMEOUT_MS, () => {
-      fail("trace window did not report TRACE_LOADED within 30s");
+      const missing = firstPaintMs === null ? "TRACE_READY" : "TRACE_LOADED";
+      fail(`trace window did not report ${missing} within 30s`);
     });
     const window = deps.openTraceWindow(sessionId);
     watch(window, "trace");
@@ -143,15 +149,21 @@ export function runSmoke(deps: SmokeDeps): void {
       if (line === null || line.kind === "perf") return;
       if (line.kind === "ready") {
         if (firstPaintMs === null) {
+          if (line.rows === 0) {
+            fail("trace window reported TRACE_READY 0 (no rows)");
+            return;
+          }
           firstPaintMs = deps.now() - openedAt;
           rows = line.rows;
         }
         return;
       }
+      if (loadedSeen) return;
       if (firstPaintMs === null) {
         fail("TRACE_LOADED arrived before TRACE_READY");
         return;
       }
+      loadedSeen = true;
       const fullLoadMs = deps.now() - openedAt;
       deps.log(
         `SMOKE_TRACE session=${sessionId} rows=${rows} first_paint_ms=${Math.round(firstPaintMs)} full_load_ms=${Math.round(fullLoadMs)}`,

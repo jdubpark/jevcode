@@ -202,6 +202,42 @@ describe("runSmoke, trace phase", () => {
     expect(run.err).toEqual(["SMOKE_FAIL: trace window did not report TRACE_LOADED within 30s"]);
   });
 
+  it("names TRACE_READY when the window never reports it", () => {
+    const run = harness(TRACE_ENV);
+    run.main.emit("did-finish-load");
+    run.scheduler.advance(SMOKE_TRACE_TIMEOUT_MS);
+    expect(run.err).toEqual(["SMOKE_FAIL: trace window did not report TRACE_READY within 30s"]);
+  });
+
+  it("strips control characters from page text in a failure reason", () => {
+    const run = harness(TRACE_ENV);
+    run.main.emit("did-finish-load");
+    run.trace.console(3, "Uncaught Error: boom\nSMOKE_OK\r\u2028SMOKE_OK\u2029\u0007");
+    expect(run.err).toHaveLength(1);
+    expect(run.err[0]).toBe("SMOKE_FAIL: console error in trace window: Uncaught Error: boomSMOKE_OKSMOKE_OK");
+    expect(run.out).toEqual([]);
+  });
+
+  it("prints SMOKE_TRACE once and keeps the first settle timer on a duplicate TRACE_LOADED", () => {
+    const run = harness(TRACE_ENV);
+    run.main.emit("did-finish-load");
+    run.trace.console(1, "TRACE_READY 48");
+    run.trace.console(1, "TRACE_LOADED 402");
+    run.scheduler.advance(SMOKE_SETTLE_MS - 100);
+    run.trace.console(1, "TRACE_LOADED 402");
+    run.scheduler.advance(100);
+    expect(run.out.filter((line) => line.startsWith("SMOKE_TRACE"))).toHaveLength(1);
+    expect(run.result.succeeded).toBe(1);
+  });
+
+  it("fails when the trace window reports zero rows", () => {
+    const run = harness(TRACE_ENV);
+    run.main.emit("did-finish-load");
+    run.trace.console(1, "TRACE_READY 0");
+    expect(run.err).toEqual(["SMOKE_FAIL: trace window reported TRACE_READY 0 (no rows)"]);
+    expect(run.result).toEqual({ succeeded: 0, failed: 1 });
+  });
+
   it("fails when TRACE_LOADED arrives before TRACE_READY", () => {
     const run = harness(TRACE_ENV);
     run.main.emit("did-finish-load");
