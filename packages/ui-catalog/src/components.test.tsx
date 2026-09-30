@@ -272,6 +272,42 @@ describe("CodeDiff", () => {
     expect(element.textContent).toContain("NotFoundError");
     expect(element.textContent).toContain("body: { user: null }");
   });
+
+  it("keeps real @@ headers and line numbers in a two-hunk diff", () => {
+    const diff = [
+      "--- a/src/auth/service.ts",
+      "+++ b/src/auth/service.ts",
+      "@@ -10,3 +10,4 @@ export class AuthService {",
+      "   const user = await this.users.find(email);",
+      "-  return user;",
+      "+  if (!user) return null;",
+      "+  return this.identities.link(user);",
+      "   }",
+      "@@ -40,2 +41,2 @@ export function verify() {",
+      "-  return false;",
+      "+  return true;",
+      " }",
+      "",
+    ].join("\n");
+    render(<CodeDiff props={{ file: "src/auth/service.ts", diff }} />);
+    const element = screen.getByTestId("code-diff");
+    expect(element.textContent).toContain("@@ -10,3 +10,4 @@");
+    expect(element.textContent).toContain("@@ -40,2 +41,2 @@");
+    const newLineNumbers = Array.from(element.querySelectorAll(".line-num2")).map((node) =>
+      (node.textContent ?? "").trim(),
+    );
+    expect(newLineNumbers).toContain("10");
+    expect(newLineNumbers).toContain("41");
+    expect(newLineNumbers).not.toContain("1");
+  });
+
+  it("renders a diff line that holds markup as text", () => {
+    const diff = ["@@ -1,1 +1,2 @@", " const a = 1;", "+<img src=x onerror=alert(1)>", ""].join("\n");
+    render(<CodeDiff props={{ file: "src/a.ts", diff }} />);
+    const element = screen.getByTestId("code-diff");
+    expect(element.querySelector("img")).toBeNull();
+    expect(element.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
 });
 
 describe("Renderer smoke", () => {
