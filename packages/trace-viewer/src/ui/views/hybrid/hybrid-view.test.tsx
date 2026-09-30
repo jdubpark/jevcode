@@ -134,7 +134,7 @@ describe("HybridView", () => {
     expect(brush.toSeq).toBeGreaterThanOrEqual(selected?.firstSeq ?? 0);
   });
 
-  it("a j press reads no scroll offset from the DOM and scrolls the spine at most once", async () => {
+  it("a j press to an off-screen row reads no scroll offset from the DOM and scrolls the spine exactly once", async () => {
     layout.restore();
     layout = stubLayout({ width: 1400, height: 200 });
     const b = new TraceBuilder();
@@ -153,7 +153,9 @@ describe("HybridView", () => {
       { state: { level: "step" } },
     );
     act(() => applyOpenDefaults(h, session));
-    act(() => h.store.dispatch({ type: "select", id: session.steps[3]?.id ?? null, by: "shell" }));
+    // A 200 px window of 32 px rows at offset 0 (a shell select does not scroll): the next row after steps[8]
+    // (288..320 px) lies below the window, so the press has to scroll.
+    act(() => h.store.dispatch({ type: "select", id: session.steps[8]?.id ?? null, by: "shell" }));
     await settle();
     const feed = document.querySelector<HTMLElement>("[data-scroll-root]") as HTMLElement;
     let top = feed.scrollTop;
@@ -168,15 +170,26 @@ describe("HybridView", () => {
         top = value;
       },
     });
+    // jsdom has no scroll extent; without one the virtualizer clamps every offset to 0.
+    Object.defineProperty(feed, "scrollHeight", { configurable: true, get: () => 5_000 });
+    Object.defineProperty(feed, "clientHeight", { configurable: true, get: () => 200 });
+    expect(top).toBe(0);
     layout.scrollCalls.length = 0;
     // Synchronous part of the press: the keydown handler plus the render and layout effects it triggers.
     await act(async () => {
       fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
       await Promise.resolve();
     });
-    expect(h.store.get().selection).toBe(session.steps[4]?.id);
+    const target = session.steps[9]?.id ?? "";
+    expect(h.store.get().selection).toBe(target);
     expect(reads).toBe(0);
-    expect(layout.scrollCalls.length).toBeLessThanOrEqual(1);
+    expect(layout.scrollCalls).toHaveLength(1);
+    // The scroll reveals the row: it lies whole inside the moved window.
+    const row = document.querySelector<HTMLElement>(`[role="feed"] article[data-key="${target}"]`);
+    const rowTop = Number(/translateY\((-?[\d.]+)px\)/.exec(row?.style.transform ?? "")?.[1] ?? Number.NaN);
+    expect(top).toBeGreaterThan(0);
+    expect(rowTop).toBeGreaterThanOrEqual(top);
+    expect(rowTop + 32).toBeLessThanOrEqual(top + 200);
   });
 
   it("applies the level presets on Alt+1, Alt+2 and Alt+3", async () => {
