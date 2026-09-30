@@ -6,23 +6,27 @@ import { registerTraceWindowHandlers } from "./trace-window-ipc.js";
 import type { TraceWindowIpcDeps } from "./trace-window-ipc.js";
 import type { TraceWindowHandle, TraceWindowRegistry } from "./trace-window.js";
 
+const TRACE_SENDER = 100;
+/** A trace window whose session has since disappeared from the reader. */
+const STALE_SENDER = 101;
+
 /** Mirrors the ipc.ts handle wrapper after its sender checks: zod-parse, then call the handler. */
 function harness(): {
   handle: IpcHandle;
   channels: () => string[];
-  invoke: (channel: string, raw: unknown) => Promise<unknown>;
+  invoke: (channel: string, raw: unknown, senderId?: number) => Promise<unknown>;
 } {
-  const handlers = new Map<string, (raw: unknown) => unknown>();
+  const handlers = new Map<string, (raw: unknown, senderId: number) => unknown>();
   const handle: IpcHandle = (channel, fn) => {
-    handlers.set(channel, (raw) => fn(parseToMain(channel, raw)));
+    handlers.set(channel, (raw, senderId) => fn(parseToMain(channel, raw), { senderId }));
   };
   return {
     handle,
     channels: () => [...handlers.keys()].sort(),
-    invoke: async (channel, raw) => {
+    invoke: async (channel, raw, senderId = TRACE_SENDER) => {
       const handler = handlers.get(channel);
       if (handler === undefined) throw new Error(`no handler for ${channel}`);
-      return await handler(raw);
+      return await handler(raw, senderId);
     },
   };
 }
@@ -34,6 +38,8 @@ function setup() {
   const windows: TraceWindowRegistry = {
     openTraceWindow,
     isTraceSender: () => false,
+    sessionForSender: (id) =>
+      id === TRACE_SENDER ? "sess_1" : id === STALE_SENDER ? "sess_missing" : undefined,
     closeAll: () => undefined,
     count: () => 0,
   };
@@ -85,10 +91,25 @@ describe("trace window IPC handlers", () => {
     expect(openTraceWindow).not.toHaveBeenCalled();
   });
 
-  it("sends nothing for an unknown session", async () => {
+  it("rejects a note for a session other than the sender window's own", async () => {
+    const { ipc, focusMainWindow, sent } = setup();
+    const payload = { sessionId: "sess_1", selected: "step:1", text: "x" };
+    // Session exists but sender 7 is not a trace window for it.
+    await expect(ipc.invoke("trace:requestChanges", payload, 7)).rejects.toMatchObject({
+      code: "UNTRUSTED_SENDER",
+    });
+    expect(focusMainWindow).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it("sends nothing for a session that does not exist", async () => {
     const { ipc, focusMainWindow, sent } = setup();
     await expect(
-      ipc.invoke("trace:requestChanges", { sessionId: "sess_missing", selected: "step:1", text: "x" }),
+      ipc.invoke(
+        "trace:requestChanges",
+        { sessionId: "sess_missing", selected: "step:1", text: "x" },
+        STALE_SENDER,
+      ),
     ).rejects.toMatchObject({ code: "UNKNOWN_SESSION" });
     expect(focusMainWindow).not.toHaveBeenCalled();
     expect(sent).toEqual([]);

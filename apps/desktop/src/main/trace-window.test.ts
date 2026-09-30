@@ -207,6 +207,9 @@ describe("trace window registry", () => {
     expect(registry.count()).toBe(2);
     expect(registry.isTraceSender(100)).toBe(true);
     expect(registry.isTraceSender(101)).toBe(true);
+    expect(registry.sessionForSender(100)).toBe("sess_1");
+    expect(registry.sessionForSender(101)).toBe("sess_2");
+    expect(registry.sessionForSender(1)).toBeUndefined();
   });
 
   it("blocks navigation and denies window.open", () => {

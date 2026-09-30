@@ -53,13 +53,15 @@ export interface TraceWindowRegistry {
   /** Focuses the existing window for sessionId; else creates one, records webContents.id before loadFile(traceHtmlPath, {query: {session}}), blocks will-navigate and denies window.open. */
   openTraceWindow(sessionId: string): TraceWindowHandle;
   isTraceSender(webContentsId: number): boolean;
+  /** The session a trace window shows, by its webContents.id; undefined for any other sender. */
+  sessionForSender(webContentsId: number): string | undefined;
   closeAll(): void;
   count(): number;
 }
 
 export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceWindowRegistry {
   const bySession = new Map<string, TraceWindowHandle>();
-  const senders = new Set<number>();
+  const senders = new Map<number, string>();
 
   function bringToFront(window: TraceWindowHandle): void {
     if (window.isMinimized()) window.restore();
@@ -78,7 +80,7 @@ export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceW
       // The IPC allowlist (spec §8.6) must know this sender before any page
       // script can run, so the id is recorded before loadFile.
       const webContentsId = window.webContents.id;
-      senders.add(webContentsId);
+      senders.set(webContentsId, sessionId);
       bySession.set(sessionId, window);
       window.webContents.on("will-navigate", (event) => {
         event.preventDefault();
@@ -102,6 +104,9 @@ export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceW
     },
     isTraceSender(webContentsId) {
       return senders.has(webContentsId);
+    },
+    sessionForSender(webContentsId) {
+      return senders.get(webContentsId);
     },
     closeAll() {
       for (const window of [...bySession.values()]) {

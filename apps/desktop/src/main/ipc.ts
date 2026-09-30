@@ -45,6 +45,7 @@ import { registerTraceHandlers } from "./trace-ipc.js";
 import type { TraceService } from "./trace-service.js";
 import { isChannelAllowed } from "./trace-allowlist.js";
 import type { SenderKind } from "./trace-allowlist.js";
+import type { IpcHandleContext } from "./trace-ipc.js";
 import { registerTraceWindowHandlers } from "./trace-window-ipc.js";
 import type { TraceWindowIpcDeps } from "./trace-window-ipc.js";
 
@@ -140,7 +141,7 @@ function repoOpenedPayload(
 export function registerIpcHandlers(deps: IpcDeps): void {
   function handle<C extends ToMainChannelName>(
     channel: C,
-    fn: (payload: ToMainPayload<C>) => unknown | Promise<unknown>,
+    fn: (payload: ToMainPayload<C>, context: IpcHandleContext) => unknown | Promise<unknown>,
   ): void {
     ipcMain.handle(channel, async (event, raw) => {
       assertTrustedSender(event);
@@ -153,7 +154,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       }
       const payload = parseToMain(channel, raw);
       try {
-        return await fn(payload);
+        return await fn(payload, { senderId: event.sender.id });
       } catch (error) {
         deps.log(`ipc ${channel} failed: ${error instanceof Error ? error.message : String(error)}`);
         throw serializeIpcError(error);
