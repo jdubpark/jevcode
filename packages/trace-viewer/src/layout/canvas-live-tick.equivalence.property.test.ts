@@ -324,6 +324,38 @@ describe("Canvas derivations built from the previous commit equal fresh ones aft
     for (const level of ["session", "chapter", "step"] as const) checkCanvasChain([session, moved], level);
   });
 
+  it("a kept noise chapter follows its own step's anchored finding (stack or not) in both directions", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    const failures = [{ file: "a", testName: "t", message: "m" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 4, failed: 1, skipped: 0, failures }, "fact_tr_0");
+    b.validation({ id: "val_0", kind: "test", command: "pnpm test", status: "failed", passed: 4, failed: 1, skipped: 0 });
+    b.agent({ type: "file_changed", path: "src/m0.ts", callId: "edit_0" });
+    b.fact({ type: "git_hunk", file: "src/m0.ts", added: 2, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_0");
+    b.unit({ id: "cu_0", files: ["src/m0.ts"], evidence: ["fact_0", "fact_tr_0"], agentCallIds: ["edit_0"], validationResults: ["val_0"] });
+    const rows = b.rows;
+    const folded = finalize(accumulateAll(createTraceState(testMeta({ lastEventSeq: rows.length, state: "running" })), rows), { live: true, nowMs: 0 });
+    // One noise chapter whose own test run anchors the failing-tests finding; the chapter names no finding itself.
+    const chapter = folded.chapters[0];
+    const run = folded.steps.find((step) => step.findingIds.length > 0);
+    if (chapter === undefined || run === undefined) throw new Error("shape");
+    const noisy = { ...chapter, noise: true, findingIds: [] };
+    const flagged: TraceSession = { ...folded, chapters: [noisy] };
+    const quiet: TraceSession = {
+      ...flagged,
+      steps: folded.steps.map((step) => (step === run ? { ...run, findingIds: [] } : step)),
+      findings: [],
+    };
+    expect(collectItems(flagged, buildTraceIndex(flagged)).find((item) => item.selId === noisy.id)?.kind).toBe("chapter");
+    expect(collectItems(quiet, buildTraceIndex(quiet)).find((item) => item.selId === noisy.id)?.kind).toBe("noise");
+    for (const level of ["session", "chapter", "step"] as const) {
+      checkCanvasChain([flagged, quiet], level);
+      checkCanvasChain([quiet, flagged], level);
+    }
+  });
+
   it("a claim's ≠ flag follows its finding even when the claim step object is kept", () => {
     // A warning, so moving it flips no step bad and only the claim's own findings tell.
     const original = oauthCanvasSession();
@@ -409,6 +441,13 @@ describe("Canvas marks from the previous commit: work", () => {
     expect(large.after).toEqual(small.after);
     expect(large.after?.validationLinks).toBeLessThanOrEqual(6);
     expect(large.after?.homeLinks).toBeLessThan(60);
+  });
+
+  it("a drip that changes no anchoring keeps every other chapter's noise flag without reading its steps", () => {
+    const links = (units: number) => canvasLayoutWork(soakDrip(units).layoutAfter)?.items.flagLinks;
+    // Only the re-emitted unit is a new object: its own links (its edit, its evidence and the shared runs) are read.
+    expect(links(240)).toBe(links(60));
+    expect(links(240)).toBeLessThanOrEqual(10);
   });
 
   it("the same layout and context re-derive nothing", () => {
