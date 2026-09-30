@@ -3878,6 +3878,7 @@ Source: lane review of C3a (`298d3ed..f55a4b9`) and its follow-up commits. Bindi
 - **`homeFrameKey` rebuilds the context per call** (0.055 ms at 5k steps). Memoize `frameForSelection` per (layout, selection) rather than calling it in the render body on every camera tick, and never call it per step.
 - **Separators carry `turn`.** A queued instruction whose step `tMs` precedes its turn's `tMs` is placed, per spec, in the previous turn's column (item turn = last turn with `tMs <= start`). Label story frames from the frame's own item, not from the column's turn.
 - **Levels and `prev`.** Pass `prev` only for the same level and session; a level switch or Tidy calls `layoutCanvas` without `prev`. Rerun only when `loadedThroughSeq` changes (spec §7.5 complexity note).
+- **Trunk endpoints follow placement order.** A trunk's `from`/`to` are its first and last placed frames, not its (col, row) extremes; ids stay `trunk:turn:N`. Do not derive trunk geometry from `from`/`to` column positions.
 - **Open C3a follow-ups (not blocking):** rails in column 0 draw at x < 0 (`railX` uses gutterLeft = -colGap) while bounds start at x 0, so Fit and the minimap clip them; P9's per-finding edge count assumes no cross-finding dedupe (assert per (from, to)); carried minors: `turnLocator` returns turn 0 before the first turn, `frameBySel` is first-frame-wins, P8's `frameByKey.has(key)` check is tautological, the bench has no frame-count guard, `edge.d ?? ""` in the minimap is dead code.
 
 ### Task C3-5: M4b spike gate: risks 2, 3, 6, 7 passed or ruled; apply rulings
