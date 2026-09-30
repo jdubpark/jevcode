@@ -43,6 +43,11 @@ import type { AppState } from "./state.js";
 import type { TerminalManager } from "./terminal-manager.js";
 import { registerTraceHandlers } from "./trace-ipc.js";
 import type { TraceService } from "./trace-service.js";
+import { isChannelAllowed } from "./trace-allowlist.js";
+import type { SenderKind } from "./trace-allowlist.js";
+import type { IpcHandleContext } from "./trace-ipc.js";
+import { registerTraceWindowHandlers } from "./trace-window-ipc.js";
+import type { TraceWindowIpcDeps } from "./trace-window-ipc.js";
 
 export type RepoOpenedPayload = z.infer<typeof RepoOpenedPayloadSchema>;
 
@@ -62,6 +67,10 @@ export interface IpcDeps {
   log: (message: string) => void;
   /** Read-only trace access over a query_only reader (trace-ipc.ts). */
   trace: TraceService;
+  /** Classifies an IPC sender by webContents id for the channel allowlist (trace-allowlist.ts). */
+  senderKind(webContentsId: number): SenderKind;
+  /** trace:open and trace:requestChanges (trace-window-ipc.ts). */
+  traceWindows: TraceWindowIpcDeps;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -132,13 +141,20 @@ function repoOpenedPayload(
 export function registerIpcHandlers(deps: IpcDeps): void {
   function handle<C extends ToMainChannelName>(
     channel: C,
-    fn: (payload: ToMainPayload<C>) => unknown | Promise<unknown>,
+    fn: (payload: ToMainPayload<C>, context: IpcHandleContext) => unknown | Promise<unknown>,
   ): void {
     ipcMain.handle(channel, async (event, raw) => {
       assertTrustedSender(event);
+      // Spec §8.6: trace windows share the preload, so each sender may use
+      // only the channels its kind allows. Checked before zod parsing.
+      const sender = deps.senderKind(event.sender.id);
+      if (!isChannelAllowed(channel, sender)) {
+        deps.log(`ipc ${channel} rejected: ${sender} sender`);
+        throw new IpcError("UNTRUSTED_SENDER", `${channel} is not allowed from a ${sender} sender`);
+      }
       const payload = parseToMain(channel, raw);
       try {
-        return await fn(payload);
+        return await fn(payload, { senderId: event.sender.id });
       } catch (error) {
         deps.log(`ipc ${channel} failed: ${error instanceof Error ? error.message : String(error)}`);
         throw serializeIpcError(error);
@@ -423,6 +439,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   registerTraceHandlers(handle, deps.trace);
+  registerTraceWindowHandlers(handle, deps.traceWindows);
 }
 
 export function openDirectoryDialog(

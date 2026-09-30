@@ -22,8 +22,12 @@ import { sweepStaleSessions } from "./session-recovery.js";
 import { createAppState } from "./state.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
+import { createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
+import type { TraceWindowRegistry } from "./trace-window.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
+const PRELOAD_PATH = path.join(dirname, "../preload/index.cjs");
+const TRACE_HTML_PATH = path.join(dirname, "../renderer/src/renderer/trace.html");
 
 function loadEnvFileFromRepo(): void {
   for (const candidate of [
@@ -50,6 +54,7 @@ let mainWindow: BrowserWindow | null = null;
 let terminals: TerminalManager | null = null;
 let db: JevcodeDb | null = null;
 let traceReader: TraceReader | null = null;
+let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
 const state = createAppState();
 
@@ -59,13 +64,7 @@ function createWindow(): BrowserWindow {
     height: 900,
     backgroundColor: "#14161a",
     show: false,
-    webPreferences: {
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      preload: path.join(dirname, "../preload/index.cjs"),
-    },
+    webPreferences: sharedWebPreferences(PRELOAD_PATH),
   });
   window.once("ready-to-show", () => {
     window.show();
@@ -74,6 +73,8 @@ function createWindow(): BrowserWindow {
     if (mainWindow === window) {
       mainWindow = null;
       setMainWindow(null);
+      // A trace window never outlives the main window (spec §8.1).
+      traceWindows?.closeAll();
     }
   });
   void window.loadFile(path.join(dirname, "../renderer/src/renderer/index.html"));
@@ -154,13 +155,40 @@ app.whenReady().then(() => {
   mainWindow = createWindow();
   setMainWindow(mainWindow);
 
+  const traceService = createTraceService(reader);
+  const windows = createTraceWindowRegistry({
+    create: (options) => new BrowserWindow(options),
+    preloadPath: PRELOAD_PATH,
+    traceHtmlPath: TRACE_HTML_PATH,
+  });
+  traceWindows = windows;
+
   registerIpcHandlers({
     db,
     state,
     terminals,
     runtime,
     instructionRouter,
-    trace: createTraceService(reader),
+    trace: traceService,
+    senderKind: (webContentsId) => {
+      const main = mainWindow;
+      if (main !== null && !main.isDestroyed() && main.webContents.id === webContentsId) {
+        return "main";
+      }
+      return windows.isTraceSender(webContentsId) ? "trace" : "other";
+    },
+    traceWindows: {
+      windows,
+      sessionExists: (sessionId) => traceService.listSessions({ sessionId, limit: 1 }).length > 0,
+      focusMainWindow: () => {
+        const main = mainWindow;
+        if (main === null || main.isDestroyed()) return;
+        if (main.isMinimized()) main.restore();
+        main.show();
+        main.focus();
+      },
+      sendToRenderer,
+    },
     requestRepoPath: () => openDirectoryDialog(mainWindow),
     log: (message) => console.log(`[ipc] ${message}`),
   });

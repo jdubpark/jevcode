@@ -36,7 +36,7 @@ function harness(): {
 } {
   const handlers = new Map<string, (raw: unknown) => unknown>();
   const handle: IpcHandle = (channel, fn) => {
-    handlers.set(channel, (raw) => fn(parseToMain(channel, raw)));
+    handlers.set(channel, (raw) => fn(parseToMain(channel, raw), { senderId: 1 }));
   };
   return {
     handle,
