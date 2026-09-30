@@ -122,6 +122,31 @@ describe("buildOutlineRows", () => {
     expect(row?.label.endsWith(formatOffset(testsChapter?.tMs ?? 0))).toBe(true);
   });
 
+  it("shows a chapter row's short title, with the full title in its tooltip and accessible name", () => {
+    const session = foldFixture("oauth");
+    const testsChapter = session.chapters.find((chapter) => chapter.category === "tests");
+    if (testsChapter === undefined) throw new Error("fixture changed");
+    const row = itemsOf(buildOutlineRows(session, ALL_OPEN), "story").find((item) => item.chapterId === testsChapter.id);
+    expect(row?.title).toBe("Tests · oauth");
+    expect(row?.hint).toBe(testsChapter.title);
+    expect(row?.label.startsWith(testsChapter.title)).toBe(true);
+  });
+
+  it("falls back to the full title and shows hostile short and full titles as visible tokens", () => {
+    const base = foldFixture("oauth");
+    const withShort = { ...base, chapters: base.chapters.map((chapter) => ({ ...chapter, title: "Full\u202E one", shortTitle: "Sh\u202Eort" })) };
+    const rows = itemsOf(buildOutlineRows(withShort, ALL_OPEN), "story").filter((row) => row.chapterId !== null && row.icon !== "fork" && !row.muted);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.title).toBe("Sh\u27E8U+202E\u27E9ort");
+      expect(row.hint).toBe("Full\u27E8U+202E\u27E9 one");
+      expect(row.label.startsWith("Full\u27E8U+202E\u27E9 one")).toBe(true);
+    }
+    const noShort = { ...base, chapters: base.chapters.map(({ shortTitle: _drop, ...chapter }) => ({ ...chapter, title: "Full title" })) };
+    const plain = itemsOf(buildOutlineRows(noShort, ALL_OPEN), "story").filter((row) => row.chapterId !== null && row.icon !== "fork" && !row.muted);
+    expect(plain.every((row) => row.title === "Full title" && row.hint === undefined)).toBe(true);
+  });
+
   it("search matches chapter titles and step text with every term required", () => {
     const session = foldFixture("oauth");
     const index = buildSearchIndex(session);
@@ -187,6 +212,10 @@ describe("buildOutlineRows", () => {
     expect(row?.graphic?.kind).toBe("fork");
     expect(row?.tMs).toBe(Math.min(decision?.tMs ?? 0, born?.tMs ?? 0));
     expect(row?.mono).toBe(false);
+    // A short label in the row (the Outline column is 216 px); the full decision title in the tooltip and the name.
+    expect(row?.title).toBe("Account-linking policy…");
+    expect(row?.hint).toBe(decision?.decision?.title);
+    expect(row?.label.startsWith(decision?.decision?.title ?? "-")).toBe(true);
   });
 
   it("marks ≠ only on chapters that carry the claim finding, plus the Final claim", () => {

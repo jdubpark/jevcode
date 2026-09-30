@@ -12,6 +12,7 @@ import {
   KIND_META,
   normalizeCommand,
   pickGraphic,
+  shortenTitle,
   signalMeta,
   type Chapter,
   type Finding,
@@ -50,7 +51,9 @@ export const RELATED_MAX = 50;
 interface RelatedItem {
   id: SelectionId;
   icon: IconName;
+  /** The row's short label (Chapter.shortTitle, a shortened decision title); `full` is its tooltip and name. */
   title: string;
+  full: string;
   tMs: number;
   graphic: GraphicSpec | null;
   shield: boolean;
@@ -151,6 +154,7 @@ function Row({
   metric,
   metricTone,
   title,
+  name,
   onClick,
 }: {
   icon: IconName;
@@ -160,6 +164,8 @@ function Row({
   metric?: string;
   metricTone?: "bad";
   title?: string;
+  /** Accessible name of a clickable row, when the visible label shortens what it names. */
+  name?: string;
   onClick?(): void;
 }) {
   const body = (
@@ -178,7 +184,7 @@ function Row({
   );
   if (onClick === undefined) return <div className={styles.row}>{body}</div>;
   return (
-    <button type="button" className={styles.row} onClick={onClick}>
+    <button type="button" className={styles.row} aria-label={name} onClick={onClick}>
       {body}
     </button>
   );
@@ -354,7 +360,9 @@ function StepDetails({ step, session, onSelect }: { step: Step; session: TraceSe
               <Row
                 key={chapter.id}
                 icon={CATEGORY_ICON[chapter.category]}
-                label={displayUntrusted(chapter.title)}
+                label={displayUntrusted(chapter.shortTitle ?? chapter.title)}
+                title={displayUntrusted(chapter.title)}
+                name={`${displayUntrusted(chapter.title)}, ${formatOffset(chapter.tMs)}`}
                 metric={formatOffset(chapter.tMs)}
                 onClick={() => onSelect(chapter.id)}
               />
@@ -596,7 +604,8 @@ function resolveRef(session: TraceSession, index: TraceIndex, ref: RelatedRef): 
     return {
       id: chapter.id,
       icon: CATEGORY_ICON[chapter.category],
-      title: displayUntrusted(chapter.title),
+      title: displayUntrusted(chapter.shortTitle ?? chapter.title),
+      full: displayUntrusted(chapter.title),
       tMs: chapter.tMs,
       graphic: null,
       shield: chapter.clampIds.length > 0,
@@ -605,13 +614,16 @@ function resolveRef(session: TraceSession, index: TraceIndex, ref: RelatedRef): 
   const step = entry?.kind === "step" ? session.steps[entry.position] : undefined;
   if (step === undefined) return null;
   if (ref.asFinding !== undefined) {
-    return { id: step.id, icon: SIGNAL_ICON[ref.asFinding.ruleId], title: FINDING_TITLE[ref.asFinding.ruleId], tMs: step.tMs, graphic: null, shield: false };
+    const title = FINDING_TITLE[ref.asFinding.ruleId];
+    return { id: step.id, icon: SIGNAL_ICON[ref.asFinding.ruleId], title, full: title, tMs: step.tMs, graphic: null, shield: false };
   }
   const graphic = step.decision !== undefined || step.tests !== undefined ? pickGraphic(step, session) : null;
-  const title = displayUntrusted(
-    step.decision !== undefined ? step.decision.title : step.command !== undefined ? normalizeCommand(step.command.command) : step.headline,
-  );
-  return { id: step.id, icon: KIND_ICON[step.kind], title, tMs: step.tMs, graphic, shield: false };
+  if (step.decision !== undefined) {
+    const { title } = step.decision;
+    return { id: step.id, icon: KIND_ICON[step.kind], title: displayUntrusted(shortenTitle(title)), full: displayUntrusted(title), tMs: step.tMs, graphic, shield: false };
+  }
+  const title = displayUntrusted(step.command !== undefined ? normalizeCommand(step.command.command) : step.headline);
+  return { id: step.id, icon: KIND_ICON[step.kind], title, full: title, tMs: step.tMs, graphic, shield: false };
 }
 
 const decisionsCache = new WeakMap<TraceSession, { byTurn: Map<number, StepId[]>; byDecisionId: Map<string, StepId> }>();
@@ -685,7 +697,8 @@ function Related({
           key={item.id}
           icon={item.icon}
           label={item.title}
-          title={item.title}
+          title={item.full}
+          name={`${item.full}, ${formatOffset(item.tMs)}`}
           graphic={
             item.graphic !== null ? (
               <Graphic spec={item.graphic} size="xs" label={describeGraphic(item.graphic)} />
