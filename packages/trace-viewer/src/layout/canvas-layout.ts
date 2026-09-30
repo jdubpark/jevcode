@@ -10,7 +10,7 @@ import {
   type LevelSpec,
 } from "./canvas-levels.js";
 import type { TimeScale, XMap } from "./time-scale.js";
-import { worstSeverity } from "./tone.js";
+import { anchoredFindings, worstSeverity } from "./tone.js";
 import type { SelectionId, TraceIndex } from "./trace-index.js";
 import type { Point, Rect } from "./viewport.js";
 
@@ -146,9 +146,16 @@ export function collectItems(
       anchorSeq = Infinity;
       for (const seq of seqs) if (seq < anchorSeq) anchorSeq = seq;
     }
+    // Spec §7.5: a noise chapter stays in its stack unless a finding names it or one of its own steps anchors one. A
+    // shared test run it reaches only through a validation (validationOnlyStepIds) is not its own (lane review I-3), and
+    // a finding that merely cites a step does not count (anchor rule).
+    const validationOnly = new Set(chapter.validationOnlyStepIds ?? []);
     const flagged =
       chapter.findingIds.length > 0 ||
-      chapter.stepIds.some((id) => (stepOf(id)?.findingIds.length ?? 0) > 0);
+      chapter.stepIds.some((id) => {
+        const step = stepOf(id);
+        return step !== undefined && !validationOnly.has(id) && anchoredFindings(step, findingsById).length > 0;
+      });
     items.push({
       key,
       selId: chapter.id,

@@ -897,12 +897,13 @@ collectItems(s):
               "plan" (plan:<seq>) if t.planStepId; "claim" (claim:<seq>) if t.claimStepId
   for decision steps: story item "decision" (decision:<id>)
   for current chapters: work item key ch:<anchorSeq>, selId unit:<id>,
-              kind "noise" if chapter.noise and no step in it has a finding, else "chapter"
+              kind "noise" if chapter.noise, no finding names it, and none of its own steps
+              (stepIds less validationOnlyStepIds) anchors a finding, else "chapter"
   for steps with a warning+ finding, no chapter and no story item: work item "loose" (step:<seq>)
   disambiguate equal keys by selId; sort by (start, anchorSeq, key)
 ```
 
-An item's `start` is its step's `tMs` or its chapter's `tMs` (display clock). A chapter's placement key is `ch:<anchorSeq>` (the min fact or step seq), which survives unit-id churn; the store resolves a stale `unit:<old>` selection through the key.
+An item's `start` is its step's `tMs` or its chapter's `tMs` (display clock). A chapter's placement key is `ch:<anchorSeq>` (the min fact or step seq), which survives unit-id churn; the store resolves a stale `unit:<old>` selection through the key. A noise chapter that reaches a shared failed test run only through its validation stays in its stack: the run and its findings belong to the chapter that owns the outcome (§6.6, §6.7 "Finding chapters"), and a finding that only cites a step does not count (anchor rule, §7.1). On the replayed oauth bundle, Lockfile and Code · users both join the failed `pnpm test` run and still stack as `Noise ×2` (lane C3b review I-3, 2026-10-01).
 
 **Column map.** Columns are time bins. The time map is a list of breakpoints `{t, xIn, xOut}`, one per placed frontier item; x is linear in `toU(t)` between breakpoints and continues at `pps` past the last as a tentative live edge.
 

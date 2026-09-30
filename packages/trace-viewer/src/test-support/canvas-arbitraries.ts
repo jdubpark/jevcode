@@ -725,6 +725,18 @@ export function oauthCanvasSession(): TraceSession {
   return foldRows(meta, rows, { live: false });
 }
 
+/**
+ * The replay shape of oauth (lane review I-1..I-4): fixtures/oauth folded through the real pipeline with the
+ * clusterer's own units, as the dev host's replayed bundle is. Every unit cites the one `pnpm test` validation, so
+ * that run (step:43) joins all seven chapters and is validation-only in the six that do not own its failure, and two
+ * chapters (Lockfile, Code · users) are noise. oauthCanvasSession() pins the §7.5 table instead and has no shared run.
+ * It lacks the replay's jev_decision rows (guardrail and attention steps); tests that need those add them.
+ */
+export function oauthReplaySession(): TraceSession {
+  const { meta, rows } = loadFixtureTrace("oauth");
+  return foldRows(meta, rows, { live: false });
+}
+
 export function oauthCanvasBundle(): TraceBundle {
   const { meta, rows } = oauthCanvasRows({ unitsInline: true });
   return {
