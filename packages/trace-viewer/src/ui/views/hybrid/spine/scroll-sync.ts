@@ -77,3 +77,21 @@ export function extendRange(base: readonly number[], extra: readonly number[], c
   for (const value of extra) if (value >= 0 && value < count) set.add(value);
   return [...set].sort((a, b) => a - b);
 }
+
+/**
+ * At the list end the browser clamps the offset wherever the last row lands, which can leave the top row half under
+ * the range chip (audit 2-8, integration item 5). Returns the index of that cut top row when the offset sits at the end
+ * clamp, so the caller can start-align it and let any cut fall at the bottom edge; null when the offset is not at the
+ * end, already on a row start, or when moving up would push `keep` (the revealed row) past the bottom edge.
+ */
+export function endClampedTopRow(
+  items: readonly { index: number; start: number; end: number }[],
+  win: ScrollWindow,
+  maxOffset: number,
+  keep: Span,
+): number | null {
+  if (win.offset < maxOffset - 0.5) return null;
+  const top = items.find((item) => item.end > win.offset);
+  if (top === undefined || win.offset <= top.start + 0.5 || win.offset >= top.end - 0.5) return null;
+  return keep.end <= top.start + win.height ? top.index : null;
+}

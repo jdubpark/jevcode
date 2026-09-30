@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { comfortBand, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { comfortBand, endClampedTopRow, extendRange, pushTarget, revealAlign, firstRowAtOrAfter, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 
 const win = { offset: 1_000, height: 600 };
 
@@ -57,4 +57,25 @@ describe("scroll-sync", () => {
     expect(firstRowAtOrAfter(181, starts.length, startOf)).toBe(4);
     expect(firstRowAtOrAfter(230, starts.length, startOf)).toBe(-1);
   });
+
+  it("start-aligns the top row the list end cut, when the revealed row stays whole (integration item 5)", () => {
+    // oauth at 1440 px, Chapter level: the list ends at 808 px in a 542 px window, so the end clamps at 266 and cuts
+    // the row starting at 256 under the range chip.
+    const items = [
+      { index: 8, start: 256, end: 288 },
+      { index: 9, start: 288, end: 320 },
+      { index: 20, start: 640, end: 744 },
+      { index: 21, start: 744, end: 776 },
+      { index: 22, start: 776, end: 808 },
+    ];
+    const clamped = { offset: 266, height: 542 };
+    expect(endClampedTopRow(items, clamped, 266, { start: 640, end: 744 })).toBe(8);
+    // Not at the list end: a reveal already lands on row starts.
+    expect(endClampedTopRow(items, { offset: 200, height: 542 }, 266, { start: 640, end: 744 })).toBeNull();
+    // On a row start: nothing to do.
+    expect(endClampedTopRow(items, { offset: 256, height: 542 }, 256, { start: 640, end: 744 })).toBeNull();
+    // Moving up would push the revealed row past the bottom edge: keep the clamp.
+    expect(endClampedTopRow(items, clamped, 266, { start: 700, end: 800 })).toBeNull();
+  });
 });
+
