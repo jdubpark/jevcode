@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
 import { accumulateAll, createTraceState, finalize } from "../model/fold.js";
-import type { Chapter, Step, StepId, TraceSession, UnitStableId } from "../model/index.js";
+import type { TraceSession, UnitStableId } from "../model/index.js";
 import { arbTraceSession } from "../test-support/arbitraries.js";
 import { FIXTURE_NAMES, loadFixtureTrace } from "../test-support/fixture-rows.js";
+import { arbEdit, editSession } from "../test-support/session-edits.js";
 import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder } from "../test-support/trace-builder.js";
 import { buildTraceIndex, traceIndexWork, type TraceIndex } from "./trace-index.js";
@@ -71,113 +72,6 @@ function foldChain(meta: TraceSessionSummary, rows: readonly TraceRow[], cuts: r
 
 const cutsArb = fc.uniqueArray(fc.nat(), { maxLength: 10 });
 
-// ------------------------------------------------------------ hand edits
-
-type Edit =
-  | { op: "stepSeq"; at: number; first: number; last: number }
-  | { op: "stepChapters"; at: number; keep: number; add: number }
-  | { op: "dropStep"; at: number }
-  | { op: "swapSteps"; at: number; with: number }
-  | { op: "chapterSteps"; at: number; keep: number; add: number }
-  | { op: "chapterFacts"; at: number; seq: number }
-  | { op: "chapterCurrent"; at: number }
-  | { op: "dropChapter"; at: number }
-  | { op: "swapChapters"; at: number; with: number }
-  | { op: "addChapter"; at: number; seq: number; add: number }
-  | { op: "addStep"; at: number; seq: number; add: number };
-
-const arbEdit: fc.Arbitrary<Edit> = fc.oneof(
-  fc.record({ op: fc.constant("stepSeq" as const), at: fc.nat(), first: fc.integer({ min: -3, max: 3 }), last: fc.integer({ min: 0, max: 5 }) }),
-  fc.record({ op: fc.constant("stepChapters" as const), at: fc.nat(), keep: fc.nat(), add: fc.nat() }),
-  fc.record({ op: fc.constant("dropStep" as const), at: fc.nat() }),
-  fc.record({ op: fc.constant("swapSteps" as const), at: fc.nat(), with: fc.nat() }),
-  fc.record({ op: fc.constant("chapterSteps" as const), at: fc.nat(), keep: fc.nat(), add: fc.nat() }),
-  fc.record({ op: fc.constant("chapterFacts" as const), at: fc.nat(), seq: fc.nat({ max: 40 }) }),
-  fc.record({ op: fc.constant("chapterCurrent" as const), at: fc.nat() }),
-  fc.record({ op: fc.constant("dropChapter" as const), at: fc.nat() }),
-  fc.record({ op: fc.constant("swapChapters" as const), at: fc.nat(), with: fc.nat() }),
-  fc.record({ op: fc.constant("addChapter" as const), at: fc.nat(), seq: fc.nat({ max: 40 }), add: fc.nat() }),
-  fc.record({ op: fc.constant("addStep" as const), at: fc.nat(), seq: fc.nat({ max: 40 }), add: fc.nat() }),
-);
-
-/** Applies edits copy-on-write, so untouched Step and Chapter objects stay shared with `session`. */
-function edit(session: TraceSession, edits: readonly Edit[]): TraceSession {
-  const steps = [...session.steps];
-  const chapters = [...session.chapters];
-  const pickStep = (n: number): Step | undefined => steps[n % Math.max(1, steps.length)];
-  const stepIdAt = (n: number): StepId => pickStep(n)?.id ?? ("step:dangling" as StepId);
-  const chapterIdAt = (n: number): UnitStableId =>
-    n % 5 === 4 ? ("unit:dangling" as UnitStableId) : (chapters[n % Math.max(1, chapters.length)]?.id ?? ("unit:dangling" as UnitStableId));
-  const setStep = (n: number, change: (s: Step) => Step) => {
-    const at = n % Math.max(1, steps.length);
-    const step = steps[at];
-    if (step !== undefined) steps[at] = change(step);
-  };
-  const setChapter = (n: number, change: (c: Chapter) => Chapter) => {
-    const at = n % Math.max(1, chapters.length);
-    const chapter = chapters[at];
-    if (chapter !== undefined) chapters[at] = change(chapter);
-  };
-  for (const e of edits) {
-    switch (e.op) {
-      case "stepSeq":
-        setStep(e.at, (s) => ({ ...s, firstSeq: Math.max(1, s.firstSeq + e.first), lastSeq: Math.max(1, s.firstSeq + e.first) + e.last }));
-        break;
-      case "stepChapters":
-        setStep(e.at, (s) => ({ ...s, chapterIds: [...s.chapterIds.slice(0, e.keep % (s.chapterIds.length + 1)), chapterIdAt(e.add)] }));
-        break;
-      case "dropStep":
-        if (steps.length > 0) steps.splice(e.at % steps.length, 1);
-        break;
-      case "swapSteps": {
-        const a = e.at % Math.max(1, steps.length);
-        const b = e.with % Math.max(1, steps.length);
-        const x = steps[a];
-        const y = steps[b];
-        if (x !== undefined && y !== undefined) [steps[a], steps[b]] = [y, x];
-        break;
-      }
-      case "chapterSteps":
-        setChapter(e.at, (c) => ({ ...c, stepIds: [...c.stepIds.slice(0, e.keep % (c.stepIds.length + 1)), stepIdAt(e.add)] }));
-        break;
-      case "chapterFacts":
-        setChapter(e.at, (c) => ({ ...c, factSeqs: [...c.factSeqs, e.seq] }));
-        break;
-      case "chapterCurrent":
-        setChapter(e.at, (c) => ({ ...c, current: !c.current }));
-        break;
-      case "dropChapter":
-        if (chapters.length > 0) chapters.splice(e.at % chapters.length, 1);
-        break;
-      case "swapChapters": {
-        const a = e.at % Math.max(1, chapters.length);
-        const b = e.with % Math.max(1, chapters.length);
-        const x = chapters[a];
-        const y = chapters[b];
-        if (x !== undefined && y !== undefined) [chapters[a], chapters[b]] = [y, x];
-        break;
-      }
-      case "addChapter": {
-        const base = chapters[0];
-        if (base === undefined) break;
-        const id = `unit:added-${chapters.length}-${e.seq}` as UnitStableId;
-        if (chapters.some((c) => c.id === id)) break;
-        chapters.splice(e.at % (chapters.length + 1), 0, { ...base, id, factSeqs: [e.seq], stepIds: [stepIdAt(e.add)], current: e.seq % 2 === 0 });
-        break;
-      }
-      case "addStep": {
-        const base = steps[0];
-        if (base === undefined) break;
-        const id = `step:added-${steps.length}-${e.seq}` as StepId;
-        if (steps.some((s) => s.id === id)) break;
-        steps.splice(e.at % (steps.length + 1), 0, { ...base, id, firstSeq: e.seq + 1, lastSeq: e.seq + 2, chapterIds: [chapterIdAt(e.add)] });
-        break;
-      }
-    }
-  }
-  return { ...session, steps, chapters };
-}
-
 describe("buildTraceIndex from the previous index equals a fresh build", () => {
   it("random rows: after every commit, live or not", () => {
     fc.assert(
@@ -215,7 +109,7 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
         fc.array(fc.array(arbEdit, { maxLength: 6 }), { minLength: 1, maxLength: 5 }),
         (session, rounds) => {
           const chain = [session];
-          for (const edits of rounds) chain.push(edit(chain[chain.length - 1] ?? session, edits));
+          for (const edits of rounds) chain.push(editSession(chain[chain.length - 1] ?? session, edits));
           checkChain(chain);
         },
       ),
