@@ -65,8 +65,9 @@ describe("HybridView", () => {
     expect(row?.textContent).toContain("+0:43");
     expect(row?.querySelector("[data-expanded]")).not.toBeNull();
     expect(screen.getByRole("button", { name: /Review/ }).getAttribute("aria-pressed")).toBe("true");
-    const main = screen.getByRole("main");
-    expect(main.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    // The hidden Canvas stays mounted under <Activity> (display: none, out of the tab order), so count the shown view.
+    const hybrid = screen.getByRole("main").querySelector('[data-view="hybrid"]');
+    expect(hybrid?.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   });
 
   it("opens with both zoom readouts at the Chapter preset of the initial selection", async () => {

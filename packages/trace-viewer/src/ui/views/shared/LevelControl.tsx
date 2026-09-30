@@ -7,15 +7,17 @@ import styles from "./shared.module.css";
 
 export const LEVEL_LABEL: Record<Level, string> = { session: "Session", chapter: "Chapter", step: "Step" };
 
+export interface LevelSegmentedProps {
+  level: Level;
+  onLevel(level: Level): void;
+}
+
 /**
- * Session | Chapter | Step segmented control writing the shared level (spec §7.2).
- * `by` names the view that owns the gesture so the store can decide whether to leave Live.
+ * Controlled Session | Chapter | Step segmented control (spec §7.2).
  * WAI-ARIA radio group: arrows move and check the neighbour (wrapping) and focus follows.
  * The radios stay out of the tab order: `Alt+1/2/3` is the keyboard path, so `main` keeps one tab stop.
  */
-export function LevelControl({ by }: { by: FocusBy }) {
-  const level = useView((state) => state.level);
-  const dispatch = useDispatch();
+export function LevelSegmented({ level, onLevel }: LevelSegmentedProps) {
   const radios = useRef<Array<HTMLButtonElement | null>>([]);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -26,7 +28,7 @@ export function LevelControl({ by }: { by: FocusBy }) {
     const nextIndex = (position + delta + LEVELS.length) % LEVELS.length;
     const next = LEVELS[nextIndex];
     if (next === undefined) return;
-    dispatch({ type: "level/set", level: next, by });
+    onLevel(next);
     radios.current[nextIndex]?.focus();
   };
   return (
@@ -42,11 +44,22 @@ export function LevelControl({ by }: { by: FocusBy }) {
           aria-checked={item === level}
           tabIndex={-1}
           className={styles.segment}
-          onClick={() => dispatch({ type: "level/set", level: item, by })}
+          title={`${LEVEL_LABEL[item]} (Alt+${index + 1})`}
+          onClick={() => onLevel(item)}
         >
           {LEVEL_LABEL[item]}
         </button>
       ))}
     </div>
   );
+}
+
+/**
+ * The segmented control bound to the shared level. `by` names the view that owns the gesture so the store
+ * can decide whether to leave Live.
+ */
+export function LevelControl({ by }: { by: FocusBy }) {
+  const level = useView((state) => state.level);
+  const dispatch = useDispatch();
+  return <LevelSegmented level={level} onLevel={(next) => dispatch({ type: "level/set", level: next, by })} />;
 }

@@ -12,6 +12,7 @@ import { brushSeqRange } from "../../../../layout/trace-index.js";
 import {
   formatDuration,
   formatOffset,
+  formatOffsetRange,
   type Finding,
   type FindingId,
   type Step,
@@ -578,7 +579,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     <div className={styles.spine}>
       <div className={styles.chip}>
         <span className={styles.chipBar} aria-hidden="true" />
-        <span>{`${formatOffset(rangeFrom)} – ${formatOffset(rangeTo)}`}</span>
+        <span>{formatOffsetRange(rangeFrom, rangeTo)}</span>
       </div>
       <div className={styles.chipFade} aria-hidden="true" />
       {empty === null ? null : <p className={styles.empty}>{empty}</p>}

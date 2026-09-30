@@ -5,7 +5,7 @@ import { buildCanvasSession, canvasScale, oauthCanvasSession } from "../test-sup
 import type { CanvasSeed } from "../test-support/canvas-arbitraries.js";
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "./canvas-layout.js";
 import { LEVEL_SPECS } from "./canvas-levels.js";
-import { directPath, homeFrameKey, laneY, samplePath, type CanvasEdge, type RouteInput } from "./canvas-routes.js";
+import { directPath, homeFrameKey, laneY, routeEdges, samplePath, type CanvasEdge, type RouteInput } from "./canvas-routes.js";
 import { buildTraceIndex } from "./trace-index.js";
 
 // Expected geometry: spec §7.5 "Expected oauth layout" paragraph and the §7.5 edge table.
@@ -281,6 +281,32 @@ describe("routeEdges rules", () => {
     expect(directPath({ x: 0, y: 0, w: 100, h: 40 }, { x: 0, y: 100, w: 100, h: 40 })).toBe(
       "M50 40C50 70 50 70 50 100",
     );
+  });
+});
+
+describe("routeEdges at scale", () => {
+  it("resolves a step's home frame once however many chapters it validates (soak: one step in 4,861 chapters)", () => {
+    const seeds: CanvasSeed[] = [{ atMs: 5_000, kind: "loose", flagged: true }];
+    for (let i = 0; i < 200; i += 1) seeds.push({ atMs: 10_000 + i * 1_000, kind: "chapter", validates: true });
+    const session = buildCanvasSession(seeds);
+    const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
+    const loose = session.steps.find((step) => session.chapters.some((chapter) => chapter.validationStepIds.includes(step.id)));
+    if (loose === undefined) throw new Error("no validation step");
+    const byId = new Map<string, (typeof session.steps)[number]>(session.steps.map((step) => [step.id, step]));
+    let lookups = 0;
+    routeEdges({
+      session,
+      frames: layout.frames,
+      frameByKey: layout.frameByKey,
+      columns: layout.columns,
+      spec: LEVEL_SPECS.chapter,
+      stepOf: (id) => {
+        if (id === loose.id) lookups += 1;
+        return byId.get(id);
+      },
+    });
+    expect(session.chapters.filter((chapter) => chapter.validationStepIds.includes(loose.id)).length).toBe(200);
+    expect(lookups).toBeLessThanOrEqual(2);
   });
 });
 

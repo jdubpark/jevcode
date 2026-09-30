@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Everything in the base index's Global Constraints applies unchanged (Node ≥ 22, zod 3 in `@jevcode/trace-viewer`, no SQL migration, the viewer never writes, stable ids per R9, commits, worktrees, zsh `${var}:suffix`).
-- R17: `packages/trace-viewer` takes **no** `@xyflow/react` dependency. Both views use one hand-rolled DOM viewport: `layout/viewport.ts` (pure math, `Camera = {mode: "uniform", tx, ty, k} | {mode: "xOnly", u0, k}`) and `ui/viewport/controller.ts` (native `wheel` listener with `{passive: false}`; Ctrl/Meta+wheel zooms at the cursor, factor `2^(−deltaY · 0.02)` clamped per event to [0.8, 1.25]; other wheel, Space-drag, hand tool and middle-drag pan; one rAF write per frame; settle 150 ms after the last input rounds `tx`/`ty` and writes `--tv-inv-k`; gesture-time `will-change` only). Fallback on spike risk 1 failure: `d3-zoom` 3.0.0 behind the same controller API.
+- R17: `packages/trace-viewer` takes **no** `@xyflow/react` dependency. Both views use one hand-rolled DOM viewport: `layout/viewport.ts` (pure math, `Camera = {mode: "uniform", tx, ty, k} | {mode: "xOnly", u0, k}`) and `ui/viewport/controller.ts` (native `wheel` listener with `{passive: false}`; Ctrl/Meta+wheel zooms at the cursor, factor `2^(−deltaY · 0.02)` clamped per event to [0.8, 1.25]; other wheel, Space-drag, hand tool and middle-drag pan; one rAF write per frame; settle 150 ms after the last input rounds `tx`/`ty` and writes `--tv-inv-k`; gesture-time `will-change` only). Fallback on spike risk 1 failure: `d3-zoom` 3.0.0 behind the same controller API. Canvas camera writes (C3-10 review I-1, C3-11): the world layer `[data-tv-world]` gets a direct `transform`; `--tv-tx`, `--tv-ty` and `--tv-k` are written only on the overlay root `[data-tv-overlay]` (labels, handles, time chip, badges); `--tv-inv-k` only on `[data-tv-world]`, at settle and at a tween's end (`INV_K_EVERY_FRAME = false`); `--tv-kw`, the label width scale, on the overlay at settle only. Nothing inherited is written above the world, so a camera frame restyles no card or edge, and probes read the camera from the overlay.
 - R19: `layout` imports `model`, never the reverse; `ui` imports `layout` and `model`; `layout` never imports `ui`, React, the DOM or timers (ESLint enforces it, section 1.1).
 - R15/D8: CSS Modules consuming `var(--tv-*)` only; tokens are inline custom properties on the Shell root; light only; no global CSS except `:global(.d2h-*)` rules nested under one Inspector class; the trace window never loads `apps/desktop/src/renderer/styles.css`. System font stack `-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`; mono `ui-monospace, "SF Mono", Menlo, monospace` for paths, commands and code only. 12 px minimum text; no ALL-CAPS and no eyebrow labels; `tabular-nums` on every number.
 - D8/R24 color: accent `#2F6BFF` = selection, focus, playhead, brush, one primary action; `#E5484D` = real problems only (failed test or check, agent failure, critical finding, guardrail hit) and every red mark also differs in shape or carries a word; `#2E9E6A` = tiny pass marks only, never text; diffs neutral (added solid `--tv-ink-2`, removed hollow `--tv-ink-3`), never green or red; no per-kind colors; no dimming after the playhead or outside the brush in v1.
@@ -490,6 +490,8 @@ export interface ViewportController<C extends Camera> {
 export function createViewportController<C extends Camera>(options: ViewportControllerOptions<C>): ViewportController<C>;
 ```
 
+Wheel origin (C3-10 review I-2, C3-11 N-1): the controller measures its element's `getBoundingClientRect` once per gesture for the zoom anchor, not per wheel event, and clears the cached origin at settle, in `finishGesture`, on a wheel that changes nothing (a zoom at its limit) and on a `ResizeObserver` entry. Each controller owns one `ResizeObserver` on its element and disconnects it in `destroy()`, so the Hybrid overview's controller has one too.
+
 #### `layout/time-scale.ts` and `layout/ticks.ts` (C1-9)
 
 ```ts
@@ -813,6 +815,9 @@ export interface CanvasItem {
   anchorSeq: number;
   turn: number;
 }
+// Noise (spec §7.5, lane C3b review I-3): a noise chapter's item stays kind "noise" unless a finding names the chapter
+// or one of its own steps (stepIds less validationOnlyStepIds) anchors a finding; a shared failed run it joins only
+// through a validation, or a finding that only cites its step, does not promote it.
 export function collectItems(session: TraceSession, index: TraceIndex, stepOf?: (id: string) => Step | undefined): CanvasItem[];
 export interface CanvasFrame {
   key: string;
@@ -904,6 +909,7 @@ export interface MinimapModel {
   viewport: Rect;
   strip: { bracket: readonly [number, number]; critical: readonly number[] } | null;
 }
+/** criticalKeys: the frames the main view paints red, frameTone "bad" (ui/views/canvas/frame-label.ts criticalFrameKeys). */
 export function buildMinimap(layout: MinimapSource, input: { viewportWorld: Rect; selectedKey: string | null; criticalKeys: ReadonlySet<string> }): MinimapModel;
 export function minimapToWorld(model: MinimapModel, point: Point): Point;
 ```
@@ -1450,13 +1456,66 @@ export function useRegisterViewPort(kind: ViewKind, port: ViewPort): void;
 // registry.notify() once a remounted overview has a camera. reveal() is queued to the next commit and dropped when
 // the playhead effect already revealed that row in the same commit, so one j press scrolls the spine at most once.
 
-// ui/views/registry.ts (C2-14 creates with [hybrid]; C3-11 adds canvas)
+// ui/views/registry.ts (C2-14 creates with [hybrid]; C3-11 adds canvas: VIEWS = [canvas, hybrid])
+// The title bar's View switch (TitleBar.tsx, C3-12) is a radiogroup with one tab stop: a roving tabindex on the checked
+// view; arrows (wrapping), Home and End check and focus a view. LevelSegmented below has no tab stop at all.
 export interface ViewProps { active: boolean }
 export interface ViewDefinition { kind: ViewKind; label: string; icon: IconName; Component: React.ComponentType<ViewProps> }
 /** Switch order: Canvas | Hybrid. The title bar shows the switch only when VIEWS.length > 1. */
 export const VIEWS: readonly ViewDefinition[];
 /** true: hidden views stay mounted under <Activity mode="hidden">; spike risk 6 ruling sets false (unmount). */
 export const KEEP_HIDDEN_VIEWS_MOUNTED: boolean;
+
+// ui/views/shared/LevelControl.tsx (C2-9; C3-8 ruling: the Canvas toolbar takes the controlled group, not the store-bound one)
+export const LEVEL_LABEL: Record<Level, string>;
+export interface LevelSegmentedProps { level: Level; onLevel(level: Level): void }
+/** Controlled Session | Chapter | Step radiogroup: radios tabIndex -1 (Alt+1/2/3 is the keyboard path), arrows wrap and move focus. */
+export function LevelSegmented(props: LevelSegmentedProps): React.JSX.Element;
+/** Thin wrapper: LevelSegmented bound to the store, dispatching level/set with `by`. Hybrid uses it. */
+export function LevelControl(props: { by: FocusBy }): React.JSX.Element;
+
+// ui/views/canvas/spike-rulings.ts (C3-5): the M4b spike rulings, read at the Canvas call sites. They replace the
+// "settleRoundK: 64 at the Canvas call site" and "INV_K_EVERY_FRAME in World.tsx" wording of C1-7 and C3-5 (section 3).
+export const CANVAS_SETTLE_ROUND_K: number | null; // 64: risk 3 fallback, k rounds to a 1/64 grid at settle
+export const INV_K_EVERY_FRAME: boolean;           // false: risk 7 passed, --tv-inv-k at settle and tween end only
+export const CULL_FRAMES: boolean;                 // true: risk 2 fallback, x0 culling and capped Step lists
+
+// ui/views/canvas/canvas-port.ts (C3-10)
+export function routeInputOf(layout: CanvasLayout, session: TraceSession): RouteInput;
+/** The frame whose members hold `id`, else a step's home frame (homeFrameKey). */
+export function frameForSelection(layout: CanvasLayout, session: TraceSession, id: SelectionId): CanvasFrame | undefined;
+/** The newest step's frame: Live follow and "seen". */
+export function tailFrame(layout: CanvasLayout, session: TraceSession): CanvasFrame | undefined;
+/** j/k order: frame members in layout order, an expanded chapter's steps right after it. */
+export function canvasReadingOrder(layout: CanvasLayout, session: TraceSession, expanded: ReadonlySet<string>): SelectionId[];
+export const CANVAS_ZOOM_PRESETS: readonly ZoomPreset[]; // 50%, 100%, 200%
+export function zoomLabel(k: number): string;           // "83%"
+export function createCanvasPort(deps: CanvasPortDeps): ViewPort;
+// Canvas port behavior: zoom.label() is the camera k as a percentage (Hybrid's is relative to its level preset);
+// presets and zoomIn/zoomOut zoom around the selection's card center, else the viewport center; resetToPreset is k 1.
+// reveal() is queued to the next commit and dropped when the selection effect already revealed that frame in the same
+// commit. During a programmatic move (the open show tween) a reveal starts from the move's target camera and lets that
+// move stamp the camera (30e434d).
+
+// ui/views/canvas/frame-label.ts (C3-6; lane C3b review fix round)
+/** frameSteps less the members' validationOnlyStepIds: the Step list, footer count, fill rows, chip and ruler band end,
+ *  frameRunning and frameTone. Fill rows also skip noise steps and rank problems by the anchor rule. */
+export function ownSteps(frame: CanvasFrame, ctx: FrameContext): Step[];
+/** The minimap's critical outlines and strip ticks: the frames whose frameTone is "bad"; memoized per (layout, ctx). */
+export function criticalFrameKeys(layout: { readonly frames: readonly CanvasFrame[] }, ctx: FrameContext): Set<string>;
+/** The selection chip: formatOffsetRange (model/format.ts), shared with Hybrid's spine chip. */
+export function timeChip(start: number, end: number): string;
+
+// ui/views/canvas/Overlay.tsx (C3-7; lane C3b review I-4)
+export type BadgeSide = "left" | "right" | "mark";
+/** The contradicts word goes left of the ≠ mark, else right, else only the mark shows (word in its tooltip). Obstacles:
+ *  cards, label rows and the selection's time chip, sized at the mounted camera's k (overlay items keep screen size). */
+export function badgeSide(layout: Pick<CanvasLayout, "frames">, point: Point, options?: { k?: number; chip?: Rect | null; frames?: readonly CanvasFrame[] }): BadgeSide;
+export function timeChipRect(frame: CanvasFrame, text: string, k?: number): Rect;
+
+// CanvasView (C3-10; lane C3b review I-5): the sticky layout runs only while `active`. Hidden, the view returns the last
+// committed layout with the session, index and scale it came from and derives nothing new; the show lays out once, with
+// prev = that layout when level, session and Tidy generation match (P6 makes the skipped appends equivalent).
 ```
 
 Root barrel `packages/trace-viewer/src/index.ts` after C2 (C1b appends lines 2-5, C2 appends the rest):
@@ -1611,7 +1670,7 @@ Size: S ≈ one module and one test file; M ≈ 2–4 files; L ≈ 5+ files or a
 
 - **C1-5** Properties: `zoomAt` keeps the anchor fixed (world point for uniform, u for xOnly) within 1e-9; `screenToWorld(worldToScreen(p)) ≈ p`; `fitBounds` output contains the box with its padding; `tweenCamera(a, b, 0)` equals `a` and `(…, 1)` equals `b`; `wheelZoomFactor` stays in [0.8, 1.25].
 - **C1-6** jsdom tests with fake `raf`/timers: a Ctrl+wheel dispatches `preventDefault` and changes k once per frame; a plain wheel pans; two wheel events in one frame produce one `onFrame`; settle fires once 150 ms after the last event with whole-pixel `tx`/`ty`; `set(camera, {animate: true})` under `reducedMotion() === true` arrives in one frame; `destroy()` removes the wheel listener (spy on `removeEventListener`).
-- **C1-7** Deliverable: `docs/spikes/trace-viewer-spike.md` with one row per risk: measured values, pass or fail against spec §16's pass column verbatim, and the ruling applied. The harness builds 60 chapters plus 40 story frames at Step level (~4k DOM nodes), 300 edges and 5k lane marks with the real `createViewportController`. Automated: risk 1 (`visualViewport.scale === 1`, scroll 0, anchor ≤ 1 px per event), risk 2 (rounded rAF intervals, ≤ 5% dropped at 60 Hz over a 3 s sweep 0.35 → 2, with and without `will-change`), risk 3 (`capturePage` crops at k 0.5/1/2, DPR 1 and 2, ≤ 1% pixels differ by > 16), risk 5 (pin DOM x vs painted mark x ≤ 1 px during pan and pinch; redraw on `devicePixelContentBoxSize`), risk 6 (two dummy views under `<Activity>` toggled mid-gesture and during a 1 Hz drip: store deep-equal, center time within 1 px, zero hidden rAF callbacks, no 0 × 0 fit), risk 7 (edge stroke 1.5 CSS px after settle at k 0.5–2; ruler ticks within 1 px during a pinch); CSP console errors = 0 under `vite.spike.config.ts`. **HUMAN CHECK** (the controller asks the user and records the answer): risk 1 blind A/B (10 trials, hand-rolled identified ≤ 7 times) and risk 4 VoiceOver reading "Linking test, 1 failed, 14 passed, +0:33" plus Tab order. Rulings on failure: 1 → run C1-7F in this lane before merge; 4 → C2-5 adds each frame's full description to its Outline row; 5 → C2-11 paints pins on the canvas and keeps DOM buttons only as focus targets; 2 → C3-5 adds x0 binary-search culling and caps Step lists; 3 → C3-5 sets `settleRoundK: 64`; 6 → C3-5 sets `KEEP_HIDDEN_VIEWS_MOUNTED = false`; 7 → C3-5 sets `INV_K_EVERY_FRAME = true` in `views/canvas/World.tsx`.
+- **C1-7** Deliverable: `docs/spikes/trace-viewer-spike.md` with one row per risk: measured values, pass or fail against spec §16's pass column verbatim, and the ruling applied. The harness builds 60 chapters plus 40 story frames at Step level (~4k DOM nodes), 300 edges and 5k lane marks with the real `createViewportController`. Automated: risk 1 (`visualViewport.scale === 1`, scroll 0, anchor ≤ 1 px per event), risk 2 (rounded rAF intervals, ≤ 5% dropped at 60 Hz over a 3 s sweep 0.35 → 2, with and without `will-change`), risk 3 (`capturePage` crops at k 0.5/1/2, DPR 1 and 2, ≤ 1% pixels differ by > 16), risk 5 (pin DOM x vs painted mark x ≤ 1 px during pan and pinch; redraw on `devicePixelContentBoxSize`), risk 6 (two dummy views under `<Activity>` toggled mid-gesture and during a 1 Hz drip: store deep-equal, center time within 1 px, zero hidden rAF callbacks, no 0 × 0 fit), risk 7 (edge stroke 1.5 CSS px after settle at k 0.5–2; ruler ticks within 1 px during a pinch); CSP console errors = 0 under `vite.spike.config.ts`. **HUMAN CHECK** (the controller asks the user and records the answer): risk 1 blind A/B (10 trials, hand-rolled identified ≤ 7 times) and risk 4 VoiceOver reading "Linking test, 1 failed, 14 passed, +0:33" plus Tab order. Rulings on failure: 1 → run C1-7F in this lane before merge; 4 → C2-5 adds each frame's full description to its Outline row; 5 → C2-11 paints pins on the canvas and keeps DOM buttons only as focus targets; 2 → C3-5 adds x0 binary-search culling and caps Step lists; 3 → C3-5 sets `settleRoundK: 64`; 6 → C3-5 sets `KEEP_HIDDEN_VIEWS_MOUNTED = false`; 7 → C3-5 sets `INV_K_EVERY_FRAME = true` (as built, all three constants live in `views/canvas/spike-rulings.ts`, section 2.4).
 - **C1-7F** Test: the C1-6 suite passes unchanged against the d3-zoom implementation (the API is the contract); `controller.ts` re-exports `createViewportController` from `d3-controller.ts`. Skipped (no commit) when risk 1 passes; the spike doc says so.
 - **C1-8** `buildSession(seed: SessionSeed): TraceSession` assigns seqs 1..n in order, `step:<firstSeq>` ids, lanes from a local copy of the section 1.4 B-2 table, `startMs`/`originMs`, and sorts every list by (seq, id); `oauthLikeSession()` mirrors oauth (intent, plan, 3 chapters, `Noise ×2`, decision, 2 linking chapters, failed `pnpm test` 14/1/0, claim at +0:43 with `claimSpan` over "all checks pass" and a critical `claim_contradicted`); `arbTraceSession({maxSteps, maxChapters, maxTurns})` covers multi-turn, no-chapter, gaps and running sessions. Test: `buildSession` output satisfies the W0 invariants (`tMs` monotone, ids unique, `noise` null wherever `problems` or `findingIds` is non-empty).
 - **C1-9** Properties: `toU` monotone; `toT(toU(t)) === t` on work segments; appending work after T leaves `toU(t)` unchanged for t ≤ T; the live edge is continuous as `liveTMs` grows; identity (`toU(t) === t`) when no gap exceeds 10 s. Examples: `displayGapMs(20_000) ≈ 15_000`, `(60_000) ≈ 22_925`, `(300_000) ≈ 34_534`, `(3_600_000) ≈ 52_430`; a decision wait of 10 min produces one `awaiting_supervisor` segment and one break; ticks are ≥ 64 px apart and none falls inside a break.
@@ -1689,7 +1748,7 @@ Size: S ≈ one module and one test file; M ≈ 2–4 files; L ≈ 5+ files or a
 | C3-11 | View switch: register Canvas, `<Activity>` restore rules, switch tests | `packages/trace-viewer/src/ui/views/{registry.ts, view-switch.test.tsx}` | C3-10 | M |
 | C3-12 | Canvas smoke and selftest; M4b exit | `apps/trace-viewer-dev/{scripts/smoke.mjs, src/selftest.ts}`; `docs/spikes/trace-viewer-spike.md` | C3-11 | M |
 
-- **C3-5** Pass: risks 2, 3, 6, 7 are "pass" or their ruling is applied here (risk 2's culling is added to C3-7's scope and recorded; risk 3 sets `settleRoundK: 64` at the Canvas call site; risk 6 sets `KEEP_HIDDEN_VIEWS_MOUNTED = false`; risk 7 is applied in C3-7 as `INV_K_EVERY_FRAME = true`).
+- **C3-5** Pass: risks 2, 3, 6, 7 are "pass" or their ruling is applied here (risk 2's culling is added to C3-7's scope and recorded; risk 3 sets `settleRoundK: 64` at the Canvas call site; risk 6 sets `KEEP_HIDDEN_VIEWS_MOUNTED = false`; risk 7 is applied in C3-7 as `INV_K_EVERY_FRAME = true`). As built: the constants live in `ui/views/canvas/spike-rulings.ts` (`CANVAS_SETTLE_ROUND_K = 64`, `INV_K_EVERY_FRAME = false` since risk 7 passed, `CULL_FRAMES = true`), and risk 6 passed, so `KEEP_HIDDEN_VIEWS_MOUNTED` stays true (section 2.4).
 - **C3-6** Tests: `frameLabel` builds "Linking test, 1 failed, 14 passed, +0:33" for oauth's linking-test chapter; frames are `role="group"` in DOM time order with one `tabindex="0"`; below k 0.5 the graphic hides and below 0.35 only icon and state fill show; Step level shows a nine-row list whose wheel scrolls unless Ctrl/Meta is held.
 - **C3-7** Tests: edges draw under frames with stroke `calc(1.5px * var(--tv-inv-k))`; the `contradicts` path has an 8 px transparent hit twin and the ≠ badge; `will-change` is set only during a gesture; focusing a frame uses `preventScroll` and the viewport's `onScroll` guard resets any browser scroll.
 - **C3-8** Tests: minimap click centers at the current zoom; dragging the viewport outline pans; Tidy appears only when `stats.holes > 0`; the toolbar has no comment tool.

@@ -154,6 +154,32 @@ describe("TitleBar", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Canvas/ }));
     expect(h.store.get().view).toBe("canvas");
   });
+  it("the view switch is one tab stop; arrows, Home and End move the checked view with focus", () => {
+    const session = foldFixture("oauth");
+    const h = renderHarness(<TitleBar onRetry={noop} />, session, { views: [canvas, hybrid] });
+    const radio = (name: RegExp): HTMLElement => screen.getByRole("radio", { name });
+    const stops = (): string[] =>
+      screen.getAllByRole("radio").filter((node) => node.closest('[aria-label="View"]') !== null).map((node) => node.getAttribute("tabindex") ?? "0");
+    act(() => h.store.dispatch({ type: "view/switch", view: "canvas" }));
+    expect(stops()).toEqual(["0", "-1"]);
+    radio(/Canvas/).focus();
+    fireEvent.keyDown(radio(/Canvas/), { key: "ArrowRight" });
+    expect(h.store.get().view).toBe("hybrid");
+    expect(document.activeElement).toBe(radio(/Hybrid/));
+    expect(stops()).toEqual(["-1", "0"]);
+    fireEvent.keyDown(radio(/Hybrid/), { key: "ArrowRight" });
+    expect(h.store.get().view).toBe("canvas");
+    expect(document.activeElement).toBe(radio(/Canvas/));
+    fireEvent.keyDown(radio(/Canvas/), { key: "ArrowLeft" });
+    expect(h.store.get().view).toBe("hybrid");
+    fireEvent.keyDown(radio(/Hybrid/), { key: "Home" });
+    expect(h.store.get().view).toBe("canvas");
+    expect(document.activeElement).toBe(radio(/Canvas/));
+    fireEvent.keyDown(radio(/Canvas/), { key: "End" });
+    expect(h.store.get().view).toBe("hybrid");
+    expect(document.activeElement).toBe(radio(/Hybrid/));
+  });
+
   describe("popover dismissal", () => {
     const gapSession = (): TraceSession => ({
       ...foldFixture("oauth"),

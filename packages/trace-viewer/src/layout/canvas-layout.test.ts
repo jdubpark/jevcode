@@ -7,6 +7,7 @@ import {
   foldCanvasPrefix,
   oauthCanvasRows,
   oauthCanvasSession,
+  oauthReplaySession,
 } from "../test-support/canvas-arbitraries.js";
 import { canvasXMap, collectItems, layoutCanvas, type CanvasLayout } from "./canvas-layout.js";
 import { buildTraceIndex } from "./trace-index.js";
@@ -108,6 +109,32 @@ describe("layoutCanvas on oauth", () => {
     const { meta, rows } = oauthCanvasRows({ unitsInline: true });
     const session = foldCanvasPrefix(meta, rows, rows.length);
     expect(tableOf(fresh(session))).toEqual(OAUTH_TABLE);
+  });
+
+  it("places the replay shape (one shared failed run in every chapter) in the same table, noise stacked", () => {
+    // Lane review I-3: the shared `pnpm test` run carries the failing_tests and claim findings and joins all seven
+    // chapters; it is validation-only in six, so it must not promote the two noise chapters to full frames.
+    const session = oauthReplaySession();
+    const shared = session.steps.find((step) => step.kind === "test");
+    const noise = session.chapters.filter((chapter) => chapter.noise).map((chapter) => chapter.id);
+    expect(noise).toHaveLength(2);
+    for (const chapter of session.chapters) {
+      if (noise.includes(chapter.id)) expect(chapter.validationOnlyStepIds).toContain(shared?.id);
+    }
+    expect(tableOf(fresh(session))).toEqual({
+      intent: [0, 0],
+      plan: [264, 0],
+      cu_78093dbe9212089d: [264, 150],
+      cu_ad1b5c606f13935e: [264, 300],
+      cu_f0eafbe575775ee9: [264, 450],
+      "noise×2": [264, 600],
+      decision: [528, 0],
+      cu_8e8b942b01d1ad59: [528, 150],
+      cu_a2589fe62ff19ebf: [528, 300],
+      claim: [792, 0],
+    });
+    const stack = fresh(session).frames.find((frame) => frame.kind === "noise");
+    expect([...(stack?.memberSelIds ?? [])].sort()).toEqual([...noise].sort());
   });
 
   it("fits in two columns at Session level", () => {
