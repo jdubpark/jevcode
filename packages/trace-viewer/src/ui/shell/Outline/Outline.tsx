@@ -296,7 +296,9 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   aria-selected={isSelected(row)}
                   aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
                   data-depth={row.depth}
-                  data-match={matches.has(row.selId) ? "" : undefined}
+                  data-match={
+                    matches.has(row.selId) || (row.alsoSelects !== undefined && matches.has(row.alsoSelects)) ? "" : undefined
+                  }
                   className={styles.row}
                   onClick={() => activate(row)}
                 >
