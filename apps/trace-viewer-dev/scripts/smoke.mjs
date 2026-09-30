@@ -10,17 +10,22 @@ import { fileURLToPath } from "node:url";
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(APP, "../..");
-const PORT = 4179;
-const ORIGIN = `http://localhost:${PORT}`;
+const DEFAULT_PORT = 4179;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const WIDTHS = [1440, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
 
 function parseArgs(argv) {
-  const options = { views: ["hybrid"], skipBuild: false };
+  const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--skip-build") options.skipBuild = true;
+    else if (arg === "--port") {
+      // Parallel worktrees each serve the preview on their own port.
+      options.port = Number(argv[i + 1]);
+      i += 1;
+      if (!Number.isInteger(options.port) || options.port <= 0) throw new Error("--port needs a port number");
+    }
     else if (arg === "--views") {
       options.views = String(argv[i + 1] ?? "")
         .split(",")
@@ -98,6 +103,7 @@ function readSelftest(html) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const ORIGIN = `http://localhost:${options.port}`;
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME}; set CHROME_PATH`);
   if (!options.skipBuild) run("pnpm", ["-r", "build"]);
   const tmp = mkdtempSync(path.join(os.tmpdir(), "tv-smoke-"));
@@ -112,7 +118,7 @@ async function main() {
     run("pnpm", ["--filter", "jevcode-trace-viewer-dev", "build"]);
     preview = spawn(
       "pnpm",
-      ["--filter", "jevcode-trace-viewer-dev", "exec", "vite", "preview", "--port", String(PORT), "--strictPort"],
+      ["--filter", "jevcode-trace-viewer-dev", "exec", "vite", "preview", "--port", String(options.port), "--strictPort"],
       { cwd: REPO, stdio: "ignore", detached: true },
     );
     await waitForServer(`${ORIGIN}/`, 30_000);
