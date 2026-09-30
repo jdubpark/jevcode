@@ -86,3 +86,36 @@ Run notes:
 | 5 Hybrid DOM/canvas alignment | Pass (initial redraw only; display-move/DPR-change path untested on a single-display machine). Pin vs mark drift 0 px over 241 frames at both DPRs. | none: DOM pins | C2-11 (`PINS_PAINTED_ON_CANVAS`) |
 
 M4a proceeds: risks 1, 4 and 5 passed or have their ruling applied by the owning task.
+
+## M4a exit (lane C2, 2026-09-30)
+
+Reference machine: Mac15,11 (Apple M3 Max, 36 GiB), macOS 27.0.1, Node 22.23.1, Google Chrome 154.0.8037.92. The automated rows below ran in headless Chrome (`--headless=new`, real time, no throttling flags) on a shared machine with load average about 4 (1-minute), so they are provisional. The desktop-Chrome measurement on a 60 Hz display (H5) is PENDING.
+
+Input: `JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_EXPORT=… node scripts/soak.mjs` wrote 110,962 trace rows (208 MiB) after 1,053 s; `traceReadMs` median 1,027 ms (runs 827, 1,061, 935, 1,027, 1,492), page p95 12.3 ms at 2,000 rows per page.
+
+| Budget (spec §10) | Target | Measured (headless, provisional) | Pass |
+|---|---|---|---|
+| Soak first paint (median of 5 cold loads after 1 discarded) | ≤ 300 ms | 1,670 ms (runs 1,665, 1,670, 1,670, 1,697, 1,674) | FAIL |
+| Soak full load (same runs) | ≤ 2 s | 1,670 ms (runs 1,665, 1,670, 1,670, 1,697, 1,674) | yes |
+| `j` to painted, 300 presses at Chapter level (`?perfrun=1`) | p95 ≤ 16.7 ms | p95 318.7 ms, median 114.7 ms, n 300 | FAIL |
+| Overview layout + paint, Session-level sweep | p95 ≤ 4 ms | p95 8.0 ms, median 5.5 ms, n 510 | FAIL |
+| Overlay nodes during the sweep | ≤ 150 | 10 | yes |
+| Anchor drift (`?selftest=drip`, oauth) | ≤ 1 px | 0 px (`SMOKE_OK`, rows 74) | yes |
+
+First paint equals full load in every run (the viewer paints once, after the last page): the progressive first paint of spec §10 does not happen for the static soak bundle. The 300 ms and 16.7 ms and 4 ms misses block the M4a exit until H5 confirms them in desktop Chrome or the owning tasks are iterated: first paint (C2-2 data controller and C2-3 shell commit), `j` to painted (C2-8 key handling, C2-12 spine rows) and overview paint (C2-10, C2-11). The headless run may overstate the paint costs (software rasterization), so this is a measurement to repeat, not a verdict on the code.
+
+The `?perf=1&perfrun=1` autorun completes in real time (about 60 s). It never completes under `--virtual-time-budget`.
+
+Smoke: `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid` printed `SMOKE_OK 2 screenshots` (371 s); screenshots `apps/trace-viewer-dev/.smoke/hybrid-1440.png` and `hybrid-1000.png` (git-ignored; regenerate with the command). Two defects surfaced while making it pass: the drip selftest reported 214 px of "drift" because a scroll landing between anchor refreshes was counted (fixed in `Spine.tsx`: drift is now the movement the scroll offset and the anchor compensation do not explain), and the open probe or the screenshot Chrome occasionally wrote no result (one rerun passed; see the report).
+
+Found at once (spec §1; `?selftest=open`, Hybrid, 1440 px): the smoke printed `hybrid: opened with step:92 selected and in view, painted at 74 ms`. The selection equals oauth's claim step, the claim row lies inside the spine viewport, its pin lies inside the overview viewport, and `tv:initial-selection-painted` `startTime` is 74 ms (≤ 5000).
+
+Screenshot observation (not a human sign-off): in `hybrid-1440.png` the Inspector's claim-versus-observed graphic wraps the claim text into a narrow column and the observed pill runs past the panel's right edge.
+
+PENDING human rows (all deferred by the person on 2026-09-30):
+
+| Check | Status | Exact steps |
+|---|---|---|
+| H5 M4a budgets in desktop Chrome | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | With the soak bundle in `apps/trace-viewer-dev/public/bundles/soak.json` (regenerate: `JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_EXPORT="$PWD/apps/trace-viewer-dev/public/bundles/soak.json" node scripts/soak.mjs`, about 18 min), run `pnpm --filter jevcode-trace-viewer-dev build && pnpm --filter jevcode-trace-viewer-dev exec vite preview --port 4179 --strictPort`. In desktop Chrome on a 60 Hz display, open `http://localhost:4179/?bundle=soak&perf=1` in 6 fresh incognito windows (discard the first) and read `tv:first-paint` and `tv:full-load` from the HUD; then open `…&perf=1&perfrun=1`, wait about 60 s for `<pre id="perf-result">` and copy its JSON. Targets: first paint median ≤ 300 ms, full load median ≤ 2,000 ms, `tv:key-to-paint` p95 ≤ 16.7 ms, `tv:overview-paint` p95 ≤ 4 ms, `maxOverlayNodes` ≤ 150. |
+| H6 product review gate | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | The person reviews oauth, api-break and the soak bundle in the dev host against spec §1 and §12 M4a (docs/IMPLEMENTATION-PLAN.md:153) and records the verdict and notes here. |
+| VoiceOver, Hybrid, oauth (gap G3; spec §7.13, §11) | PENDING — deferred by the person on 2026-09-30; revisit before the M4a exit | Serve `?bundle=oauth` as above (window at least 1440 px). 1) Open `http://localhost:4179/?bundle=oauth`, wait for the Inspector title "Claim contradicts tests". 2) Cmd+F5 (VoiceOver on). 3) Click the address bar, Tab out of the title bar, keep pressing Tab: focus enters the Outline, then the reading spine in `main`, then the Inspector, one stop each; Shift+Tab walks back. 4) On the spine stop VoiceOver reads the selected row with "+0:43" and "Claim contradicts tests". 5) Rotor (Control+Option+U), Form Controls, "Playhead": reads "Playhead", "slider", "+0:43, Claim contradicts tests, step <n> of <m>". 6) Escape, click the claim row, Option+3, rotor Form Controls: "Range start" and "Range end", each with a "+m:ss" value. 7) Cmd+F5, then record pass or fail for 3–6, what VoiceOver said, and the macOS and Chrome versions. A fail returns C2-8 (item 3), C2-12 (item 4) or C2-11 (items 5, 6). |
