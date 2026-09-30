@@ -16,6 +16,20 @@ function isRun(step: Step): boolean {
   return step.kind === "command" || step.kind === "test" || step.kind === "check";
 }
 
+/** Equal, or one path ends with the other at a segment boundary (a runner may report absolute paths). */
+function samePath(a: string, b: string): boolean {
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+/** True when a chapter owns a test or check run's outcome: its unit failed, or its files hold a
+ *  failing test's file (spec §6.7 "Finding chapters"). One validation is often cited by every unit,
+ *  so joining the run is not enough to make it the chapter's own. */
+export function ownsRunOutcome(chapter: Pick<Chapter, "status" | "files">, run: Step): boolean {
+  if (chapter.status === "failed") return true;
+  const failures = run.tests?.failures ?? [];
+  return chapter.files.some((file) => failures.some((failure) => samePath(file, failure.file)));
+}
+
 /** A guardrail step with a warning or critical clamp (CLAMP_META; unknown ids are info). Only these
  *  anchor a guardrail_clamp finding; an info-only step is pipeline noise. */
 export function hasSevereClamp(step: Step): boolean {

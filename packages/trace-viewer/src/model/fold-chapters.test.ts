@@ -153,19 +153,26 @@ describe("chapter short titles", () => {
 });
 
 describe("validation-only steps", () => {
-  it("lists validation steps that no other join links to the chapter", () => {
+  it("lists a shared run for every chapter that does not own its outcome", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_a");
+    b.fact({ type: "git_hunk", file: "tests/a.test.ts", added: 9, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_t");
     const run = b.agent({ type: "command_started", command: "pnpm test" });
-    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "" });
-    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 0, skipped: 0, failures: [] }, "fact_tr");
-    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "passed", passed: 3, failed: 0, skipped: 0 });
-    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a"], validationResults: ["val_1"] });
-    b.unit({ id: "cu_t", files: ["tests/a.test.ts"], evidence: ["fact_tr"], validationResults: ["val_1"] });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    const failures = [{ file: "tests/a.test.ts", testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 1, skipped: 0, failures }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 3, failed: 1, skipped: 0 });
+    const lint = b.agent({ type: "command_started", command: "pnpm lint" });
+    b.agent({ type: "command_completed", command: "pnpm lint", exitCode: 0, stdout: "", stderr: "" });
+    b.validation({ id: "val_2", kind: "lint", command: "pnpm lint", status: "passed", passed: 0, failed: 0, skipped: 0 });
+    // As on oauth, every unit cites the run's test_result fact as well as its validation.
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a", "fact_tr"], validationResults: ["val_1", "val_2"] });
+    b.unit({ id: "cu_t", files: ["tests/a.test.ts"], evidence: ["fact_t", "fact_tr"], validationResults: ["val_1"] });
     const byUnit = new Map(fold(b).chapters.map((chapter) => [chapter.changeUnitId, chapter]));
-    expect(byUnit.get("cu_a")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [`step:${run}`] });
-    // cu_t also cites the run's test_result fact, so the run is part of its own work.
+    // cu_a does not own the failure; its own lint run is not shared, so it stays in its footprint.
+    expect(byUnit.get("cu_a")).toMatchObject({ validationStepIds: [`step:${run}`, `step:${lint}`], validationOnlyStepIds: [`step:${run}`] });
+    // cu_t holds the failing test's file, so the run is part of its own story.
     expect(byUnit.get("cu_t")).toMatchObject({ validationStepIds: [`step:${run}`], validationOnlyStepIds: [] });
   });
 });

@@ -362,9 +362,10 @@ export interface Chapter {
   validationIds: string[];
   /** Steps that the unit's validation results attached to, in seq order (R25). */
   validationStepIds: StepId[];
-  /** The validationStepIds that no fact, call-id, decision, Jev or time-window join also links to
-   *  this chapter, in seq order. A validation cited by many units reaches every chapter; the
-   *  overview band footprint skips these steps (spec §6.6, §7.6.1). Absent on hand-built sessions. */
+  /** Test and check steps, in seq order, that another current chapter also joins and whose outcome
+   *  this chapter does not own (ownsRunOutcome). One validation cited by every unit reaches every
+   *  chapter; the overview band footprint skips these steps (spec §6.6, §7.6.1). Absent on
+   *  hand-built sessions. */
   validationOnlyStepIds?: StepId[];
   clampIds: string[];
   triad: { importance?: number; relevance?: number; interruption?: number; clientKind?: JevClientKind };
