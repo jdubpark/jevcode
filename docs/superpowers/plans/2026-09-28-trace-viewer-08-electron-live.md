@@ -1364,6 +1364,26 @@ git commit -m "feat(desktop): add trace window channels and a per-sender IPC all
 
 **Part Da exit:** `pnpm --filter jevcode-desktop typecheck` and `test` pass; the four root checks pass; `trace:open` and `trace:requestChanges` exist but nothing in the renderer calls them yet. Merge to `main` after C2 and C3a (UI index §4).
 
+### Hand-offs from Da (lane review)
+
+The Da lane review (2026-09-30) found no blocking issue. Part Db must know four contract points:
+
+1. **`trace:requestChanges` is bound to the sender window's own session.** `createDesktopViewerHost` must send the same `sessionId` as the `?session=` query that opened the window. A mismatch is rejected inside the handler, is serialized, and arrives as `jevcode.ipc.UNTRUSTED_SENDER: …`.
+2. **Allowlist rejections cross the bridge without a code.** The `handle` wrapper throws a raw `IpcError` outside its `try`, like the existing `assertTrustedSender` and `parseToMain` paths, so the renderer sees no `jevcode.ipc.<CODE>` prefix. The ipc-source maps unknown errors to `SOURCE_FAILED`; Db must not depend on the code for these errors.
+3. **`IpcHandle` changed.** `fn` takes a second `context: IpcHandleContext` argument (`{ senderId }`). One-parameter handlers still typecheck; a test harness that calls `fn` directly must pass `{ senderId }`. D-7's `bridgeOver` calls the service directly and is not affected.
+4. **`TraceWindowRegistry` gained `sessionForSender(webContentsId)`.** A hand-written fake registry in Db tests must implement it. The Db plan has none today.
+
+### Hand-offs from C2 (fix wave)
+
+Source: the C2 lane review ("Hand-offs W3 must know"), its fix-wave re-review ("W3 hand-offs") and the C2 ledger (`.superpowers/sdd/2026-09-28-trace-viewer-06-viewer-shell-hybrid/`). Binding for D-3..D-8.
+
+1. **Commits are progressive.** The DataController yields one macrotask between pages. `onReady` still fires once, after the first committed fold, and its `rows` is the count folded so far (one page of a large session, not the total). Wait for the `tv:full-load` mark for "loaded".
+2. **Key the viewer by session id.** `TraceViewer` captures `source`, `pollMs` and the store in `useState`, so a new `source` prop does nothing. Key it by `sessionId` (or keep one window per session) and pass a stable `host` object: the Shell's `onLocation` and diagnostics effects re-run when `host` identity changes.
+3. **Mark `tv:bundle-parsed` in `trace/main.tsx`.** `markAfterPaint(PERF.fullLoad, PERF.bundleParsed)` always records the `tv:full-load` mark, but the measure exists only when something marked `tv:bundle-parsed`. `tv:live-tick` is measured after the full load either way.
+4. **Final state.** The title bar reads the final state from `session.meta.state`, the latest page's state, so a live window whose session ends shows the terminal state. The lane review's "shows Running" caveat is closed.
+5. **Review note.** `requestChanges` receives `{ sessionId: session.meta.sessionId, selected, text: note.firstLine }`; `text` escapes bidi characters in chapter and decision titles. `sessionId` must equal the `?session=` id (Da hand-off 1).
+6. **Visibility.** The DataController does not emit while the document is hidden and flushes the latest snapshot on show; the poll keeps running while hidden.
+
 ---
 
 ## Part Db: trace window, live follow, parity and M5 exit (lane 08b, wave W3)
