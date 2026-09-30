@@ -144,12 +144,20 @@ export function StepRow(props: StepRowProps) {
           ) : null}
         </span>
         {titled && finding !== null ? (
-          <span className={styles.head}>
+          <>
+            {/* The title starts at the graphic column unless the step has a graphic to keep (mockup claim row). */}
+            {graphic === null ? null : (
+              <span className={styles.graphic}>
+                <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} elapsedMs={elapsedMs} />
+              </span>
+            )}
+            <span className={styles.head} data-wide={graphic === null ? "" : undefined}>
             <span id={lineId} className={styles.findingTitle}>
               {FINDING_TITLE[finding.ruleId]}
             </span>
             {open ? <FindingBody finding={finding} step={step} session={session} onJump={props.onJump} part="header" /> : null}
-          </span>
+            </span>
+          </>
         ) : (
           <>
             <span className={styles.graphic}>
