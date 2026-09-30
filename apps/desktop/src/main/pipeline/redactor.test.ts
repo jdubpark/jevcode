@@ -83,6 +83,81 @@ describe("redactText", () => {
     const result = redactText("plain command line, no secrets");
     expect(result).toEqual({ text: "plain command line, no secrets", count: 0 });
   });
+
+  it("redacts indented and exported env lines and keeps the indentation", () => {
+    expect(redactText("  STRIPE_KEY=sk_live_abc")).toEqual({
+      text: "  STRIPE_KEY=[REDACTED:env_value]",
+      count: 1,
+    });
+    expect(redactText("export STRIPE_KEY=sk_live_abc")).toEqual({
+      text: "export STRIPE_KEY=[REDACTED:env_value]",
+      count: 1,
+    });
+    expect(redactText("\texport  DB_PASSWORD = opensesame")).toEqual({
+      text: "\texport  DB_PASSWORD=[REDACTED:env_value]",
+      count: 1,
+    });
+  });
+
+  it("keeps an env value on its own line", () => {
+    expect(redactText("DEPLOY_KEY=\nnext line")).toEqual({
+      text: "DEPLOY_KEY=\nnext line",
+      count: 0,
+    });
+  });
+
+  // One sample per rule (spec §4.3 rule 4): the first pass redacts it once,
+  // and a second pass over the redacted text changes and counts nothing.
+  const samples: [kind: string, input: string][] = [
+    ["aws_key", "key=AKIAIOSFODNN7EXAMPLE rest"],
+    ["jwt", "auth eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcDEFghiJkLmnOPqrsTUVwxyz"],
+    ["private_key", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----"],
+    ["github_token", `const t = "ghp_${"a".repeat(36)}";`],
+    ["github_token", `GH=github_pat_${"B".repeat(22)}`],
+    ["slack_token", "hook xoxb-1234567890-abcdefghij"],
+    ["provider_key", `"apiKey": "sk-proj-${"b".repeat(24)}",`],
+    ["provider_key", `stripe sk_live_${"c".repeat(16)}`],
+    ["provider_key", `maps AIza${"d".repeat(35)}`],
+    ["bearer", `Authorization: "Bearer ${"e".repeat(24)}"`],
+    ["url_password", "DATABASE_URL=postgres://admin:hunter2secret@db.internal:5432/app"],
+    ["aws_secret", `aws_secret_access_key = ${"F".repeat(40)}`],
+    ["password", "mysql --password=hunter2"],
+    ["token", "API_KEY=abc123"],
+    ["env_value", "STRIPE_KEY=sk_live_abc"],
+  ];
+
+  for (const [kind, input] of samples) {
+    it(`redacts a ${kind} sample once and a second pass is a no-op`, () => {
+      const first = redactText(input);
+      expect(first.count).toBe(1);
+      expect(first.text).toContain(`[REDACTED:${kind}]`);
+      expect(redactText(first.text)).toEqual({ text: first.text, count: 0 });
+    });
+  }
+
+  it("counts API_KEY=abc123 once (spec §4.3 rule 4)", () => {
+    expect(redactText("API_KEY=abc123")).toEqual({ text: "API_KEY=[REDACTED:token]", count: 1 });
+  });
+
+  it("counts a provider key under a token key once", () => {
+    const key = `sk-proj-${"g".repeat(24)}`;
+    for (const input of [`api_key: "${key}"`, `API_KEY=${key}`, `export OPENAI_API_KEY='${key}'`]) {
+      const result = redactText(input);
+      expect(result.count, input).toBe(1);
+      expect(result.text, input).toContain("[REDACTED:provider_key]");
+      expect(result.text, input).not.toContain(key);
+    }
+  });
+
+  it("keeps the Bearer and URL shapes readable", () => {
+    expect(redactText(`curl -H "Authorization: Bearer ${"h".repeat(20)}" x`).text).toBe(
+      'curl -H "Authorization: Bearer [REDACTED:bearer]" x',
+    );
+    expect(redactText("redis://default:s3cretpass@cache:6379").text).toBe(
+      "redis://default:[REDACTED:url_password]@cache:6379",
+    );
+    expect(redactText("see https://example.com/docs and git@github.com:org/repo").count).toBe(0);
+  });
 });
 
 describe("redactEvidenceFact", () => {
@@ -149,6 +224,11 @@ describe("isSecretPath", () => {
       ".npmrc",
       "home/.netrc",
       ".pgpass",
+      ".pypirc",
+      "home/.pypirc",
+      "credentials",
+      "home/.aws/credentials",
+      "CREDENTIALS",
     ]) {
       expect(isSecretPath(file), file).toBe(true);
     }
@@ -164,6 +244,10 @@ describe("isSecretPath", () => {
       "src/keystore.ts",
       "docs/npmrc.md",
       "src/.npmrc.ts",
+      "src/pypirc.ts",
+      "credentials.json",
+      "src/credentials.ts",
+      "aws-credentials",
     ]) {
       expect(isSecretPath(file), file).toBe(false);
     }
@@ -230,6 +314,130 @@ describe("prepareDiffForStorage", () => {
     expect(diff.text).toContain("-STRIPE_KEY=[REDACTED:env_value]");
     expect(diff.text).not.toContain("sk_live");
     expect(GitHunkDiffSchema.safeParse(diff).success).toBe(true);
+  });
+
+  it("withholds .pypirc and credentials files", () => {
+    for (const file of [".pypirc", "home/.aws/credentials"]) {
+      expect(prepareDiffForStorage(file, raw), file).toEqual({
+        hash: diffHash(raw),
+        bytes: Buffer.byteLength(raw),
+        truncated: false,
+        redactions: 0,
+        withheld: "secret_path",
+      });
+    }
+  });
+
+  function addedLineDiff(line: string): string {
+    return [
+      "diff --git a/src/x.ts b/src/x.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/x.ts",
+      "+++ b/src/x.ts",
+      "@@ -1 +1,2 @@",
+      " export const x = 1;",
+      `+${line}`,
+      "",
+    ].join("\n");
+  }
+
+  // The lane review's probe (0 redactions before this fix): each secret is
+  // redacted inside a hunk line and none of it is stored.
+  const probes: [line: string, secret: string][] = [
+    [`const t = "ghp_${"a".repeat(36)}";`, `ghp_${"a".repeat(36)}`],
+    [`"apiKey": "sk-proj-${"b".repeat(24)}",`, `sk-proj-${"b".repeat(24)}`],
+    [`Authorization: "Bearer ${"c".repeat(24)}"`, "c".repeat(24)],
+    ["DATABASE_URL=postgres://admin:hunter2secret@db.internal/app", "hunter2secret"],
+    [`export STRIPE_KEY=sk_live_${"d".repeat(24)}`, `sk_live_${"d".repeat(24)}`],
+    [`  STRIPE_KEY=sk_live_${"e".repeat(24)}`, `sk_live_${"e".repeat(24)}`],
+    [`aws_secret_access_key = ${"F".repeat(40)}`, "F".repeat(40)],
+  ];
+
+  for (const [line, secret] of probes) {
+    it(`stores ${line.slice(0, 28)}… with its secret redacted`, () => {
+      const diff = prepareDiffForStorage("src/x.ts", addedLineDiff(line));
+      expect(diff.redactions).toBe(1);
+      expect(diff.text).not.toContain(secret);
+      expect(diff.text).toContain("[REDACTED:");
+    });
+  }
+
+  it("treats ---/+++ as headers only in the header block", () => {
+    const diff = [
+      "diff --git a/deploy/notes.sql b/deploy/notes.sql",
+      "index 1111111..2222222 100644",
+      "--- a/deploy/notes.sql",
+      "+++ b/deploy/notes.sql",
+      "@@ -1,3 +1,3 @@",
+      " -- connection notes",
+      "--- password=hunter2",
+      "+++ token=abc123",
+      " -- end",
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("deploy/notes.sql", diff)).toEqual({
+      hash: diffHash(diff),
+      bytes: Buffer.byteLength(diff),
+      text: [
+        "diff --git a/deploy/notes.sql b/deploy/notes.sql",
+        "index 1111111..2222222 100644",
+        "--- a/deploy/notes.sql",
+        "+++ b/deploy/notes.sql",
+        "@@ -1,3 +1,3 @@",
+        " -- connection notes",
+        "--- password=[REDACTED:password]",
+        "+++ token=[REDACTED:token]",
+        " -- end",
+        "",
+      ].join("\n"),
+      truncated: false,
+      redactions: 2,
+    });
+  });
+
+  it("keeps structure lines verbatim and redacts the hunk heading", () => {
+    const diff = [
+      "diff --git a/scripts/deploy.sh b/scripts/deploy.sh",
+      "index 1111111..2222222 100755",
+      "--- a/scripts/deploy.sh",
+      "+++ b/scripts/deploy.sh",
+      "@@ -10 +10 @@ export STRIPE_KEY=sk_live_abc",
+      "-echo deploy",
+      "\\ No newline at end of file",
+      "+echo deploying",
+      "\\ No newline at end of file",
+      "",
+    ].join("\n");
+    const stored = prepareDiffForStorage("scripts/deploy.sh", diff);
+    expect(stored.redactions).toBe(1);
+    expect(stored.text).toBe(
+      diff.replace("STRIPE_KEY=sk_live_abc", "STRIPE_KEY=[REDACTED:env_value]"),
+    );
+
+    const binary = [
+      "diff --git a/assets/token=v2.png b/assets/token=v2.png",
+      "index 1111111..2222222 100644",
+      "Binary files a/assets/token=v2.png and b/assets/token=v2.png differ",
+      "",
+    ].join("\n");
+    expect(prepareDiffForStorage("assets/token=v2.png", binary)).toMatchObject({
+      text: binary,
+      redactions: 0,
+    });
+  });
+
+  it("counts only the redactions in the stored text of a capped diff", () => {
+    const kept = FILE_HEADER + "@@ -1,0 +1,1 @@\n+API_KEY=abc123\n" + addedHunk(10, 345);
+    // The third hunk overflows the cap, so the cut drops it with its secret.
+    const cutBody = addedHunk(2001, 345).replace(/^@@[^\n]*\n/, "");
+    const diff = `${kept}@@ -2000,0 +2000,346 @@\n+API_KEY=zzz999\n${cutBody}`;
+    expect(Buffer.byteLength(kept)).toBeLessThan(DIFF_TEXT_CAP_BYTES);
+    expect(Buffer.byteLength(diff)).toBeGreaterThan(DIFF_TEXT_CAP_BYTES);
+
+    const stored = prepareDiffForStorage("src/big.ts", diff);
+    expect(stored.truncated).toBe(true);
+    expect(stored.text).toBe(kept.replace("API_KEY=abc123", "API_KEY=[REDACTED:token]"));
+    expect(stored.redactions).toBe(1);
   });
 
   it("withholds an id_ed25519 private key and stores its .pub diff", () => {
