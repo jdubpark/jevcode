@@ -10,25 +10,25 @@ const GAP_TEXT: Record<string, string> = {
   missing_evidence: "has no evidence",
 };
 
-export function SeparatorRow({ row, session }: { row: Extract<SpineRow, { t: "turn" | "idle" | "gap" }>; session: TraceSession }) {
+export function SeparatorRow({ row, session, lineId }: { row: Extract<SpineRow, { t: "turn" | "idle" | "gap" }>; session: TraceSession; lineId?: string }) {
   if (row.t === "turn") {
     const turn = session.turns[row.turn];
     return (
-      <div className={styles.separator}>
+      <div id={lineId} className={styles.separator}>
         {turn === undefined ? "Turn" : `Turn ${turn.index + 1} · ${turn.trigger} · ${formatOffset(turn.tMs)}`}
       </div>
     );
   }
   if (row.t === "idle") {
     return (
-      <div className={styles.separator}>
+      <div id={lineId} className={styles.separator}>
         {`⋯ ${formatDuration(row.ms)} · ${row.reason === "awaiting_supervisor" ? "waiting for supervisor" : "agent quiet"}`}
       </div>
     );
   }
   const gap = session.gaps[row.gap];
   return (
-    <div className={styles.separator}>
+    <div id={lineId} className={styles.separator}>
       {gap === undefined ? "A row is missing" : `1 row ${GAP_TEXT[gap.kind] ?? "is missing"} · seq ${gap.atSeq}`}
     </div>
   );
