@@ -356,6 +356,13 @@ describe("Overview", () => {
     expect(labels.some((label) => label.startsWith("Claim contradicts tests"))).toBe(true);
   });
 
+  it("names the claim's evidence pin by its own finding: one claim pin, one failed-tests pin (anchor rule)", async () => {
+    await renderOverview({ state: { selection: claimStep() } });
+    const labels = Array.from(document.querySelectorAll<HTMLElement>("[data-steps]")).map((pin) => pin.getAttribute("aria-label") ?? "");
+    expect(labels.filter((label) => label.startsWith("Claim contradicts tests"))).toHaveLength(1);
+    expect(labels.filter((label) => label.startsWith("Tests failed"))).toHaveLength(1);
+  });
+
   it("restores the pre-gesture brush when a drag is cancelled", async () => {
     const frames = installFrames();
     const { h } = await renderOverview();

@@ -26,7 +26,7 @@ import { NewBadge } from "../../shared/NewBadge.js";
 import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
-import { rowFindingOf } from "./row-finding.js";
+import { rowFindingOf } from "../../../inspector/finding-copy.js";
 import { extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 

@@ -1,6 +1,6 @@
-import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
+import { anchoredFindings, citingFindings } from "../../layout/tone.js";
+import { autoExpandingFindings, type SelectionId, type TraceIndex } from "../../layout/trace-index.js";
 import {
-  compareFindings,
   displayUntrusted,
   KIND_META,
   type Finding,
@@ -29,27 +29,34 @@ function findingMap(session: TraceSession): ReadonlyMap<FindingId, Finding> {
   return map;
 }
 
-function stepFindings(session: TraceSession, step: Step): Finding[] {
-  const map = findingMap(session);
-  return step.findingIds.map((id) => map.get(id)).filter((finding): finding is Finding => finding !== undefined);
-}
-
-/** Findings anchored at the step (anchor rule): only these may title, tone or fill the step's own surfaces. */
+/** Findings anchored at the step (anchor rule, layout/tone.ts): only these may title, tone or fill the step's own surfaces. */
 export function findingsOf(session: TraceSession, step: Step): Finding[] {
-  return stepFindings(session, step)
-    .filter((finding) => finding.anchorStepId === step.id)
-    .sort(compareFindings);
+  return anchoredFindings(step, findingMap(session));
 }
 
 /** Findings that cite the step without being anchored there; they appear as Related or evidence, never as its title. */
 export function citingFindingsOf(session: TraceSession, step: Step): Finding[] {
-  return stepFindings(session, step)
-    .filter((finding) => finding.anchorStepId !== step.id)
-    .sort(compareFindings);
+  return citingFindings(step, findingMap(session));
 }
 
 export function topFindingOf(session: TraceSession, step: Step): Finding | null {
   return findingsOf(session, step)[0] ?? null;
+}
+
+export interface RowFinding {
+  finding: Finding;
+  /** True when the finding takes the row's title slot and node (a critical finding that opens the row); else a badge. */
+  titled: boolean;
+}
+
+/**
+ * The finding a spine row shows: its top anchored finding. A finding that only cites the step (a claim over its test
+ * run) belongs to its own anchor row and appears here neither as title nor as badge.
+ */
+export function rowFindingOf(session: TraceSession, step: Step, findingsById: ReadonlyMap<FindingId, Finding>): RowFinding | null {
+  const top = topFindingOf(session, step);
+  if (top === null) return null;
+  return { finding: top, titled: autoExpandingFindings(step, findingsById).includes(top) };
 }
 
 /** Finding-first title (spec §7.1). Chapter and decision titles carry paths and agent text, so they pass through displayUntrusted. */
