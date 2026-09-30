@@ -77,17 +77,16 @@ Full incremental clustering is out of scope (documented in SPEC §19).
 Measured 2026-09-30 with `JEVCODE_SOAK_PROFILE=trace node scripts/soak.mjs`, the
 full soak on the spec §10 reference input: command stdout of 0.2 to 64 KiB,
 assistant notes of 0.2 to 4 KiB, `callId` pairs, agent `file_changed` claims
-and a steer every 500 records. Run on a quiet machine at commit `f180a95`.
-Before it stops the session, the soak reads the whole session through the
-viewer's own path: a second `query_only` connection (`openTraceReader`),
-`createTraceService` (fact ids, and strings over 16 KiB clipped to a 4 KiB
-head and a 12 KiB tail) and `readAllRows`. Only the six `TRACE_ROW_TYPES` are
-read; graph, telemetry, snapshot and failure rows are skipped. The full read
-runs 6 times in pages of up to 5,000 rows, and a page also ends after the row
-that takes its stored payload past 2 MiB; the first read is a discarded
-warm-up and the budget uses the median of the other 5. The `trace:rows`
-budget times single calls at the viewer's page size of 2,000 rows (or 2 MiB
-of payload) over repeated full reads.
+and a steer every 500 records. Before it stops the session, the soak reads the
+whole session through the viewer's own path: a second `query_only` connection
+(`openTraceReader`), `createTraceService` (fact ids, and strings over 16 KiB
+clipped to a 4 KiB head and a 12 KiB tail) and `readAllRows`. Only the six
+`TRACE_ROW_TYPES` are read; graph, telemetry, snapshot and failure rows are
+skipped. The full read runs 6 times in pages of up to 5,000 rows, and a page
+also ends after the row that takes its stored payload past 2 MiB; the first
+read is a discarded warm-up and the budget uses the median of the other 5. The
+`trace:rows` budget times single calls at the viewer's page size of 2,000 rows
+(or 2 MiB of payload) over repeated full reads.
 
 | Budget | Target | Measured | Status |
 |---|---|---|---|
