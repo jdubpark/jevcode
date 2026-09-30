@@ -113,8 +113,13 @@ function EditEvidence({ step }: { step: Step }) {
   );
 }
 
+/** The decision and completion rows are the latest of a step, so keep the tail when a step holds more than one request allows. */
+function latestSeqs(seqs: readonly number[]): readonly number[] {
+  return seqs.length > TRACE_PAYLOADS_MAX ? seqs.slice(-TRACE_PAYLOADS_MAX) : seqs;
+}
+
 function OutputEvidence({ step }: { step: Step }) {
-  const { state, retry } = usePayloadRows(step.seqs);
+  const { state, retry } = usePayloadRows(latestSeqs(step.seqs));
   if (state.status === "error") return <PayloadError message={state.message} onRetry={retry} />;
   if (state.status === "loading") return <p className={styles.muted}>Loading output</p>;
   const completion = [...state.rows]
@@ -153,7 +158,7 @@ function decisionOptions(rows: readonly TraceRow[]): DecisionOption[] | null {
 }
 
 function DecisionEvidence({ step }: { step: Step }) {
-  const { state, retry } = usePayloadRows(step.seqs);
+  const { state, retry } = usePayloadRows(latestSeqs(step.seqs));
   const model = step.decision?.options ?? [];
   const chosen = model.filter((option) => option.chosen);
   if (state.status === "error") {

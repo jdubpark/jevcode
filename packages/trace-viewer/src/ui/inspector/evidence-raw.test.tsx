@@ -130,6 +130,18 @@ describe("Evidence", () => {
     expect(await screen.findByText(step?.decision?.options[0]?.label ?? "")).toBeTruthy();
   });
 
+  it("clips a decision's payload request to the latest 50 seqs", async () => {
+    const base = foldFixture("oauth");
+    const step = base.steps.find((s) => s.decision !== undefined);
+    const last = step?.seqs[step.seqs.length - 1] ?? 1;
+    const many = Array.from({ length: 60 }, (_, i) => last - 59 + i);
+    const session = withStep(base, step?.id ?? "", (s) => ({ ...s, seqs: many }));
+    const payloads = vi.fn(async () => [] as TraceRow[]);
+    renderHarness(<Evidence selection={step?.id ?? null} />, session, { payloads });
+    await waitFor(() => expect(payloads).toHaveBeenCalled());
+    expect(payloads).toHaveBeenCalledWith(many.slice(-50));
+  });
+
   it("a failed decision fetch shows Retry, and Retry loads the descriptions", async () => {
     const session = foldFixture("oauth");
     const step = session.steps.find((s) => s.decision !== undefined);
