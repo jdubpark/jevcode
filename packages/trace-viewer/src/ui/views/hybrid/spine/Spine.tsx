@@ -27,7 +27,7 @@ import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
 import { rowFindingOf } from "./row-finding.js";
-import { extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { cutTopRow, extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
 export interface FindingBodyProps {
@@ -215,6 +215,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     userScroll.current = true;
     readerMovedSinceSample.current = true;
     intendedOffset.current = null;
+    settleSnap.current = false;
     clearTimer(userTimer);
     userTimer.current = viewOf()?.setTimeout(() => {
       userTimer.current = null;
@@ -227,6 +228,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
    * offset only from the scroll event, so a second reveal in the same commit would otherwise decide from the old one.
    */
   const intendedOffset = useRef<number | null>(null);
+  /** A reveal scrolled; when it settles, a first row left half under the range chip is start-aligned once. */
+  const settleSnap = useRef(false);
   /**
    * The viewport in list coordinates, from the virtualizer's own scroll offset and height. Reading element.scrollTop
    * here would force a synchronous layout right after React mutated the DOM (perf investigation fix 6).
@@ -283,6 +286,19 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       if (anchorKey !== reported.current.anchor) {
         reported.current.anchor = anchorKey;
         handlers.current.onAnchor?.({ key: firstRow.key, offsetPx });
+      }
+    }
+    if (!scrolling && !virtualizer.isScrolling && settleSnap.current) {
+      settleSnap.current = false;
+      // The list end clamps a reveal once expanded rows are measured smaller than estimated; move up to the cut row's
+      // start so the top row is whole and any cut falls at the bottom edge (audit 2-8). The scroll has settled, so the
+      // virtualizer's offset is the real one.
+      const cut = cutTopRow(items, virtualizer.scrollOffset ?? win.offset);
+      if (cut !== null) {
+        intendedOffset.current = null;
+        beginProgrammatic();
+        virtualizer.scrollToIndex(cut, { align: "start", behavior: "auto" });
+        return;
       }
     }
     if (!scrolling) {
@@ -361,6 +377,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     if (snapped > 0 && (cache[snapped]?.start ?? 0) > maxOffset) snapped -= 1;
     const start = cache[snapped]?.start;
     beginProgrammatic();
+    settleSnap.current = true;
     if (snapped < 0 || start === undefined) virtualizer.scrollToIndex(position, { align: decided, behavior: "auto" });
     else virtualizer.scrollToIndex(snapped, { align: "start", behavior: "auto" });
     intendedOffset.current = Math.max(0, Math.min(start ?? target[0], maxOffset));
