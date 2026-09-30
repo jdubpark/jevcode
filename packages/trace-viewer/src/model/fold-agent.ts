@@ -302,7 +302,7 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
         // A steer echoes its relaunch's prompt right after the agent_started: one instruction step
         // holds both rows (spec §6.6 "Instruction dedupe"). It may still be a decision answer.
         addRowToStep(opening, ctx, false);
-        state.pendingAnswer = { step: opening, seq: ctx.seq };
+        state.pendingAnswer = { step: opening, seq: ctx.seq, t: ctx.t, sourceTs: ctx.sourceTs };
         break;
       }
       const message = createStep(state, turn, ctx, {
@@ -316,7 +316,7 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
       if (event.role === "user") {
         // The latest user message may answer an open decision; the next decision row decides (R25).
         // A later relaunch with the same prompt delivers it (spec §6.6).
-        state.pendingAnswer = { step: message, seq: ctx.seq };
+        state.pendingAnswer = { step: message, seq: ctx.seq, t: ctx.t, sourceTs: ctx.sourceTs };
         state.undelivered.push(message);
       }
       break;

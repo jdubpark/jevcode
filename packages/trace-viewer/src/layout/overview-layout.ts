@@ -1,5 +1,5 @@
 import { LANES, type FindingId, type Lane, type Level, type UnitStableId } from "../model/index.js";
-import { GLYPH_CODE, PIN_PRIORITY, type LaneMarks, type OverviewIndex, type PinCandidate, type PinKind } from "./overview-index.js";
+import { bandGroupsOf, GLYPH_CODE, PIN_PRIORITY, type LaneMarks, type OverviewIndex, type PinCandidate, type PinKind } from "./overview-index.js";
 import type { TimeScale } from "./time-scale.js";
 import type { Tone } from "./tone.js";
 import type { Brush, TraceIndex } from "./trace-index.js";
@@ -30,6 +30,8 @@ const LABEL_GAP_PX = 8;
 const ICON_ONLY_PX = 20;
 const BAR_MERGE_PX = 2;
 const CHAPTER_MIN_SPAN_MS = 20_000;
+/** Step preset on a finished session: at most this fraction of the view lies past either end. */
+const STEP_EDGE_PAD = 0.08;
 
 export type MarkOp =
   | { op: "dot"; lane: Lane; x: number; tone: Tone }
@@ -41,7 +43,12 @@ export type MarkOp =
   | { op: "noise"; lane: Lane; x0: number; x1: number }
   | { op: "problem"; lane: Lane; x: number };
 export interface PinPlacement { key: string; lane: Lane; x: number; kind: PinKind; critical: boolean; stepIndexes: readonly number[]; cluster: boolean; findingId: FindingId | null }
-export interface BandPlacement { key: string; id: UnitStableId | null; x0: number; x1: number; title: string; tier: 0 | 1 | null; iconOnly: boolean }
+export interface BandPlacement {
+  key: string; id: UnitStableId | null; x0: number; x1: number;
+  /** Where a placed label starts: x0, or 0 when the band begins left of the viewport. */
+  labelX: number;
+  title: string; tier: 0 | 1 | null; iconOnly: boolean;
+}
 export interface OverviewLayout {
   marks: readonly MarkOp[];
   pins: readonly PinPlacement[];
@@ -211,53 +218,93 @@ function placePins(overview: OverviewIndex, camera: XOnlyCamera, widthPx: number
   return out;
 }
 
+interface VisibleBand { key: string; id: UnitStableId | null; u0: number; u1: number; title: string }
+
+/** First index in [0, n) whose value satisfies pred, for a pred that is monotone over the array. */
+function firstIndex(n: number, pred: (i: number) => boolean): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (pred(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** Bands merged where the pixel gap is under BAND_MERGE_GAP_PX, clipped to the viewport: per key,
+ *  a binary search finds the first piece reaching x = 0, the merge walks back to its chain start and
+ *  forward to the first chain past the right edge. Cost follows the visible pieces, not the index. */
+function visibleBands(overview: OverviewIndex, camera: XOnlyCamera, widthPx: number): VisibleBand[] {
+  const k = camera.k;
+  const xOf = (u: number): number => (u - camera.u0) * k;
+  const out: VisibleBand[] = [];
+  for (const group of bandGroupsOf(overview)) {
+    const n = group.u0.length;
+    const first = firstIndex(n, (i) => xOf(group.u1[i] ?? 0) >= 0);
+    if (first >= n) continue;
+    let j = first;
+    while (j > 0 && ((group.u0[j] ?? 0) - (group.u1[j - 1] ?? 0)) * k < BAND_MERGE_GAP_PX) j -= 1;
+    let current: VisibleBand | null = null;
+    for (; j < n; j += 1) {
+      const u0 = group.u0[j] ?? 0;
+      const u1 = group.u1[j] ?? u0;
+      if (current !== null && (u0 - current.u1) * k < BAND_MERGE_GAP_PX) {
+        current.u1 = Math.max(current.u1, u1);
+        continue;
+      }
+      if (current !== null && xOf(current.u1) >= 0) out.push(current);
+      if (xOf(u0) > widthPx) {
+        current = null;
+        break;
+      }
+      current = { key: group.key, id: group.id[j] ?? null, u0, u1, title: group.title[j] ?? "" };
+    }
+    if (current !== null && xOf(current.u1) >= 0) out.push(current);
+  }
+  return out.sort((a, b) => a.u0 - b.u0 || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/** Spec §7.6.1 labels: icon + name, greedy left to right in two tiers over the visible bands. A
+ *  chapter's label goes on its first visible piece at least 20 px wide, else on its widest visible
+ *  piece, and starts at that piece's visible left edge. The label may run past its band into free space: it collides
+ *  only with the previous label in its tier, and a start with no free tier is left out. A name that
+ *  would cross the viewport's right edge shows as the icon only. */
 function placeBands(overview: OverviewIndex, camera: XOnlyCamera, widthPx: number): BandPlacement[] {
   const k = camera.k;
   const xOf = (u: number): number => (u - camera.u0) * k;
-  const byKey = new Map<string, { id: UnitStableId | null; u0: number; u1: number; title: string }[]>();
-  for (const band of overview.bands) {
-    const list = byKey.get(band.key) ?? [];
-    list.push({ id: band.id, u0: band.u0, u1: band.u1, title: band.title });
-    byKey.set(band.key, list);
+  const visible = visibleBands(overview, camera, widthPx);
+  const uLeft = camera.u0;
+  const uRight = camera.u0 + widthPx / k;
+  const spanPx = (band: VisibleBand): number => (Math.min(band.u1, uRight) - Math.max(band.u0, uLeft)) * k;
+  const target = new Map<string, VisibleBand>();
+  for (const band of visible) {
+    const chosen = target.get(band.key);
+    if (chosen === undefined || (spanPx(chosen) < ICON_ONLY_PX && spanPx(band) > spanPx(chosen))) target.set(band.key, band);
   }
-  const merged: { key: string; id: UnitStableId | null; u0: number; u1: number; title: string }[] = [];
-  for (const [key, pieces] of byKey) {
-    let current: { key: string; id: UnitStableId | null; u0: number; u1: number; title: string } | null = null;
-    for (const piece of [...pieces].sort((a, b) => a.u0 - b.u0)) {
-      if (current !== null && (piece.u0 - current.u1) * k < BAND_MERGE_GAP_PX) current.u1 = Math.max(current.u1, piece.u1);
-      else {
-        if (current !== null) merged.push(current);
-        current = { key, ...piece };
-      }
-    }
-    if (current !== null) merged.push(current);
-  }
-  const visible = merged
-    .filter((b) => xOf(b.u1) >= 0 && xOf(b.u0) <= widthPx)
-    .sort((a, b) => a.u0 - b.u0 || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const seen = new Map<string, number>();
   const tierEndU: [number, number] = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
   return visible.map((band) => {
     const n = seen.get(band.key) ?? 0;
     seen.set(band.key, n + 1);
+    const labelU = Math.max(band.u0, uLeft);
     let tier: 0 | 1 | null = null;
     let iconOnly = false;
-    if (n === 0) {
-      const bandPx = (band.u1 - band.u0) * k;
+    if (target.get(band.key) === band) {
       const labelPx = LABEL_ICON_PX + band.title.length * LABEL_CHAR_PX;
-      const full = bandPx >= labelPx;
-      if (full || bandPx >= ICON_ONLY_PX) {
-        for (const t of [0, 1] as const) {
-          if (band.u0 >= tierEndU[t] + LABEL_GAP_PX / k) {
-            tier = t;
-            iconOnly = !full;
-            tierEndU[t] = band.u0 + (full ? labelPx : ICON_ONLY_PX) / k;
-            break;
-          }
+      for (const t of [0, 1] as const) {
+        if (labelU >= tierEndU[t] + LABEL_GAP_PX / k) {
+          tier = t;
+          tierEndU[t] = labelU + labelPx / k;
+          break;
         }
       }
+      iconOnly = tier !== null && (uRight - labelU) * k < labelPx;
     }
-    return { key: n === 0 ? band.key : `${band.key}#${n}`, id: band.id, x0: xOf(band.u0), x1: xOf(band.u1), title: band.title, tier, iconOnly };
+    return {
+      key: n === 0 ? band.key : `${band.key}#${n}`, id: band.id, x0: xOf(band.u0), x1: xOf(band.u1), labelX: xOf(labelU),
+      title: band.title, tier, iconOnly,
+    };
   });
 }
 
@@ -353,6 +400,15 @@ export function overviewPreset(input: OverviewPresetInput): { camera: XOnlyCamer
   const k = median > 0 ? Math.min(K_MAX, 28 / median) : K_MAX;
   const center = scale.toU(steps[i]?.tMs ?? 0);
   const camera: XOnlyCamera = { mode: "xOnly", k, u0: center - widthPx / (2 * k) };
+  if (!live) {
+    // A finished session has nothing past its end: keep at most 8% of the view as padding at either
+    // edge, and center the session when the view is wider than it (visual audit 2-7).
+    const span = widthPx / k;
+    const pad = STEP_EDGE_PAD * span;
+    const lo = -pad;
+    const hi = overview.endU + pad - span;
+    camera.u0 = hi >= lo ? Math.min(Math.max(camera.u0, lo), hi) : (lo + hi) / 2;
+  }
   const uLast = camera.u0 + widthPx / k;
   let first = -1;
   let last = -1;

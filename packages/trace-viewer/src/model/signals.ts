@@ -1,4 +1,4 @@
-import { hasSevereClamp } from "./classify.js";
+import { hasSevereClamp, ownsRunOutcome } from "./classify.js";
 import { normalizeCommand } from "./format.js";
 import { clampMeta, severityRank } from "./registry.js";
 import {
@@ -7,6 +7,7 @@ import {
   findingStableId,
   unitStableId,
   type Capability,
+  type Chapter,
   type ClaimObservation,
   type Coverage,
   type Finding,
@@ -73,6 +74,25 @@ function sortedUnique(values: readonly number[]): number[] {
 
 function sortStepIds(ids: readonly StepId[], steps: ReadonlyMap<StepId, Step>): StepId[] {
   return [...new Set(ids)].sort((a, b) => (steps.get(a)?.firstSeq ?? 0) - (steps.get(b)?.firstSeq ?? 0));
+}
+
+/** The chapters a finding about a test or check run names (spec §6.7 "Finding chapters"). One
+ *  validation is often cited by every unit, so the run belongs to every chapter; only the chapters
+ *  that own the failure count: of the run's chapters, those whose unit failed or whose files hold a
+ *  failing test's file, else the latest of them (session order). This keeps a shared validation from
+ *  making every chapter a finding chapter and from clearing noise on lockfile or formatting chapters. */
+function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
+  const owners = run.chapterIds.filter((id) => {
+    const chapter = chapterById.get(id);
+    return chapter !== undefined && ownsRunOutcome(chapter, run);
+  });
+  if (owners.length > 0) return owners;
+  const latest = run.chapterIds[run.chapterIds.length - 1];
+  return latest === undefined ? [] : [latest];
+}
+
+function chaptersById(session: SignalInput["session"]): Map<UnitStableId, Chapter> {
+  return new Map(session.chapters.map((chapter) => [chapter.id, chapter]));
 }
 
 // ------------------------------------------------------------ claim lexicon (R10)
@@ -169,6 +189,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
   requires: ["agent_messages", "test_results"],
   evaluate({ session }) {
     const stepById = new Map(session.steps.map((step) => [step.id, step]));
+    const chapterById = chaptersById(session);
     // Only each turn's claimStepId (its last success claim, set by markTurns) is checked (R25).
     const claimIds = new Set<StepId>();
     for (const turn of session.turns) if (turn.claimStepId !== undefined) claimIds.add(turn.claimStepId);
@@ -195,7 +216,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
           tests.failed > 0 ? `${tests.failed} failing test${tests.failed === 1 ? "" : "s"}` : "a non-zero exit"
         }.`,
         stepIds: sortStepIds([step.id, failed.id], stepById),
-        chapterIds: [...failed.chapterIds],
+        chapterIds: runChapters(failed, chapterById),
         evidenceSeqs: sortedUnique([runSeq(failed), step.firstSeq]),
         claim: {
           claim: { text, seq: step.firstSeq, tMs: step.tMs, stepId: step.id },
@@ -230,6 +251,7 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
   ],
   requires: ["test_results"],
   evaluate({ session }) {
+    const chapterById = chaptersById(session);
     const finalRun = new Map<string, Step>();
     for (const step of session.steps) {
       if (isRun(step) && step.target !== undefined) finalRun.set(normalizeCommand(step.target), step);
@@ -249,7 +271,7 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
             ? `${step.target ?? "The test command"} still fails in its final run.`
             : `${step.target ?? "The test command"} passed in a later run.`,
           stepIds: [step.id],
-          chapterIds: [...step.chapterIds],
+          chapterIds: runChapters(step, chapterById),
           evidenceSeqs: [runSeq(step)],
         } satisfies FindingDraft;
       });
@@ -290,7 +312,7 @@ const guardrailClamp: SignalRule & { readonly id: "guardrail_clamp" } = {
   severity: "info",
   title: "Guardrail clamp",
   rationale:
-    "Jev's guardrails overrode a model value for a change unit. One finding per guardrail row with a warning or critical clamp, at the most severe clamp's severity (destructive_command critical; security, schema, public API and failed-unit clamps warning). Rows whose clamps are all info, including ids this build does not know, raise none and collapse as lifecycle noise.",
+    "Jev's guardrails overrode a model value for a change unit. One finding per guardrail row with a warning or critical clamp, at the most severe clamp's severity (destructive_command critical; security, schema, public API and failed-unit clamps warning). Rows whose clamps are all info, including ids this build does not know, raise none and collapse as pipeline noise.",
   knownFalsePositives: [
     "Before M1c, suppression rows were logged as clientKind \"degrade\" with confidence 1 (apps/desktop/src/main/pipeline/jev-stage.ts:146-160), so they read as rule-only.",
     "The security-path patterns match /token/i in tokenizer.ts and \\.env in .env.example (packages/jev-router/src/patterns.ts:11-19).",
@@ -330,6 +352,7 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
   knownFalsePositives: ["The later run passed because tests were deleted or skipped rather than fixed."],
   requires: ["test_results"],
   evaluate({ session }) {
+    const chapterById = chaptersById(session);
     const drafts: FindingDraft[] = [];
     const openFailure = new Map<string, { failed: Step; edits: StepId[] }>();
     for (const step of session.steps) {
@@ -358,7 +381,9 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
         headline: "Recovered after edits",
         reason: `${step.target} failed, ${pending.edits.length} edit${pending.edits.length === 1 ? "" : "s"} followed, then it passed.`,
         stepIds: [pending.failed.id, ...pending.edits, step.id],
-        chapterIds: [...new Set([...pending.failed.chapterIds, ...step.chapterIds])],
+        // The chapters that owned the failure recovered; the passing run's chapters only when the
+        // failed run has none.
+        chapterIds: runChapters(pending.failed.chapterIds.length > 0 ? pending.failed : step, chapterById),
         evidenceSeqs: sortedUnique([runSeq(pending.failed), runSeq(step)]),
       });
     }

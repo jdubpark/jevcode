@@ -13,7 +13,8 @@ export function worstSeverity(step: Step, findingsById: ReadonlyMap<FindingId, F
   return worst;
 }
 
-/** bad: failed test/check, agent_failed, a guardrail problem, or anchoring a critical finding; good: passed test/check; a command with exit > 0 stays neutral. */
+/** bad: failed test/check, agent_failed, a guardrail problem (a critical, blocking clamp), or anchoring a critical finding;
+ *  good: passed test/check; a command with exit > 0 and a warning or info clamp stay neutral (§7.12). */
 export function stepTone(step: Step, findingsById: ReadonlyMap<FindingId, Finding>): Tone {
   if (worstSeverity(step, findingsById) === "critical") return "bad";
   const testLike = step.kind === "test" || step.kind === "check";

@@ -16,10 +16,30 @@ function isRun(step: Step): boolean {
   return step.kind === "command" || step.kind === "test" || step.kind === "check";
 }
 
+/** Equal, or one path ends with the other at a segment boundary (a runner may report absolute paths). */
+function samePath(a: string, b: string): boolean {
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+
+/** True when a chapter owns a test or check run's outcome: its unit failed, or its files hold a
+ *  failing test's file (spec §6.7 "Finding chapters"). One validation is often cited by every unit,
+ *  so joining the run is not enough to make it the chapter's own. */
+export function ownsRunOutcome(chapter: Pick<Chapter, "status" | "files">, run: Step): boolean {
+  if (chapter.status === "failed") return true;
+  const failures = run.tests?.failures ?? [];
+  return chapter.files.some((file) => failures.some((failure) => samePath(file, failure.file)));
+}
+
 /** A guardrail step with a warning or critical clamp (CLAMP_META; unknown ids are info). Only these
- *  carry the guardrail problem and a guardrail_clamp finding; an info-only step is lifecycle noise. */
+ *  anchor a guardrail_clamp finding; an info-only step is pipeline noise. */
 export function hasSevereClamp(step: Step): boolean {
   return (step.guardrail?.clampIds ?? []).some((id) => severityRank(clampMeta(id).severity) >= severityRank("warning"));
+}
+
+/** A guardrail step with a critical clamp: the rule blocked something. Only these carry the
+ *  guardrail problem, so a warning clamp keeps its finding but never paints red (spec §7.12). */
+export function hasBlockingClamp(step: Step): boolean {
+  return (step.guardrail?.clampIds ?? []).some((id) => clampMeta(id).severity === "critical");
 }
 
 /** Rule-derived problems of one step. claim_contradicted comes from the claim_contradicted signal. */
@@ -30,7 +50,7 @@ export function problemsOf(step: Step): ProblemKind[] {
   if (step.tests !== undefined && step.tests.failed > 0) found.add("tests_failed");
   if (step.kind === "lifecycle" && step.status === "failed") found.add("agent_failed");
   if (step.command?.destructivePattern !== undefined) found.add("destructive");
-  if (step.kind === "guardrail" && hasSevereClamp(step)) found.add("guardrail");
+  if (step.kind === "guardrail" && hasBlockingClamp(step)) found.add("guardrail");
   if (step.problems.includes("claim_contradicted")) found.add("claim_contradicted");
   return PROBLEM_KINDS.filter((kind) => found.has(kind));
 }
@@ -99,11 +119,13 @@ export function noiseOf(step: Step, context: NoiseContext, lastRuns: ReadonlyMap
       return null;
     }
     case "lifecycle":
-    case "attention":
       return "lifecycle";
+    case "attention":
+      // Jev pipeline rows, not agent lifecycle: the spine names them "pipeline events" (spec §6.6).
+      return "pipeline";
     case "guardrail":
       // Routine suppress_formatting and suppress_lockfile rows collapse (spec §6.6, §6.7).
-      return hasSevereClamp(step) ? null : "lifecycle";
+      return hasSevereClamp(step) ? null : "pipeline";
     case "test":
     case "check": {
       if (step.status !== "ok" || step.target === undefined) return null;

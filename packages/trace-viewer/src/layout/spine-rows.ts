@@ -4,17 +4,32 @@ import {
   type TraceSession, type UnitStableId,
 } from "../model/index.js";
 import { BREAK_MIN_MS, type IdleReason, type TimeScale } from "./time-scale.js";
-import { worstSeverity } from "./tone.js";
+import { stepTone, worstSeverity, type Tone } from "./tone.js";
 import { brushSeqRange, isStepExpanded, type Brush, type SelectionId, type TraceIndex } from "./trace-index.js";
 
 export type SpineRow =
   | { t: "step"; key: StepId; step: number; expanded: boolean }
   | { t: "chapter"; key: `ch:${number}`; chapter: number }
-  | { t: "noise"; key: `noise:${number}`; steps: number[]; label: string }
+  | {
+      t: "noise"; key: `noise:${number}`; steps: number[]; label: string;
+      /** Set on a Chapter-level Jev review group: consecutive Jev-lane rows (guardrail clamps with their
+       *  warning findings, attention and pipeline rows) folded into one row (visual audit 1-1). A
+       *  renderer that ignores it shows the group as a noise row with its label. */
+      jev?: JevGroup;
+    }
   | { t: "elided"; key: `elided:${number}`; steps: number[]; byLane: Record<Lane, number>; spanMs: number }
   | { t: "turn"; key: `turn:${number}`; turn: number }
   | { t: "idle"; key: `idle:${number}`; ms: number; reason: IdleReason }
   | { t: "gap"; key: `gap:${number}`; gap: number };
+
+export interface JevGroup {
+  /** Guardrail rows with a (warning) guardrail_clamp finding; the label reads "Jev review · 3 guardrails". */
+  guardrails: number;
+  /** Worst stepTone of the members (bad > neutral > good). */
+  tone: Tone;
+  /** Worst finding severity of the members; never critical (a critical finding keeps its own row). */
+  severity: Severity | null;
+}
 
 export const SPINE_ROW_PX = 32;
 export const SPINE_SEPARATOR_PX = 24;
@@ -53,24 +68,27 @@ const NOUN: { readonly [R in NoiseReason]: [string, string] } = {
   formatting: ["formatting edit", "formatting edits"],
   duplicate_poll: ["repeated poll", "repeated polls"],
   lifecycle: ["lifecycle event", "lifecycle events"],
+  pipeline: ["pipeline event", "pipeline events"],
   superseded: ["superseded edit", "superseded edits"],
   passing_test: ["passing test run", "passing test runs"],
 };
 
-/** "3 reads", "2 lockfile and formatting edits", "4 noise steps: reads, lifecycle events". */
-function noiseLabel(steps: readonly number[], session: TraceSession): string {
-  const reasons: NoiseReason[] = [];
-  for (const i of steps) {
-    const reason = session.steps[i]?.noise;
-    if (reason !== null && reason !== undefined && !reasons.includes(reason)) reasons.push(reason);
-  }
-  const n = steps.length;
+/** "3 reads", "2 lockfile and formatting edits", "4 noise steps: reads, lifecycle events".
+ *  Reasons are in first-appearance order. */
+function noiseLabel(n: number, reasons: readonly NoiseReason[]): string {
   const only = reasons[0];
   if (reasons.length === 1 && only !== undefined) return `${n} ${NOUN[only][n === 1 ? 0 : 1]}`;
   if (reasons.length > 1 && reasons.every((r) => EDIT_ADJECTIVE[r] !== undefined)) {
     return `${n} ${reasons.map((r) => EDIT_ADJECTIVE[r]).join(" and ")} ${n === 1 ? "edit" : "edits"}`;
   }
   return `${n} noise steps: ${reasons.map((r) => NOUN[r][1]).join(", ")}`;
+}
+
+/** An open noise row's distinct reasons, kept while steps append so each label is built once. */
+interface NoiseRun { row: Extract<SpineRow, { t: "noise" }>; reasons: NoiseReason[] }
+
+function addReason(run: NoiseRun, reason: NoiseReason | null): void {
+  if (reason !== null && !run.reasons.includes(reason)) run.reasons.push(reason);
 }
 
 interface Segment { rows: SpineRow[]; parent: string | null; turn: number }
@@ -112,36 +130,50 @@ function emitSegment(out: SpineRow[], segment: Segment, input: SpineRowsInput, o
   out.push(...rows.slice(0, ELIDE_HEAD), { t: "elided", key, steps, byLane, spanMs: end - first.tMs }, ...rows.slice(rows.length - ELIDE_TAIL));
 }
 
-/** ch:<anchor> for the first current chapter at an anchor (by id) and ch:<anchor>.<n> for the rest, as Canvas keys them (spec §7.5). */
-function chapterRowKey(id: UnitStableId, index: TraceIndex): `ch:${number}` | undefined {
+/** ch:<anchor> for the first current chapter at an anchor (by id) and ch:<anchor>.<n> for the rest, as Canvas keys them (spec §7.5).
+ *  `order` caches each anchor's id → n, so a session whose chapters share one anchor stays linear. */
+function chapterRowKey(id: UnitStableId, index: TraceIndex, order: Map<number, Map<UnitStableId, number>>): `ch:${number}` | undefined {
   const key = index.chapterKey(id);
   if (key === undefined) return undefined;
-  const n = index.chaptersByAnchor(Number(key.slice(3))).indexOf(id);
+  const anchor = Number(key.slice(3));
+  let positions = order.get(anchor);
+  if (positions === undefined) {
+    positions = new Map(index.chaptersByAnchor(anchor).map((chapterId, n) => [chapterId, n]));
+    order.set(anchor, positions);
+  }
+  const n = positions.get(id) ?? -1;
   return n > 0 ? (`${key}.${n}` as `ch:${number}`) : key;
 }
 
 function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsInput, range: { fromSeq: number; toSeq: number }, i0: number, i1: number): SpineRow[] {
-  const items: { seq: number; turn: number; id: string; row: SpineRow }[] = [];
+  const items: { seq: number; t: number; turn: number; id: string; row: SpineRow }[] = [];
   const current = session.chapters.filter((c) => c.current);
+  const order = new Map<number, Map<UnitStableId, number>>();
   session.chapters.forEach((chapter, position) => {
     if (!chapter.current) return;
     const entry = index.entry(chapter.id);
-    const key = chapterRowKey(chapter.id, index);
+    const key = chapterRowKey(chapter.id, index, order);
     if (entry === undefined || key === undefined || entry.firstSeq < range.fromSeq || entry.firstSeq > range.toSeq) return;
-    items.push({ seq: entry.firstSeq, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, id: chapter.id, row: { t: "chapter", key, chapter: position } });
+    items.push({
+      seq: entry.firstSeq, t: chapter.tMs, turn: index.turnAtSeq(entry.firstSeq)?.index ?? 0, id: chapter.id,
+      row: { t: "chapter", key, chapter: position },
+    });
   });
   for (let i = i0; i <= i1; i += 1) {
     const step = session.steps[i];
     if (step === undefined) continue;
     if (!PINNED_KINDS.has(step.kind) && worstSeverity(step, index.findingsById) !== "critical") continue;
     items.push({
-      seq: step.firstSeq, turn: step.turnIndex, id: step.id,
+      seq: step.firstSeq, t: step.tMs, turn: step.turnIndex, id: step.id,
       row: { t: "step", key: step.id, step: i, expanded: isStepExpanded(step, index.findingsById, input.expanded, input.collapsed) },
     });
   }
-  // Chapter rows lead the step at their seq; chapters that start together order by id, independent of chapter order.
+  // Beats read in gutter-time order within a turn (a chapter shows its unit's start, which can
+  // follow its first step: a decision-born chapter starts after the decision; visual audit 1-14).
+  // Steps keep seq order (their times never decrease with seq); a chapter row leads a step at the
+  // same time and seq; chapters that tie order by id, independent of chapter order.
   const rank = (row: SpineRow): number => (row.t === "chapter" ? 0 : 1);
-  items.sort((a, b) => a.seq - b.seq || rank(a.row) - rank(b.row) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  items.sort((a, b) => a.turn - b.turn || a.t - b.t || a.seq - b.seq || rank(a.row) - rank(b.row) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const showTurns = session.turns.length > 1 || current.length === 0;
   const out: SpineRow[] = [];
   let turn = -1;
@@ -151,6 +183,79 @@ function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsI
     out.push(item.row);
   }
   return out;
+}
+
+const TONE_RANK: { readonly [T in Tone]: number } = { good: 0, neutral: 1, bad: 2 };
+
+/** Jev-lane rows that may fold into a review group; a critical finding, a failure, the playhead,
+ *  the selection and a search match keep their own row. */
+function foldableJev(step: Step, i: number, index: TraceIndex, input: SpineRowsInput, playheadStep: number, selectedStep: number): boolean {
+  return step.lane === "jev" && i !== playheadStep && i !== selectedStep && step.status !== "failed"
+    && !(input.matches?.has(step.id) ?? false) && worstSeverity(step, index.findingsById) !== "critical";
+}
+
+/** Start index → end index of every Chapter-level Jev review group: a maximal run of foldable Jev
+ *  rows with no separator (turn, idle break, gap) between them, at least two rows long and holding
+ *  at least one guardrail hit (a guardrail row with a finding). Attention and info-only clamp rows
+ *  alone stay plain pipeline noise runs. */
+function jevRunEnds(
+  session: TraceSession, index: TraceIndex, scale: TimeScale, input: SpineRowsInput, gapSeqs: readonly number[],
+  i0: number, i1: number, playheadStep: number, selectedStep: number,
+): Map<number, number> {
+  const runs = new Map<number, number>();
+  let start = -1;
+  let guardrails = 0;
+  const close = (end: number): void => {
+    if (start >= 0 && end > start && guardrails > 0) runs.set(start, end);
+    start = -1;
+    guardrails = 0;
+  };
+  for (let i = i0; i <= i1; i += 1) {
+    const step = session.steps[i];
+    if (step === undefined || !foldableJev(step, i, index, input, playheadStep, selectedStep)) {
+      close(i - 1);
+      continue;
+    }
+    const prev = session.steps[i - 1];
+    if (start < 0 || prev === undefined || !joined(prev, step, scale, gapSeqs)) {
+      close(i - 1);
+      start = i;
+    }
+    if (isGuardrailHit(step)) guardrails += 1;
+  }
+  close(i1);
+  return runs;
+}
+
+function isGuardrailHit(step: Step): boolean {
+  return step.kind === "guardrail" && step.findingIds.length > 0;
+}
+
+/** No separator row falls between two adjacent steps (the checks buildSpineRows makes). */
+function joined(prev: Step, step: Step, scale: TimeScale, gapSeqs: readonly number[]): boolean {
+  if (prev.turnIndex !== step.turnIndex) return false;
+  if (gapSeqs.some((seq) => seq >= prev.firstSeq && seq < step.firstSeq)) return false;
+  const prevEnd = prev.tMs + Math.max(0, prev.durationMs ?? 0);
+  return step.tMs <= prevEnd || scale.breaks(scale.toU(prevEnd), scale.toU(step.tMs), BREAK_MIN_MS)[0]?.idle === undefined;
+}
+
+function addToJevGroup(row: Extract<SpineRow, { t: "noise" }>, group: JevGroup, i: number, step: Step, index: TraceIndex): void {
+  row.steps.push(i);
+  if (isGuardrailHit(step)) group.guardrails += 1;
+  const tone = stepTone(step, index.findingsById);
+  if (TONE_RANK[tone] > TONE_RANK[group.tone]) group.tone = tone;
+  const severity = worstSeverity(step, index.findingsById);
+  if (severity !== null && (group.severity === null || SEVERITY_RANK[severity] > SEVERITY_RANK[group.severity])) group.severity = severity;
+}
+
+function closeJevGroup(out: SpineRow[], row: Extract<SpineRow, { t: "noise" }>, group: JevGroup, input: SpineRowsInput, session: TraceSession): void {
+  row.label = `Jev review · ${group.guardrails} ${group.guardrails === 1 ? "guardrail" : "guardrails"}`;
+  row.jev = group;
+  if (!input.expanded.has(row.key)) return;
+  for (const i of row.steps) {
+    const step = session.steps[i];
+    if (step !== undefined) out.push({ t: "step", key: step.id, step: i, expanded: input.expanded.has(step.id) });
+  }
 }
 
 /** Binary-searches steps by firstSeq for the brushed range; keys survive refolds, churn and live ticks (spec §7.6.3). */
@@ -171,9 +276,16 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
     .filter(({ gap }) => gap.atSeq >= range.fromSeq && gap.atSeq <= range.toSeq)
     .sort((a, b) => a.gap.atSeq - b.gap.atSeq);
   let gapCursor = 0;
+  const jevRuns = input.level === "chapter"
+    ? jevRunEnds(session, index, scale, input, gaps.map(({ gap }) => gap.atSeq), i0, i1, playheadStep, selectedStep)
+    : new Map<number, number>();
   const out: SpineRow[] = [];
   let segment: Segment | null = null;
   let prev: Step | null = null;
+  let jev: { row: Extract<SpineRow, { t: "noise" }>; end: number; group: JevGroup } | null = null;
+  // At most one noise row is open (the segment's last row); labels are written once per run.
+  const runs: NoiseRun[] = [];
+  let openRun: NoiseRun | null = null;
 
   for (let i = i0; i <= i1; i += 1) {
     const step = steps[i];
@@ -200,6 +312,27 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
     }
     out.push(...separators);
 
+    // Jev review groups act like pinned rows: they close the segment and are never elided.
+    const runEnd = jevRuns.get(i);
+    if (runEnd !== undefined) {
+      if (segment !== null) {
+        emitSegment(out, segment, input, false, session);
+        segment = null;
+      }
+      const row: Extract<SpineRow, { t: "noise" }> = { t: "noise", key: `noise:${step.firstSeq}`, steps: [], label: "" };
+      jev = { row, end: runEnd, group: { guardrails: 0, tone: "good", severity: null } };
+      out.push(row);
+    }
+    if (jev !== null) {
+      addToJevGroup(jev.row, jev.group, i, step, index);
+      if (i === jev.end) {
+        closeJevGroup(out, jev.row, jev.group, input, session);
+        jev = null;
+      }
+      prev = step;
+      continue;
+    }
+
     const parent = index.entry(step.id)?.parent ?? null;
     const pinned = PINNED_KINDS.has(step.kind) || step.findingIds.length > 0 || step.status === "failed"
       || i === playheadStep || i === selectedStep || (input.matches?.has(step.id) ?? false);
@@ -215,9 +348,9 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
     }
     const isNoise = step.noise !== null && input.level !== "step";
     const last = segment === null ? undefined : segment.rows[segment.rows.length - 1];
-    if (isNoise && last !== undefined && last.t === "noise") {
+    if (isNoise && last !== undefined && last.t === "noise" && openRun?.row === last) {
       last.steps.push(i);
-      last.label = noiseLabel(last.steps, session);
+      addReason(openRun, step.noise);
       prev = step;
       continue;
     }
@@ -226,9 +359,19 @@ export function buildSpineRows(session: TraceSession, index: TraceIndex, scale: 
       segment = null;
     }
     segment ??= { rows: [], parent, turn: step.turnIndex };
-    segment.rows.push(isNoise ? { t: "noise", key: `noise:${step.firstSeq}`, steps: [i], label: noiseLabel([i], session) } : row);
+    if (isNoise) {
+      const noise: NoiseRun = { row: { t: "noise", key: `noise:${step.firstSeq}`, steps: [i], label: "" }, reasons: [] };
+      addReason(noise, step.noise);
+      runs.push(noise);
+      openRun = noise;
+      segment.rows.push(noise.row);
+    } else {
+      segment.rows.push(row);
+    }
     prev = step;
   }
+  // Rows are shared with emitted segments (and elided bands drop theirs), so labelling here reaches every kept row.
+  for (const run of runs) run.row.label = noiseLabel(run.row.steps.length, run.reasons);
   if (segment !== null) emitSegment(out, segment, input, input.live && i1 === steps.length - 1, session);
   for (let next = gaps[gapCursor]; next !== undefined; next = gaps[gapCursor]) {
     out.push({ t: "gap", key: `gap:${next.gap.atSeq}`, gap: next.gi });
