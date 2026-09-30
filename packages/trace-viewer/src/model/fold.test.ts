@@ -69,6 +69,28 @@ describe("fold: seq handling and gaps", () => {
     expect(stepAt(session, 4).text).toBe("still here");
   });
 
+  it("validates change_unit rows exactly as the contracts schema does (fast path, perf fix 8)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.unit({ id: "cu_ok", files: ["src/a.ts"], title: "Valid" });
+    b.unit({ id: "cu_empty_file", files: [""] });
+    b.unit({ id: "cu_score", files: ["src/b.ts"], importance: 1.5 });
+    b.raw("change_unit", { id: "cu_extra", sessionId: "s", title: "Extra key", category: "api", status: "validated", files: ["src/c.ts"], symbols: [{ id: "x", name: "x", path: "src/c.ts", kind: "function", note: 1 }], interfacesChanged: [], schemaChanges: [], dependencyChanges: [], relatedDecisions: [], validationResults: [], evidence: [], createdAt: "2026-09-18T09:00:05.000Z", updatedAt: "2026-09-18T09:00:05.000Z", extra: { anything: true } });
+    b.raw("change_unit", { id: "cu_bad_kind", sessionId: "s", title: "t", category: "api", status: "validated", files: [], symbols: [{ id: "x", name: "x", path: "p", kind: "gizmo" }], interfacesChanged: [], schemaChanges: [], dependencyChanges: [], relatedDecisions: [], validationResults: [], evidence: [], createdAt: "c", updatedAt: "u" });
+    b.raw("change_unit", ["not", "an", "object"]);
+    const session = fold(b);
+    expect(session.gaps.map((gap) => [gap.atSeq, gap.message])).toEqual([
+      [3, "change_unit row 3 failed its schema at files.0: String must contain at least 1 character(s)"],
+      [4, "change_unit row 4 failed its schema at importance: Number must be less than or equal to 1"],
+      [6, expect.stringMatching(/^change_unit row 6 failed its schema at symbols\.0\.kind: Invalid enum value/)],
+      [7, "change_unit row 7 failed its schema at payload: Expected object, received array"],
+    ]);
+    expect(session.chapters.map((chapter) => [chapter.changeUnitId, chapter.title, chapter.category])).toEqual([
+      ["cu_ok", "Valid", "implementation"],
+      ["cu_extra", "Extra key", "api"],
+    ]);
+  });
+
   it("records an unknown row type and counts hidden envelope types", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
