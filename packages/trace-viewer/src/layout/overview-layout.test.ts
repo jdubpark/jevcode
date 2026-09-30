@@ -138,8 +138,8 @@ describe("chapter band footprints (orchestrator ruling M6)", () => {
     b.agent({ type: "command_started", command: "pnpm test", ts: TraceBuilder.at(30) });
     b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "", ts: TraceBuilder.at(35) });
     b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "passed", passed: 3, failed: 0, skipped: 0 });
-    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_src/a.ts"], validationResults: ["val_1"] });
-    b.unit({ id: "cu_b", files: ["src/b.ts"], evidence: ["fact_src/b.ts"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], title: "Changed 1 file: src/a.ts", evidence: ["fact_src/a.ts"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_b", files: ["src/b.ts"], title: "Changed 1 file: src/b.ts", evidence: ["fact_src/b.ts"], validationResults: ["val_1"] });
     const session = foldRows(testMeta(), b.rows, { live: false });
     const index = buildTraceIndex(session);
     const scale = buildTimeScale(timeScaleInputOf(session));
@@ -147,5 +147,7 @@ describe("chapter band footprints (orchestrator ruling M6)", () => {
     const testU = scale.toU(30_000);
     expect(overview.bands).toHaveLength(2);
     for (const band of overview.bands) expect(band.u1).toBeLessThan(testU);
+    // Band labels use the chapter's short title (ruling M2).
+    expect(overview.bands.map((band) => band.title)).toEqual(["Code · a", "Code · b"]);
   });
 });

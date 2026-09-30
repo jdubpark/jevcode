@@ -140,6 +140,18 @@ describe("chapters", () => {
   });
 });
 
+describe("chapter short titles", () => {
+  it("sets shortTitle from the latest unit version", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.unit({ id: "cu_1", files: ["tests/auth/oauth.test.ts"], category: "tests", title: "Changed 1 file: tests/auth/oauth.test.ts" });
+    b.unit({ id: "cu_2", files: ["src/a.ts"], title: "Google OAuth identity layer" });
+    const byUnit = new Map(fold(b).chapters.map((chapter) => [chapter.changeUnitId, chapter]));
+    expect(byUnit.get("cu_1")).toMatchObject({ title: "Changed 1 file: tests/auth/oauth.test.ts", shortTitle: "Tests · oauth" });
+    expect(byUnit.get("cu_2")?.shortTitle).toBe("Google OAuth identity…");
+  });
+});
+
 describe("validation-only steps", () => {
   it("lists validation steps that no other join links to the chapter", () => {
     const b = new TraceBuilder();
