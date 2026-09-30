@@ -1025,7 +1025,7 @@ The lane is `KIND_META[kind].lane`, a model fact; the glyph is a UI choice in `l
 | test, check | bar, echoed as a plain bar on Commands | same |
 | edit, dependency, revert | hist (up strokes added, down strokes removed) | same |
 | read | ring | never |
-| jev | dot; a shield pin per clamped row | always when clamped |
+| jev | dot; a shield pin per guardrail row with a warning-or-worse clamp (its `guardrail_clamp` finding) | only for those; info-only clamps and attention rows never pin |
 
 A finding draws on its anchor step's lane (`claim_contradicted` as a quote pin linked to the evidence pin with `≠` at the midpoint; others as a badge pin). Tone follows `stepTone`/`findingTone` (`layout/tone.ts`, §6.8): red for failed tests and checks, agent failures, critical findings and guardrail hits; neutral otherwise, so an info clamp keeps a gray shield.
 

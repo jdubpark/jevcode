@@ -232,3 +232,21 @@ describe("overview band labels (spec §7.6.1, visual audit 0-5)", () => {
       .toEqual([["ch:1", 0, false], ["ch:2", 1, false], ["ch:3", null, false]]);
   });
 });
+
+describe("Jev lane pins (visual audit 2-10)", () => {
+  it("pin only warning-or-worse clamps; info clamps and attention rows never pin or cluster", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p", ts: TraceBuilder.at(0) });
+    const warning = b.jev({ id: "j1", clamps: ["security_path"] });
+    const attention = b.jev({ id: "j2", clamps: [] });
+    const info = b.jev({ id: "j3", clamps: ["suppress_formatting", "suppress_lockfile"] });
+    const blocked = b.jev({ id: "j4", clamps: ["destructive_command"] });
+    b.jev({ id: "j5", clamps: [] });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    const p = prepare(session);
+    const pinned = p.overview.pins.filter((pin) => pin.lane === "jev").map((pin) => session.steps[pin.stepIndex]?.firstSeq);
+    expect(pinned).toEqual([warning, blocked]);
+    expect(pinned).not.toContain(attention);
+    expect(pinned).not.toContain(info);
+  });
+});
