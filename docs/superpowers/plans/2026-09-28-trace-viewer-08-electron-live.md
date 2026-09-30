@@ -3540,7 +3540,7 @@ Reference machine: <model>, <CPU>, <memory>, macOS <version>, Node <version>, El
 | `trace:rows` call in main (trace profile) | p95 ≤ 50 ms | M2 | | | soak.mjs trace phase, per page |
 | Fold of 75k rows / one appended row | ≤ 500 ms / ≤ 2 ms | Benchmark | | | `pnpm --filter @jevcode/trace-viewer bench` |
 | Soak first paint / full load (dev host) | ≤ 300 ms / ≤ 2 s | M4a | | | HUD, spike doc "M4a exit" |
-| `j` to painted | p95 ≤ 16.7 ms of work | M4a | | | HUD, spike doc "M4a exit" |
+| `j` to painted | p95 ≤ 16.7 ms, keydown to next painted frame (zero-work baseline beside it) | M4a | | | HUD, spike doc "M4a exit" |
 | Overview layout + paint, Session level | p95 ≤ 4 ms; ≤ 150 overlay nodes | M4a | | | HUD, spike doc "M4a exit" |
 | Anchor drift (spine and canvas) | ≤ 1 px | Smoke | | | `?selftest=drip`, spike doc |
 | `layoutCanvas` fresh / sticky | ≤ 2 ms / ≤ 0.5 ms | Benchmark | | | `canvas-layout.bench.ts` |
