@@ -6,6 +6,7 @@ import { foldFixture } from "../../../test-support/ui-harness.js";
 import {
   buildOutlineRows,
   DEFAULT_OPEN_SECTIONS,
+  FILE_TITLE_MAX,
   searchMatches,
   type OutlineItemRow,
   type OutlineRow,
@@ -33,10 +34,11 @@ describe("buildOutlineRows", () => {
     expect(story.find((row) => row.muted)?.title).toBe("Noise 2");
     expect(story.at(-1)?.title).toBe("Final claim");
     expect(story.at(-1)?.flag).toBe("neq");
-    expect(story.every((row) => row.graphic === null)).toBe(true);
+    // Story rows carry no mini graphic, except the ForkGlyph of a decision row that absorbed its chapter.
+    expect(story.every((row) => row.graphic === null || row.graphic.kind === "fork")).toBe(true);
   });
 
-  it("sanitizes a hostile decision title and keeps it in a mono slot", () => {
+  it("sanitizes a hostile decision title and sets it in the sans face", () => {
     const base = foldFixture("oauth");
     const session = {
       ...base,
@@ -48,7 +50,8 @@ describe("buildOutlineRows", () => {
     };
     const fork = itemsOf(buildOutlineRows(session, ALL_OPEN), "story").find((row) => row.icon === "fork");
     expect(fork?.title).toBe("Pick⟨U+202E⟩ one");
-    expect(fork?.mono).toBe(true);
+    // Decision titles are prose, not paths or commands (§7.12): sans, still neutralised.
+    expect(fork?.mono).toBe(false);
   });
 
   it("adds turn rows only when there is more than one turn", () => {
@@ -134,7 +137,57 @@ describe("buildOutlineRows", () => {
     const hostile = "src/evil\u202Egnp.ts";
     const session = { ...base, entities: base.entities.map((e, i) => (i === 0 ? { ...e, path: hostile, label: hostile } : e)) };
     const row = itemsOf(buildOutlineRows(session, ALL_OPEN), "files").find((item) => item.key === first?.id);
-    expect(row?.title).toBe("src/evil\u27E8U+202E\u27E9gnp.ts");
     expect(row?.title).not.toContain("\u202E");
+    expect(row?.hint).toBe("src/evil\u27E8U+202E\u27E9gnp.ts");
+    expect(row?.label).toContain("src/evil\u27E8U+202E\u27E9gnp.ts");
+    expect(row?.label).not.toContain("\u202E");
+  });
+
+  it("shows a Files row by its basename, cut in the middle, with the full path in the tooltip and name", () => {
+    const rows = itemsOf(buildOutlineRows(foldFixture("oauth"), ALL_OPEN), "files");
+    const identity = rows.find((row) => row.hint === "src/auth/identity.ts");
+    expect(identity?.title).toBe("identity.ts");
+    expect(identity?.label.startsWith("src/auth/identity.ts")).toBe(true);
+    const migration = rows.find((row) => row.hint === "migrations/001_create_identities.sql");
+    // "001_create_identities.sql" is too long for the 216 px column: the extension must survive.
+    expect(migration?.title).toMatch(/^001_.*….*\.sql$/u);
+    expect(migration?.title.length).toBeLessThanOrEqual(FILE_TITLE_MAX);
+    expect(migration?.label.startsWith("migrations/001_create_identities.sql")).toBe(true);
+  });
+
+  it("folds a decision-born chapter into its decision row with the fork glyph", () => {
+    const session = foldFixture("oauth");
+    const decision = session.steps.find((step) => step.kind === "decision");
+    const born = session.chapters.find((chapter) => chapter.decisionIds.includes(`decision:${decision?.decision?.decisionId ?? ""}`));
+    expect(decision).toBeDefined();
+    expect(born).toBeDefined();
+    const story = itemsOf(buildOutlineRows(session, ALL_OPEN), "story");
+    // One row for the decision and the chapter it gave birth to, not two near-duplicates.
+    expect(story.filter((row) => row.selId === decision?.id || row.chapterId === born?.id)).toHaveLength(1);
+    const row = story.find((item) => item.selId === decision?.id);
+    expect(row?.icon).toBe("fork");
+    expect(row?.chapterId).toBe(born?.id);
+    expect(row?.alsoSelects).toBe(born?.id);
+    expect(row?.graphic?.kind).toBe("fork");
+    expect(row?.tMs).toBe(Math.min(decision?.tMs ?? 0, born?.tMs ?? 0));
+    expect(row?.mono).toBe(false);
+  });
+
+  it("marks ≠ only on chapters that carry the claim finding, plus the Final claim", () => {
+    const base = foldFixture("oauth");
+    const claim = base.findings.find((finding) => finding.ruleId === "claim_contradicted");
+    const failing = base.chapters.find((chapter) => chapter.status === "failed");
+    expect(claim).toBeDefined();
+    expect(failing).toBeDefined();
+    // Model scoping (branch M) leaves the claim on the failing chapter only; the Outline follows the data.
+    const session = {
+      ...base,
+      chapters: base.chapters.map((chapter) =>
+        chapter.id === failing?.id ? chapter : { ...chapter, findingIds: chapter.findingIds.filter((id) => id !== claim?.id) },
+      ),
+    };
+    const story = itemsOf(buildOutlineRows(session, ALL_OPEN), "story");
+    const marked = story.filter((row) => row.flag === "neq").map((row) => row.chapterId ?? row.title);
+    expect(marked).toEqual([failing?.id, "Final claim"]);
   });
 });
