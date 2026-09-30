@@ -18,7 +18,7 @@ import type { ViewerHost } from "../shell/host.js";
 import { ErrorBoundary } from "../shell/ErrorBoundary.js";
 import { useAnnounce } from "../shell/LiveRegion.js";
 import { useSessionView } from "../shell/session-context.js";
-import { useDispatch, useView } from "../state/store.js";
+import { useDispatch, useView, useViewStore } from "../state/store.js";
 import type { InspectorTab } from "../state/view-state.js";
 import { selectionTitle, topFindingOf } from "./finding-copy.js";
 import styles from "./Inspector.module.css";
@@ -116,7 +116,7 @@ function TabBody({
   session: TraceSession | null;
   index: TraceIndex;
   selection: SelectionId | null;
-  onRelatedSelect(): void;
+  onRelatedSelect(id: SelectionId): void;
 }) {
   if (tab === "summary") {
     return <Summary session={session} index={index} selection={selection} onRelatedSelect={onRelatedSelect} />;
@@ -139,15 +139,17 @@ function InspectorBody({ host }: InspectorProps) {
   const canRequest = host.requestChanges !== undefined;
 
   const panelRef = useRef<HTMLDivElement>(null);
-  const focusPanelNext = useRef(false);
+  const store = useViewStore();
+  /** Selection a Related click is heading to; cleared once reached or when the select turned out to be a no-op. */
+  const focusPanelFor = useRef<SelectionId | null>(null);
   const sending = useRef(false);
   const [, setSendingTick] = useState(false);
 
   // After a Related click remounts the keyed panel, keep keyboard focus in the inspector (never on Live rebuilds).
   useEffect(() => {
-    if (!focusPanelNext.current) return;
-    focusPanelNext.current = false;
-    panelRef.current?.focus();
+    const intent = focusPanelFor.current;
+    focusPanelFor.current = null;
+    if (intent !== null && intent === selection) panelRef.current?.focus();
   }, [selection]);
 
   const onPrimary = async (): Promise<void> => {
@@ -224,8 +226,10 @@ function InspectorBody({ host }: InspectorProps) {
           session={session}
           index={index}
           selection={selection}
-          onRelatedSelect={() => {
-            focusPanelNext.current = true;
+          onRelatedSelect={(id) => {
+            focusPanelFor.current = id;
+            store.dispatch({ type: "select", id, by: "shell" });
+            if (store.get().selection !== id) focusPanelFor.current = null;
           }}
         />
       </div>
@@ -233,7 +237,8 @@ function InspectorBody({ host }: InspectorProps) {
         <button
           type="button"
           className={styles.primary}
-          disabled={selection === null || session === null || sending.current}
+          disabled={selection === null || session === null}
+          aria-disabled={sending.current || undefined}
           aria-busy={sending.current}
           onClick={() => void onPrimary()}
         >

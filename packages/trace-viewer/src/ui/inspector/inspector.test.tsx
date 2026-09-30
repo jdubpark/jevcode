@@ -122,6 +122,41 @@ describe("Inspector", () => {
     expect(document.querySelector('[role="tabpanel"]')?.contains(document.activeElement)).toBe(true);
   });
 
+  it("keeps focus on the request button while a send is in flight", async () => {
+    let release: () => void = () => undefined;
+    const requestChanges = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    const h = renderHarness(<Inspector host={{ requestChanges }} />, foldFixture("oauth"), {
+      state: { selection: claimStepId() as `step:${number}` },
+    });
+    const button = screen.getByRole("button", { name: /Request changes/ });
+    button.focus();
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    release();
+    await waitFor(() => expect(h.announcements).toContain("Sent to the composer"));
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("drops the focus intent of a Related click that does not change the selection", () => {
+    const h = renderHarness(<Inspector host={{}} />, foldFixture("oauth"), { state: { selection: claimStepId() as `step:${number}` } });
+    const related = screen.getByText("Related").closest("section")?.querySelector("button");
+    if (related === null || related === undefined) throw new Error("no Related button");
+    const before = h.store.get().selection;
+    let requested: string | null = null;
+    const dispatch = vi.spyOn(h.store, "dispatch").mockImplementation((action) => {
+      if (action.type === "select") requested = action.id;
+    });
+    related.focus();
+    fireEvent.click(related);
+    dispatch.mockRestore();
+    expect(requested).not.toBeNull();
+    expect(h.store.get().selection).toBe(before);
+    (document.activeElement as HTMLElement | null)?.blur();
+    act(() => h.store.dispatch({ type: "select", id: requested as `step:${number}`, by: "shell" }));
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it("does not move focus when the selection changes from outside the inspector", () => {
     const session = foldFixture("oauth");
     const h = renderHarness(<Inspector host={{}} />, session, { state: { selection: session.steps[0]?.id ?? null } });
