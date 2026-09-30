@@ -93,24 +93,32 @@ Reference machine: Mac15,11 (Apple M3 Max, 36 GiB), macOS 27.0.1, Node 22.23.1, 
 
 Input: `JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_EXPORT=… node scripts/soak.mjs` wrote 110,962 trace rows (208 MiB) after 1,053 s; `traceReadMs` median 1,027 ms (runs 827, 1,061, 935, 1,027, 1,492), page p95 12.3 ms at 2,000 rows per page.
 
-| Budget (spec §10) | Target | Measured (headless, provisional) | Pass |
-|---|---|---|---|
-| Soak first paint (median of 5 cold loads after 1 discarded) | ≤ 300 ms | 1,670 ms (runs 1,665, 1,670, 1,670, 1,697, 1,674) | FAIL |
-| Soak full load (same runs) | ≤ 2 s | 1,670 ms (runs 1,665, 1,670, 1,670, 1,697, 1,674) | yes |
-| `j` to painted, 300 presses at Chapter level (`?perfrun=1`) | p95 ≤ 16.7 ms | p95 318.7 ms, median 114.7 ms, n 300 | FAIL |
-| Overview layout + paint, Session-level sweep | p95 ≤ 4 ms | p95 8.0 ms, median 5.5 ms, n 510 | FAIL |
-| Overlay nodes during the sweep | ≤ 150 | 10 | yes |
-| Anchor drift (`?selftest=drip`, oauth) | ≤ 1 px | 0 px (`SMOKE_OK`, rows 74) | yes |
+| Budget (spec §10) | Target | First measurement (lane C2 head 32c0b0a) | After the C2 fix wave (integration, 2026-09-30) | Pass now |
+|---|---|---|---|---|
+| Soak first paint (median of 5 cold loads after 1 discarded) | ≤ 300 ms | 1,670 ms (runs 1,665, 1,670, 1,670, 1,697, 1,674) | 183 ms (runs 181, 183, 184, 173, 183) | yes |
+| Soak full load (same runs) | ≤ 2 s | 1,670 ms (same runs) | 965 ms (runs 965, 958, 967, 969, 962) | yes |
+| `j` to painted, 300 presses at Chapter level (`?perfrun=1`) | p95 ≤ 16.7 ms | p95 318.7 ms, median 114.7 ms, n 300 (measured inside a rAF callback) | p95 18.8 / 18.9 ms, median 8.8 / 8.2 ms, n 300 (two runs); zero-work baseline p95 10.6 / 11.0 ms, median 2.9 / 3.7 ms | no (by 2 ms; see below) |
+| Overview layout + paint, Session-level sweep | p95 ≤ 4 ms | p95 8.0 ms, median 5.5 ms, n 510 | p95 0.5 ms, median 0.2 ms, n 512 (both runs) | yes |
+| Overlay nodes during the sweep | ≤ 150 | 10 | 7 / 9 | yes |
+| Anchor drift (`?selftest=drip`, oauth) | ≤ 1 px | 0 px (`SMOKE_OK`, rows 74) | 0 px (`SMOKE_OK`, rows 76) | yes |
 
-First paint equals full load in every run (the viewer paints once, after the last page): the progressive first paint of spec §10 does not happen for the static soak bundle. The 300 ms and 16.7 ms and 4 ms misses block the M4a exit until H5 confirms them in desktop Chrome or the owning tasks are iterated: first paint (C2-2 data controller and C2-3 shell commit), `j` to painted (C2-8 key handling, C2-12 spine rows) and overview paint (C2-10, C2-11). The headless run may overstate the paint costs (software rasterization), so this is a measurement to repeat, not a verdict on the code.
+The second column was taken after the four fix branches (M, A1, A2, B) and the integration commits were merged into `tv/c2-shell-hybrid`, on the same machine, in headless Chrome driven over CDP (`--headless=new`, real time, DPR 1, 1440 × 900), with a 1-minute load average of 6 to 8. First-paint and full-load values are the `tv:first-paint` and `tv:full-load` measures, which start at `tv:bundle-parsed` (about 1.15 s after navigation for the 208 MiB file).
+
+What changed since the first measurement:
+
+- First paint is now progressive. The data controller yields to the browser between pages (A2), so the viewer paints the first page instead of painting once after the last one. The fold got cheaper too (M part 2): a conservative exact guard skips zod for `change_unit` rows that zod would accept unchanged (fold 791 → 236 ms in Node), and a quadratic pass over shared validations that M part 1 had introduced in `buildChapters` (finalize 14.1 s in Node) is linear again (253 ms). A soak-shaped timing test (`model/fold.soak-shape.test.ts`) now guards that shape.
+- `j` to painted: A1 moved the harness to real input (keydown `timeStamp` to the next frame's paint, pressed from a macrotask at a random frame phase, per the orchestrator ruling), which removes the full frame the old rAF-dispatched presses added by construction, and it records a zero-work baseline (an unbound key). A1 also made each `j` do one spine reveal with no forced layout; M cut Chapter-level `buildSpineRows` on soak from 115 ms to 3 ms (noise labels once per run) and Session level from 88 ms to 2 ms. The viewer's own share (median `j` minus median baseline) is about 5 ms. The p95 misses the 16.7 ms budget by about 2 ms while the baseline p95 alone is 11 ms on this loaded machine, so the miss is not yet attributable to the viewer; H5 on a quiet desktop decides it.
+- Overview paint: M replaced the per-frame band merge with cached, pre-merged band chains and a binary search to the viewport (`layoutOverview` on the pre-M6 160k-piece shape 32–44 ms → 0.6 ms), and B made the overview lay out once per camera change instead of once per render.
 
 The `?perf=1&perfrun=1` autorun completes in real time (about 60 s). It never completes under `--virtual-time-budget`.
 
 Smoke: `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid` printed `SMOKE_OK 2 screenshots` (371 s); screenshots `apps/trace-viewer-dev/.smoke/hybrid-1440.png` and `hybrid-1000.png` (git-ignored; regenerate with the command). Two defects surfaced while making it pass: the drip selftest reported 214 px of "drift" because a scroll landing between anchor refreshes was counted (fixed in `Spine.tsx`: drift is now the movement the scroll offset and the anchor compensation do not explain), and the open probe or the screenshot Chrome occasionally wrote no result (one rerun passed; see the report).
 
+Smoke after the fix wave: `node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid --port 4195` printed `hybrid: opened with step:92 selected and in view, painted at 62 ms`, `hybrid: selftest ok (rows 76, max drift 0px)` and `SMOKE_OK 2 screenshots`. In its `--screenshot` capture (virtual time) the top spine row still sits half under the range chip at Chapter level; in real time the spine start-aligns it about 300 ms after open (integration item 5).
+
 Found at once (spec §1; `?selftest=open`, Hybrid, 1440 px): the smoke printed `hybrid: opened with step:92 selected and in view, painted at 74 ms`. The selection equals oauth's claim step, the claim row lies inside the spine viewport, its pin lies inside the overview viewport, and `tv:initial-selection-painted` `startTime` is 74 ms (≤ 5000).
 
-Screenshot observation (not a human sign-off): in `hybrid-1440.png` the Inspector's claim-versus-observed graphic wraps the claim text into a narrow column and the observed pill runs past the panel's right edge.
+Screenshot observation (not a human sign-off): in `hybrid-1440.png` the Inspector's claim-versus-observed graphic wraps the claim text into a narrow column and the observed pill runs past the panel's right edge. After the fix wave (not a human sign-off either): the Inspector leads with the failing test, an Evidence list with mini graphics and short Related rows; the claim-versus-observed card lives in the spine row and matches the mockup's layout; the top spine row no longer sits half under the range chip; headless screenshots of oauth at 1440, 1180 and 1000 px, each level, with and without a selection, are listed in `.superpowers/sdd/2026-09-28-trace-viewer-06-viewer-shell-hybrid/fix-wave-integration.md`.
 
 PENDING human rows (all deferred by the person on 2026-09-30):
 
