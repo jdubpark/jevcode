@@ -22,6 +22,7 @@ import { sweepStaleSessions } from "./session-recovery.js";
 import { createAppState } from "./state.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
+import { forwardTracePerf, runSmoke } from "./smoke.js";
 import { createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
 import type { TraceWindowRegistry } from "./trace-window.js";
 
@@ -49,6 +50,8 @@ function loadEnvFileFromRepo(): void {
 loadEnvFileFromRepo();
 
 const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
+/** Prints trace windows' TRACE_PERF lines (docs/perf.md live-tick samples). */
+const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let terminals: TerminalManager | null = null;
@@ -79,18 +82,6 @@ function createWindow(): BrowserWindow {
   });
   void window.loadFile(path.join(dirname, "../renderer/src/renderer/index.html"));
   return window;
-}
-
-function runSmoke(window: BrowserWindow): void {
-  const timeout = setTimeout(() => {
-    console.error("SMOKE_FAIL: renderer did not finish loading within 15s");
-    app.exit(1);
-  }, 15_000);
-  window.webContents.once("did-finish-load", () => {
-    clearTimeout(timeout);
-    console.log("SMOKE_OK");
-    app.quit();
-  });
 }
 
 app.whenReady().then(() => {
@@ -157,7 +148,11 @@ app.whenReady().then(() => {
 
   const traceService = createTraceService(reader);
   const windows = createTraceWindowRegistry({
-    create: (options) => new BrowserWindow(options),
+    create: (options) => {
+      const window = new BrowserWindow(options);
+      if (TRACE_PERF) forwardTracePerf(window, (line) => console.log(line));
+      return window;
+    },
     preloadPath: PRELOAD_PATH,
     traceHtmlPath: TRACE_HTML_PATH,
   });
@@ -194,7 +189,19 @@ app.whenReady().then(() => {
   });
 
   if (SMOKE) {
-    runSmoke(mainWindow);
+    runSmoke({
+      mainWindow,
+      env: process.env,
+      newestSessionId: () => traceService.listSessions({ limit: 1 })[0]?.sessionId ?? null,
+      openTraceWindow: (sessionId) => windows.openTraceWindow(sessionId),
+      now: () => performance.now(),
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      log: (line) => console.log(line),
+      error: (line) => console.error(line),
+      succeed: () => app.quit(),
+      fail: () => app.exit(1),
+    });
   }
 
   app.on("activate", () => {

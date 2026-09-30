@@ -3640,4 +3640,4 @@ git add docs/perf.md docs/SPEC.md docs/security.md
 git commit -m "docs: record M5 trace viewer budgets and the trace window allowlist"
 ```
 
-**Part Db exit (M5 exit):** every row of Step 7 holds. Rebase on `main` after C3b merges (UI index §4: C3b → Db), rerun `pnpm install --frozen-lockfile && pnpm -r build`, the root checks and D-6 Step 9, then merge.
+**Part Db exit (M5 exit):** every row of Step 7 holds. Rebase on `main` after C3b merges (UI index §4: C3b → Db), rerun `pnpm install --frozen-lockfile && pnpm -r build`, the root checks and D-6 Step 9, then the 5-run soak open (D-8 Step 1: 6 boots, discard run 0; the M5 full load passed with a thin margin, 142 ms, so record it again after the rebase and at H5 on an idle machine), then merge.

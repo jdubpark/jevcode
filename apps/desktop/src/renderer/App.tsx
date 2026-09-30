@@ -8,6 +8,7 @@ import {
 } from "../shared/prefs.js";
 import type { AgentPreferences } from "../shared/prefs.js";
 import { getBridge } from "./bridge.js";
+import { traceOpenErrorMessage } from "./trace-open-error.js";
 import { AgentSettings } from "./components/AgentSettings.js";
 import { DebugPanel } from "./components/DebugPanel.js";
 import { Header } from "./components/Header.js";
@@ -26,6 +27,7 @@ export function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState("");
+  const [traceError, setTraceError] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<AgentPreferences>(
     DEFAULT_AGENT_PREFERENCES,
   );
@@ -69,6 +71,10 @@ export function App() {
   }, [bridge, repo, sessionState?.sessionId]);
 
   useEffect(() => {
+    setTraceError(null);
+  }, [sessionState?.sessionId]);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "J") {
         event.preventDefault();
@@ -81,12 +87,25 @@ export function App() {
     };
   }, []);
 
+  const handleOpenTrace = useCallback(() => {
+    const sessionId = sessionState?.sessionId;
+    if (!sessionId) return;
+    // trace:open only opens or focuses a window; it never calls session.switchTo.
+    setTraceError(null);
+    void bridge.trace.open(sessionId).catch((error: unknown) => {
+      const message = traceOpenErrorMessage(error);
+      console.warn(`[jevcode] ${message}`);
+      setTraceError(message);
+    });
+  }, [bridge, sessionState?.sessionId]);
+
   const handleCloseRepo = useCallback(() => {
     if (repo) {
       void bridge.repo.close(repo.repoId);
       setRepo(null);
       setSessionState(null);
       setActivePrompt("");
+      setTraceError(null);
     }
   }, [bridge, repo]);
 
@@ -101,6 +120,7 @@ export function App() {
         onToggleTerminal={() => setTerminalOpen((open) => !open)}
         onToggleDebug={() => setDebugOpen((open) => !open)}
         onCloseRepo={handleCloseRepo}
+        onOpenTrace={handleOpenTrace}
       />
       <div className="body">
         <aside className="sidebar">
@@ -109,6 +129,9 @@ export function App() {
           <AgentSettings prefs={prefs} onSet={(patch) => void bridge.prefs.set(patch)} />
         </aside>
         <main className="workspace-column">
+          {traceError !== null ? (
+            <p className="form-error" role="alert">{traceError}</p>
+          ) : null}
           <WorkspaceHost
             repo={repo}
             sessionState={sessionState}
