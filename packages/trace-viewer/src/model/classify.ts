@@ -17,7 +17,7 @@ function isRun(step: Step): boolean {
 }
 
 /** A guardrail step with a warning or critical clamp (CLAMP_META; unknown ids are info). Only these
- *  anchor a guardrail_clamp finding; an info-only step is lifecycle noise. */
+ *  anchor a guardrail_clamp finding; an info-only step is pipeline noise. */
 export function hasSevereClamp(step: Step): boolean {
   return (step.guardrail?.clampIds ?? []).some((id) => severityRank(clampMeta(id).severity) >= severityRank("warning"));
 }
@@ -105,11 +105,13 @@ export function noiseOf(step: Step, context: NoiseContext, lastRuns: ReadonlyMap
       return null;
     }
     case "lifecycle":
-    case "attention":
       return "lifecycle";
+    case "attention":
+      // Jev pipeline rows, not agent lifecycle: the spine names them "pipeline events" (spec §6.6).
+      return "pipeline";
     case "guardrail":
       // Routine suppress_formatting and suppress_lockfile rows collapse (spec §6.6, §6.7).
-      return hasSevereClamp(step) ? null : "lifecycle";
+      return hasSevereClamp(step) ? null : "pipeline";
     case "test":
     case "check": {
       if (step.status !== "ok" || step.target === undefined) return null;

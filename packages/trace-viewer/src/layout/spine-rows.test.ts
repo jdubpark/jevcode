@@ -44,6 +44,22 @@ describe("spine rows on the oauth-like session", () => {
     expect(labels.slice(0, 2)).toEqual(["3 reads", "2 lockfile and formatting edits"]);
   });
 
+  it("labels Jev pipeline noise as pipeline events, apart from agent lifecycle events", () => {
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "guardrail", tMs: 1_000, noise: "pipeline" },
+        { kind: "attention", tMs: 1_000, noise: "pipeline" },
+        { kind: "command", tMs: 2_000, target: "ls" },
+        { kind: "attention", tMs: 3_000, noise: "pipeline" },
+        { kind: "lifecycle", tMs: 3_000, noise: "lifecycle" },
+      ],
+    });
+    const labels = rowsOf(session).filter((r): r is Extract<SpineRow, { t: "noise" }> => r.t === "noise").map((r) => r.label);
+    expect(labels).toEqual(["3 pipeline events", "2 noise steps: pipeline events, lifecycle events"]);
+  });
+
   it("Session level shows chapter rows interleaved with beats", () => {
     const rows = rowsOf(oauth, { level: "session" });
     expect(rows.filter((r) => r.t === "chapter")).toHaveLength(7);

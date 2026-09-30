@@ -245,7 +245,7 @@ describe("guardrail_clamp", () => {
         kind: "guardrail",
         problems: [],
         findingIds: [],
-        noise: "lifecycle",
+        noise: "pipeline",
       });
     }
     expect(session.chapters[0]?.findingIds).toEqual([]);

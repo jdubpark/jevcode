@@ -89,7 +89,8 @@ describe("noise", () => {
     expect(stepAt(session, real).noise).toBeNull();
     expect(stepAt(session, poll).noise).toBe("duplicate_poll");
     expect(stepAt(session, waiting).noise).toBe("lifecycle");
-    expect(stepAt(session, attention).noise).toBe("lifecycle");
+    // Jev pipeline rows get their own reason and noun, not the agent's lifecycle (spec §6.6 Noise).
+    expect(stepAt(session, attention).noise).toBe("pipeline");
     expect(stepAt(session, failed)).toMatchObject({ problems: ["agent_failed"], noise: null });
   });
 
@@ -100,8 +101,8 @@ describe("noise", () => {
     const unknown = b.jev({ id: "j2", clamps: ["guardrail.security"] });
     const warning = b.jev({ id: "j3", clamps: ["suppress_lockfile", "security_path"] });
     const session = fold(b);
-    expect(stepAt(session, routine)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
-    expect(stepAt(session, unknown)).toMatchObject({ kind: "guardrail", problems: [], noise: "lifecycle" });
+    expect(stepAt(session, routine)).toMatchObject({ kind: "guardrail", problems: [], noise: "pipeline" });
+    expect(stepAt(session, unknown)).toMatchObject({ kind: "guardrail", problems: [], noise: "pipeline" });
     expect(stepAt(session, warning)).toMatchObject({ kind: "guardrail", problems: [], noise: null });
     expect(stepAt(session, warning).findingIds).toHaveLength(1);
   });

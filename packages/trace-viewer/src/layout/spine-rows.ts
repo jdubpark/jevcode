@@ -53,6 +53,7 @@ const NOUN: { readonly [R in NoiseReason]: [string, string] } = {
   formatting: ["formatting edit", "formatting edits"],
   duplicate_poll: ["repeated poll", "repeated polls"],
   lifecycle: ["lifecycle event", "lifecycle events"],
+  pipeline: ["pipeline event", "pipeline events"],
   superseded: ["superseded edit", "superseded edits"],
   passing_test: ["passing test run", "passing test runs"],
 };
