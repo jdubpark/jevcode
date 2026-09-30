@@ -245,6 +245,134 @@ export function criticalFrameKeys(layout: { readonly frames: readonly CanvasFram
 }
 
 /**
+ * The whole-layout marks (C3-7, lane review I-1): which frames are bad (criticalFrameKeys) and running (frameRunning),
+ * and each frame's flag (frameFlag). Built from the previous build (spec §6.4 keeps unchanged steps and chapters), so a
+ * Live commit re-derives only the frames it can have changed.
+ */
+export interface FrameMarks {
+  readonly critical: ReadonlySet<string>;
+  readonly running: ReadonlySet<string>;
+  readonly flags: ReadonlyMap<string, FrameFlag>;
+}
+
+type MemberObject = Chapter | Step | undefined;
+
+/** A frame's marks and the inputs they came from; never changed once built, so any later build may keep it. */
+interface MarkRecord {
+  item: CanvasFrame["item"];
+  kind: CanvasFrame["kind"];
+  selId: string;
+  memberSelIds: readonly string[];
+  members: readonly MemberObject[];
+  tone: "bad" | "neutral";
+  running: boolean;
+  flag: FrameFlag;
+}
+
+interface MarksState {
+  ctx: FrameContext;
+  sets: StepSets;
+  records: ReadonlyMap<string, MarkRecord>;
+}
+
+/** Frames a build derived (not kept) and chapter-step links it scanned for bit flips: a regression gauge for tests. */
+export interface FrameMarksWork {
+  frames: number;
+  derived: number;
+  links: number;
+}
+
+const MARKS = new WeakMap<FrameMarks, MarksState>();
+const MARKS_WORK = new WeakMap<FrameMarks, FrameMarksWork>();
+
+export function frameMarksWork(marks: FrameMarks): FrameMarksWork | undefined {
+  return MARKS_WORK.get(marks);
+}
+
+function flipsOf(before: ReadonlySet<string>, after: ReadonlySet<string>, out: Set<string>): void {
+  for (const id of before) if (!after.has(id)) out.add(id);
+  for (const id of after) if (!before.has(id)) out.add(id);
+}
+
+function memberOf(ctx: FrameContext, selId: string): MemberObject {
+  return ctx.chapterById.get(selId) ?? ctx.stepById.get(selId);
+}
+
+/**
+ * A frame's tone and running read only its members' chapters (stepIds, validationOnlyStepIds) and whether each listed
+ * step is bad or running; its flag reads the tone and its chapters' clamps, and a claim's findings. So a record stays
+ * valid while the frame has the same members resolving to the same objects and no step it lists flipped bad or
+ * running (a finding can flip a step without changing it). Claim flags read findings directly and are always redone.
+ */
+export function buildFrameMarks(
+  layout: { readonly frames: readonly CanvasFrame[] },
+  ctx: FrameContext,
+  previous?: FrameMarks,
+): FrameMarks {
+  const sets = stepSets(ctx);
+  const prior = previous === undefined ? undefined : MARKS.get(previous);
+  const work: FrameMarksWork = { frames: layout.frames.length, derived: 0, links: 0 };
+  // Bits that flipped since the previous build, and the chapters listing one of them.
+  const flips = new Set<string>();
+  const flipped = new Set<string>();
+  if (prior !== undefined && prior.ctx !== ctx) {
+    flipsOf(prior.sets.bad, sets.bad, flips);
+    flipsOf(prior.sets.running, sets.running, flips);
+    if (flips.size > 0) {
+      for (const [id, chapter] of ctx.chapterById) {
+        work.links += chapter.stepIds.length;
+        if (chapter.stepIds.some((stepId) => flips.has(stepId))) flipped.add(id);
+      }
+    }
+  }
+  const records = new Map<string, MarkRecord>();
+  const critical = new Set<string>();
+  const running = new Set<string>();
+  const flags = new Map<string, FrameFlag>();
+  for (const frame of layout.frames) {
+    const kept = prior?.records.get(frame.key);
+    let record: MarkRecord | undefined =
+      kept !== undefined && kept.item === frame.item && kept.kind === frame.kind && kept.selId === frame.selId && frame.item !== "claim"
+        ? kept
+        : undefined;
+    const ids = frame.memberSelIds;
+    if (record !== undefined && record.memberSelIds.length === ids.length) {
+      for (let i = 0; i < ids.length; i += 1) {
+        const id = ids[i] ?? "";
+        if (record.memberSelIds[i] !== id || record.members[i] !== memberOf(ctx, id) || flipped.has(id) || flips.has(id)) {
+          record = undefined;
+          break;
+        }
+      }
+    } else {
+      record = undefined;
+    }
+    if (record === undefined) {
+      work.derived += 1;
+      const tone = hasOwnStepIn(frame, ctx, sets.bad) ? "bad" : "neutral";
+      record = {
+        item: frame.item,
+        kind: frame.kind,
+        selId: frame.selId,
+        memberSelIds: ids,
+        members: ids.map((id) => memberOf(ctx, id)),
+        tone,
+        running: hasOwnStepIn(frame, ctx, sets.running),
+        flag: flagOf(frame, ctx, tone),
+      };
+    }
+    records.set(frame.key, record);
+    if (record.tone === "bad") critical.add(frame.key);
+    if (record.running) running.add(frame.key);
+    flags.set(frame.key, record.flag);
+  }
+  const marks: FrameMarks = { critical, running, flags };
+  MARKS.set(marks, { ctx, sets, records });
+  MARKS_WORK.set(marks, work);
+  return marks;
+}
+
+/**
  * "shield" (a warning or critical clamp) is always neutral: a bad clamp (a guardrail problem, layout/tone.ts) makes a
  * member step bad, and a bad frame reads "failed" first. Warning clamps stay neutral, as in the Outline.
  */
