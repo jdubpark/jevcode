@@ -201,7 +201,12 @@ describe("Frame", () => {
   it("draws the decision's fork on the decision frame only; the identity chapter lists its files", () => {
     const identity = renderFrame(oauthCanvasSession(), (frame) => frame.selId === "unit:oauth-identity-layer");
     expect(identity.view.container.querySelector('[data-graphic="fork"]')).toBeNull();
-    expect(identity.view.container.querySelectorAll("[data-file]")).toHaveLength(4);
+    // Four files, three rows fit the 112 px card (C3-6 re-review N-1); the fourth is counted in "+1 more".
+    const files = [...identity.view.container.querySelectorAll<HTMLElement>("[data-file]")];
+    expect(files.map((file) => file.dataset.file)).toEqual(["src/auth/google.ts", "src/auth/identity.ts", "src/auth/service.ts"]);
+    expect(identity.view.container.querySelector("[data-more-files]")?.textContent).toBe("+1 more");
+    // Each row carries its own counts; no total floats beside the list.
+    expect(files[0]?.textContent).toMatch(/\+\d+/u);
     cleanup();
     const policy = renderFrame(oauthCanvasSession(), (frame) => frame.selId === "unit:oauth-account-linking-decision");
     expect(policy.view.container.querySelector('[data-graphic="fork"]')).toBeNull();

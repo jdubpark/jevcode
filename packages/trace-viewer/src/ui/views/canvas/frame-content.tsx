@@ -14,14 +14,17 @@ import {
 import { DiffBar } from "../../graphics/DiffBar.js";
 import { DurationBar } from "../../graphics/DurationBar.js";
 import { Graphic } from "../../graphics/Graphic.js";
+import { compactCount } from "../../graphics/scales.js";
 import { TestDots } from "../../graphics/TestDots.js";
 import { Icon } from "../../icons/Icon.js";
 import { KIND_ICON } from "../../icons/kind-icons.js";
 import styles from "./Frame.module.css";
 import {
+  CARD_FILE_ROWS,
   claimSpanFor,
   frameStepRows,
   graphicPhrase,
+  hiddenFileCount,
   planItems,
   STEP_LIST_CAP,
   type FrameContext,
@@ -259,13 +262,50 @@ function EditSummary({ steps }: { steps: readonly Step[] }): React.JSX.Element |
   );
 }
 
+type DiffFile = { path: string; added: number; removed: number };
+
+/** The last path segment, or the last two when another listed file shares it. */
+function fileName(path: string, files: readonly DiffFile[]): string {
+  const parts = path.split("/");
+  const base = parts.at(-1) ?? path;
+  const clash = files.some((file) => file.path !== path && file.path.split("/").at(-1) === base);
+  return clash ? parts.slice(-2).join("/") : base;
+}
+
+/** Canvas mockup file list: one row per file with its own counts, capped to the rows the card fits (CARD_FILE_ROWS). */
+function FileList({ files }: { files: readonly DiffFile[] }): React.JSX.Element {
+  const shown = files.slice(0, CARD_FILE_ROWS);
+  return (
+    <ul className={styles.files} aria-label="Files">
+      {shown.map((file) => (
+        <li key={file.path} className={styles.fileRow} data-file={file.path}>
+          <span className={styles.filePath} title={displayUntrusted(file.path)}>
+            {displayUntrusted(fileName(file.path, shown))}
+          </span>
+          <DiffBar size="xs" added={file.added} removed={file.removed} />
+          <span className={styles.fileCount}>
+            {file.removed > 0 ? `+${compactCount(file.added)} −${compactCount(file.removed)}` : `+${compactCount(file.added)}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** The frame's mini graphic at card scale; hidden below GRAPHIC_MIN_K by the zoom band. */
 function GraphicPart(props: BodyProps): React.JSX.Element | null {
   const graphic = props.model.graphic;
   if (graphic === null) return null;
   // Tests keep their counts and duration as text below GRAPHIC_MIN_K; the dots and the run's bar are the graphic part.
   if (graphic.kind === "tests") return <TestsGraphic spec={graphic} run={testRunOf(props)} nowMs={props.nowMs} />;
-  const body = graphic.kind === "fork" ? <OptionFork spec={graphic} /> : <Graphic spec={graphic} size="sm" />;
+  const body =
+    graphic.kind === "fork" ? (
+      <OptionFork spec={graphic} />
+    ) : graphic.kind === "diff" && graphic.files !== undefined && graphic.files.length > 0 ? (
+      <FileList files={graphic.files} />
+    ) : (
+      <Graphic spec={graphic} size="sm" />
+    );
   return (
     <div className={styles.graphic} data-part="graphic" data-graphic={graphic.kind}>
       {body}
@@ -393,6 +433,7 @@ function ChapterBody(props: FrameContentProps): React.JSX.Element {
   const chapter = ctx.chapterById.get(frame.selId);
   // The span of the chapter and its steps: unit timestamps alone are often a single instant.
   const spanMs = model.end - model.start;
+  const hidden = hiddenFileCount(graphic);
   return (
     <>
       <GraphicPart {...props} />
@@ -407,6 +448,7 @@ function ChapterBody(props: FrameContentProps): React.JSX.Element {
             </>
           ) : null}
           <span className={styles.spacer} />
+          {hidden > 0 ? <span data-more-files="">{`+${hidden} more`}</span> : null}
           <span>{`${steps.length} ${steps.length === 1 ? "step" : "steps"}`}</span>
         </div>
       )}
