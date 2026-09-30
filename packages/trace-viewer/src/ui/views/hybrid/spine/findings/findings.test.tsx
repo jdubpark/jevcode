@@ -163,6 +163,22 @@ describe("FINDING_BODY", () => {
     render(<FindingBody finding={recovery} step={session.steps[0]!} session={session} onJump={() => undefined} />);
     const labels = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
     expect(labels).toHaveLength(3);
-    for (const label of labels) expect(label).toMatch(/^Go to (fail|edit|pass) step at \+\d+:\d\d/);
+    for (const label of labels) expect(label).toMatch(/^Go to [a-z]+ step at \+\d+:\d\d/);
+  });
+
+  it("labels a recovery step by its real kind, not as a pass", () => {
+    const base = foldFixture("oauth");
+    const other = base.steps.filter((step) => step.kind !== "edit" && step.kind !== "test" && step.status !== "failed").slice(0, 2);
+    const passingSource = base.steps.find((step) => step.kind === "test") ?? base.steps[0]!;
+    const passing = { ...passingSource, kind: "test" as const, status: "ok" as const };
+    expect(other).toHaveLength(2);
+    const session = { ...base, steps: base.steps.map((step) => (step.id === passing.id ? passing : step)) };
+    const steps = [...other, passing];
+    const recovery = synthetic(session, { ruleId: "recovery_arc", severity: "info", stepIds: steps.map((step) => step.id) });
+    render(<FindingBody finding={recovery} step={session.steps[0]!} session={session} onJump={() => undefined} />);
+    const labels = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+    expect(labels[0]).toMatch(new RegExp(`^Go to ${other[0]!.kind} step at `));
+    expect(labels[1]).toMatch(new RegExp(`^Go to ${other[1]!.kind} step at `));
+    expect(labels[2]).toMatch(/^Go to pass step at /);
   });
 });

@@ -4,9 +4,12 @@ import { KIND_ICON } from "../../../../icons/kind-icons.js";
 import type { FindingBodyProps } from "../Spine.js";
 import styles from "../Spine.module.css";
 
-function outcomeWord(step: Step): "fail" | "edit" | "pass" {
+/** The arc reads fail, edit, pass (spec §7.4); any other step keeps its own kind name. */
+function outcomeWord(step: Step): string {
   if (step.status === "failed") return "fail";
-  return step.kind === "edit" ? "edit" : "pass";
+  if (step.kind === "edit") return "edit";
+  if ((step.kind === "test" || step.kind === "check") && step.status === "ok") return "pass";
+  return step.kind;
 }
 
 export function RecoveryFinding({ finding, session, onJump }: FindingBodyProps) {
