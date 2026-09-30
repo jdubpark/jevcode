@@ -224,6 +224,42 @@ describe("createEvidenceSession", () => {
       expect(mocks.gitCollect.mock.calls.length).toBe(calls);
       expect(mocks.watcherStop).toHaveBeenCalledTimes(1);
     });
+
+    it("polls again when started after stop() (a paused stop, then resume)", async () => {
+      mocks.gitCollect.mockResolvedValue([]);
+      mocks.revertCheck.mockResolvedValue(null);
+      const session = makeSession();
+
+      await session.start();
+      await session.stop();
+      await session.start();
+      const calls = mocks.gitCollect.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(mocks.gitCollect.mock.calls.length).toBe(calls + 1);
+      expect(mocks.watcherStart).toHaveBeenCalledTimes(2);
+      await session.stop();
+    });
+
+    it("starts no watcher or poll when stopped during the initial collect", async () => {
+      let release: (facts: EvidenceFact[]) => void = () => {};
+      mocks.gitCollect.mockImplementationOnce(
+        () =>
+          new Promise<EvidenceFact[]>((resolve) => {
+            release = resolve;
+          }),
+      );
+      mocks.gitCollect.mockResolvedValue([]);
+      mocks.revertCheck.mockResolvedValue(null);
+      const session = makeSession();
+
+      const starting = session.start();
+      await session.stop();
+      release([]);
+      await starting;
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(mocks.watcherStart).not.toHaveBeenCalled();
+      expect(mocks.gitCollect).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

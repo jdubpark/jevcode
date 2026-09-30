@@ -110,7 +110,12 @@ export function createEvidenceSession(
   let stopped = false;
 
   return {
+    // Also restarts a stopped session (a paused stop, then resume). The git
+    // collector keeps its last emitted hashes, so the first collect reports
+    // only diffs that changed meanwhile.
     async start(): Promise<void> {
+      if (pollTimer !== null) return;
+      stopped = false;
       // Collectors push every fact into bridgeSink themselves; re-pushing the
       // returned facts would deliver each one twice.
       try {
@@ -119,6 +124,8 @@ export function createEvidenceSession(
       } catch (error) {
         collectTracker.failure("initial git collect", error);
       }
+      // stop() ran during the initial collect: start nothing.
+      if (stopped || pollTimer !== null) return;
       fileWatcher.start();
       pollTimer = setInterval(() => {
         if (stopped) return;
