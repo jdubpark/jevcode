@@ -2,7 +2,7 @@ import { memo, type JSX } from "react";
 
 import styles from "./graphics.module.css";
 import { graphicA11y, type GraphicBaseProps } from "./scales.js";
-import { displayUntrusted } from "./untrusted.js";
+import { displayUntrusted } from "../../model/index.js";
 
 export interface TableGlyphProps extends GraphicBaseProps {
   tables: readonly { name: string; role: "new" | "altered"; columns: number }[];
