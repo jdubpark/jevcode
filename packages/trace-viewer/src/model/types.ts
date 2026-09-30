@@ -205,6 +205,8 @@ export interface TestDetail extends TestCounts {
   runner?: string;
   /** At most the first 20 failures. */
   failures: TestFailureSummary[];
+  /** seq of the test_result row these counts come from; fetch it with TraceSource.payloads. */
+  resultSeq?: number;
 }
 
 export type DiffState = "text" | "truncated" | "withheld_secret" | "not_captured" | "none";

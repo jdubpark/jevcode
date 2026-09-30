@@ -5,6 +5,12 @@ import {
   type NormalizedAgentEvent,
 } from "@jevcode/contracts";
 import {
+  agentEventLabel,
+  agentStateLabel,
+  formatClock,
+  truncateMiddle,
+} from "@jevcode/trace-viewer/model";
+import {
   registry,
   setActionDispatcher,
   SurfaceManager,
@@ -85,67 +91,6 @@ function mergeEvents(
     .slice(-160);
 }
 
-function readable(value: string): string {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function shortToolName(value: string): string {
-  const parts = value.split(".");
-  return readable(parts[parts.length - 1] ?? value);
-}
-
-function shortPath(value: string): string {
-  const parts = value.split("/");
-  return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : value;
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function eventSummary(event: NormalizedAgentEvent): string {
-  switch (event.type) {
-    case "agent_started":
-      return "Started working on the task";
-    case "agent_message":
-      return event.role === "user" ? "Direction received" : event.text;
-    case "agent_reasoning":
-      return "Thinking";
-    case "tool_started":
-      return `Using ${shortToolName(event.tool)}`;
-    case "tool_completed":
-      return `Finished ${shortToolName(event.tool)}`;
-    case "command_started":
-      return `Running ${event.command}`;
-    case "command_completed":
-      return `${event.command} finished with exit ${event.exitCode}`;
-    case "file_read":
-      return `Reading ${shortPath(event.path)}`;
-    case "file_changed":
-      return `Changed ${shortPath(event.path)}`;
-    case "approval_requested":
-      return `Approval needed for ${event.command}`;
-    case "test_started":
-      return `Checking with ${event.command}`;
-    case "test_completed":
-      return `${event.command} ${event.exitCode === 0 ? "passed" : "failed"}`;
-    case "agent_waiting":
-      return "Waiting for direction";
-    case "agent_completed":
-      return "Task completed";
-    case "agent_failed":
-      return `Stopped: ${event.error}`;
-    case "agent_interrupted":
-      return event.reason === "stop"
-        ? "Stopped"
-        : event.reason === "steer"
-          ? "Redirected"
-          : "Paused";
-  }
-}
-
 function isConversationEvent(event: NormalizedAgentEvent): boolean {
   return (
     event.type === "agent_started" ||
@@ -188,23 +133,6 @@ function surfaceMeta(surface: SurfaceRecord): SurfaceMeta {
     return { group: "detail", label: "Code detail", title };
   }
   return { group: "change", label: "Change", title };
-}
-
-function statusLabel(state: SessionStatePayload["state"]): string {
-  switch (state) {
-    case "starting":
-      return "Starting";
-    case "running":
-      return "Working";
-    case "waiting_decision":
-      return "Needs your decision";
-    case "paused":
-      return "Paused";
-    case "completed":
-      return "Completed";
-    case "failed":
-      return "Stopped with an error";
-  }
 }
 
 function ActivityMark({ kind }: { kind: string }) {
@@ -256,7 +184,7 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
         <div>
           <div className="activity-message-meta">
             <strong>Task direction</strong>
-            <time>{formatTime(event.ts)}</time>
+            <time>{formatClock(event.ts)}</time>
           </div>
           <MessageText text={event.prompt} />
         </div>
@@ -271,7 +199,7 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
         <div>
           <div className="activity-message-meta">
             <strong>{event.role === "user" ? "Your direction" : "Agent note"}</strong>
-            <time>{formatTime(event.ts)}</time>
+            <time>{formatClock(event.ts)}</time>
           </div>
           <MessageText text={event.text} />
         </div>
@@ -300,8 +228,8 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
       </span>
       <div className="activity-operation-copy">
         <div>
-          <span>{eventSummary(event)}</span>
-          <time>{formatTime(event.ts)}</time>
+          <span>{agentEventLabel(event)}</span>
+          <time>{formatClock(event.ts)}</time>
         </div>
         {detail.length > 0 ? (
           <details>
@@ -726,7 +654,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
               {state ? (
                 <span className={`session-state session-state-${state}`}>
                   <span className="session-state-dot" />
-                  {statusLabel(state)}
+                  {agentStateLabel(state)}
                 </span>
               ) : null}
             </div>
@@ -910,7 +838,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
               {state === "completed"
                 ? "Work is complete and ready for review or a follow-up."
                 : latestEvent
-                  ? eventSummary(latestEvent)
+                  ? agentEventLabel(latestEvent)
                   : "Preparing the session"}
             </p>
           </div>
@@ -945,7 +873,7 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
             <h2>Files in play</h2>
             <ul className="context-files">
               {changedFiles.slice(0, 8).map((file) => (
-                <li key={file} title={file}>{shortPath(file)}</li>
+                <li key={file} title={file}>{truncateMiddle(file, 48)}</li>
               ))}
             </ul>
             {changedFiles.length > 8 ? (
