@@ -1,0 +1,129 @@
+.root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--tv-canvas);
+}
+
+/* The time ruler over the stage (spec §7.4): x matches the viewport's screen x, since both start at the root's left. */
+.ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 28px;
+  z-index: 3;
+  overflow: hidden;
+  background: var(--tv-canvas);
+  box-shadow: 0 1px 0 var(--tv-hair);
+}
+
+.rulerInner {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.rulerLabels {
+  top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rulerMarks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+.rulerMinor {
+  fill: none;
+  stroke: var(--tv-ink-4);
+  stroke-width: 1px;
+}
+
+.rulerBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--tv-accent-soft);
+}
+
+.rulerProblem {
+  fill: var(--tv-bad);
+}
+
+.rulerPlayhead {
+  fill: var(--tv-accent);
+}
+
+.stage {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28px;
+  bottom: 0;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  font-size: 13px;
+  color: var(--tv-ink-3);
+  pointer-events: none;
+}
+
+/* Positioning boxes for the floating chrome (chrome.module.css positions the toolbar at 50% of its box and the
+   minimap 16 px from its box's bottom-right corner). */
+.toolbarSlot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+}
+
+.toolbarSlot[data-narrow] {
+  right: auto;
+  width: 342px;
+}
+
+.minimapSlot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+}
+
+.minimapSlot[data-narrow] {
+  bottom: 52px;
+}
+
+/* "N frames →" (spec §7.10 Review): new frames past the right edge. */
+.ahead {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  z-index: 4;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--tv-ink);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.ahead:hover {
+  color: var(--tv-accent-ink);
+}
