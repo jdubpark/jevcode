@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { accumulateAll, createTraceState, finalize } from "../model/fold.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
-import { layoutCanvas } from "./canvas-layout.js";
+import { collectItems, layoutCanvas } from "./canvas-layout.js";
+import { LEVEL_SPECS, stepFinder } from "./canvas-levels.js";
+import { routeEdges, type RouteInput } from "./canvas-routes.js";
 import { buildTraceIndex } from "./trace-index.js";
+import { buildFrameContext, criticalFrameKeys, frameTone } from "../ui/views/canvas/frame-label.js";
 import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
 
 // Soak-shaped timing guard for the Canvas live tick (M5 risk from the M4b exit). The soak bundle's 4,861 change units
@@ -11,12 +14,14 @@ import { buildTimeScale, timeScaleInputOf } from "./time-scale.js";
 // frames. Every live commit re-lays out the whole session (the fold rebuilds it), so the layout must spend a few map
 // lookups per link: before this guard, collectItems re-derived each chapter's anchor and ran stepOf and anchoredFindings
 // per link, and routing walked each shared run's 4,861 chapters with several lookups each, for ~75 ms on this shape
-// (~120 ms on soak). With per-link work kept to set and map lookups it takes ~12 ms on an M3 Max.
+// (~120 ms on soak). With per-link work kept to set and map lookups it takes ~12 ms on an M3 Max. The regression guard
+// counts chapterAnchor and stepOf calls, which scale with chapters and frames, not with chapter-step links; wall time
+// is only a loose sanity bound.
 
 const UNITS = 5_000;
 const RUNS = 31;
-/** Median sticky layout budget after a 20-row append. */
-const STICKY_BUDGET_MS = 40;
+/** Loose sanity bound for one sticky layout after a 20-row append (~12 ms on an M3 Max); call counts are the guard. */
+const SANITY_BUDGET_MS = 1_000;
 
 function soakShapedRows() {
   const b = new TraceBuilder();
@@ -45,7 +50,7 @@ function soakShapedRows() {
 }
 
 describe("layoutCanvas on a soak-shaped session (shared validations)", () => {
-  it(`lays out ${UNITS} units that all cite ${RUNS} shared runs within ${STICKY_BUDGET_MS} ms after an append`, () => {
+  it(`keeps chapterAnchor and stepOf work per chapter and frame, not per chapter-step link, for ${UNITS} units citing ${RUNS} shared runs`, () => {
     const rows = soakShapedRows();
     const meta = testMeta({ lastEventSeq: rows.length, state: "running" });
     const state = accumulateAll(createTraceState(meta), rows.slice(0, -20));
@@ -55,17 +60,52 @@ describe("layoutCanvas on a soak-shaped session (shared validations)", () => {
     const session = finalize(state, { live: true, nowMs: 0 });
     const index = buildTraceIndex(session);
     const scale = buildTimeScale(timeScaleInputOf(session));
-    expect(session.chapters.reduce((sum, chapter) => sum + chapter.stepIds.length, 0)).toBe(UNITS * (RUNS + 1));
+    const links = session.chapters.reduce((sum, chapter) => sum + chapter.stepIds.length, 0);
+    expect(links).toBe(UNITS * (RUNS + 1));
+    const chapters = session.chapters.length;
 
-    const times: number[] = [];
-    let frames = 0;
-    for (let i = 0; i < 5; i += 1) {
-      const start = performance.now();
-      frames = layoutCanvas(session, index, scale, "chapter", prev).frames.length;
-      times.push(performance.now() - start);
-    }
-    expect(frames).toBeLessThan(200);
-    const median = [...times].sort((a, b) => a - b)[2] ?? Number.POSITIVE_INFINITY;
-    expect(median, `sticky layouts ${times.map((t) => t.toFixed(1)).join(", ")} ms`).toBeLessThan(STICKY_BUDGET_MS);
+    let anchorCalls = 0;
+    const counted = { ...index, chapterAnchor: (id: Parameters<typeof index.chapterAnchor>[0]) => (anchorCalls += 1, index.chapterAnchor(id)) };
+    const start = performance.now();
+    const layout = layoutCanvas(session, counted, scale, "chapter", prev);
+    const elapsed = performance.now() - start;
+    expect(layout.frames.length).toBeLessThan(200);
+    expect(elapsed, "sanity bound only; call counts are the guard").toBeLessThan(SANITY_BUDGET_MS);
+
+    // collectItems: one anchor lookup per current chapter; stepOf only for story steps, the anchoring shortlist and
+    // flagged-candidate links, never once per chapter-step link (160k here).
+    let stepCalls = 0;
+    const finder = stepFinder(session.steps);
+    const items = collectItems(session, counted, (id) => (stepCalls += 1, finder(id)));
+    expect(items.length).toBeGreaterThan(0);
+    expect(anchorCalls, "chapterAnchor calls over layout + collectItems").toBeLessThanOrEqual(3 * chapters);
+    expect(stepCalls, `stepOf calls in collectItems (${links} links)`).toBeLessThanOrEqual(2 * chapters);
+
+    // Routing: the validates pass runs over every chapter's shared runs; homeKey resolves each step once.
+    let routeStepCalls = 0;
+    let routeAnchorCalls = 0;
+    const input: RouteInput = {
+      session,
+      frames: layout.frames,
+      frameByKey: new Map(layout.frames.map((frame) => [frame.key, frame])),
+      columns: layout.columns,
+      spec: LEVEL_SPECS[layout.level],
+      stepOf: (id) => (routeStepCalls += 1, finder(id)),
+      chapterAnchor: (id) => (routeAnchorCalls += 1, index.chapterAnchor(id)),
+    };
+    const routed = routeEdges(input);
+    expect(routeStepCalls, `stepOf calls while routing (${links} links)`).toBeLessThanOrEqual(2 * chapters);
+    expect(routeAnchorCalls, "chapterAnchor calls while routing").toBeLessThanOrEqual(chapters);
+
+    // The result is right, not just cheap: the failed runs are shared, so only the chapters that own them are red.
+    const ctx = buildFrameContext(session);
+    const critical = criticalFrameKeys(layout, ctx);
+    expect(critical.size).toBeGreaterThan(0);
+    expect(critical.size).toBeLessThanOrEqual(Math.ceil(RUNS / 3));
+    expect(critical).toEqual(new Set(layout.frames.filter((frame) => frameTone(frame, ctx) === "bad").map((frame) => frame.key)));
+    const validates = routed.edges.filter((edge) => edge.kind === "validates");
+    expect(validates.length).toBeGreaterThan(0);
+    expect(validates.length).toBeLessThanOrEqual(layout.frames.length * RUNS);
+    expect(new Set(validates.map((edge) => edge.id)).size).toBe(validates.length);
   }, 60_000);
 });
