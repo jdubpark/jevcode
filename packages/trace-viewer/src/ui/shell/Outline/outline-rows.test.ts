@@ -1,6 +1,17 @@
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { buildSearchIndex, describeGraphic, foldRows, formatOffset, pickGraphic } from "../../../model/index.js";
+import {
+  accumulateAll,
+  buildSearchIndex,
+  createTraceState,
+  describeGraphic,
+  finalize,
+  foldRows,
+  formatOffset,
+  pickGraphic,
+} from "../../../model/index.js";
+import { arbRowSession, soakShapedRows } from "../../../test-support/row-arbitraries.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import { foldFixture } from "../../../test-support/ui-harness.js";
 import {
@@ -238,5 +249,55 @@ describe("buildOutlineRows", () => {
     const story = itemsOf(buildOutlineRows(session, ALL_OPEN), "story");
     const marked = story.filter((row) => row.flag === "neq").map((row) => row.chapterId ?? row.title);
     expect(marked).toEqual([failing?.id, "Final claim"]);
+  });
+});
+
+describe("buildOutlineRows across Live commits", () => {
+  // Rows are cached per step and entity object; the incremental finalize keeps unchanged objects.
+  // A structural clone has only new objects, so its rows are built from scratch.
+  const everything = { open: new Set<OutlineSection>(["story", "files", "commands", "tests"]), showAll: new Set<OutlineSection>(["files"]) };
+
+  type Rows = Parameters<typeof accumulateAll>[1];
+
+  /** One column width per run, as in the app: a width change rebuilds the Files rows anyway. */
+  function checkCommits(meta: Parameters<typeof createTraceState>[0], batches: readonly Rows[]): void {
+    for (const fileTitleMax of [FILE_TITLE_MAX, 30]) {
+      const state = createTraceState(meta);
+      const input = { ...everything, fileTitleMax };
+      for (const [index, batch] of batches.entries()) {
+        accumulateAll(state, batch);
+        const session = finalize(state, { live: true, nowMs: index });
+        expect(buildOutlineRows(session, input)).toStrictEqual(buildOutlineRows(structuredClone(session), input));
+      }
+    }
+  }
+
+  it("cached rows equal rows built from scratch after every commit (random rows)", () => {
+    fc.assert(
+      fc.property(arbRowSession(), fc.integer({ min: 1, max: 12 }), ({ meta, rows }, size) => {
+        const batches = [];
+        for (let start = 0; start < rows.length; start += size) batches.push(rows.slice(start, start + size));
+        checkCommits(meta, batches);
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it("a cached Files row follows a clamp its chapter gains later (the entity itself is unchanged)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "file_changed", path: "src/a.ts" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 1, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false }, "fact_1");
+    b.unit({ id: "u1", files: ["src/a.ts"], evidence: ["fact_1"] });
+    const first = b.rows.length;
+    b.jev({ id: "jev_1", changeUnitId: "u1", clamps: ["schema_floor"] });
+    checkCommits(testMeta(), [b.rows.slice(0, first), b.rows.slice(first)]);
+  });
+
+  it("cached rows equal rows built from scratch after every commit (soak-shaped rows)", () => {
+    const { meta, rows } = soakShapedRows({ units: 80, runs: 4, reemits: 2 });
+    const batches = [];
+    for (let start = 0; start < rows.length; start += 37) batches.push(rows.slice(start, start + 37));
+    checkCommits(meta, batches);
   });
 });
