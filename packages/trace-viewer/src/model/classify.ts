@@ -55,54 +55,41 @@ export function problemsOf(step: Step): ProblemKind[] {
   return PROBLEM_KINDS.filter((kind) => found.has(kind));
 }
 
-export function applyProblems(steps: readonly Step[]): void {
-  for (const step of steps) step.problems = problemsOf(step);
-}
-
 /** A turn is closed when it ended, a later turn exists, or the session is not live. */
 export function isTurnClosed(turn: Turn, lastTurnIndex: number, live: boolean): boolean {
   return !live || turn.index < lastTurnIndex || turn.outcome === "completed" || turn.outcome === "failed" || turn.outcome === "interrupted";
 }
 
-/** missing_evidence (closed turns only): a finished test run with no test_result, or an agent
- *  edit claim with no repo fact by the end of its turn. */
-export function flagMissingEvidence(steps: readonly Step[], turns: readonly Turn[], live: boolean, gaps: Gap[]): void {
-  const lastTurnIndex = turns.length - 1;
-  const closed = new Set(turns.filter((turn) => isTurnClosed(turn, lastTurnIndex, live)).map((turn) => turn.index));
-  for (const step of steps) {
-    if (!closed.has(step.turnIndex)) continue;
-    if (step.kind === "test" && step.endTs !== null && step.tests === undefined) {
-      gaps.push({
+/** missing_evidence of one step of a closed turn (spec §6.6): a finished test run with no
+ *  test_result, or an agent edit claim with no repo fact by the end of its turn. The claim's step
+ *  status becomes unknown (unknownStatus). */
+export function missingEvidence(step: Step): { gap: Gap; unknownStatus: boolean } | null {
+  if (step.kind === "test" && step.endTs !== null && step.tests === undefined) {
+    return {
+      gap: {
         kind: "missing_evidence",
         atSeq: step.firstSeq,
         message: `${step.target ?? "test run"} finished but no test result was recorded`,
-      });
-    }
-    if (step.kind === "edit" && step.edit !== undefined && step.edit.claimed && !step.edit.observed) {
-      step.status = "unknown";
-      gaps.push({
+      },
+      unknownStatus: false,
+    };
+  }
+  if (step.kind === "edit" && step.edit !== undefined && step.edit.claimed && !step.edit.observed) {
+    return {
+      gap: {
         kind: "missing_evidence",
         atSeq: step.firstSeq,
         message: `the agent reported a change to ${step.edit.path} but no repository change was observed`,
-      });
-    }
+      },
+      unknownStatus: true,
+    };
   }
+  return null;
 }
 
 export interface NoiseContext {
   /** duplicate_poll edit steps. */
   duplicates: ReadonlySet<string>;
-  chapters: readonly Chapter[];
-}
-
-function lastRunByTarget(steps: readonly Step[]): Map<string, Step> {
-  const last = new Map<string, Step>();
-  for (const step of steps) {
-    if ((step.kind === "test" || step.kind === "check") && step.target !== undefined) {
-      last.set(normalizeCommand(step.target), step);
-    }
-  }
-  return last;
 }
 
 export function noiseOf(step: Step, context: NoiseContext, lastRuns: ReadonlyMap<string, Step>, superseded: ReadonlySet<string>): NoiseReason | null {
@@ -134,15 +121,5 @@ export function noiseOf(step: Step, context: NoiseContext, lastRuns: ReadonlyMap
     }
     default:
       return null;
-  }
-}
-
-/** Runs after signals: a step with a problem or a finding never collapses. */
-export function applyNoise(steps: readonly Step[], context: NoiseContext): void {
-  const lastRuns = lastRunByTarget(steps);
-  const superseded = new Set(context.chapters.filter((chapter) => chapter.status === "superseded").map((chapter) => chapter.id));
-  for (const step of steps) {
-    step.noise =
-      step.problems.length > 0 || step.findingIds.length > 0 ? null : noiseOf(step, context, lastRuns, superseded);
   }
 }
