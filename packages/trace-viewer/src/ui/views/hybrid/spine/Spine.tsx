@@ -312,7 +312,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     if (view === null || terminal || !active) return undefined;
     const handle = view.setInterval(rerender, 1_000);
     return () => view.clearInterval(handle);
-  }, [terminal, active]);
+  }, [terminal, active, session === null]);
 
   useEffect(
     () => () => {

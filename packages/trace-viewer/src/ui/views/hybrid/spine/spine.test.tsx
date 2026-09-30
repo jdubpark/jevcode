@@ -355,3 +355,43 @@ describe("Spine Live clock and article names", () => {
     }
   });
 });
+
+describe("Spine Live tick after a late session", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("starts the interval when a Live session arrives after mount", () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    layout = stubLayout({ height: 2_000 });
+    const apiRef: { current: SpineApi | null } = { current: null };
+    const h = renderHarness(<Spine active apiRef={apiRef} />, null, { terminal: false });
+    const baseline = vi.getTimerCount();
+    const live = { ...foldFixture("oauth"), live: true };
+    const clock = { t: 49_000 };
+    h.view.nowT = () => clock.t;
+    // A fresh element: the harness context value is mutated in place, so an identical element would bail out.
+    applySession(h, <Spine active apiRef={apiRef} />, live);
+    expect(vi.getTimerCount()).toBe(baseline + 1);
+    const before = screen.getByText(/^Agent running · last event/).textContent;
+    clock.t += 1_000;
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByText(/^Agent running · last event/).textContent).not.toBe(before);
+  });
+});
+
+describe("Spine decision rows", () => {
+  it("makes bidi characters in a decision title visible", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Decide" });
+    b.decision({ id: "d1", title: "Use‮ redis" });
+    const session = foldRows(testMeta(), b.rows, { live: false });
+    renderSpine(session, { state: { level: "step" } });
+    await settle();
+    const step = session.steps.find((item) => item.decision !== undefined);
+    expect(article(step?.id ?? "")?.textContent).toContain("Use⟨U+202E⟩ redis");
+  });
+});

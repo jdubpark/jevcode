@@ -13,13 +13,14 @@ export function ClaimFinding({ finding, session, onJump }: FindingBodyProps) {
   const gap = formatDuration(gapMs);
   return (
     <div className={styles.findingBody}>
-      <p className={styles.chain} aria-label={`Claim made ${gap} after the failing run`}>
+      <p className={styles.chain}>
+        <span className={styles.srOnly}>{`Claim made ${gap} after the failing run`}</span>
         <span className={styles.chainIconBad}>
           <Icon name="test" size={14} />
         </span>
         <span className={styles.chainLine} aria-hidden="true" />
         <Icon name="quote" size={14} />
-        <span>{gap}</span>
+        <span aria-hidden="true">{gap}</span>
       </p>
       <ClaimVsObserved
         size="sm"
