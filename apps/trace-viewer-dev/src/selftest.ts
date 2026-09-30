@@ -1,6 +1,8 @@
 import type { TraceBundle } from "@jevcode/contracts";
 import type { DripOptions, StaticBundleSource, ViewerHost } from "@jevcode/trace-viewer";
 
+import { startCanvasDriftProbe, type CanvasDriftProbe } from "./selftest-canvas.js";
+
 export interface SelftestResult {
   ready: boolean;
   view: "hybrid" | "canvas";
@@ -64,6 +66,8 @@ export function createSelftest(options: {
   const originalError = console.error;
   let timer: ReturnType<typeof setInterval> | null = null;
   let written = false;
+  // C3-12: samples the Canvas frame nearest the viewport center; stays 0 while the Canvas is hidden.
+  let canvasDrift: CanvasDriftProbe | null = null;
 
   const onError = (event: ErrorEvent): void => {
     result.errors.push(event.message);
@@ -78,6 +82,10 @@ export function createSelftest(options: {
     if (written) return;
     written = true;
     result.rows = options.source.released();
+    if (canvasDrift !== null) {
+      result.maxDriftPx = Math.max(result.maxDriftPx, canvasDrift.stop());
+      canvasDrift = null;
+    }
     options.write({ ...result, errors: [...result.errors], cspViolations: [...result.cspViolations] });
   };
 
@@ -86,6 +94,7 @@ export function createSelftest(options: {
       onReady: () => {
         result.ready = true;
         requestAnimationFrame(scrollSpineToMiddle);
+        canvasDrift ??= startCanvasDriftProbe();
       },
       onDiagnostics: (diagnostics) => {
         result.selectedTitle = diagnostics.selectedTitle;
@@ -120,6 +129,8 @@ export function createSelftest(options: {
       console.error = originalError;
       if (timer !== null) clearInterval(timer);
       timer = null;
+      canvasDrift?.stop();
+      canvasDrift = null;
     },
   };
 }
