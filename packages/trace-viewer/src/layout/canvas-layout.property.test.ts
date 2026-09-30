@@ -11,6 +11,8 @@ import {
 } from "../test-support/canvas-arbitraries.js";
 import { LEVEL_SPECS, frameSize } from "./canvas-levels.js";
 import { canvasXMap, collectItems, layoutCanvas, type CanvasItem, type CanvasLayout } from "./canvas-layout.js";
+import { homeFrameKey, samplePath, type RouteInput } from "./canvas-routes.js";
+import { worstSeverity } from "./tone.js";
 import { buildTraceIndex } from "./trace-index.js";
 import type { Rect } from "./viewport.js";
 
@@ -248,5 +250,68 @@ describe("canvas layout invariants", () => {
 
   it("P10 slot size depends only on (level, kind) in fresh layouts", () => {
     fc.assert(fc.property(arbCanvasSession(), levels, (session, level) => checkP10(fresh(session, level))), RUNS);
+  });
+
+  it("P9 rest edges cross no card; only contradicts is red; one contradicts per evidence frame; lanes in range", () => {
+    fc.assert(
+      fc.property(arbCanvasSession(), levels, (session, level) => {
+        const layout = fresh(session, level);
+        const spec = LEVEL_SPECS[level];
+        for (const edge of layout.edges) {
+          if (edge.tone === "bad") expect(edge.kind).toBe("contradicts");
+          if (edge.kind === "contradicts") {
+            expect(edge.rest).toBe(true);
+            expect(edge.d).not.toBeNull();
+          }
+          if (edge.shape === "channel") expect(edge.lane ?? -1).toBeLessThan(spec.channelLanes);
+          if (edge.shape === "rail") expect(edge.lane ?? -1).toBeLessThan(spec.railLanes);
+          if (!edge.rest || edge.d === null || edge.shape === "direct") continue;
+          for (const point of samplePath(edge.d)) {
+            for (const frame of layout.frames) {
+              const { x, y, w, h } = frame.card;
+              const inside = point.x > x + 1 && point.x < x + w - 1 && point.y > y + 1 && point.y < y + h - 1;
+              expect(inside, `${edge.id} crosses ${frame.key}`).toBe(false);
+            }
+          }
+        }
+        const input: RouteInput = { session, frames: layout.frames, frameByKey: layout.frameByKey, columns: layout.columns, spec };
+        for (const finding of session.findings) {
+          if (finding.ruleId !== "claim_contradicted") continue;
+          const from = homeFrameKey(finding.claimStepId ?? finding.anchorStepId, input);
+          const targets = new Set(
+            (finding.evidenceStepIds ?? [])
+              .map((id) => homeFrameKey(id, input))
+              .filter((key): key is string => key !== undefined && key !== from),
+          );
+          const drawn = layout.edges.filter((edge) => edge.kind === "contradicts" && edge.findingId === finding.id);
+          expect(drawn).toHaveLength(targets.size);
+        }
+      }),
+      RUNS,
+    );
+  });
+
+  it("P8 every warning-or-worse step is reachable through its home frame", () => {
+    fc.assert(
+      fc.property(arbCanvasSession(), levels, (session, level) => {
+        const layout = fresh(session, level);
+        const input: RouteInput = {
+          session,
+          frames: layout.frames,
+          frameByKey: layout.frameByKey,
+          columns: layout.columns,
+          spec: LEVEL_SPECS[level],
+        };
+        const findingsById = new Map(session.findings.map((finding) => [finding.id, finding]));
+        for (const step of session.steps) {
+          const severity = worstSeverity(step, findingsById);
+          if (severity !== "warning" && severity !== "critical") continue;
+          const key = homeFrameKey(step.id, input);
+          expect(key, step.id).toBeDefined();
+          expect(layout.frameByKey.has(key ?? "")).toBe(true);
+        }
+      }),
+      RUNS,
+    );
   });
 });

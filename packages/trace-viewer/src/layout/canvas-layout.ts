@@ -1,5 +1,5 @@
 import type { Finding, FindingId, Level, Step, TraceSession, Turn } from "../model/index.js";
-import type { CanvasEdge } from "./canvas-routes.js";
+import { routeEdges, type CanvasEdge } from "./canvas-routes.js";
 import {
   LABEL_ROW_PX,
   LEVEL_SPECS,
@@ -542,10 +542,10 @@ function finalize(run: Run, session: TraceSession, itemByKey: ReadonlyMap<string
     turn: col.turn,
   }));
   const frameByKey = new Map(frames.map((frame) => [frame.key, frame]));
-  // C3-3 replaces this block with routeEdges.
-  const edges: CanvasEdge[] = [];
-  const junctions: Point[] = [];
-  const hiddenEdges = 0;
+  const routed = routeEdges({ session, frames, frameByKey, columns, spec });
+  const edges: readonly CanvasEdge[] = routed.edges;
+  const junctions: readonly Point[] = routed.junctions;
+  const hiddenEdges = routed.hiddenEdges;
   return {
     level: st.level,
     sessionId: st.sessionId,
