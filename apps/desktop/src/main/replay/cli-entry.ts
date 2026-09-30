@@ -1,19 +1,22 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { openDb } from "@jevcode/storage";
-import type { JevcodeDb } from "@jevcode/storage";
+import { openDb, openTraceReader } from "@jevcode/storage";
+import type { JevcodeDb, TraceReader } from "@jevcode/storage";
 import { parseReplayLine } from "@jevcode/semantic-core";
 import type { PipelineRecord } from "@jevcode/semantic-core";
 import { EvidenceFactSchema } from "@jevcode/contracts";
 
+import { IpcError } from "../../shared/errors.js";
 import {
   PlaybackClient,
   PlaybackLabels,
   loadPlaybackFixture,
 } from "../pipeline/playback.js";
 import { PipelineRuntime } from "../pipeline/pipeline-runtime.js";
+import { buildTraceBundle, writeTraceBundle } from "../trace-bundle.js";
+import { createTraceService } from "../trace-service.js";
 
 export interface ReplayResult {
   sessionId: string;
@@ -24,6 +27,8 @@ export interface ReplayResult {
   decisionCount: number;
   specCount: number;
   errors: string[];
+  /** <outDir>/trace.json: a TraceBundle (format jevcode.trace v1) of the replayed session. */
+  bundlePath: string;
 }
 
 export async function runReplay(
@@ -176,6 +181,16 @@ export async function runReplay(
 
     await runtime.stopSession(sessionId);
 
+    // Read back through a second, query_only connection, the same path the
+    // trace viewer uses, so trace.json holds exactly what the viewer loads.
+    const bundlePath = path.join(outDir, "trace.json");
+    const reader = openTraceReader(db.dbPath);
+    try {
+      writeTraceBundle(bundlePath, buildTraceBundle(createTraceService(reader), sessionId));
+    } finally {
+      reader.close();
+    }
+
     return {
       sessionId,
       records: records.length,
@@ -188,6 +203,7 @@ export async function runReplay(
       decisionCount: decisions.length,
       specCount: surfaces.size,
       errors,
+      bundlePath,
     };
   } finally {
     db.close();
@@ -199,11 +215,132 @@ function readStream(fixtureDir: string): string[] {
   return text.split("\n").filter((line) => line.trim().length > 0);
 }
 
+export const EXPORT_USAGE =
+  "usage: jevcode-replay export --db <path> --session <id> --out <file>";
+
+interface ExportFlags {
+  db: string;
+  session: string;
+  out: string;
+}
+
+/** Exactly --db, --session and --out, each once with a non-empty value; anything else is null. */
+function parseExportFlags(args: readonly string[]): ExportFlags | null {
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (flag !== "--db" && flag !== "--session" && flag !== "--out") return null;
+    if (value === undefined || value.length === 0 || value.startsWith("--")) return null;
+    values.set(flag.slice(2), value);
+  }
+  const db = values.get("db");
+  const session = values.get("session");
+  const out = values.get("out");
+  if (db === undefined || session === undefined || out === undefined) return null;
+  return { db: path.resolve(db), session, out: path.resolve(out) };
+}
+
+/** The real path with its on-disk case; for a missing file, its parent's real path plus its name. */
+function canonicalPath(file: string): string {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    try {
+      return path.join(realpathSync.native(path.dirname(file)), path.basename(file));
+    } catch {
+      return file;
+    }
+  }
+}
+
+function fileIdentity(file: string): string | undefined {
+  try {
+    const stats = statSync(file);
+    return `${stats.dev}/${stats.ino}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when `out` names the database or its -wal/-shm files, by any spelling,
+ * symlink or hard link. Writing the bundle there would destroy the store.
+ * SQLite names the -wal/-shm files after the real database path, so both
+ * spellings of the database are guarded.
+ */
+function outNamesDatabase(db: string, out: string): boolean {
+  const databaseFiles = [db, canonicalPath(db)].flatMap((base) => [
+    base,
+    `${base}-wal`,
+    `${base}-shm`,
+  ]);
+  const guarded = new Set(databaseFiles.flatMap((file) => [file, canonicalPath(file)]));
+  if (guarded.has(out) || guarded.has(canonicalPath(out))) return true;
+  const outIdentity = fileIdentity(out);
+  return (
+    outIdentity !== undefined && databaseFiles.some((file) => fileIdentity(file) === outIdentity)
+  );
+}
+
+/**
+ * `jevcode-replay export --db <path> --session <id> --out <file>`: writes one
+ * stored session as a redacted trace.json (mode 0600). The database is opened
+ * query_only and never created, and an --out that names the database or its
+ * -wal/-shm files is refused. Returns 0 on success, 1 on any failure; a
+ * failure writes no file.
+ */
+export async function exportMain(args: readonly string[]): Promise<number> {
+  const flags = parseExportFlags(args);
+  if (flags === null) {
+    console.error(EXPORT_USAGE);
+    return 1;
+  }
+  if (outNamesDatabase(flags.db, flags.out)) {
+    console.error("export: --out must not be the database or its -wal/-shm files");
+    return 1;
+  }
+  let reader: TraceReader;
+  try {
+    reader = openTraceReader(flags.db);
+  } catch (error) {
+    console.error(
+      `export: cannot open ${flags.db}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+  try {
+    const bundle = buildTraceBundle(createTraceService(reader), flags.session);
+    writeTraceBundle(flags.out, bundle);
+    console.log(
+      JSON.stringify({
+        out: flags.out,
+        rows: bundle.rows.length,
+        redactionCount: bundle.redactionCount,
+      }),
+    );
+    return 0;
+  } catch (error) {
+    if (error instanceof IpcError && error.code === "UNKNOWN_SESSION") {
+      console.error(`export: no session ${flags.session} in ${flags.db}`);
+    } else {
+      console.error(`export: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return 1;
+  } finally {
+    reader.close();
+  }
+}
+
 export async function replayMain(argv: string[]): Promise<number> {
+  if (argv[2] === "export") {
+    return exportMain(argv.slice(3));
+  }
   const fixtureDir = argv[2];
   const outDir = argv[3];
   if (fixtureDir === undefined || outDir === undefined) {
     console.error("usage: jevcode-replay <fixtureDir> <outDir>");
+    console.error(EXPORT_USAGE);
     return 1;
   }
   const started = Date.now();

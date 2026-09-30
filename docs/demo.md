@@ -32,7 +32,31 @@ rm -rf /tmp/jevcode-replay && node apps/desktop/scripts/replay.mjs fixtures/rate
 
 Emits the UI specs to `/tmp/jevcode-replay/ui-specs/` and session state to
 `semantic-state.json`. Replays every fixture with Jev in playback mode
-(deterministic labeled outputs).
+(deterministic labeled outputs). It also writes `/tmp/jevcode-replay/trace.json`,
+a `jevcode.trace` v1 bundle of the session's trace rows for the trace viewer's
+dev host.
+
+## Trace export (viewer bundle)
+
+Export any stored session, from the app database or a `replay.db`, to a
+`trace.json` bundle. Run it from the repo root after a build:
+
+```
+pnpm build
+sqlite3 ~/.jevcode/jevcode.db "SELECT id, startedAt, prompt FROM sessions ORDER BY startedAt DESC LIMIT 10"
+node apps/desktop/scripts/replay.mjs export --db ~/.jevcode/jevcode.db --session <session id> --out /tmp/jevcode-trace.json
+```
+
+The export opens the database on a second, `query_only` connection and never
+writes to it. Every string in the bundle passes the redactor before strings
+over 16 KiB are clipped to their first 4 KiB and last 12 KiB, your home
+directory becomes `~`, and the file is written with mode 0600. On success it
+prints `{"out", "rows", "redactionCount"}` and exits 0; a missing flag, a
+missing database, an unknown session or an `--out` that names the database or
+its `-wal`/`-shm` files exits 1 and writes nothing.
+`pnpm --filter jevcode-desktop replay export …` also works, but pnpm runs the
+script from `apps/desktop`, so pass absolute paths. Bundles stay on this
+machine; sharing them is out of scope for v1.
 
 ## Live demo (Electron, real agent)
 

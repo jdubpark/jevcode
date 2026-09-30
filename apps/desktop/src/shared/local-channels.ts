@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-import { AgentStateSchema, RendererToMainChannels } from "@jevcode/contracts";
+import {
+  AgentStateSchema,
+  RendererToMainChannels,
+  TRACE_LIST_SESSIONS_MAX,
+  TRACE_PAYLOADS_MAX,
+  TRACE_ROWS_PAGE_MAX,
+} from "@jevcode/contracts";
 
 import {
   AGENT_MODEL_OPTIONS,
@@ -18,6 +24,9 @@ export const RendererToMainLocalChannels = {
   debugListJevDecisions: "debug:listJevDecisions",
   preferencesGet: "preferences:get",
   preferencesSet: "preferences:set",
+  traceListSessions: "trace:listSessions",
+  traceRows: "trace:rows",
+  tracePayloads: "trace:payloads",
 } as const;
 
 export const MainToRendererLocalChannels = {
@@ -204,6 +213,26 @@ export type PreferencesUpdatedPayload = z.infer<
   typeof PreferencesUpdatedPayloadSchema
 >;
 
+// Read-only trace viewer requests (R5). Responses: trace:listSessions ->
+// { sessions: TraceSessionSummary[] }, trace:rows -> TraceRowsPage,
+// trace:payloads -> { rows: TraceRow[] } (types from @jevcode/contracts).
+export const TraceListSessionsPayloadSchema = z.object({
+  repoId: z.string().min(1).optional(),
+  sessionId: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(TRACE_LIST_SESSIONS_MAX).optional(),
+});
+
+export const TraceRowsPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  afterSeq: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(TRACE_ROWS_PAGE_MAX).optional(),
+});
+
+export const TracePayloadsPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  seqs: z.array(z.number().int().positive()).min(1).max(TRACE_PAYLOADS_MAX),
+});
+
 export const localToMain = {
   [RendererToMainChannels.sessionStart]: SessionStartPayloadSchema,
   [RendererToMainLocalChannels.repoBrowse]: RepoBrowsePayloadSchema,
@@ -219,6 +248,9 @@ export const localToMain = {
     DebugListJevDecisionsPayloadSchema,
   [RendererToMainLocalChannels.preferencesGet]: PreferencesGetPayloadSchema,
   [RendererToMainLocalChannels.preferencesSet]: PreferencesSetPayloadSchema,
+  [RendererToMainLocalChannels.traceListSessions]: TraceListSessionsPayloadSchema,
+  [RendererToMainLocalChannels.traceRows]: TraceRowsPayloadSchema,
+  [RendererToMainLocalChannels.tracePayloads]: TracePayloadsPayloadSchema,
 } as const;
 
 export const localFromMain = {
