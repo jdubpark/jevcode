@@ -140,6 +140,37 @@ describe("World", () => {
     );
   });
 
+  it("dims the halo of a dimmed lifted edge with its stroke", () => {
+    const contradicts = layout.edges.find((edge) => edge.kind === "contradicts");
+    if (contradicts === undefined) throw new Error("no contradicts edge");
+    expect(contradicts.from === intent.key || contradicts.to === intent.key).toBe(false);
+    const lifted: CanvasLayout = {
+      ...layout,
+      edges: layout.edges.map((edge) => (edge.id === contradicts.id ? { ...edge, shape: "direct" } : edge)),
+    };
+    const { view } = renderWorld({ layout: lifted, selectedKey: intent.key });
+    const halo = view.container.querySelector(`[data-edge="${contradicts.id}"] path:first-child`);
+    expect(halo?.getAttribute("class")).toContain(styles.halo);
+    expect(halo?.getAttribute("class")).toContain(styles.dim);
+    cleanup();
+    const rest = renderWorld({ layout: lifted });
+    expect(rest.view.container.querySelector(`[data-edge="${contradicts.id}"] path:first-child`)?.getAttribute("class")).not.toContain(
+      styles.dim,
+    );
+  });
+
+  it("keeps junction dots at screen size and renders a repeated junction without a key clash", () => {
+    const point = layout.junctions[0];
+    if (point === undefined) throw new Error("no junction");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const doubled: CanvasLayout = { ...layout, junctions: [point, point] };
+    const { view } = renderWorld({ layout: doubled });
+    expect(view.container.querySelectorAll('svg[data-layer="under"] circle')).toHaveLength(2);
+    expect(error).not.toHaveBeenCalled();
+    const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
+    expect(css).toContain("r: calc(2.5px * var(--tv-inv-k, 1))");
+  });
+
   it("keeps edge strokes at 1.5 CSS px through --tv-inv-k and never colors text with ink-4", () => {
     const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
     expect(css).toContain("stroke-width: calc(1.5px * var(--tv-inv-k, 1))");
@@ -292,6 +323,20 @@ describe("edge and cull helpers", () => {
   it("culls by x only when the risk 2 ruling passes a range", () => {
     expect(cullFrames(layout.frames, null)).toBe(layout.frames);
     expect(cullFrames(layout.frames, { x0: 500, x1: 760 }).map((candidate) => candidate.col)).toEqual([2, 2, 2]);
+  });
+
+  it("keeps a frame whose card contains x0 or ends exactly at x0, and one that starts exactly at x1", () => {
+    const first = layout.frames[0];
+    if (first === undefined) throw new Error("no frames");
+    const { x, w } = first.card;
+    const keys = (range: { x0: number; x1: number }) => cullFrames(layout.frames, range).map((candidate) => candidate.key);
+    expect(keys({ x0: x + w / 2, x1: x + w / 2 + 1 })).toContain(first.key);
+    expect(keys({ x0: x + w, x1: x + w + 1 })).toContain(first.key);
+    expect(keys({ x0: x + w + 1, x1: x + w + 2 })).not.toContain(first.key);
+    const last = layout.frames[layout.frames.length - 1];
+    if (last === undefined) throw new Error("no frames");
+    expect(keys({ x0: last.card.x - 50, x1: last.card.x })).toContain(last.key);
+    expect(keys({ x0: last.card.x - 50, x1: last.card.x - 1 })).not.toContain(last.key);
   });
 
   it("draws the selection's lane-less edges as direct paths above the frames", () => {
