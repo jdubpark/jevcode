@@ -53,6 +53,20 @@ describe("collectItems", () => {
     expect(items(session).map((item) => item.kind)).toEqual(["intent", "chapter", "noise"]);
   });
 
+  it("keeps a noise chapter as noise when its step only cites a finding anchored elsewhere", () => {
+    const base = buildCanvasSession([
+      { atMs: 1_000, kind: "noise" },
+      { atMs: 3_000, kind: "loose" },
+    ]);
+    const session: TraceSession = structuredClone(base);
+    const [noiseStep, looseStep] = [session.steps[1], session.steps[2]];
+    const finding = session.findings[0];
+    if (noiseStep === undefined || looseStep === undefined || finding === undefined) throw new Error("fixture changed");
+    expect(finding.anchorStepId).toBe(looseStep.id);
+    noiseStep.findingIds.push(finding.id);
+    expect(items(session).map((item) => item.kind)).toEqual(["intent", "noise", "loose"]);
+  });
+
   it("makes a warning finding step with no chapter a loose item", () => {
     const session = buildCanvasSession([
       { atMs: 2_000, kind: "work" },
