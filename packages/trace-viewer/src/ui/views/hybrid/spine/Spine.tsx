@@ -27,7 +27,7 @@ import { GroupRow } from "./rows/GroupRows.js";
 import { SeparatorRow } from "./rows/SeparatorRows.js";
 import { StepRow } from "./rows/StepRow.js";
 import { rowFindingOf } from "../../../inspector/finding-copy.js";
-import { extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
+import { endClampedTopRow, extendRange, firstRowAtOrAfter, pushTarget, revealAlign, spineVirtualOptions, type PushCandidate } from "./scroll-sync.js";
 import styles from "./Spine.module.css";
 
 export interface FindingBodyProps {
@@ -246,6 +246,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
     });
   };
 
+  /** The end-clamped offset last start-aligned by the frame handler, so one clamp gets one correction. */
+  const endSnapAt = useRef<number | null>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -286,9 +288,23 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       }
     }
     if (!scrolling) {
+      const readerScrolled = userScroll.current;
       endProgrammatic();
       userScroll.current = false;
       clearTimer(userTimer);
+      // A finished session opens scrolled to the list end, and rows measured after the reveal (the expanded claim)
+      // can leave the end clamp cutting the top row under the range chip. Start-align that row once, unless the reader
+      // put the list there; the playhead row must stay whole (audit 2-8, integration item 5).
+      if (terminal && !readerScrolled && endSnapAt.current !== win.offset) {
+        const playItem = items.find((item) => item.index === playheadIndex);
+        const keep = playItem ?? first;
+        const cut = keep === undefined ? null : endClampedTopRow(items, win, Math.max(0, virtualizer.getTotalSize() - win.height), keep);
+        if (cut !== null) {
+          endSnapAt.current = win.offset;
+          beginProgrammatic();
+          virtualizer.scrollToIndex(cut, { align: "start", behavior: "auto" });
+        }
+      }
       return;
     }
     // Only the reader's own scroll moves the playhead; reveals, restores, anchoring and follow never do.
