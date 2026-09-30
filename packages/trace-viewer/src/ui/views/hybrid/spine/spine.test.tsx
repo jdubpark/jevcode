@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildTimeScale, timeScaleInputOf } from "../../../../layout/time-scale.js";
 import { buildTraceIndex } from "../../../../layout/trace-index.js";
 import { foldRows, type TraceSession } from "../../../../model/index.js";
+import { buildSession, type StepSeed } from "../../../../test-support/session-builder.js";
 import { TraceBuilder, testMeta } from "../../../../test-support/trace-builder.js";
 import {
   applyOpenDefaults,
@@ -185,18 +186,64 @@ describe("Spine", () => {
     expect(article(one?.id ?? "")?.textContent).not.toContain("Guardrail clamp");
   });
 
-  it("renders a bidi override in a chapter title as the escape token", async () => {
+  it("renders a bidi override in a chapter's short and full titles as the escape token", async () => {
     layout = stubLayout({ height: 2_000 });
     const base = foldFixture("oauth");
     const session: TraceSession = {
       ...base,
-      chapters: base.chapters.map((chapter) => ({ ...chapter, title: `Changed 1 file: src/‮txt.exe` })),
+      chapters: base.chapters.map((chapter) => ({ ...chapter, title: `Changed 1 file: src/\u202Etxt.exe`, shortTitle: "Code · \u202Etxt" })),
     };
     renderSpine(session, { state: { level: "session" } });
     await settle();
     const feed = screen.getByRole("feed");
-    expect(feed.textContent).toContain("src/⟨U+202E⟩txt.exe");
-    expect(feed.textContent).not.toContain("‮");
+    expect(feed.textContent).toContain("Code · \u27E8U+202E\u27E9txt");
+    expect(feed.textContent).not.toContain("\u202E");
+    const line = [...feed.querySelectorAll<HTMLElement>("[aria-label]")].find((el) => (el.textContent ?? "").startsWith("Code · "));
+    expect(line?.getAttribute("aria-label")).toBe("Changed 1 file: src/\u27E8U+202E\u27E9txt.exe");
+    expect(line?.getAttribute("title")).toBe("Changed 1 file: src/\u27E8U+202E\u27E9txt.exe");
+  });
+
+  it("shows a chapter group row's short title and names it with the full title", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const session = foldFixture("oauth");
+    const chapter = session.chapters.find((item) => item.shortTitle === "Tests · oauth");
+    if (chapter === undefined) throw new Error("fixture changed");
+    renderSpine(session, { state: { level: "session" } });
+    await settle();
+    const line = [...screen.getByRole("feed").querySelectorAll<HTMLElement>("span")].find((el) => el.textContent === "Tests · oauth");
+    expect(line).toBeDefined();
+    expect(line?.getAttribute("aria-label")).toBe(chapter.title);
+    const item = line?.closest("article");
+    expect(item?.getAttribute("aria-labelledby")).toBe(line?.id);
+  });
+
+  it("renders a Chapter-level Jev review group as one shield row that expands on click", async () => {
+    layout = stubLayout({ height: 4_000 });
+    // The oauth bundle's tail (the test fixture has no Jev rows): warning clamps with findings among attention rows.
+    const session = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "go" },
+        { kind: "command", tMs: 1_000, durationMs: 500, target: "pnpm test" },
+        ...[0, 1, 2, 3].flatMap((n): StepSeed[] => [
+          { kind: "guardrail", tMs: 45_000, guardrail: { clampIds: ["security_path"] } },
+          { kind: "attention", tMs: 45_000 + n, noise: "pipeline" },
+        ]),
+        { kind: "message", tMs: 46_000, text: "done" },
+      ],
+      findings: [2, 4, 6, 8].map((step) => ({ ruleId: "guardrail_clamp" as const, severity: "warning" as const, step })),
+    });
+    const { h } = renderSpine(session, { state: { level: "chapter" } });
+    await settle();
+    const group = document.querySelector<HTMLElement>("[data-jev]");
+    expect(group).not.toBeNull();
+    expect(group?.textContent).toContain("Jev review · 4 guardrails");
+    expect(group?.querySelector("use")?.getAttribute("href")).toBe("#tv-i-shield");
+    expect(group?.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
+    const key = group?.closest("article")?.getAttribute("data-key") ?? "";
+    expect(key.startsWith("noise:")).toBe(true);
+    act(() => group?.click());
+    await settle();
+    expect(h.store.get().expanded.has(key)).toBe(true);
   });
 
   it("never scrolls for a spine-origin playhead write and reveals for an overview write", async () => {

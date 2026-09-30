@@ -25,6 +25,7 @@ export function GroupRow({
     const chapter = session.chapters[row.chapter];
     if (chapter === undefined) return <div className={styles.group} />;
     const graphic = pickGraphic(chapter, session);
+    const fullTitle = displayUntrusted(chapter.title);
     return (
       <div className={styles.group} data-selected={selected ? "" : undefined} onClick={onActivate}>
         {selected ? <SelectionFrame /> : null}
@@ -35,7 +36,10 @@ export function GroupRow({
         <span className={styles.graphic}>
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} />}
         </span>
-        <span id={lineId} className={styles.line}>{displayUntrusted(chapter.title)}</span>
+        {/* The short title reads in the row; the full title is the tooltip and, through aria-labelledby, the name. */}
+        <span id={lineId} className={styles.line} title={fullTitle} aria-label={fullTitle}>
+          {displayUntrusted(chapter.shortTitle ?? chapter.title)}
+        </span>
         <span className={styles.metric}>
           {`${formatDuration(chapter.endTMs - chapter.tMs)} · ${chapter.stepIds.length} steps`}
           {chapter.findingIds.length > 0 ? <Icon name="flag" size={12} title={`${chapter.findingIds.length} findings`} /> : null}
@@ -45,12 +49,20 @@ export function GroupRow({
   }
   const first = session.steps[row.steps[0] ?? -1];
   if (row.t === "noise") {
+    // A Chapter-level Jev review group (spec §7.6.3): shield node, gray unless a member is a real problem.
+    const jev = row.jev;
     return (
-      <div className={styles.group} data-selected={selected ? "" : undefined} onClick={onActivate} data-noise="">
+      <div
+        className={styles.group}
+        data-selected={selected ? "" : undefined}
+        onClick={onActivate}
+        data-noise=""
+        data-jev={jev === undefined ? undefined : ""}
+      >
         {selected ? <SelectionFrame /> : null}
         <span className={styles.time} data-playhead={playhead ? "" : undefined}>{first === undefined ? "" : formatOffset(first.tMs)}</span>
-        <span className={styles.node}>
-          <Icon name="eyeoff" size={14} />
+        <span className={styles.node} data-tone={jev === undefined ? undefined : jev.tone === "bad" ? "bad" : "neutral"}>
+          <Icon name={jev === undefined ? "eyeoff" : "shield"} size={14} />
         </span>
         <span className={styles.graphic} />
         <span id={lineId} className={styles.line}>{row.label}</span>
