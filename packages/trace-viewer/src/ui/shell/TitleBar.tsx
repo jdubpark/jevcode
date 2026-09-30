@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { AgentState, TraceSessionSummary } from "@jevcode/contracts";
 
@@ -105,6 +105,25 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
     if (running) dispatch({ type: "follow/set", follow: true });
   };
 
+  // WAI-ARIA radio group: the checked view is the one tab stop; arrows (wrapping), Home and End check and focus.
+  const viewRadios = useRef<Array<HTMLButtonElement | null>>([]);
+  const checkedView = Math.max(0, views.findIndex((definition) => definition.kind === view));
+  const onViewKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const count = views.length;
+    let target: number;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") target = (checkedView + 1) % count;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") target = (checkedView - 1 + count) % count;
+    else if (event.key === "Home") target = 0;
+    else if (event.key === "End") target = count - 1;
+    else return;
+    event.preventDefault();
+    const next = views[target];
+    if (next === undefined) return;
+    if (next.kind !== view) dispatch({ type: "view/switch", view: next.kind });
+    viewRadios.current[target]?.focus();
+  };
+
   return (
     <div className={styles.bar}>
       <p className={styles.title} title={displayUntrusted(summary?.prompt ?? "")}>
@@ -174,13 +193,17 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
       ) : null}
 
       {views.length > 1 ? (
-        <div role="radiogroup" aria-label="View" className={styles.segmented}>
+        <div role="radiogroup" aria-label="View" className={styles.segmented} onKeyDown={onViewKeyDown}>
           {views.map((definition, position) => (
             <button
               key={definition.kind}
+              ref={(node) => {
+                viewRadios.current[position] = node;
+              }}
               type="button"
               role="radio"
               aria-checked={definition.kind === view}
+              tabIndex={position === checkedView ? 0 : -1}
               className={styles.segment}
               title={`${definition.label} (${position + 1})`}
               onClick={() => dispatch({ type: "view/switch", view: definition.kind })}
