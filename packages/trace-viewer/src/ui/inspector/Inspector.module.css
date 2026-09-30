@@ -272,6 +272,7 @@
 }
 
 .primary:disabled,
+.primary[aria-disabled="true"],
 .secondary:disabled {
   cursor: default;
   background: var(--tv-fill-2);

@@ -19,26 +19,31 @@ export function usePayloadRows(seqs: readonly number[]): { state: PayloadState; 
   fetchRows.current = payloads;
   const key = seqs.join(",");
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<PayloadState>({ status: "loading" });
+  // State is stored with the request it answers, so a changed key or retry reads as loading at once.
+  const request = `${key}#${attempt}`;
+  const [settled, setSettled] = useState<{ request: string; state: PayloadState }>({
+    request,
+    state: { status: "loading" },
+  });
+  const state: PayloadState =
+    key === "" ? { status: "ready", rows: [] } : settled.request === request ? settled.state : { status: "loading" };
   useEffect(() => {
-    if (key === "") {
-      setState({ status: "ready", rows: [] });
-      return undefined;
-    }
+    if (key === "") return undefined;
     let cancelled = false;
-    setState({ status: "loading" });
     fetchRows.current(key.split(",").map(Number)).then(
       (rows) => {
-        if (!cancelled) setState({ status: "ready", rows });
+        if (!cancelled) setSettled({ request, state: { status: "ready", rows } });
       },
       (error: unknown) => {
-        if (!cancelled) setState({ status: "error", message: error instanceof Error ? error.message : String(error) });
+        if (!cancelled) {
+          setSettled({ request, state: { status: "error", message: error instanceof Error ? error.message : String(error) } });
+        }
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [key, attempt]);
+  }, [key, request]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { state, retry };
 }
@@ -57,7 +62,7 @@ export function selectionSeqs(session: TraceSession, index: TraceIndex, id: Sele
 export function PayloadError({ message, onRetry }: { message: string; onRetry(): void }) {
   return (
     <p className={styles.error}>
-      <span>{`Could not load rows: ${message}`}</span>
+      <span>{`Could not load rows: ${displayUntrusted(message)}`}</span>
       <button type="button" className={styles.inlineButton} onClick={onRetry}>
         Retry
       </button>
