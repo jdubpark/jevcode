@@ -236,4 +236,96 @@ describe("KeyboardLayer", () => {
     expect(h.store.get().tool).toBe("hand");
     outside.remove();
   });
+
+  it("F6 into main focuses the visible view's tab stop, not a hidden view's earlier one", () => {
+    renderHarness(
+      <KeyHarness>
+        <div style={{ display: "none" }}>
+          <button type="button" tabIndex={0}>
+            hidden row
+          </button>
+        </div>
+        <div>
+          <button type="button" tabIndex={0}>
+            visible row
+          </button>
+        </div>
+      </KeyHarness>,
+      foldFixture("oauth"),
+    );
+    screen.getByRole("button", { name: "outline row" }).focus();
+    fireEvent.keyDown(document.activeElement ?? document.body, { code: "F6", key: "F6" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "visible row" }));
+  });
+
+  it("releases the hand tool on Space keyup even when the pointer is no longer over a pannable surface", () => {
+    const h = renderHarness(<KeyHarness><button type="button">row action</button></KeyHarness>, foldFixture("oauth"));
+    const row = screen.getByRole("button", { name: "row action" });
+    row.focus();
+    fireEvent.keyDown(row, { code: "Space", key: " " });
+    expect(h.store.get().tool).toBe("hand");
+    const outline = screen.getByRole("button", { name: "outline row" });
+    outline.focus();
+    fireEvent.keyUp(outline, { code: "Space", key: " " });
+    expect(h.store.get().tool).toBe("select");
+  });
+
+  it("releases the hand tool when the window loses focus while Space is held", () => {
+    const h = renderHarness(<KeyHarness><button type="button">row action</button></KeyHarness>, foldFixture("oauth"));
+    const row = screen.getByRole("button", { name: "row action" });
+    row.focus();
+    fireEvent.keyDown(row, { code: "Space", key: " " });
+    expect(h.store.get().tool).toBe("hand");
+    fireEvent.blur(window);
+    expect(h.store.get().tool).toBe("select");
+  });
+
+  it("focuses the sheet's Close button when it opens", () => {
+    renderHarness(<KeyHarness />, foldFixture("oauth"));
+    const trigger = screen.getByRole("button", { name: "outline row" });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { code: "Slash", key: "?", shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("Esc from an editable target closes an open sheet and otherwise leaves Esc to the input", () => {
+    const session = foldFixture("oauth");
+    const selection = session.steps[0]?.id ?? null;
+    const h = renderHarness(
+      <KeyHarness>
+        <input aria-label="field" />
+      </KeyHarness>,
+      session,
+      { state: { selection } },
+    );
+    const input = screen.getByLabelText("field");
+    input.focus();
+    fireEvent.keyDown(input, { code: "Escape", key: "Escape" });
+    expect(h.store.get().selection).toBe(selection);
+    const trigger = screen.getByRole("button", { name: "outline row" });
+    fireEvent.keyDown(trigger, { code: "Slash", key: "?", shiftKey: true });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    input.focus();
+    fireEvent.keyDown(input, { code: "Escape", key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(h.store.get().selection).toBe(selection);
+  });
+
+  it("forgets the pointer target when the pointer leaves the viewer", () => {
+    renderHarness(
+      <KeyHarness>
+        <div data-pannable data-testid="pan">
+          surface
+        </div>
+      </KeyHarness>,
+      foldFixture("oauth"),
+    );
+    const pan = screen.getByTestId("pan");
+    const root = pan.parentElement?.parentElement as HTMLElement;
+    fireEvent.pointerOver(pan);
+    expect(fireEvent.keyDown(document.body, { code: "Space", key: " " })).toBe(false);
+    fireEvent.keyUp(document.body, { code: "Space", key: " " });
+    fireEvent.pointerLeave(root);
+    expect(fireEvent.keyDown(document.body, { code: "Space", key: " " })).toBe(true);
+  });
 });

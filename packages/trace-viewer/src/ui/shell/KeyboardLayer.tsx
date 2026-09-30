@@ -17,6 +17,7 @@ import {
   nextInOrder,
   nextRegion,
   regionOf,
+  REGIONS,
 } from "./regions.js";
 import { useSessionView } from "./session-context.js";
 import { ShortcutSheet } from "./ShortcutSheet.js";
@@ -75,12 +76,15 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
       if (target instanceof Element && target.closest('[role="dialog"]') !== null) return;
       closeHelp(false);
     };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [helpOpen, closeHelp]);
+    const doc = root?.ownerDocument ?? document;
+    doc.addEventListener("pointerdown", onPointerDown);
+    return () => doc.removeEventListener("pointerdown", onPointerDown);
+  }, [helpOpen, closeHelp, root]);
 
   useEffect(() => {
     if (root === null) return undefined;
+    const doc = root.ownerDocument;
+    const win = doc.defaultView;
     let pointerTarget: Element | null = null;
     let spaceHeld = false;
     let toolBeforeSpace: Tool = "select";
@@ -134,7 +138,7 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
             return;
           }
           store.dispatch({ type: "esc" });
-          if (regionOf(document.activeElement) === "inspector") port?.focusSelected();
+          if (regionOf(doc.activeElement) === "inspector") port?.focusSelected();
           return;
         case "view": {
           const definition = definitions.find((item) => item.kind === command.view);
@@ -193,13 +197,19 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
           if (latest.current.helpOpen) {
             closeHelp(true);
           } else {
-            helpReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            helpReturn.current = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
             setHelpOpen(true);
           }
           return;
-        case "region":
-          focusRegion(root, nextRegion(regionOf(document.activeElement), command.dir));
+        case "region": {
+          // Absent or hidden regions are skipped.
+          let region = nextRegion(regionOf(doc.activeElement), command.dir);
+          for (let tries = 0; tries < REGIONS.length; tries += 1) {
+            if (focusRegion(root, region)) return;
+            region = nextRegion(region, command.dir);
+          }
           return;
+        }
         case "copyNote": {
           if (view.session === null || state.selection === null) return;
           const note = buildReviewNote(view.session, view.index, state.selection);
@@ -211,11 +221,32 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
       }
     };
 
+    const releaseSpace = (): void => {
+      if (!spaceHeld) return;
+      spaceHeld = false;
+      store.dispatch({ type: "tool/set", tool: toolBeforeSpace });
+    };
+
     const handle = (event: KeyboardEvent, phase: "down" | "up"): void => {
       if (event.defaultPrevented) return;
+      // Once Space is held its keyup always releases the hand tool, wherever the pointer or focus has moved.
+      if (phase === "up" && spaceHeld && event.code === "Space") {
+        event.preventDefault();
+        releaseSpace();
+        return;
+      }
+      // Esc inside an editable field closes only an open sheet; the field keeps Esc otherwise.
+      if (phase === "down" && event.code === "Escape" && latest.current.helpOpen) {
+        const editable = event.target instanceof Element && isEditableTarget(event.target);
+        if (editable && root.contains(event.target as Element)) {
+          event.preventDefault();
+          closeHelp(true);
+          return;
+        }
+      }
       const target = event.target instanceof Element ? event.target : null;
       const inside =
-        target === null || target === document.body || target === document.documentElement || root.contains(target);
+        target === null || target === doc.body || target === doc.documentElement || root.contains(target);
       if (!inside) return;
       const input: KeyInput = {
         code: event.code,
@@ -246,13 +277,20 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
     const onPointerOver = (event: PointerEvent): void => {
       pointerTarget = event.target instanceof Element ? event.target : null;
     };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
+    const onPointerLeave = (): void => {
+      pointerTarget = null;
+    };
+    win?.addEventListener("keydown", onKeyDown);
+    win?.addEventListener("keyup", onKeyUp);
+    win?.addEventListener("blur", releaseSpace);
     root.addEventListener("pointerover", onPointerOver);
+    root.addEventListener("pointerleave", onPointerLeave);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
+      win?.removeEventListener("keydown", onKeyDown);
+      win?.removeEventListener("keyup", onKeyUp);
+      win?.removeEventListener("blur", releaseSpace);
       root.removeEventListener("pointerover", onPointerOver);
+      root.removeEventListener("pointerleave", onPointerLeave);
     };
   }, [root, store, registry, closeHelp]);
 
