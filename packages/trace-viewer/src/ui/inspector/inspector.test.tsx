@@ -76,6 +76,67 @@ describe("Inspector", () => {
     expect(request.text.includes("\n")).toBe(false);
   });
 
+  it("announces a rejected requestChanges without an unhandled rejection", async () => {
+    const requestChanges = vi.fn(async () => {
+      throw new Error("INVALID_PAYLOAD");
+    });
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    const h = renderHarness(<Inspector host={{ requestChanges }} />, foldFixture("oauth"), {
+      state: { selection: claimStepId() as `step:${number}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Request changes/ }));
+    await waitFor(() => expect(h.announcements).toContain("Could not send to the composer"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    process.off("unhandledRejection", unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(h.announcements).not.toContain("Sent to the composer");
+  });
+
+  it("ignores repeat clicks while a request is in flight", async () => {
+    let release: () => void = () => undefined;
+    const requestChanges = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+    const h = renderHarness(<Inspector host={{ requestChanges }} />, foldFixture("oauth"), {
+      state: { selection: claimStepId() as `step:${number}` },
+    });
+    const button = screen.getByRole("button", { name: /Request changes/ });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(requestChanges).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(h.announcements).toContain("Sent to the composer"));
+    fireEvent.click(screen.getByRole("button", { name: /Request changes/ }));
+    expect(requestChanges).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps keyboard focus inside the inspector after a Related click changes the selection", () => {
+    const h = renderHarness(<Inspector host={{}} />, foldFixture("oauth"), {
+      state: { selection: claimStepId() as `step:${number}` },
+    });
+    const related = screen.getByText("Related").closest("section")?.querySelector("button");
+    if (related === null || related === undefined) throw new Error("no Related button");
+    related.focus();
+    fireEvent.click(related);
+    expect(h.store.get().selection).not.toBe(claimStepId());
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.querySelector('[role="tabpanel"]')?.contains(document.activeElement)).toBe(true);
+  });
+
+  it("does not move focus when the selection changes from outside the inspector", () => {
+    const session = foldFixture("oauth");
+    const h = renderHarness(<Inspector host={{}} />, session, { state: { selection: session.steps[0]?.id ?? null } });
+    act(() => h.store.dispatch({ type: "select", id: session.steps[1]?.id ?? null, by: "shell" }));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("moves between tabs with Home and End", () => {
+    renderHarness(<Inspector host={{}} />, foldFixture("oauth"));
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "End" });
+    expect(selectedTab()).toBe("Raw");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Raw" }), { key: "Home" });
+    expect(selectedTab()).toBe("Summary");
+  });
+
   it("copies the review note when the host has no requestChanges", async () => {
     const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

@@ -33,6 +33,8 @@ import styles from "./Inspector.module.css";
 const SEVERITY_WORD: Record<Severity, string> = { critical: "Critical", warning: "Warning", info: "Info" };
 
 export interface SummaryProps {
+  /** Called when a Related click is about to change the selection (the Inspector then keeps focus). */
+  onRelatedSelect?(): void;
   session: TraceSession | null;
   index: TraceIndex;
   selection: SelectionId | null;
@@ -112,7 +114,7 @@ function StepDetails({ step, session }: { step: Step; session: TraceSession }) {
         </p>
         {tests.failures.slice(0, 3).map((failure, position) => (
           <div key={`${failure.file}:${position}`} className={styles.failure}>
-            <p className={styles.prose}>{failure.testName}</p>
+            <p className={styles.prose}>{displayUntrusted(failure.testName)}</p>
             <pre className={styles.mono}>{displayUntrusted(failure.message, { multiline: true })}</pre>
             <p className={styles.path}>{displayUntrusted(failure.file)}</p>
           </div>
@@ -152,6 +154,9 @@ function StepDetails({ step, session }: { step: Step; session: TraceSession }) {
   if (step.decision !== undefined) {
     const decision = step.decision;
     const chosen = decision.options.filter((option) => option.chosen).map((option) => option.label);
+    const affected = session.chapters
+      .filter((chapter) => chapter.decisionIds.some((id) => id.slice("decision:".length) === decision.decisionId))
+      .map((chapter) => chapter.title);
     return (
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Decision</h3>
@@ -171,6 +176,7 @@ function StepDetails({ step, session }: { step: Step; session: TraceSession }) {
           {chosen.length > 0 ? `Answer: ${chosen.join(", ")}` : "No answer yet"}
           {step.durationMs === null ? "" : ` · waited ${formatDuration(step.durationMs)}`}
         </p>
+        {affected.length > 0 ? <p className={styles.meta}>{`Affects ${affected.map((title) => displayUntrusted(title)).join(", ")}`}</p> : null}
       </section>
     );
   }
@@ -288,7 +294,7 @@ function SessionSummary({ session }: { session: TraceSession }) {
   );
 }
 
-function Related({ items }: { items: readonly RelatedItem[] }) {
+function Related({ items, onSelect }: { items: readonly RelatedItem[]; onSelect?(): void }) {
   const dispatch = useDispatch();
   if (items.length === 0) return null;
   return (
@@ -299,7 +305,10 @@ function Related({ items }: { items: readonly RelatedItem[] }) {
           key={item.id}
           type="button"
           className={styles.related}
-          onClick={() => dispatch({ type: "select", id: item.id, by: "shell" })}
+          onClick={() => {
+            onSelect?.();
+            dispatch({ type: "select", id: item.id, by: "shell" });
+          }}
         >
           <Icon name={item.icon} size={14} />
           <span>{item.title}</span>
@@ -323,7 +332,7 @@ function relatedForStep(session: TraceSession, step: Step): RelatedItem[] {
   }
   for (const chapterId of step.chapterIds) {
     const chapter = session.chapters.find((item) => item.id === chapterId);
-    if (chapter !== undefined) items.push({ id: chapter.id, icon: CATEGORY_ICON[chapter.category], title: chapter.title, tMs: chapter.tMs });
+    if (chapter !== undefined) items.push({ id: chapter.id, icon: CATEGORY_ICON[chapter.category], title: displayUntrusted(chapter.title), tMs: chapter.tMs });
   }
   return items;
 }
@@ -340,7 +349,7 @@ function relatedForChapter(session: TraceSession, chapter: Chapter): RelatedItem
   return items;
 }
 
-export function Summary({ session, index, selection }: SummaryProps) {
+export function Summary({ session, index, selection, onRelatedSelect }: SummaryProps) {
   if (session === null) return <p className={styles.muted}>Loading the session</p>;
   if (selection === null) return <SessionSummary session={session} />;
   const entry = index.entry(selection);
@@ -350,7 +359,7 @@ export function Summary({ session, index, selection }: SummaryProps) {
     return (
       <>
         <ChapterDetails chapter={chapter} session={session} />
-        <Related items={relatedForChapter(session, chapter)} />
+        <Related items={relatedForChapter(session, chapter)} onSelect={onRelatedSelect} />
       </>
     );
   }
@@ -362,7 +371,7 @@ export function Summary({ session, index, selection }: SummaryProps) {
         <FindingBlock key={finding.id} finding={finding} />
       ))}
       <StepDetails step={step} session={session} />
-      <Related items={relatedForStep(session, step)} />
+      <Related items={relatedForStep(session, step)} onSelect={onRelatedSelect} />
     </>
   );
 }
