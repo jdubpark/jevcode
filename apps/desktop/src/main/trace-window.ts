@@ -99,6 +99,9 @@ export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceW
           console.error(
             `[trace] failed to load the trace window for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
           );
+          // Drop the blank window (closed removes the registry entries) so the
+          // next Trace click creates a fresh one instead of focusing it.
+          if (!window.isDestroyed()) window.close();
         });
       return window;
     },
