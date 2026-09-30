@@ -566,7 +566,7 @@ export interface FinalizeOptions {
   throughSeq?: number;      // cursorAfter(lastPage); raises loadedThroughSeq past filtered rows
   nowMs?: number;           // source.now(); an open step's duration while live
 }
-export function finalize(state: TraceState, options: FinalizeOptions): TraceSession;  // never mutates state
+export function finalize(state: TraceState, options: FinalizeOptions): TraceSession;  // incremental; never mutates a returned session
 export function foldRows(meta: TraceSessionSummary, rows: readonly TraceRow[],
   options: FinalizeOptions): TraceSession;
 ```
@@ -588,10 +588,12 @@ accumulate(state, row):
 finalize(fold, {live, state: pageState, throughSeq, nowMs}):
   loadedThroughSeq = max(last folded seq, throughSeq); meta.state = pageState ?? meta.state
   derive pairing closures, chapters, claims, problems, noise, findings, coverage, entities
-  sort every list by (seq, id); never mutate fold
+  sort every list by (seq, id); never mutate a session returned earlier
 ```
 
 - `accumulate` mutates in place, because copying per row at 75k rows is wasteful. The parity test proves a whole fold equals any batch split and any intermediate `finalize` (§11), and a session already returned never changes when later rows arrive.
+- `finalize` is incremental (§10's first remedy for the Live tick; `model/fold-finalize.ts`). The state keeps derived records between calls, and a call re-derives only what the rows since the previous call reach: the steps they touched, running steps when `nowMs` moves, the steps of a turn that closed or stopped being the last, the chapters of units whose rows changed or whose joins the new rows complete (fact, validation and decision ids that resolve, call ids that gain a step, edits on an inferred chapter's files), and the fields those feed (`Step.chapterIds`, validation-only runs, noise, entities, gaps). Signals re-run over the whole session with cheap per-step work. The result always equals a fresh fold of the same rows (`fold.incremental.test.ts`); a change of `live` or of the clock origin re-derives everything.
+- Identity for consumers: a session `finalize` returned is never mutated later. Between two calls with the same `live`, a `Step`, `Chapter`, `Entity`, `Turn` or `Finding` whose value did not change is the same object, and so is a list (`steps`, `chapters`, `entities`, `turns`, `findings`, `gaps`) none of whose items changed; `coverage`, `meta`, `span` and `hidden` likewise. Selectors may cache per object (the Outline rows do); a running step's `durationMs` follows `nowMs`, so a live running step is a new object on every commit.
 - With `live`, open steps read `running` with `durationMs = nowMs − startMs`, and the open turn raises no `missing_evidence`.
 - Live input must be stored rows with a seq; `agent:event` pushes carry none (contracts/src/ipc.ts:44).
 - `hidden.unreceived = loadedThroughSeq − received`: the rows the source filtered out, exact because seq is gapless. `hidden.byType` counts delivered rows that make no step; the reader and bundles deliver only `TRACE_ROW_TYPES`, so it is empty in v1. The Outline footer shows their sum.
