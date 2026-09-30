@@ -34,7 +34,10 @@ export interface ViewportControllerOptions<C extends Camera> {
 
 export interface ViewportController<C extends Camera> {
   get(): C;
-  /** Animated moves take TWEEN_MS (0 under reduced motion); resolves when the camera arrives or is superseded. */
+  /**
+   * Animated moves take TWEEN_MS (0 under reduced motion); resolves when the camera arrives or is superseded.
+   * A gesture in progress (including a drag) settles first, so onGestureEnd reports the camera it left.
+   */
   set(camera: C, options?: { animate?: boolean }): Promise<void>;
   zoomBy(factor: number, anchor?: Point): void;
   panBy(dx: number, dy: number): void;
@@ -48,6 +51,11 @@ export interface ViewportCore<C extends Camera> extends ViewportController<C> {
 }
 
 interface Tween<C> { from: C; to: C; start: number | null; duration: number; resolve(): void }
+
+function sameCamera(a: Camera, b: Camera): boolean {
+  if (a.mode === "xOnly") return b.mode === "xOnly" && a.k === b.k && a.u0 === b.u0;
+  return b.mode === "uniform" && a.k === b.k && a.tx === b.tx && a.ty === b.ty;
+}
 
 export function createViewportCore<C extends Camera>(options: ViewportControllerOptions<C>): ViewportCore<C> {
   const raf = options.raf ?? ((cb: FrameRequestCallback) => window.requestAnimationFrame(cb));
@@ -139,12 +147,43 @@ export function createViewportCore<C extends Camera>(options: ViewportController
     options.onGestureEnd?.(camera);
   }
 
+  function releaseCapture(pointerId: number): void {
+    if (typeof element.releasePointerCapture !== "function") return;
+    try {
+      element.releasePointerCapture(pointerId);
+    } catch {
+      // Capture was never taken (synthetic events).
+    }
+  }
+
+  /**
+   * A programmatic move settles the gesture in progress first, with the camera the gesture left, so a
+   * settle never cancels the tween's frames or reports a tween's camera as a gesture end (spec §7.8 rule 2).
+   */
+  function finishGesture(): void {
+    if (drag !== null) {
+      releaseCapture(drag.pointerId);
+      drag = null;
+    }
+    if (settleHandle !== null) {
+      clearTimer(settleHandle);
+      settleHandle = null;
+    }
+    if (gesturing) settle();
+  }
+
   function gestureTo(next: C, kind: "pan" | "zoom"): void {
     if (destroyed) return;
     beginGesture(kind);
     camera = clampToContent(next);
     schedule("gesture");
     armSettle();
+  }
+
+  /** Wheel input that would not move the camera starts no gesture, so it never leaves Live. */
+  function wheelTo(next: C, kind: "pan" | "zoom"): void {
+    if (sameCamera(clampToContent(next), camera)) return;
+    gestureTo(next, kind);
   }
 
   function localPoint(clientX: number, clientY: number): Point {
@@ -159,17 +198,18 @@ export function createViewportCore<C extends Camera>(options: ViewportController
     if (event.ctrlKey || event.metaKey) {
       if (!wheelZoom) return;
       const factor = wheelZoomFactor(event.deltaY, event.deltaMode as 0 | 1 | 2, viewport.h);
-      gestureTo(zoomAt(camera, localPoint(event.clientX, event.clientY), factor, options.limits()), "zoom");
+      wheelTo(zoomAt(camera, localPoint(event.clientX, event.clientY), factor, options.limits()), "zoom");
       return;
     }
     const scale = event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? viewport.h : 1;
     let dx = event.deltaX * scale;
     let dy = event.deltaY * scale;
-    if (event.shiftKey && dx === 0) {
-      dx = dy;
+    // An xOnly camera has no y, so a plain (vertical) mouse wheel pans x by the dominant axis (spec §7.6.2).
+    if ((camera as Camera).mode === "xOnly" || (event.shiftKey && dx === 0)) {
+      if (Math.abs(dy) > Math.abs(dx)) dx = dy;
       dy = 0;
     }
-    gestureTo(panCamera(camera, -dx, -dy), "pan");
+    wheelTo(panCamera(camera, -dx, -dy), "pan");
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -203,13 +243,7 @@ export function createViewportCore<C extends Camera>(options: ViewportController
 
   function onPointerUp(event: PointerEvent): void {
     if (drag === null || event.pointerId !== drag.pointerId) return;
-    if (typeof element.releasePointerCapture === "function") {
-      try {
-        element.releasePointerCapture(event.pointerId);
-      } catch {
-        // Capture was never taken (synthetic events).
-      }
-    }
+    releaseCapture(event.pointerId);
     drag = null;
     armSettle();
   }
@@ -226,6 +260,7 @@ export function createViewportCore<C extends Camera>(options: ViewportController
     set(next, setOptions) {
       supersedeTween();
       if (destroyed) return Promise.resolve();
+      finishGesture();
       const animate = setOptions?.animate === true && !options.reducedMotion();
       return new Promise<void>((resolve) => {
         tween = { from: camera, to: next, start: null, duration: animate ? TWEEN_MS : 0, resolve };

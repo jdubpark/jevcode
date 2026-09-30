@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-import type { UniformCamera } from "../../layout/viewport.js";
+import type { UniformCamera, XOnlyCamera } from "../../layout/viewport.js";
 import { createViewportController, SETTLE_MS, type FramePhase, type ViewportController } from "./controller.js";
 
 interface Harness {
@@ -163,6 +163,47 @@ describe("viewport controller", () => {
     expect(h.controller.get().tx).toBe(-50);
   });
 
+  it("a set inside the settle window ends the gesture at the panned camera, then tweens to the end", async () => {
+    const h = setup();
+    wheel(h.element, { deltaY: 10.4 });
+    h.flush();
+    vi.advanceTimersByTime(50);
+    let arrived = false;
+    const target: UniformCamera = { mode: "uniform", tx: 300, ty: 0, k: 1 };
+    void h.controller.set(target, { animate: true }).then(() => { arrived = true; });
+    // The gesture ends before the tween starts, with the camera the wheel left (rounded), never a tween camera.
+    expect(h.onGestureEnd).toHaveBeenCalledTimes(1);
+    expect(h.onGestureEnd.mock.calls[0]?.[0]).toEqual({ mode: "uniform", tx: 0, ty: -10, k: 1 });
+    expect(h.controller.isGesturing()).toBe(false);
+    for (let i = 0; i < 20; i += 1) {
+      h.flush(16);
+      vi.advanceTimersByTime(16);
+    }
+    await Promise.resolve();
+    expect(h.onGestureEnd).toHaveBeenCalledTimes(1);
+    expect(h.controller.get()).toEqual(target);
+    expect(arrived).toBe(true);
+    expect(h.onFrame.mock.calls.at(-1)).toEqual([target, "tween"]);
+  });
+
+  it("a set during a drag ends the drag; later moves of that pointer do not pan", async () => {
+    const h = setup();
+    h.state.hand = true;
+    pointer(h.element, "pointerdown", { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    pointer(h.element, "pointermove", { clientX: 30, clientY: 10, pointerId: 1 });
+    h.flush();
+    const done = h.controller.set({ mode: "uniform", tx: -100, ty: 0, k: 1 });
+    expect(h.onGestureEnd.mock.calls[0]?.[0]).toEqual({ mode: "uniform", tx: 20, ty: 0, k: 1 });
+    pointer(h.element, "pointermove", { clientX: 90, clientY: 10, pointerId: 1 });
+    h.flush();
+    await done;
+    pointer(h.element, "pointerup", { clientX: 90, clientY: 10, pointerId: 1 });
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.controller.get().tx).toBe(-100);
+    expect(h.onGestureEnd).toHaveBeenCalledTimes(1);
+    expect(h.controller.isGesturing()).toBe(false);
+  });
+
   it("the hand tool drags to pan; middle drag pans without it", () => {
     const h = setup();
     pointer(h.element, "pointerdown", { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
@@ -190,5 +231,56 @@ describe("viewport controller", () => {
     wheel(h.element, { deltaY: 10 });
     h.flush();
     expect(h.onFrame).not.toHaveBeenCalled();
+  });
+});
+
+describe("viewport controller on an xOnly (overview) camera", () => {
+  function setupXOnly(initial: XOnlyCamera) {
+    const element = document.createElement("div");
+    document.body.append(element);
+    const queue: FrameRequestCallback[] = [];
+    const onGestureStart = vi.fn<(kind: "pan" | "zoom") => void>();
+    const onFrame = vi.fn<(camera: XOnlyCamera, phase: FramePhase) => void>();
+    const controller = createViewportController<XOnlyCamera>({
+      element,
+      initial,
+      limits: () => ({ minK: 0.01, maxK: 0.4 }),
+      viewport: () => ({ w: 800, h: 120 }),
+      content: () => ({ x: 0, y: 0, w: 100_000, h: 0 }),
+      onFrame,
+      onGestureStart,
+      isHandTool: () => false,
+      reducedMotion: () => false,
+      raf: (cb) => { queue.push(cb); return queue.length; },
+      cancelRaf: () => { queue.length = 0; },
+      setTimer: (cb, ms) => setTimeout(cb, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    });
+    const flush = (): void => { for (const cb of queue.splice(0)) cb(16); };
+    return { element, controller, onGestureStart, onFrame, flush };
+  }
+
+  it("a plain vertical wheel pans x (spec §7.6.2)", () => {
+    const h = setupXOnly({ mode: "xOnly", u0: 1_000, k: 0.1 });
+    const event = wheel(h.element, { deltaY: 100 });
+    h.flush();
+    expect(event.defaultPrevented).toBe(true);
+    expect(h.controller.get()).toEqual({ mode: "xOnly", u0: 2_000, k: 0.1 });
+    expect(h.onGestureStart).toHaveBeenCalledWith("pan");
+    wheel(h.element, { deltaX: -30, deltaY: 10 });
+    h.flush();
+    expect(h.controller.get().u0).toBeCloseTo(1_700, 9);
+  });
+
+  it("a wheel that cannot move the camera starts no gesture", () => {
+    // u0 = −CLAMP_PAD_PX / k is the left clamp edge.
+    const h = setupXOnly({ mode: "xOnly", u0: -240, k: 0.1 });
+    const event = wheel(h.element, { deltaY: -50 });
+    wheel(h.element, { deltaX: 0, deltaY: 0 });
+    h.flush();
+    expect(event.defaultPrevented).toBe(true);
+    expect(h.onGestureStart).not.toHaveBeenCalled();
+    expect(h.onFrame).not.toHaveBeenCalled();
+    expect(h.controller.isGesturing()).toBe(false);
   });
 });
