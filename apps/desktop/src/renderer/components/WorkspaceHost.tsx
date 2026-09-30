@@ -29,6 +29,8 @@ import type {
   UiSpecPatchPayload,
   UiSpecPayload,
 } from "../payload-types.js";
+import { appendPrefill, decidePrefill } from "./composer-prefill.js";
+import type { ComposerPrefill } from "./composer-prefill.js";
 import { TaskPrompt } from "./TaskPrompt.js";
 
 interface WorkspaceHostProps {
@@ -336,6 +338,11 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   const [filter, setFilter] = useState<WorkspaceFilter>("overview");
   const [instructionMode, setInstructionMode] = useState<InstructionMode>("steer");
   const [instruction, setInstruction] = useState("");
+  const instructionRef = useRef(instruction);
+  instructionRef.current = instruction;
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [traceNote, setTraceNote] = useState<ComposerPrefill | null>(null);
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const workspaceRef = useCallback((element: HTMLElement | null) => {
@@ -360,6 +367,43 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     setInstruction("");
     setActionError(null);
   }, [sessionId]);
+
+  // Trace window "Request changes" (spec §8.5): append to the draft, keep the
+  // instruction mode, focus with the caret at the end, never send.
+  useEffect(() => {
+    return bridge.onComposerPrefill((payload) => {
+      const decision = decidePrefill(
+        sessionRef.current?.sessionId ?? null,
+        payload,
+        instructionRef.current,
+      );
+      if (decision.kind === "apply") {
+        setInstruction(decision.draft);
+        setFocusRequest((count) => count + 1);
+      } else {
+        setTraceNote(payload);
+      }
+    });
+  }, [bridge]);
+
+  // A note held for another session applies after the user's own Switch. This
+  // effect runs after the reset above, so the note lands in the new draft.
+  useEffect(() => {
+    if (traceNote === null || traceNote.sessionId !== sessionId) return;
+    setInstruction((draft) => appendPrefill(draft, traceNote.text));
+    setTraceNote(null);
+    setFocusRequest((count) => count + 1);
+  }, [sessionId, traceNote]);
+
+  useEffect(() => {
+    if (focusRequest === 0) return;
+    const composer = composerRef.current;
+    if (composer === null || composer.disabled) return;
+    composer.focus();
+    const end = composer.value.length;
+    composer.setSelectionRange(end, end);
+    composer.scrollTop = composer.scrollHeight;
+  }, [focusRequest]);
 
   useEffect(() => {
     const element = workspaceEl;
@@ -618,6 +662,15 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     }
   };
 
+  const switchToTraceNote = () => {
+    const note = traceNote;
+    if (note === null) return;
+    setActionError(null);
+    void bridge.session.switchTo(note.sessionId).catch((error: unknown) => {
+      setActionError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
   const toggleAgent = async () => {
     if (!sessionId || !state) return;
     setActionError(null);
@@ -767,7 +820,19 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
         </div>
 
         <div className="session-composer">
+          {traceNote !== null ? (
+            <p className="composer-hint" role="status">
+              Trace note for another session ·{" "}
+              <button type="button" onClick={switchToTraceNote}>
+                Switch
+              </button>{" "}
+              <button type="button" onClick={() => setTraceNote(null)}>
+                Dismiss
+              </button>
+            </p>
+          ) : null}
           <textarea
+            ref={composerRef}
             aria-label="Guide the agent"
             placeholder={
               state === "completed"
