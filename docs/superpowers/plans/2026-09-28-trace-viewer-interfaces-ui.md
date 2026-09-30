@@ -992,6 +992,8 @@ export interface ClaimVsObservedProps extends GraphicBaseProps {
   claim: { text: string; span?: readonly [number, number]; tMs: number };
   observed: { passed: number; failed: number; command: string; tMs: number };
   onObservedClick?(): void;
+  /** Added by the C1a lane fix (d1dde66): a roving-tabindex region passes -1 so the observed button is not a second tab stop. Default 0. */
+  observedTabIndex?: 0 | -1;
 }
 export const ClaimVsObserved: React.NamedExoticComponent<ClaimVsObservedProps>;
 // ui/graphics/Graphic.tsx
