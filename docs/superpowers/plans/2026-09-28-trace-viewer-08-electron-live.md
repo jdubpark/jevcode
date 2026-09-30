@@ -173,7 +173,7 @@ Baseline: `pnpm --filter jevcode-desktop test` exits 0.
 - Anchors are quoted text, not line numbers: earlier waves moved the lines. Each quoted anchor occurs exactly once in its file; if it does not, stop and escalate.
 - Workspace packages export only `dist`, and desktop tests have no pretest build. After a change under `packages/`, run `pnpm --filter "...<package>" build` before desktop tests. Before any desktop test or build that imports the viewer: `pnpm --filter @jevcode/trace-viewer build`.
 - Targeted tests: `pnpm --filter jevcode-desktop exec vitest run <path relative to apps/desktop>`; ui-catalog: `pnpm --filter @jevcode/ui-catalog exec vitest run <path>`.
-- better-sqlite3 ABI: vitest needs the Node ABI (`pnpm --filter jevcode-desktop rebuild:node`), `electron .` needs the Electron ABI (`pnpm --filter jevcode-desktop rebuild`). Every step that starts Electron ends by switching back with `rebuild:node`. A test failing with `NODE_MODULE_VERSION` means the ABI is wrong.
+- better-sqlite3 ABI: vitest needs the Node ABI (`pnpm --filter jevcode-desktop rebuild:node`), `electron .` needs the Electron ABI (`pnpm --filter jevcode-desktop run rebuild`). Every step that starts Electron ends by switching back with `rebuild:node`. A test failing with `NODE_MODULE_VERSION` means the ABI is wrong.
 - `pnpm --filter jevcode-desktop <script>` runs in `apps/desktop`, so pass absolute paths to `replay` and `start` (a relative `fixtures/oauth` resolves under `apps/desktop`).
 - Electron runs set `JEVCODE_DB` to a temporary database, never the user's `~/.jevcode/jevcode.db`. Boot runs `rebuildOnBoot` and `sweepStaleSessions`, which write, so copy a kept database before each run.
 - Root checks at the end of every task, in order: `pnpm -r build`, `pnpm -r typecheck`, `pnpm -r --no-bail --workspace-concurrency=1 test`, `pnpm lint`. Each must exit 0. Known flakes (`packages/agent-codex/src/stall-watchdog.test.ts`, `packages/agent-codex/src/codex-adapter.test.ts`, `packages/evidence-engine/src/collectors/file-watcher.test.ts`) are confirmed by rerunning that package alone once; name the flake in the task report.
@@ -1341,7 +1341,7 @@ Expected: `2`
 Run (Electron boot with a throwaway database; the main renderer's own startup calls must pass the allowlist as `main`):
 
 ```bash
-pnpm --filter jevcode-desktop rebuild
+pnpm --filter jevcode-desktop run rebuild
 rm -f "${TMPDIR:-/tmp}/jevcode-da-smoke.db"*
 JEVCODE_SMOKE=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-da-smoke.db" pnpm --filter jevcode-desktop start 2>&1 | tee "${TMPDIR:-/tmp}/jevcode-da-smoke.log"
 grep -c "rejected:" "${TMPDIR:-/tmp}/jevcode-da-smoke.log"
@@ -3216,7 +3216,7 @@ From `/Users/jwpark/Projects/jevcode-tv-db` (absolute fixture path; `replay` run
 rm -rf "${TMPDIR:-/tmp}/jevcode-d6-oauth"
 pnpm --filter jevcode-desktop replay /Users/jwpark/Projects/jevcode-tv-db/fixtures/oauth "${TMPDIR:-/tmp}/jevcode-d6-oauth"
 cp "${TMPDIR:-/tmp}/jevcode-d6-oauth/replay.db" "${TMPDIR:-/tmp}/jevcode-d6-run.db"
-pnpm --filter jevcode-desktop rebuild
+pnpm --filter jevcode-desktop run rebuild
 JEVCODE_SMOKE=1 JEVCODE_SMOKE_TRACE=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-d6-run.db" pnpm --filter jevcode-desktop start 2>&1 | grep -E "SMOKE_(OK|TRACE|FAIL)"
 JEVCODE_SMOKE=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-d6-run.db" pnpm --filter jevcode-desktop start 2>&1 | grep -E "SMOKE_(OK|FAIL)"
 pnpm --filter jevcode-desktop rebuild:node
@@ -3465,7 +3465,7 @@ KEEP="${TMPDIR:-/tmp}/jevcode-soak-trace.db"
 RUN="${TMPDIR:-/tmp}/jevcode-soak-run.db"
 rm -f "$KEEP"*
 JEVCODE_SOAK_PROFILE=trace JEVCODE_SOAK_KEEP_DB="$KEEP" JEVCODE_SOAK_EXPORT="${TMPDIR:-/tmp}/jevcode-soak-trace.json" node scripts/soak.mjs | tail -1
-pnpm --filter jevcode-desktop rebuild
+pnpm --filter jevcode-desktop run rebuild
 for i in 0 1 2 3 4 5; do
   rm -f "$RUN"*
   cp "$KEEP" "$RUN"
@@ -3495,7 +3495,7 @@ REPO="${TMPDIR:-/tmp}/jevcode-m5-repo"
 rm -rf "$REPO" && cp -R fixtures/rate-limit/repo "$REPO"
 git -C "$REPO" init -q && git -C "$REPO" add -A && git -C "$REPO" -c user.name=m5 -c user.email=m5@example.invalid commit -qm seed
 rm -f "${TMPDIR:-/tmp}/jevcode-m5-live.db"*
-pnpm --filter jevcode-desktop rebuild
+pnpm --filter jevcode-desktop run rebuild
 JEVC_AGENT=mock JEVCODE_TRACE_PERF=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-m5-live.db" pnpm --filter jevcode-desktop start 2>&1 | tee "${TMPDIR:-/tmp}/jevcode-m5-live.log"
 ```
 

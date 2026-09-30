@@ -146,7 +146,7 @@ pnpm -r build
 
 - Run every command from `/Users/jwpark/Projects/jevcode-tv-a2`.
 - Workspace packages export only `./dist`, and no `vitest.config.ts` has aliases, so a package's tests run against the last build of its dependencies. After changing `packages/storage`, run `pnpm --filter @jevcode/storage build` before any `jevcode-desktop` test or typecheck. `apps/desktop/package.json` has no pretest build.
-- better-sqlite3 must be built for Node when vitest loads it. If a storage or desktop test fails with `NODE_MODULE_VERSION`, `was compiled against a different Node.js version` or `Could not locate the bindings file`, rerun the second setup command (Lane prerequisites; expected last line: `native modules restored to node ABI`) and rerun the test. `pnpm --filter jevcode-desktop rebuild` switches to the Electron ABI; switch back with `pnpm --filter jevcode-desktop rebuild:node` before testing.
+- better-sqlite3 must be built for Node when vitest loads it. If a storage or desktop test fails with `NODE_MODULE_VERSION`, `was compiled against a different Node.js version` or `Could not locate the bindings file`, rerun the second setup command (Lane prerequisites; expected last line: `native modules restored to node ABI`) and rerun the test. `pnpm --filter jevcode-desktop run rebuild` switches to the Electron ABI; switch back with `pnpm --filter jevcode-desktop rebuild:node` before testing.
 - Line numbers in "Replace line N" and "Replace lines N-M" count lines in the file as it is when the step starts (before the step's first edit). An earlier edit in the same step shifts later lines, so find each edit by its quoted text, which occurs exactly once in the file.
 - Targeted tests: `pnpm --filter <package> exec vitest run <path relative to the package>`.
 - Root checks at the end of every task, in order: `pnpm -r build`, `pnpm -r typecheck`, `pnpm -r --no-bail --workspace-concurrency=1 test`, `pnpm lint`. Each must exit 0. Three pre-existing suites flake under load (agent-codex `src/stall-watchdog.test.ts` and `src/codex-adapter.test.ts`, evidence-engine `src/collectors/file-watcher.test.ts`; W0 Gotcha 3). If they are the only failures, rerun that package alone (`pnpm --filter @jevcode/agent-codex test` or `pnpm --filter @jevcode/evidence-engine test`, one retry); it must pass alone, and you name the flake in the task report.
@@ -3868,7 +3868,7 @@ Expected: each exits 0.
 
 This needs the Electron ABI, then the Node ABI back for tests. It uses a throwaway database so it never opens `~/.jevcode`.
 
-Run: `pnpm --filter jevcode-desktop rebuild`
+Run: `pnpm --filter jevcode-desktop run rebuild`
 Expected: last line `native modules rebuilt for Electron ABI`.
 
 Run: `JEVCODE_SMOKE=1 JEVCODE_DB="${TMPDIR:-/tmp}/jevcode-a2-smoke.db" pnpm --filter jevcode-desktop start`

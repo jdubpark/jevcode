@@ -8826,7 +8826,7 @@ Open `apps/trace-viewer-dev/.smoke/canvas-1440.png` and `docs/superpowers/specs/
 The controller asks the user to set the display to 60 Hz (ProMotion off) and to confirm, then runs the spike harness's risk 2 sweep exactly as the spike doc's "How to run" section (C1-7) records, from this worktree:
 
 ```bash
-pnpm --filter jevcode-desktop rebuild
+pnpm --filter jevcode-desktop run rebuild
 pnpm --filter jevcode-trace-viewer-dev exec vite build --config vite.spike.config.ts
 pnpm --filter jevcode-desktop exec electron /Users/jwpark/Projects/jevcode-tv-c3b/apps/trace-viewer-dev/scripts/spike-electron.cjs
 pnpm --filter jevcode-desktop rebuild:node
