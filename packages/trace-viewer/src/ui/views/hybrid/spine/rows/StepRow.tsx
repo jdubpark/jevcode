@@ -62,6 +62,7 @@ export interface StepRowProps {
   onSelect(): void;
   onToggle(): void;
   onJump(stepId: StepId): void;
+  lineId?: string;
 }
 
 /** First line of agent prose, with bidi and control characters made visible. */
@@ -72,7 +73,7 @@ function firstLine(text: string): string {
 function lineOf(step: Step): { text: string; mono: boolean; className?: string } {
   if (step.command !== undefined) return { text: displayUntrusted(normalizeCommand(step.command.command)), mono: true };
   if (step.edit !== undefined) return { text: truncateMiddle(displayUntrusted(step.edit.path), 64), mono: true };
-  if (step.decision !== undefined) return { text: step.decision.title, mono: false };
+  if (step.decision !== undefined) return { text: displayUntrusted(step.decision.title), mono: false };
   if (step.kind === "reasoning") return { text: `Thinking ${firstLine(step.text ?? "")}`, mono: false, className: "thinking" };
   if (step.kind === "message") return { text: firstLine(step.text ?? step.headline), mono: false, className: "message" };
   if (step.kind === "instruction") return { text: firstLine(step.text ?? step.headline), mono: false };
@@ -106,6 +107,7 @@ export function StepRow(props: StepRowProps) {
   const elapsedMs = graphic !== null && graphic.kind === "duration" && graphic.running ? Math.max(0, nowMs - step.startMs) : undefined;
   const exitX = step.command !== undefined && step.command.exitCode !== null && step.command.exitCode > 0 && step.kind === "command";
   const line = lineOf(step);
+  const lineId = props.lineId;
   return (
     <>
       <div
@@ -131,11 +133,11 @@ export function StepRow(props: StepRowProps) {
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} elapsedMs={elapsedMs} />}
         </span>
         {finding === null ? (
-          <span className={`${styles.line} ${line.mono ? styles.mono : ""} ${line.className === undefined ? "" : styles[line.className] ?? ""}`}>
+          <span id={lineId} className={`${styles.line} ${line.mono ? styles.mono : ""} ${line.className === undefined ? "" : styles[line.className] ?? ""}`}>
             {line.text}
           </span>
         ) : (
-          <span className={`${styles.line} ${critical ? styles.findingTitle : ""}`}>{FINDING_TITLE[finding.ruleId]}</span>
+          <span id={lineId} className={`${styles.line} ${critical ? styles.findingTitle : ""}`}>{FINDING_TITLE[finding.ruleId]}</span>
         )}
         <span className={styles.metric} data-tone={tone === "bad" ? "bad" : "neutral"}>
           {metricOf(step)}

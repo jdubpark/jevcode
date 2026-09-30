@@ -11,12 +11,14 @@ export function GroupRow({
   selected = false,
   playhead = false,
   onActivate,
+  lineId,
 }: {
   row: Extract<SpineRow, { t: "chapter" | "noise" | "elided" }>;
   session: TraceSession;
   selected?: boolean;
   playhead?: boolean;
   onActivate(): void;
+  lineId?: string;
 }) {
   if (row.t === "chapter") {
     const chapter = session.chapters[row.chapter];
@@ -31,7 +33,7 @@ export function GroupRow({
         <span className={styles.graphic}>
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} />}
         </span>
-        <span className={styles.line}>{chapter.title}</span>
+        <span id={lineId} className={styles.line}>{chapter.title}</span>
         <span className={styles.metric}>
           {`${formatDuration(chapter.endTMs - chapter.tMs)} · ${chapter.stepIds.length} steps`}
           {chapter.findingIds.length > 0 ? <Icon name="flag" size={12} title={`${chapter.findingIds.length} findings`} /> : null}
@@ -48,7 +50,7 @@ export function GroupRow({
           <Icon name="eyeoff" size={14} />
         </span>
         <span className={styles.graphic} />
-        <span className={styles.line}>{row.label}</span>
+        <span id={lineId} className={styles.line}>{row.label}</span>
         <span className={styles.metric}>
           <Icon name="chev-r" size={12} />
         </span>
@@ -78,7 +80,7 @@ export function GroupRow({
           ) : null,
         )}
       </span>
-      <span className={styles.line}>{parts.join(" · ")}</span>
+      <span id={lineId} className={styles.line}>{parts.join(" · ")}</span>
       <span className={styles.metric}>
         <Icon name="chev-r" size={12} />
       </span>

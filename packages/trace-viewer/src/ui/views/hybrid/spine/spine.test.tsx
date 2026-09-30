@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildTimeScale, timeScaleInputOf } from "../../../../layout/time-scale.js";
 import { buildTraceIndex } from "../../../../layout/trace-index.js";
@@ -300,5 +300,58 @@ describe("Spine", () => {
     const later = await hollowWidth((session.steps.at(-1)?.tMs ?? 0) + 60_000);
     expect(later).toBeGreaterThan(early);
     expect(later).toBeGreaterThan(0);
+  });
+});
+
+describe("Spine Live clock and article names", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function tickingSpine(terminal: boolean) {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    layout = stubLayout({ height: 2_000 });
+    const session = { ...foldFixture("oauth"), live: !terminal };
+    const clock = { t: 49_000 };
+    const apiRef: { current: SpineApi | null } = { current: null };
+    const h = renderHarness(<Spine active apiRef={apiRef} />, session, { terminal, state: { level: "step" } });
+    h.view.nowT = () => clock.t;
+    return { h, clock, session };
+  }
+
+  it("advances the Live footer every second without new data", () => {
+    const { clock } = tickingSpine(false);
+    const before = screen.getByText(/^Agent running · last event/).textContent;
+    clock.t += 1_000;
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByText(/^Agent running · last event/).textContent).not.toBe(before);
+  });
+
+  it("holds no interval once terminal or unmounted", () => {
+    tickingSpine(true);
+    const baseline = vi.getTimerCount();
+    cleanup();
+    const afterTerminal = vi.getTimerCount();
+    tickingSpine(false);
+    expect(vi.getTimerCount()).toBe(baseline + 1);
+    cleanup();
+    expect(vi.getTimerCount()).toBe(afterTerminal);
+  });
+
+  it("names every article from its own headline", async () => {
+    layout = stubLayout({ height: 2_000 });
+    renderSpine(foldFixture("oauth"), { state: { level: "step" } });
+    await settle();
+    const articles = [...document.querySelectorAll<HTMLElement>('[role="feed"] article')];
+    expect(articles.length).toBeGreaterThan(0);
+    for (const item of articles) {
+      const id = item.getAttribute("aria-labelledby");
+      expect(id).toBeTruthy();
+      const target = document.getElementById(id ?? "");
+      expect(item.contains(target)).toBe(true);
+      expect(target?.textContent?.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -107,6 +107,11 @@ const USER_SCROLL_MS = 400;
 /** A programmatic scroll that never reports "done" stops suppressing pushes after this long. */
 const SUPPRESS_MS = 500;
 
+/** DOM id of a row's headline element; the article is labelled by it (spec feed rule). */
+function lineIdOf(key: string): string {
+  return `spine-line:${key}`;
+}
+
 export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
   const { session, index, scale, terminal, loadedFraction, nowT } = useSessionView();
   const store = useViewStore();
@@ -300,6 +305,14 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
       for (const [name, listener] of listeners) element.removeEventListener(name, listener);
     };
   }, [active, session === null]);
+
+  // A quiet Live agent still ages: the footer and running bars advance once a second without new data.
+  useEffect(() => {
+    const view = viewOf();
+    if (view === null || terminal || !active) return undefined;
+    const handle = view.setInterval(rerender, 1_000);
+    return () => view.clearInterval(handle);
+  }, [terminal, active]);
 
   useEffect(
     () => () => {
@@ -520,6 +533,7 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
                 data-playhead={isPlayhead ? "" : undefined}
                 aria-posinset={item.index + 1}
                 aria-setsize={rows.length}
+                aria-labelledby={lineIdOf(row.key)}
                 tabIndex={row.key === tabKey ? 0 : -1}
                 className={styles.slot}
                 style={{ transform: `translateY(${item.start}px)`, height: measured ? undefined : item.size }}
@@ -527,8 +541,8 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
                   if (event.target === event.currentTarget) focusKey.current = row.key;
                 }}
                 onBlur={(event) => {
-                  const next = event.relatedTarget;
-                  if (focusKey.current === row.key && next instanceof Node && !event.currentTarget.contains(next)) {
+                  const next = event.relatedTarget as Node | null;
+                  if (focusKey.current === row.key && next !== null && !event.currentTarget.contains(next)) {
                     focusKey.current = null;
                   }
                 }}
@@ -553,17 +567,19 @@ export function Spine({ active, apiRef, onWindow, onAnchor }: SpineProps) {
                         onSelect={() => selectRow(step.id)}
                         onToggle={() => toggleFinding(step, row.expanded)}
                         onJump={jump}
+                        lineId={lineIdOf(row.key)}
                       />
                     );
                   })()
                 ) : row.t === "turn" || row.t === "idle" || row.t === "gap" ? (
-                  <SeparatorRow row={row} session={session} />
+                  <SeparatorRow row={row} session={session} lineId={lineIdOf(row.key)} />
                 ) : (
                   <GroupRow
                     row={row}
                     session={session}
                     selected={isSelected}
                     playhead={isPlayhead}
+                    lineId={lineIdOf(row.key)}
                     onActivate={() => {
                       if (row.t === "chapter") {
                         const chapter = session.chapters[row.chapter];
