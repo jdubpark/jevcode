@@ -45,8 +45,12 @@ export interface EdgeLayerProps {
   onSelectEdge(edge: CanvasEdge): void;
 }
 
+function dimClass(hop: boolean, selecting: boolean): string | undefined {
+  return hop ? undefined : selecting ? styles.dim : undefined;
+}
+
 function strokeClass(edge: CanvasEdge, hop: boolean, selecting: boolean): string {
-  return [styles.edge, hop ? styles.hop : selecting ? styles.dim : undefined, edge.tone === "bad" ? styles.bad : undefined]
+  return [styles.edge, hop ? styles.hop : dimClass(hop, selecting), edge.tone === "bad" ? styles.bad : undefined]
     .filter((name): name is string => name !== undefined)
     .join(" ");
 }
@@ -65,7 +69,7 @@ function EdgeLayerView({ layout, layer, selectedKey, onSelectEdge }: EdgeLayerPr
     >
       {edges.map(({ edge, d, hop }) => (
         <g key={edge.id} data-edge={edge.id} data-kind={edge.kind}>
-          {layer === "over" ? <path className={styles.halo} d={d} /> : null}
+          {layer === "over" ? <path className={[styles.halo, dimClass(hop, selectedKey !== null)].filter(Boolean).join(" ")} d={d} /> : null}
           <path className={strokeClass(edge, hop, selectedKey !== null)} d={d} data-stroke="" />
           {edge.kind === "contradicts" ? (
             <path className={styles.hit} d={d} data-hit="contradicts" onClick={() => onSelectEdge(edge)} />
@@ -73,8 +77,8 @@ function EdgeLayerView({ layout, layer, selectedKey, onSelectEdge }: EdgeLayerPr
         </g>
       ))}
       {layer === "under"
-        ? layout.junctions.map((point) => (
-            <circle key={`${point.x}:${point.y}`} className={styles.junction} cx={point.x} cy={point.y} r={2.5} />
+        ? layout.junctions.map((point, index) => (
+            <circle key={`${index}:${point.x}:${point.y}`} className={styles.junction} cx={point.x} cy={point.y} r={2.5} />
           ))
         : null}
     </svg>

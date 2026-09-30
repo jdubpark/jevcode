@@ -85,6 +85,7 @@
 
 .junction {
   fill: var(--tv-ink-4);
+  r: calc(2.5px * var(--tv-inv-k, 1));
 }
 
 /* Screen-space overlay: labels, handles, time chip, separator labels and the contradicts badge stay 12 px at any k. */
