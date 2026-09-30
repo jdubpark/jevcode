@@ -711,6 +711,8 @@ Each rule in `model/signals.ts` is a `SignalMeta` `{id, version, severity, title
 
 `failing_tests` follows R11's wording ("critical if target's final run failed"): a failing run followed by another failing run is critical for both, because the failure was never fixed.
 
+**Finding chapters.** A finding about a test or check run (`claim_contradicted` through its evidence run, `failing_tests`, and `recovery_arc` through its failed run, or its passing run when the failed run has no chapter) names only the run's chapters that own the failure: those whose unit `status` is `failed` or whose `files` hold a failing test's `file` (equal, or one path ends with the other at a `/`), else the latest of the run's chapters in session order. One validation is often cited by every unit (all seven oauth units cite the one `pnpm test` validation), so the run joins every chapter (§6.6 join, unchanged); naming all of them would mark every chapter with the finding and, through `applySignals`, clear `noise` on lockfile and formatting chapters. This refines the earlier "the run's `chapterIds`" by an orchestrator ruling (M1, 2026-09-30).
+
 ```ts
 export const CLAMP_META: Readonly<Record<string, { label: string; severity: Severity }>> = {
   destructive_command: { label: "Destructive command", severity: "critical" },   // mirrors jev-router/src/guardrails.ts:76-256
