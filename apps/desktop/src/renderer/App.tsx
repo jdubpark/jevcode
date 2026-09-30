@@ -8,6 +8,7 @@ import {
 } from "../shared/prefs.js";
 import type { AgentPreferences } from "../shared/prefs.js";
 import { getBridge } from "./bridge.js";
+import { traceOpenErrorMessage } from "./trace-open-error.js";
 import { AgentSettings } from "./components/AgentSettings.js";
 import { DebugPanel } from "./components/DebugPanel.js";
 import { Header } from "./components/Header.js";
@@ -26,6 +27,7 @@ export function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState("");
+  const [traceError, setTraceError] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<AgentPreferences>(
     DEFAULT_AGENT_PREFERENCES,
   );
@@ -85,10 +87,11 @@ export function App() {
     const sessionId = sessionState?.sessionId;
     if (!sessionId) return;
     // trace:open only opens or focuses a window; it never calls session.switchTo.
+    setTraceError(null);
     void bridge.trace.open(sessionId).catch((error: unknown) => {
-      console.warn(
-        `[jevcode] could not open the trace: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const message = traceOpenErrorMessage(error);
+      console.warn(`[jevcode] ${message}`);
+      setTraceError(message);
     });
   }, [bridge, sessionState?.sessionId]);
 
@@ -121,6 +124,9 @@ export function App() {
           <AgentSettings prefs={prefs} onSet={(patch) => void bridge.prefs.set(patch)} />
         </aside>
         <main className="workspace-column">
+          {traceError !== null ? (
+            <p className="form-error" role="alert">{traceError}</p>
+          ) : null}
           <WorkspaceHost
             repo={repo}
             sessionState={sessionState}
