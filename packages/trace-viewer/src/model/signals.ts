@@ -24,6 +24,15 @@ import {
 
 export interface SignalInput {
   session: Omit<TraceSession, "findings" | "coverage">;
+  /** Lookups the finalize already maintains (fold-finalize.ts); built from session when absent. */
+  index?: SignalIndex;
+}
+
+export interface SignalIndex {
+  stepById: ReadonlyMap<StepId, Step>;
+  chapterById: ReadonlyMap<UnitStableId, Chapter>;
+  /** runChapters(run, chapterById), kept up to date as chapters change. */
+  runChapters(run: Step): UnitStableId[];
 }
 
 export interface FindingDraft {
@@ -50,6 +59,19 @@ export interface SignalRule extends SignalMeta {
 }
 
 // ------------------------------------------------------------ shared helpers
+
+/** normalizeCommand memo: signals run on every finalize, over every run step. Bounded. */
+const normalized = new Map<string, string>();
+
+function commandKey(command: string): string {
+  let key = normalized.get(command);
+  if (key === undefined) {
+    if (normalized.size >= 4_096) normalized.clear();
+    key = normalizeCommand(command);
+    normalized.set(command, key);
+  }
+  return key;
+}
 
 function isRun(step: Step): boolean {
   return step.kind === "test" || step.kind === "check";
@@ -81,7 +103,7 @@ function sortStepIds(ids: readonly StepId[], steps: ReadonlyMap<StepId, Step>): 
  *  that own the failure count: of the run's chapters, those whose unit failed or whose files hold a
  *  failing test's file, else the latest of them (session order). This keeps a shared validation from
  *  making every chapter a finding chapter and from clearing noise on lockfile or formatting chapters. */
-function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
+export function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
   const owners = run.chapterIds.filter((id) => {
     const chapter = chapterById.get(id);
     return chapter !== undefined && ownsRunOutcome(chapter, run);
@@ -91,8 +113,11 @@ function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>)
   return latest === undefined ? [] : [latest];
 }
 
-function chaptersById(session: SignalInput["session"]): Map<UnitStableId, Chapter> {
-  return new Map(session.chapters.map((chapter) => [chapter.id, chapter]));
+function chaptersOf(input: SignalInput): (run: Step) => UnitStableId[] {
+  const index = input.index;
+  if (index !== undefined) return (run) => index.runChapters(run);
+  const chapterById = new Map(input.session.chapters.map((chapter) => [chapter.id, chapter]));
+  return (run) => runChapters(run, chapterById);
 }
 
 // ------------------------------------------------------------ claim lexicon (R10)
@@ -147,30 +172,29 @@ export function isPlanText(text: string): boolean {
   return PLAN_LEAD.test(text) || (text.match(LIST_ITEM) ?? []).length >= 2;
 }
 
-/** Sets Turn.planStepId (the first plan message before the turn's first edit) and
- *  Turn.claimStepId (the turn's last success claim) (R25). finalize calls it before signals, and
- *  claim_contradicted checks only claimStepId. */
-export function markTurns(turns: readonly Turn[], stepById: ReadonlyMap<StepId, Step>): void {
-  for (const turn of turns) {
-    const steps = turn.stepIds
-      .map((id) => stepById.get(id))
-      .filter((step): step is Step => step !== undefined);
-    const firstEdit = steps.find((step) => step.kind === "edit");
-    const plan = steps.find(
-      (step) =>
-        step.kind === "message" &&
-        (firstEdit === undefined || step.firstSeq < firstEdit.firstSeq) &&
-        isPlanText(step.text ?? ""),
-    );
-    if (plan !== undefined) turn.planStepId = plan.id;
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      const step = steps[index];
-      if (step !== undefined && step.kind === "message" && isSuccessClaim(step.text ?? "")) {
-        turn.claimStepId = step.id;
-        break;
-      }
+/** Turn.planStepId (the first plan message before the turn's first edit) and Turn.claimStepId (the
+ *  turn's last success claim) of a turn's steps in order (R25). claim_contradicted checks only
+ *  claimStepId. isPlan and isClaim default to isPlanText and isSuccessClaim of the step's text. */
+export function turnMarks(
+  steps: readonly Step[],
+  isPlan: (step: Step) => boolean = (step) => isPlanText(step.text ?? ""),
+  isClaim: (step: Step) => boolean = (step) => isSuccessClaim(step.text ?? ""),
+): Pick<Turn, "planStepId" | "claimStepId"> {
+  const marks: Pick<Turn, "planStepId" | "claimStepId"> = {};
+  const firstEdit = steps.find((step) => step.kind === "edit");
+  const plan = steps.find(
+    (step) =>
+      step.kind === "message" && (firstEdit === undefined || step.firstSeq < firstEdit.firstSeq) && isPlan(step),
+  );
+  if (plan !== undefined) marks.planStepId = plan.id;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (step !== undefined && step.kind === "message" && isClaim(step)) {
+      marks.claimStepId = step.id;
+      break;
     }
   }
+  return marks;
 }
 
 // ------------------------------------------------------------ the five v1 signals (R11)
@@ -187,9 +211,10 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
     "Before M1a, reasoning text was stored as assistant messages (packages/agent-codex/src/jsonl.ts:178-189), so a thought can read as a claim.",
   ],
   requires: ["agent_messages", "test_results"],
-  evaluate({ session }) {
-    const stepById = new Map(session.steps.map((step) => [step.id, step]));
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const stepById = input.index?.stepById ?? new Map(session.steps.map((step) => [step.id, step]));
+    const chaptersOfRun = chaptersOf(input);
     // Only each turn's claimStepId (its last success claim, set by markTurns) is checked (R25).
     const claimIds = new Set<StepId>();
     for (const turn of session.turns) if (turn.claimStepId !== undefined) claimIds.add(turn.claimStepId);
@@ -198,7 +223,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
     const drafts: FindingDraft[] = [];
     for (const step of session.steps) {
       if (isRun(step) && step.target !== undefined) {
-        latestByTarget.set(normalizeCommand(step.target), step);
+        latestByTarget.set(commandKey(step.target), step);
         continue;
       }
       if (!claimIds.has(step.id)) continue;
@@ -216,7 +241,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
           tests.failed > 0 ? `${tests.failed} failing test${tests.failed === 1 ? "" : "s"}` : "a non-zero exit"
         }.`,
         stepIds: sortStepIds([step.id, failed.id], stepById),
-        chapterIds: runChapters(failed, chapterById),
+        chapterIds: chaptersOfRun(failed),
         evidenceSeqs: sortedUnique([runSeq(failed), step.firstSeq]),
         claim: {
           claim: { text, seq: step.firstSeq, tMs: step.tMs, stepId: step.id },
@@ -250,17 +275,18 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
     "Any runner-like stdout is parsed into a test result (apps/desktop/src/main/pipeline/pipeline-runtime.ts:750-753), so a command that prints a test summary it did not run can count.",
   ],
   requires: ["test_results"],
-  evaluate({ session }) {
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const chaptersOfRun = chaptersOf(input);
     const finalRun = new Map<string, Step>();
     for (const step of session.steps) {
-      if (isRun(step) && step.target !== undefined) finalRun.set(normalizeCommand(step.target), step);
+      if (isRun(step) && step.target !== undefined) finalRun.set(commandKey(step.target), step);
     }
     return session.steps
       .filter((step) => isRun(step) && step.tests !== undefined && step.tests.failed > 0)
       .map((step) => {
         const tests = step.tests ?? { passed: 0, failed: 0, skipped: 0 };
-        const final = step.target !== undefined ? finalRun.get(normalizeCommand(step.target)) : undefined;
+        const final = step.target !== undefined ? finalRun.get(commandKey(step.target)) : undefined;
         const unresolved = final !== undefined && runFailed(final);
         return {
           anchorSeq: runSeq(step),
@@ -271,7 +297,7 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
             ? `${step.target ?? "The test command"} still fails in its final run.`
             : `${step.target ?? "The test command"} passed in a later run.`,
           stepIds: [step.id],
-          chapterIds: runChapters(step, chapterById),
+          chapterIds: chaptersOfRun(step),
           evidenceSeqs: [runSeq(step)],
         } satisfies FindingDraft;
       });
@@ -351,8 +377,9 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
   rationale: "A run failed, the agent edited code, and a later run of the same command passed.",
   knownFalsePositives: ["The later run passed because tests were deleted or skipped rather than fixed."],
   requires: ["test_results"],
-  evaluate({ session }) {
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const chaptersOfRun = chaptersOf(input);
     const drafts: FindingDraft[] = [];
     const openFailure = new Map<string, { failed: Step; edits: StepId[] }>();
     for (const step of session.steps) {
@@ -361,7 +388,7 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
         continue;
       }
       if (!isRun(step) || step.target === undefined) continue;
-      const target = normalizeCommand(step.target);
+      const target = commandKey(step.target);
       if (runFailed(step)) {
         const pending = openFailure.get(target);
         if (pending === undefined || pending.edits.length > 0) openFailure.set(target, { failed: step, edits: [] });
@@ -383,7 +410,7 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
         stepIds: [pending.failed.id, ...pending.edits, step.id],
         // The chapters that owned the failure recovered; the passing run's chapters only when the
         // failed run has none.
-        chapterIds: runChapters(pending.failed.chapterIds.length > 0 ? pending.failed : step, chapterById),
+        chapterIds: chaptersOfRun(pending.failed.chapterIds.length > 0 ? pending.failed : step),
         evidenceSeqs: sortedUnique([runSeq(pending.failed), runSeq(step)]),
       });
     }
@@ -441,11 +468,12 @@ export function computeCoverage(
   return { capabilities: present, signals, approximateJoins, inferredSteps };
 }
 
-/** Evaluates the active signals, attaches findingIds to steps and chapters, un-collapses every
- *  step a finding names, and marks each contradicted claim step with the claim_contradicted
- *  problem. Runs after applyNoise. Findings are derived here and never persisted. */
-export function applySignals(input: SignalInput, coverage: Coverage): Finding[] {
-  const session = input.session;
+/** Evaluates the active signals: findings in (anchorSeq, id) order, the first draft of each id kept.
+ *  Signals read the steps and chapters before findings apply (finding ids empty, noise before a
+ *  finding clears it); the finalize then attaches findingIds to the steps and chapters each finding
+ *  names, un-collapses them, and marks each contradicted claim step with the claim_contradicted
+ *  problem. Findings are derived here and never persisted. */
+export function evaluateSignals(input: SignalInput, coverage: Coverage): Finding[] {
   const findings = new Map<string, Finding>();
   for (const signal of coverage.signals) {
     if (!signal.active) continue;
@@ -456,34 +484,5 @@ export function applySignals(input: SignalInput, coverage: Coverage): Finding[] 
       findings.set(id, { id, ruleId: rule.id, ruleVersion: rule.version, ...draft });
     }
   }
-  const sorted = [...findings.values()].sort((a, b) => a.anchorSeq - b.anchorSeq || a.id.localeCompare(b.id));
-  const stepById = new Map(session.steps.map((step) => [step.id, step]));
-  const chapterById = new Map(session.chapters.map((chapter) => [chapter.id, chapter]));
-  for (const finding of sorted) {
-    for (const stepId of finding.stepIds) {
-      const step = stepById.get(stepId);
-      if (step === undefined) continue;
-      step.findingIds.push(finding.id);
-      step.noise = null;
-    }
-    for (const chapterId of finding.chapterIds) {
-      const chapter = chapterById.get(chapterId);
-      if (chapter === undefined) continue;
-      chapter.findingIds.push(finding.id);
-      chapter.noise = false;
-      // A chapter a finding names keeps the finding's runs in its band footprint, including the
-      // latest chapter runChapters falls back to when no chapter owns a shared run (spec §6.6).
-      const validationOnly = chapter.validationOnlyStepIds;
-      if (validationOnly !== undefined && validationOnly.length > 0) {
-        chapter.validationOnlyStepIds = validationOnly.filter((stepId) => !finding.stepIds.includes(stepId));
-      }
-    }
-    if (finding.ruleId === "claim_contradicted" && finding.claim !== undefined) {
-      const claimStep = stepById.get(finding.claim.claim.stepId);
-      if (claimStep !== undefined && !claimStep.problems.includes("claim_contradicted")) {
-        claimStep.problems.push("claim_contradicted");
-      }
-    }
-  }
-  return sorted;
+  return [...findings.values()].sort((a, b) => a.anchorSeq - b.anchorSeq || a.id.localeCompare(b.id));
 }
