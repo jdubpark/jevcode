@@ -33,8 +33,8 @@ import styles from "./Inspector.module.css";
 const SEVERITY_WORD: Record<Severity, string> = { critical: "Critical", warning: "Warning", info: "Info" };
 
 export interface SummaryProps {
-  /** Called when a Related click is about to change the selection (the Inspector then keeps focus). */
-  onRelatedSelect?(): void;
+  /** Handles a Related click (the Inspector selects and keeps focus); without it the click selects directly. */
+  onRelatedSelect?(id: SelectionId): void;
   session: TraceSession | null;
   index: TraceIndex;
   selection: SelectionId | null;
@@ -294,7 +294,7 @@ function SessionSummary({ session }: { session: TraceSession }) {
   );
 }
 
-function Related({ items, onSelect }: { items: readonly RelatedItem[]; onSelect?(): void }) {
+function Related({ items, onSelect }: { items: readonly RelatedItem[]; onSelect?(id: SelectionId): void }) {
   const dispatch = useDispatch();
   if (items.length === 0) return null;
   return (
@@ -306,8 +306,8 @@ function Related({ items, onSelect }: { items: readonly RelatedItem[]; onSelect?
           type="button"
           className={styles.related}
           onClick={() => {
-            onSelect?.();
-            dispatch({ type: "select", id: item.id, by: "shell" });
+            if (onSelect !== undefined) onSelect(item.id);
+            else dispatch({ type: "select", id: item.id, by: "shell" });
           }}
         >
           <Icon name={item.icon} size={14} />
