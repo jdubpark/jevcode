@@ -70,8 +70,10 @@ function arrayGuard(def: Def): ExactGuard {
     const entry = def[key] as { value?: unknown } | null | undefined;
     return typeof entry?.value === "number" ? entry.value : null;
   };
-  const min = bound("minLength") ?? bound("exactLength") ?? 0;
-  const max = bound("maxLength") ?? bound("exactLength") ?? Number.POSITIVE_INFINITY;
+  // zod checks minLength, maxLength and exactLength independently, so every bound set applies.
+  const exact = bound("exactLength");
+  const min = Math.max(bound("minLength") ?? 0, exact ?? 0);
+  const max = Math.min(bound("maxLength") ?? Number.POSITIVE_INFINITY, exact ?? Number.POSITIVE_INFINITY);
   return (value) => {
     if (!Array.isArray(value) || value.length < min || value.length > max) return false;
     for (const element of value as unknown[]) if (!item(element)) return false;

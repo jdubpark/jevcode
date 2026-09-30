@@ -124,4 +124,24 @@ describe("exactGuard: a fast path that never accepts what zod would reject or re
     }
     expect(guard({ ...ok, f: 0.5 })).toBe(true);
   });
+
+  it("keeps every array bound when .length(n) is combined with .min() or .max()", () => {
+    expect(exactGuard(z.array(z.string()).min(1).length(3))(["a", "b"])).toBe(false);
+    expect(exactGuard(z.array(z.string()).max(5).length(3))(["a", "b", "c", "d"])).toBe(false);
+    expect(exactGuard(z.array(z.string()).min(1).length(3))(["a", "b", "c"])).toBe(true);
+  });
+
+  it("agrees with zod on string arrays around any mix of min, max and length bounds", () => {
+    const bound = fc.option(fc.nat({ max: 5 }), { nil: undefined });
+    fc.assert(
+      fc.property(bound, bound, bound, fc.array(fc.constantFrom("a", "b"), { maxLength: 7 }), (min, max, length, value) => {
+        let schema = z.array(z.string());
+        if (min !== undefined) schema = schema.min(min);
+        if (max !== undefined) schema = schema.max(max);
+        if (length !== undefined) schema = schema.length(length);
+        expect(exactGuard(schema)(value)).toBe(schema.safeParse(value).success);
+      }),
+      { numRuns: 2_000 },
+    );
+  });
 });
