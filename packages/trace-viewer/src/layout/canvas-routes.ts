@@ -29,6 +29,10 @@ export interface RouteInput {
   frameByKey: ReadonlyMap<string, CanvasFrame>;
   columns: readonly CanvasColumn[];
   spec: LevelSpec;
+  /** Frame key → placement order (the order slots were first placed). Defaults to (col, row) frame order. */
+  order?: ReadonlyMap<string, number>;
+  /** Step lookup shared with the caller; built from `session.steps` when omitted. */
+  stepOf?: (id: string) => Step | undefined;
 }
 
 export const RAIL_RADIUS_PX = 6;
@@ -60,10 +64,10 @@ interface RouteContext {
 
 function createContext(input: RouteInput): RouteContext {
   const frameBySel = new Map<SelectionId, CanvasFrame>();
-  const order = new Map<string, number>();
+  const order = new Map<string, number>(input.order ?? []);
   const byColumn = new Map<number, CanvasFrame[]>();
   input.frames.forEach((frame, index) => {
-    order.set(frame.key, index);
+    if (input.order === undefined) order.set(frame.key, index);
     for (const selId of frame.memberSelIds) if (!frameBySel.has(selId)) frameBySel.set(selId, frame);
     const list = byColumn.get(frame.col);
     if (list === undefined) byColumn.set(frame.col, [frame]);
@@ -72,7 +76,7 @@ function createContext(input: RouteInput): RouteContext {
   for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
   return {
     input,
-    stepOf: stepFinder(input.session.steps),
+    stepOf: input.stepOf ?? stepFinder(input.session.steps),
     chapterById: new Map(input.session.chapters.map((chapter) => [chapter.id, chapter])),
     frameBySel,
     order,
@@ -81,8 +85,13 @@ function createContext(input: RouteInput): RouteContext {
 }
 
 function anchorOf(ctx: RouteContext, chapter: Chapter): number {
-  const stepSeqs = chapter.stepIds.map((id) => ctx.stepOf(id)?.firstSeq ?? Infinity);
-  return Math.min(Infinity, ...chapter.factSeqs, ...stepSeqs);
+  let min = Infinity;
+  for (const seq of chapter.factSeqs) if (seq < min) min = seq;
+  for (const id of chapter.stepIds) {
+    const seq = ctx.stepOf(id)?.firstSeq ?? Infinity;
+    if (seq < min) min = seq;
+  }
+  return min;
 }
 
 function homeKey(ctx: RouteContext, stepId: string): string | undefined {
@@ -419,8 +428,9 @@ function wantedEdges(ctx: RouteContext): EdgeSpec[] {
     if (seen === undefined || compareText(spec.findingId ?? "", seen.findingId ?? "") < 0) unique.set(id, spec);
   }
   const order = (key: string): number => ctx.order.get(key) ?? Number.MAX_SAFE_INTEGER;
-  // Age first (newest endpoint), so an appended edge is routed after every edge already placed and
-  // can only take lanes nobody holds. Reserved lanes make kind irrelevant for cross-kind contention.
+  // Age first (newest endpoint by slot placement order, which is append order in sticky state), so an edge
+  // touching a newly placed frame is routed after every edge already placed and can only take lanes nobody
+  // holds. Reserved lanes make kind irrelevant for cross-kind contention.
   const age = (spec: EdgeSpec): number => Math.max(order(spec.from), order(spec.to));
   return [...unique.values()].sort(
     (a, b) =>

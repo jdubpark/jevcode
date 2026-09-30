@@ -74,8 +74,11 @@ function compareItems(a: CanvasItem, b: CanvasItem): number {
 }
 
 /** Spec §7.5 "Items": story items per turn, decisions, current chapters and loose finding steps. */
-export function collectItems(session: TraceSession, index: TraceIndex): CanvasItem[] {
-  const stepOf = stepFinder(session.steps);
+export function collectItems(
+  session: TraceSession,
+  index: TraceIndex,
+  stepOf: (id: string) => Step | undefined = stepFinder(session.steps),
+): CanvasItem[] {
   const findingsById = new Map<FindingId, Finding>(session.findings.map((finding) => [finding.id, finding]));
   const currentChapters = new Set<string>(
     session.chapters.filter((chapter) => chapter.current).map((chapter) => chapter.id),
@@ -138,7 +141,11 @@ export function collectItems(session: TraceSession, index: TraceIndex): CanvasIt
     const own = chapter.stepIds.flatMap((id) => stepOf(id)?.firstSeq ?? []);
     const seqs = [...chapter.factSeqs, ...own];
     // Same rule as trace-index: min over factSeqs and step firstSeqs (spec §7.5).
-    const anchorSeq = seqs.length > 0 ? Math.min(...seqs) : chapter.firstSeq;
+    let anchorSeq = chapter.firstSeq;
+    if (seqs.length > 0) {
+      anchorSeq = Infinity;
+      for (const seq of seqs) if (seq < anchorSeq) anchorSeq = seq;
+    }
     const flagged =
       chapter.findingIds.length > 0 ||
       chapter.stepIds.some((id) => (stepOf(id)?.findingIds.length ?? 0) > 0);
@@ -490,7 +497,12 @@ function frameKindOf(item: CanvasItemKind): CanvasFrame["kind"] {
   return "loose";
 }
 
-function finalize(run: Run, session: TraceSession, itemByKey: ReadonlyMap<string, CanvasItem>): CanvasLayout {
+function finalize(
+  run: Run,
+  session: TraceSession,
+  itemByKey: ReadonlyMap<string, CanvasItem>,
+  stepOf: (id: string) => Step | undefined,
+): CanvasLayout {
   const { st, spec } = run;
   const frames: CanvasFrame[] = [];
   const holes: Rect[] = [];
@@ -542,7 +554,9 @@ function finalize(run: Run, session: TraceSession, itemByKey: ReadonlyMap<string
     turn: col.turn,
   }));
   const frameByKey = new Map(frames.map((frame) => [frame.key, frame]));
-  const routed = routeEdges({ session, frames, frameByKey, columns, spec });
+  // st.slots is in first-placement order, which sticky state preserves, so route age follows append order.
+  const order = new Map(st.slots.map((slot, i) => [slot.id, i] as const));
+  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf });
   const edges: readonly CanvasEdge[] = routed.edges;
   const junctions: readonly Point[] = routed.junctions;
   const hiddenEdges = routed.hiddenEdges;
@@ -590,7 +604,8 @@ export function layoutCanvas(
       ? cloneState(unpackState(prev.state))
       : emptyState(level, sessionId);
   const run: Run = { st, spec, scale, slotById: new Map(st.slots.map((slot) => [slot.id, slot])) };
-  const items = collectItems(session, index);
+  const stepOf = stepFinder(session.steps);
+  const items = collectItems(session, index, stepOf);
   const itemByKey = new Map(items.map((item) => [item.key, item]));
   for (const item of items) {
     const slotId = st.memberSlot[item.key];
@@ -607,7 +622,7 @@ export function layoutCanvas(
       if (col !== undefined) putItem(run, col, item, true);
     }
   }
-  return finalize(run, session, itemByKey);
+  return finalize(run, session, itemByKey, stepOf);
 }
 
 /** World x ↔ display time over the breakpoints, linear in toU between them, pps past the last. */
