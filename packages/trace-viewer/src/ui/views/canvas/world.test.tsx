@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 // Expected values: spec §7.5 (edges table, oauth table, zoom bands), R17 (world, edge svg, overlay, hit twin, focus),
-// the canvas mockup (badge worded "contradicts", time chip "+0:33 – 0:40") and lane rulings (CULL_FRAMES, nowMs).
+// the canvas mockup (badge worded "contradicts", time chip "+0:33 – 0:40", written "+0:33 – +0:40" in the shared range format) and lane rulings (CULL_FRAMES, nowMs).
 
 const session = oauthCanvasSession();
 const layout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "chapter");
@@ -218,7 +218,7 @@ describe("World", () => {
   it("draws four handles and the time chip around the selection", () => {
     const { view } = renderWorld({ selectedKey: linkingTest.key });
     expect(view.container.querySelectorAll("[data-handle]")).toHaveLength(4);
-    expect(view.container.querySelector("[data-time-chip]")?.textContent).toBe("+0:33 – 0:40");
+    expect(view.container.querySelector("[data-time-chip]")?.textContent).toBe("+0:33 – +0:40");
   });
 
   it("renders an empty viewport while the session loads", () => {

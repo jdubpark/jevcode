@@ -29,7 +29,7 @@ import {
 } from "./frame-label.js";
 
 // Expected strings: spec §7.13 ("Linking test, 1 failed, 14 passed, +0:33", with the model's unit title),
-// §7.1 FINDING_TITLE, and the canvas mockup's time chip "+0:33 – 0:40".
+// §7.1 FINDING_TITLE, and the canvas mockup's time chip "+0:33 – 0:40", written "+0:33 – +0:40" in the shared range format.
 
 const oauth = oauthCanvasSession();
 const layout = layoutCanvas(oauth, buildTraceIndex(oauth), canvasScale(oauth), "chapter");
@@ -73,7 +73,7 @@ describe("frameLabel", () => {
 
   it("gives the selected chapter's time chip", () => {
     const linkingTest = frame((f) => f.selId === "unit:oauth-linking-test-failure");
-    expect(timeChip(frameStart(linkingTest, ctx), frameEnd(linkingTest, ctx))).toBe("+0:33 – 0:40");
+    expect(timeChip(frameStart(linkingTest, ctx), frameEnd(linkingTest, ctx))).toBe("+0:33 – +0:40");
   });
 });
 

@@ -10,6 +10,7 @@ import {
   formatClock,
   formatDuration,
   formatOffset,
+  formatOffsetRange,
   normalizeCommand,
   stepHeadline,
   toolLabel,
@@ -97,6 +98,18 @@ describe("formatOffset", () => {
     [Number.NaN, "+0:00"],
   ])("formats %d ms as %s", (ms, expected) => {
     expect(formatOffset(ms)).toBe(expected);
+  });
+});
+
+describe("formatOffsetRange (the Canvas time chip and the Hybrid spine chip)", () => {
+  it.each([
+    [0, 45_000, "+0:00 – +0:45"],
+    [33_000, 40_000, "+0:33 – +0:40"],
+    [43_000, 43_000, "+0:43"],
+    [43_000, 43_900, "+0:43"],
+    [43_000, 40_000, "+0:43"],
+  ])("formats %d – %d ms as %s", (start, end, expected) => {
+    expect(formatOffsetRange(start, end)).toBe(expected);
   });
 });
 
