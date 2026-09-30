@@ -164,4 +164,37 @@ describe("per-sender allowlist in the handle wrapper (spec 8.6)", () => {
     expect(trace.rows).toHaveBeenCalledTimes(1);
     db.close();
   });
+
+  it("passes the real sender id to trace:requestChanges so it is bound to that window's session", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const sendToRenderer = vi.fn();
+    const traceWindows: IpcDeps["traceWindows"] = {
+      windows: {
+        sessionForSender: (id: number) => (id === 100 ? "sess_a" : undefined),
+      } as unknown as IpcDeps["traceWindows"]["windows"],
+      sessionExists: () => true,
+      focusMainWindow: vi.fn(),
+      sendToRenderer: sendToRenderer as unknown as IpcDeps["traceWindows"]["sendToRenderer"],
+    };
+    const deps = {
+      ...makeDeps(db, runtime, state, (id) => (id === 100 ? "trace" : "main")),
+      traceWindows,
+    };
+    const handler = registerAndCapture(deps).get("trace:requestChanges")!;
+    const traceEvent = {
+      senderFrame: { url: "file:///trace.html" },
+      sender: { id: 100 },
+    } as unknown as IpcMainInvokeEvent;
+
+    await handler(traceEvent, { sessionId: "sess_a", selected: "step:1", text: "note" });
+    expect(sendToRenderer).toHaveBeenCalledWith("composer:prefill", { sessionId: "sess_a", text: "note" });
+
+    sendToRenderer.mockClear();
+    await expect(
+      handler(traceEvent, { sessionId: "sess_b", selected: "step:1", text: "note" }),
+    ).rejects.toThrow(/UNTRUSTED_SENDER/);
+    expect(sendToRenderer).not.toHaveBeenCalled();
+    db.close();
+  });
 });

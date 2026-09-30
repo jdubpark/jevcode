@@ -57,6 +57,7 @@ class FakeWindow extends FakeEmitter {
   minimized = false;
   destroyed = false;
   loaded: { file: string; options: unknown; senderRecorded: boolean } | null = null;
+  loadError: Error | null = null;
 
   constructor(
     id: number,
@@ -73,6 +74,7 @@ class FakeWindow extends FakeEmitter {
       options,
       senderRecorded: this.registry().isTraceSender(this.webContents.id),
     };
+    if (this.loadError !== null) throw this.loadError;
   }
 
   show(): void {
@@ -103,7 +105,7 @@ class FakeWindow extends FakeEmitter {
   }
 }
 
-function setup(): {
+function setup(failLoad = false): {
   registry: TraceWindowRegistry;
   created: FakeWindow[];
   options: BrowserWindowConstructorOptions[];
@@ -120,6 +122,7 @@ function setup(): {
     create: (windowOptions) => {
       options.push(windowOptions);
       const window = new FakeWindow(nextId, current);
+      if (failLoad) window.loadError = new Error("ERR_FILE_NOT_FOUND");
       nextId += 1;
       created.push(window);
       return window as unknown as TraceWindowHandle;
@@ -243,5 +246,20 @@ describe("trace window registry", () => {
     expect(created.map((window) => window.calls.includes("close"))).toEqual([true, true]);
     expect(registry.count()).toBe(0);
     expect(registry.isTraceSender(100)).toBe(false);
+  });
+
+  it("closes the window and drops it from the registry when the page fails to load, so the next open retries", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { registry, created } = setup(true);
+    registry.openTraceWindow("sess_1");
+    expect(created).toHaveLength(1);
+    const first = at(created, 0);
+    await vi.waitFor(() => expect(first.calls).toContain("close"));
+    expect(registry.count()).toBe(0);
+    expect(registry.isTraceSender(first.webContents.id)).toBe(false);
+
+    registry.openTraceWindow("sess_1");
+    expect(created).toHaveLength(2);
+    errorSpy.mockRestore();
   });
 });
