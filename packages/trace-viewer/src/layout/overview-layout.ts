@@ -263,9 +263,11 @@ function visibleBands(overview: OverviewIndex, camera: XOnlyCamera, widthPx: num
   return out.sort((a, b) => a.u0 - b.u0 || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
-/** Spec §7.6.1 labels: greedy in two tiers over the visible bands. A chapter's label goes on its
- *  first piece whose visible span fits icon + name, else on its first piece of at least 20 px as an
- *  icon, else nowhere; a label whose start finds no free tier is left out. */
+/** Spec §7.6.1 labels: icon + name, greedy left to right in two tiers over the visible bands. A
+ *  chapter's label goes on its first visible piece at least 20 px wide, else on its widest visible
+ *  piece, and starts at that piece's visible left edge. The label may run past its band into free space: it collides
+ *  only with the previous label in its tier, and a start with no free tier is left out. A name that
+ *  would cross the viewport's right edge shows as the icon only. */
 function placeBands(overview: OverviewIndex, camera: XOnlyCamera, widthPx: number): BandPlacement[] {
   const k = camera.k;
   const xOf = (u: number): number => (u - camera.u0) * k;
@@ -273,37 +275,29 @@ function placeBands(overview: OverviewIndex, camera: XOnlyCamera, widthPx: numbe
   const uLeft = camera.u0;
   const uRight = camera.u0 + widthPx / k;
   const spanPx = (band: VisibleBand): number => (Math.min(band.u1, uRight) - Math.max(band.u0, uLeft)) * k;
-  const labelPxOf = (band: VisibleBand): number => LABEL_ICON_PX + band.title.length * LABEL_CHAR_PX;
-  const target = new Map<string, { band: VisibleBand; full: boolean }>();
+  const target = new Map<string, VisibleBand>();
   for (const band of visible) {
     const chosen = target.get(band.key);
-    if (chosen?.full === true) continue;
-    const span = spanPx(band);
-    if (span >= labelPxOf(band)) target.set(band.key, { band, full: true });
-    else if (chosen === undefined && span >= ICON_ONLY_PX) target.set(band.key, { band, full: false });
+    if (chosen === undefined || (spanPx(chosen) < ICON_ONLY_PX && spanPx(band) > spanPx(chosen))) target.set(band.key, band);
   }
   const seen = new Map<string, number>();
   const tierEndU: [number, number] = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
-  const tierFor = (labelU: number, px: number): 0 | 1 | null => {
-    for (const t of [0, 1] as const) {
-      if (labelU >= tierEndU[t] + LABEL_GAP_PX / k) {
-        tierEndU[t] = labelU + px / k;
-        return t;
-      }
-    }
-    return null;
-  };
   return visible.map((band) => {
     const n = seen.get(band.key) ?? 0;
     seen.set(band.key, n + 1);
     const labelU = Math.max(band.u0, uLeft);
     let tier: 0 | 1 | null = null;
     let iconOnly = false;
-    const chosen = target.get(band.key);
-    if (chosen?.band === band) {
-      // A tier is free by where the label starts, so an icon never fits where the name did not.
-      tier = tierFor(labelU, chosen.full ? labelPxOf(band) : ICON_ONLY_PX);
-      iconOnly = tier !== null && !chosen.full;
+    if (target.get(band.key) === band) {
+      const labelPx = LABEL_ICON_PX + band.title.length * LABEL_CHAR_PX;
+      for (const t of [0, 1] as const) {
+        if (labelU >= tierEndU[t] + LABEL_GAP_PX / k) {
+          tier = t;
+          tierEndU[t] = labelU + labelPx / k;
+          break;
+        }
+      }
+      iconOnly = tier !== null && (uRight - labelU) * k < labelPx;
     }
     return {
       key: n === 0 ? band.key : `${band.key}#${n}`, id: band.id, x0: xOf(band.u0), x1: xOf(band.u1), labelX: xOf(labelU),
