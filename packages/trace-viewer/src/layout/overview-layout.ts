@@ -30,6 +30,8 @@ const LABEL_GAP_PX = 8;
 const ICON_ONLY_PX = 20;
 const BAR_MERGE_PX = 2;
 const CHAPTER_MIN_SPAN_MS = 20_000;
+/** Step preset on a finished session: at most this fraction of the view lies past either end. */
+const STEP_EDGE_PAD = 0.08;
 
 export type MarkOp =
   | { op: "dot"; lane: Lane; x: number; tone: Tone }
@@ -398,6 +400,15 @@ export function overviewPreset(input: OverviewPresetInput): { camera: XOnlyCamer
   const k = median > 0 ? Math.min(K_MAX, 28 / median) : K_MAX;
   const center = scale.toU(steps[i]?.tMs ?? 0);
   const camera: XOnlyCamera = { mode: "xOnly", k, u0: center - widthPx / (2 * k) };
+  if (!live) {
+    // A finished session has nothing past its end: keep at most 8% of the view as padding at either
+    // edge, and center the session when the view is wider than it (visual audit 2-7).
+    const span = widthPx / k;
+    const pad = STEP_EDGE_PAD * span;
+    const lo = -pad;
+    const hi = overview.endU + pad - span;
+    camera.u0 = hi >= lo ? Math.min(Math.max(camera.u0, lo), hi) : (lo + hi) / 2;
+  }
   const uLast = camera.u0 + widthPx / k;
   let first = -1;
   let last = -1;

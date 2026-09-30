@@ -1046,7 +1046,7 @@ A finding draws on its anchor step's lane (`claim_contradicted` as a quote pin l
 
 | | Session | Chapter (default) | Step |
 |---|---|---|---|
-| Preset domain | `fit(0, endU)` | Playhead chapter's footprint, 8% padding, ≥ 20 s display | Centered on the playhead; k makes the median spacing of ±20 neighbors 28 px, capped at `K_MAX = 0.4` px per display ms |
+| Preset domain | `fit(0, endU)` | Playhead chapter's footprint, 8% padding, ≥ 20 s display | Centered on the playhead; k makes the median spacing of ±20 neighbors 28 px, capped at `K_MAX = 0.4` px per display ms; on a finished session, shifted so at most 8% of the view lies past either end (centered on the session when the view is wider) |
 | Preset brush | `session` | `chapter` holding the playhead | `range` over the visible domain |
 | Pins | Critical findings, instructions, decisions | Every pin rule | Same, plus a link per finding |
 | Noise | Omitted | One hollow thin bar per noise run | Individual muted marks |
