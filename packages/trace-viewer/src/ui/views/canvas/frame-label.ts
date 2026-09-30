@@ -2,6 +2,7 @@ import type { CanvasFrame } from "../../../layout/canvas-layout.js";
 import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, LEVEL_SPECS, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
 import { anchoredFindings, stepTone } from "../../../layout/tone.js";
 import {
+  clampMeta,
   describeGraphic,
   displayUntrusted,
   formatOffset,
@@ -194,8 +195,8 @@ export function criticalFrameKeys(layout: { readonly frames: readonly CanvasFram
 }
 
 /**
- * "shield" is always neutral: a bad clamp (a guardrail problem, layout/tone.ts) makes a member step bad, and a bad
- * frame reads "failed" first. Warning and info clamps stay neutral, as in the Outline.
+ * "shield" (a warning or critical clamp) is always neutral: a bad clamp (a guardrail problem, layout/tone.ts) makes a
+ * member step bad, and a bad frame reads "failed" first. Warning clamps stay neutral, as in the Outline.
  */
 export type FrameFlag = "neq" | "failed" | "shield" | null;
 
@@ -213,7 +214,11 @@ function flagOf(frame: CanvasFrame, ctx: FrameContext, tone: "bad" | "neutral"):
     if (anchored === true) return "neq";
   }
   if (tone === "bad") return "failed";
-  const guarded = frame.memberSelIds.some((selId) => (ctx.chapterById.get(selId)?.clampIds.length ?? 0) > 0);
+  // Warning-or-worse clamps only: an info suppression (Lockfile change hidden) is how a chapter becomes noise, not a
+  // guard to flag (lane review minor 3; the Outline's noise row shows none either).
+  const guarded = frame.memberSelIds.some((selId) =>
+    (ctx.chapterById.get(selId)?.clampIds ?? []).some((id) => clampMeta(id).severity !== "info"),
+  );
   return guarded ? "shield" : null;
 }
 

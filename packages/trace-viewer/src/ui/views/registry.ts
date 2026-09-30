@@ -4,7 +4,7 @@ import type { ViewDefinition } from "./view-port.js";
 
 export type { ViewDefinition, ViewProps } from "./view-port.js";
 
-/** Switch order: Canvas | Hybrid. The title bar shows the switch only when VIEWS.length > 1 . */
+/** Switch order: Canvas | Hybrid. The title bar shows the switch only when VIEWS.length > 1. */
 export const VIEWS: readonly ViewDefinition[] = [
   { kind: "canvas", label: "Canvas", icon: "view-canvas", Component: CanvasView },
   { kind: "hybrid", label: "Hybrid", icon: "view-hybrid", Component: HybridView },
