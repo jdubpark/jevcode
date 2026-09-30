@@ -123,7 +123,8 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
           {approxOpen ? (
             <div role="dialog" aria-label="Approximate joins" className={styles.note}>
               Some chapters were joined to steps by time window, because this session was recorded before the
-              exact step links existed. Their step lists can be slightly off.
+              exact step links existed. The window is an edit to one of the unit's files within 5 s of the unit's
+              createdAt–updatedAt span, else that file's latest earlier edit. Their step lists can be slightly off.
             </div>
           ) : null}
         </span>
@@ -248,7 +249,6 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
                 <button
                   key={preset.id}
                   type="button"
-                 
                   className={styles.popoverItem}
                   onClick={() => {
                     port.zoom.applyPreset(preset.id);

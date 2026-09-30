@@ -127,4 +127,14 @@ describe("buildOutlineRows", () => {
     expect(searchMatches(session, index, "pnpm zzzz-not-there")).toEqual([]);
     expect(searchMatches(session, index, "   ")).toEqual([]);
   });
+
+  it("shows a bidi override in a Files path as a visible token", () => {
+    const base = foldFixture("oauth");
+    const first = base.entities[0];
+    const hostile = "src/evil\u202Egnp.ts";
+    const session = { ...base, entities: base.entities.map((e, i) => (i === 0 ? { ...e, path: hostile, label: hostile } : e)) };
+    const row = itemsOf(buildOutlineRows(session, ALL_OPEN), "files").find((item) => item.key === first?.id);
+    expect(row?.title).toBe("src/evil\u27E8U+202E\u27E9gnp.ts");
+    expect(row?.title).not.toContain("\u202E");
+  });
 });

@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { buildSearchIndex, formatOffset } from "../../../model/index.js";
@@ -41,6 +41,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [query, setQuery] = useState(search?.query ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<string | null>(null);
 
   useEffect(() => {
     if (search === null) setQuery("");
@@ -54,28 +55,48 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
   const currentChapter = session === null ? undefined : index.chapterAtSeq(playheadSeq)?.id;
 
+  const selectedKey = rows.find((row) => row.t === "item" && row.selId === selection)?.key;
+  const tabKey =
+    focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
+
+  // The roving row and the selected rows stay mounted however far they scroll, so exactly one
+  // mounted row keeps tabindex=0 and Tab always finds the tree.
+  const pinned = useMemo(() => {
+    const positions: number[] = [];
+    rows.forEach((row, position) => {
+      if (row.key === tabKey || (row.t === "item" && row.selId === selection)) positions.push(position);
+    });
+    return positions;
+  }, [rows, tabKey, selection]);
+
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_PX,
     getItemKey: (position) => rows[position]?.key ?? position,
     overscan: 8,
+    rangeExtractor: (range) =>
+      Array.from(new Set([...defaultRangeExtractor(range), ...pinned.filter((position) => position < range.count)])).sort(
+        (a, b) => a - b,
+      ),
   });
 
-  const selectedKey = rows.find((row) => row.t === "item" && row.selId === selection)?.key;
-  const tabKey =
-    focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
-
+  // Focus moves only after a keyboard move; a rows rebuild (Live poll) never steals it.
   useEffect(() => {
-    if (focusKey === null) return;
-    const position = rows.findIndex((row) => row.key === focusKey);
-    if (position < 0) return;
+    const target = pendingFocus.current;
+    if (target === null) return;
+    const position = rows.findIndex((row) => row.key === target);
+    if (position < 0) {
+      pendingFocus.current = null;
+      return;
+    }
     virtualizer.scrollToIndex(position, { align: "auto" });
     const frame = requestAnimationFrame(() => {
-      const target = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("[data-key]") ?? []).find(
-        (element) => element.dataset.key === focusKey,
+      pendingFocus.current = null;
+      const element = Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("[data-key]") ?? []).find(
+        (node) => node.dataset.key === target,
       );
-      target?.focus({ preventScroll: true });
+      element?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [focusKey, rows, virtualizer]);
@@ -93,7 +114,9 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
     const position = rows.findIndex((row) => row.key === tabKey);
     const move = (to: number): void => {
       const row = rows[Math.max(0, Math.min(rows.length - 1, to))];
-      if (row !== undefined) setFocusKey(row.key);
+      if (row === undefined) return;
+      pendingFocus.current = row.key;
+      setFocusKey(row.key);
     };
     const row = rows[position];
     switch (event.key) {
@@ -193,6 +216,8 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
               const common = {
                 "data-key": row.key,
                 "data-index": item.index,
+                "aria-setsize": rows.length,
+                "aria-posinset": item.index + 1,
                 tabIndex: row.key === tabKey ? 0 : -1,
                 style: { transform: `translateY(${item.start}px)` },
                 onFocus: () => setFocusKey(row.key),

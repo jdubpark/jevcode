@@ -182,6 +182,9 @@ describe("TitleBar", () => {
       expect(chip.getAttribute("data-tone")).toBe("neutral");
       fireEvent.click(chip);
       expect(screen.getByRole("dialog", { name: "Approximate joins" }).textContent).toContain("time window");
+      const rule = screen.getByRole("dialog", { name: "Approximate joins" }).textContent ?? "";
+      expect(rule).toContain("within 5 s");
+      expect(rule).toContain("latest earlier edit");
       fireEvent.keyDown(document, { key: "Escape" });
       expect(screen.queryByRole("dialog", { name: "Approximate joins" })).toBeNull();
       expect(document.activeElement).toBe(chip);
