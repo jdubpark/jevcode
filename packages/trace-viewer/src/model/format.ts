@@ -343,41 +343,131 @@ function linesChanged(entity: Entity): number {
  *  a Live commit whose rows need no test or fork graphic never indexes the steps. */
 interface GraphicLookups {
   /** Entity positions per path, ascending. */
-  readonly entitiesByPath: Map<string, number[]>;
-  readonly stepPosition: Map<string, number>;
+  readonly entitiesByPath: ReadonlyMap<string, readonly number[]>;
+  readonly stepPosition: ReadonlyMap<string, number>;
   /** decisionId → position of the first step deciding it (decidedBy set). */
-  readonly decidedStep: Map<string, number>;
+  readonly decidedStep: ReadonlyMap<string, number>;
   /** chapter id → the decision that gave birth to it (bornChapters). */
   readonly bornFrom: Map<string, string>;
 }
 
 const LOOKUPS = new WeakMap<TraceSession, GraphicLookups>();
 
-function lazyLookups(session: TraceSession): GraphicLookups {
-  let entitiesByPath: Map<string, number[]> | undefined;
-  let steps: { stepPosition: Map<string, number>; decidedStep: Map<string, number> } | undefined;
-  let bornFrom: Map<string, string> | undefined;
-  const stepMaps = () => {
-    if (steps !== undefined) return steps;
-    const stepPosition = new Map<string, number>();
-    const decidedStep = new Map<string, number>();
-    session.steps.forEach((step, position) => {
-      stepPosition.set(step.id, position);
-      const decision = step.decision;
-      if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
+export interface EntityPositions {
+  readonly entities: readonly Entity[];
+  readonly byPath: ReadonlyMap<string, readonly number[]>;
+}
+
+/**
+ * Entity positions per path, ascending. From `previous` when the list keeps its paths at their positions (a Live
+ * commit replaces an entity in place or appends one): the map is copied and only the new positions are added, so a
+ * commit costs O(entities) comparisons instead of a rebuild. Never changes `previous`.
+ */
+export function entityPositions(entities: readonly Entity[], previous?: EntityPositions): EntityPositions {
+  const before = previous?.entities;
+  let keeps = previous !== undefined && before !== undefined && entities.length >= before.length;
+  if (keeps && before !== undefined) {
+    for (let position = 0; position < before.length; position += 1) {
+      const entity = entities[position];
+      const was = before[position];
+      if (entity !== was && entity?.path !== was?.path) {
+        keeps = false;
+        break;
+      }
+    }
+  }
+  if (!keeps || previous === undefined || before === undefined) {
+    const byPath = new Map<string, number[]>();
+    entities.forEach((entity, position) => {
+      const list = byPath.get(entity.path);
+      if (list === undefined) byPath.set(entity.path, [position]);
+      else list.push(position);
     });
-    return (steps = { stepPosition, decidedStep });
+    return { entities, byPath };
+  }
+  if (entities.length === before.length) return { entities, byPath: previous.byPath };
+  const byPath = new Map<string, readonly number[]>(previous.byPath);
+  for (let position = before.length; position < entities.length; position += 1) {
+    const path = entities[position]?.path ?? "";
+    byPath.set(path, [...(byPath.get(path) ?? []), position]);
+  }
+  return { entities, byPath };
+}
+
+export interface StepPositions {
+  readonly steps: readonly Step[];
+  readonly stepPosition: ReadonlyMap<string, number>;
+  /** decisionId → position of the first step deciding it (decidedBy set). */
+  readonly decidedStep: ReadonlyMap<string, number>;
+}
+
+function decidedSteps(steps: readonly Step[]): Map<string, number> {
+  const decidedStep = new Map<string, number>();
+  steps.forEach((step, position) => {
+    const decision = step.decision;
+    if (decision?.decidedBy !== undefined && !decidedStep.has(decision.decisionId)) decidedStep.set(decision.decisionId, position);
+  });
+  return decidedStep;
+}
+
+/**
+ * Step positions by id and the first deciding step per decision. From `previous` when the list keeps its ids at their
+ * positions: new positions are added to a copy, and the decision map is kept unless a changed or added step carries a
+ * decision. Never changes `previous`.
+ */
+export function stepPositions(steps: readonly Step[], previous?: StepPositions): StepPositions {
+  const before = previous?.steps;
+  let keeps = previous !== undefined && before !== undefined && steps.length >= before.length;
+  let decisions = false;
+  if (keeps && before !== undefined) {
+    for (let position = 0; position < before.length; position += 1) {
+      const step = steps[position];
+      const was = before[position];
+      if (step === was) continue;
+      if (step?.id !== was?.id) {
+        keeps = false;
+        break;
+      }
+      if (step?.decision !== undefined || was?.decision !== undefined) decisions = true;
+    }
+  }
+  if (!keeps || previous === undefined || before === undefined) {
+    const stepPosition = new Map<string, number>();
+    steps.forEach((step, position) => stepPosition.set(step.id, position));
+    return { steps, stepPosition, decidedStep: decidedSteps(steps) };
+  }
+  for (let position = before.length; position < steps.length && !decisions; position += 1) {
+    if (steps[position]?.decision !== undefined) decisions = true;
+  }
+  let stepPosition = previous.stepPosition;
+  if (steps.length > before.length) {
+    const copy = new Map(previous.stepPosition);
+    for (let position = before.length; position < steps.length; position += 1) copy.set(steps[position]?.id ?? "", position);
+    stepPosition = copy;
+  }
+  return { steps, stepPosition, decidedStep: decisions ? decidedSteps(steps) : previous.decidedStep };
+}
+
+/** The latest session's positions, so the next Live session derives its own from them (one generation kept). */
+let lastEntityPositions: EntityPositions | undefined;
+let lastStepPositions: StepPositions | undefined;
+
+function lazyLookups(session: TraceSession): GraphicLookups {
+  let entitiesByPath: ReadonlyMap<string, readonly number[]> | undefined;
+  let steps: StepPositions | undefined;
+  let bornFrom: Map<string, string> | undefined;
+  const stepMaps = (): StepPositions => {
+    if (steps !== undefined) return steps;
+    steps = stepPositions(session.steps, lastStepPositions);
+    lastStepPositions = steps;
+    return steps;
   };
   return {
     get entitiesByPath() {
       if (entitiesByPath !== undefined) return entitiesByPath;
-      const map = new Map<string, number[]>();
-      session.entities.forEach((entity, position) => {
-        const list = map.get(entity.path);
-        if (list === undefined) map.set(entity.path, [position]);
-        else list.push(position);
-      });
-      return (entitiesByPath = map);
+      const positions = entityPositions(session.entities, lastEntityPositions);
+      lastEntityPositions = positions;
+      return (entitiesByPath = positions.byPath);
     },
     get stepPosition() {
       return stepMaps().stepPosition;
@@ -389,6 +479,15 @@ function lazyLookups(session: TraceSession): GraphicLookups {
       return (bornFrom ??= bornChapters(session));
     },
   };
+}
+
+/**
+ * The step with this id in session.steps (the last one when ids repeat), through the session's position index, which
+ * a Live commit derives from the previous session's instead of mapping every step again.
+ */
+export function sessionStep(session: TraceSession, id: string): Step | undefined {
+  const position = lookupsOf(session).stepPosition.get(id);
+  return position === undefined ? undefined : session.steps[position];
 }
 
 function lookupsOf(session: TraceSession): GraphicLookups {
