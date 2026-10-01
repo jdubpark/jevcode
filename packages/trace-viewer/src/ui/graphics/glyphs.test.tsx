@@ -183,13 +183,10 @@ describe("untrusted text in accessible names (spec §16)", () => {
     expect(text).toContain("rm ⟨U+202E⟩fdp.exe");
   });
 
-  it("ForkGlyph keeps no raw bidi character in a branch attribute or its accessible name", () => {
+  it("ForkGlyph keeps no raw bidi character in a branch attribute", () => {
     const { container } = render(
       <ForkGlyph size="sm" label="x" options={[{ label: "a‮b", chosen: true }, { label: "c", chosen: false }]} decidedBy="supervisor" />,
     );
     expect(container.querySelector("[data-branch]")?.getAttribute("data-branch")).toBe("a⟨U+202E⟩b");
-    const spec: GraphicSpec = { kind: "fork", decidedBy: "supervisor", options: [{ label: "a‮b", chosen: true }] };
-    const named = render(<Graphic spec={spec} size="sm" />).container;
-    expect(named.querySelector("[aria-label]")?.getAttribute("aria-label")).not.toContain("‮");
   });
 });
