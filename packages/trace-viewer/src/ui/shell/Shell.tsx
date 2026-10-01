@@ -146,13 +146,16 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
     return store.subscribe(sync);
   }, [store, controller]);
 
+  // The root's own document: a popout window reports its own visibility.
   useEffect(() => {
+    if (root === null) return undefined;
+    const doc = root.ownerDocument;
     const onVisibility = (): void => {
-      if (document.visibilityState === "visible") controller.notifyVisible();
+      if (doc.visibilityState === "visible") controller.notifyVisible();
     };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [controller]);
+    doc.addEventListener("visibilitychange", onVisibility);
+    return () => doc.removeEventListener("visibilitychange", onVisibility);
+  }, [controller, root]);
 
   const session = snapshot.session;
   // Each commit's index starts from the last one built (only what changed objects reach is recomputed); any

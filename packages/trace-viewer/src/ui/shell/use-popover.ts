@@ -25,22 +25,24 @@ export function usePopoverDismissal(open: boolean, setOpen: (open: boolean) => v
   }, []);
 
   useEffect(() => {
-    if (!open) return undefined;
+    const doc = anchorRef.current?.ownerDocument;
+    if (!open || doc === undefined) return undefined;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
       close();
     };
     const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target;
-      if (target instanceof Node && anchorRef.current?.contains(target)) return;
+      // Not `instanceof Node`: a popout window's nodes belong to another realm.
+      const target = event.target as Node | null;
+      if (target !== null && anchorRef.current?.contains(target)) return;
       setOpenRef.current(false);
     };
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown);
+    doc.addEventListener("keydown", onKeyDown);
+    doc.addEventListener("pointerdown", onPointerDown);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown);
+      doc.removeEventListener("keydown", onKeyDown);
+      doc.removeEventListener("pointerdown", onPointerDown);
     };
   }, [open, close]);
 
