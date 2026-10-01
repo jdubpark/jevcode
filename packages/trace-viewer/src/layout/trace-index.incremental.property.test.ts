@@ -128,6 +128,18 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
     checkChain([session, { ...session, chapters: chapters.filter((c) => c !== undefined) }]);
   });
 
+  it("a repeated id after a swap counts each earlier id once: [A, B, C] -> [B, A, A] (review 3 m1)", () => {
+    const { meta, rows } = soakShapedRows({ units: 6, runs: 2, reemits: 1 });
+    const [session] = foldChain(meta, rows, [], true);
+    if (session === undefined || session.steps.length < 4 || session.chapters.length < 4) throw new Error("session");
+    const swap = <T,>(list: readonly T[]): T[] => {
+      const [a, b] = list.slice(-3) as [T, T, T];
+      return [...list.slice(0, -3), b, a, a];
+    };
+    checkChain([session, { ...session, steps: swap(session.steps) }]);
+    checkChain([session, { ...session, chapters: swap(session.chapters) }]);
+  });
+
   it("an index seeds one later build; a second build from it, or another session id, is fresh and still equal", () => {
     const { meta, rows } = soakShapedRows({ units: 12, runs: 3, reemits: 1 });
     const [a, b, c] = foldChain(meta, rows, [rows.length - 40, rows.length - 20], true);
