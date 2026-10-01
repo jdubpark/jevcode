@@ -162,6 +162,17 @@ describe("Jev review groups at Chapter level (visual audit 1-1)", () => {
     expect(rowsOf(quiet).map((r) => (r.t === "noise" ? r.label : r.t))).toEqual(["step", "step", "2 noise steps: lifecycle events, pipeline events"]);
   });
 
+  it("leave \"Turn ended\" beside one lone guardrail warning as plain rows (P2 review 2)", () => {
+    const ended: StepSeed = { kind: "lifecycle", tMs: 45_000, headline: "Turn ended", noise: "lifecycle" };
+    const lone = buildSession({
+      steps: [...tail.slice(0, 3), ended],
+      findings: [{ ruleId: "guardrail_clamp", severity: "warning", step: 2 }],
+    });
+    const rows = rowsOf(lone);
+    expect(rows.some((r) => r.t === "noise" && r.jev !== undefined)).toBe(false);
+    expect(rows.some((r) => r.t === "step" && r.step === 2)).toBe(true);
+  });
+
   it("keep critical findings, the playhead and the selection as their own rows; Step level never groups", () => {
     const critical = buildSession({ steps: tail, findings: [...warnings, { ruleId: "guardrail_clamp", severity: "critical", step: 4 }] });
     expect(rowsOf(critical).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3], 4, [5, 6, 7]]);
