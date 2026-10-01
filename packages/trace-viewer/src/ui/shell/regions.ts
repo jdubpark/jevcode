@@ -44,9 +44,9 @@ export function isEditableTarget(target: Element | null): boolean {
   return editable !== null && editable.getAttribute("contenteditable") !== "false";
 }
 
-export function hasTextSelection(): boolean {
-  if (typeof window === "undefined") return false;
-  const selection = window.getSelection();
+/** Whether `view` (the root's own window, so a popout window reads its own selection) has a non-empty selection. */
+export function hasTextSelection(view: Window | null): boolean {
+  const selection = view?.getSelection() ?? null;
   return selection !== null && !selection.isCollapsed && selection.toString().length > 0;
 }
 

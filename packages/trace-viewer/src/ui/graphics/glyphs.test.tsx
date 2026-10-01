@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { GraphicSpec } from "../../model/index.js";
+import { describeGraphic, type GraphicSpec } from "../../model/index.js";
 import { ClaimVsObserved } from "./ClaimVsObserved.js";
 import { FlowGlyph } from "./FlowGlyph.js";
 import { ForkGlyph } from "./ForkGlyph.js";
@@ -158,5 +158,35 @@ describe("Graphic map", () => {
     expect(container.querySelectorAll("circle[data-state]")).toHaveLength(15);
     const running = render(<Graphic spec={{ kind: "duration", durationMs: null, running: true, status: "running", end: "none" }} size="xs" elapsedMs={10_000} />);
     expect(running.container.querySelector('rect[data-bar="hollow"]')).not.toBeNull();
+  });
+});
+
+describe("untrusted text in accessible names (spec §16)", () => {
+  const BIDI = ["‮", "⁦", "\u0007"];
+  it("describeGraphic shows bidi and control characters as tokens in every agent-text slot", () => {
+    const specs: GraphicSpec[] = [
+      { kind: "fork", decidedBy: "supervisor", options: [{ label: "pick‮ one", chosen: true }, { label: "b", chosen: false }] },
+      { kind: "flow", nodes: ["identity", "goo⁦gle"], focus: 0 },
+      { kind: "table", tables: [{ name: "users\u0007", role: "altered", columns: 1 }] },
+      {
+        kind: "claim",
+        claim: { text: "all‮ pass", tMs: 1 },
+        observed: { passed: 1, failed: 0, command: "rm ‮fdp.exe", tMs: 0 },
+      },
+    ];
+    const text = specs.map((spec) => describeGraphic(spec)).join("\n");
+    for (const raw of BIDI) expect(text).not.toContain(raw);
+    expect(text).toContain("pick⟨U+202E⟩ one");
+    expect(text).toContain("goo⟨U+2066⟩gle");
+    expect(text).toContain("users⟨U+0007⟩");
+    expect(text).toContain("all⟨U+202E⟩ pass");
+    expect(text).toContain("rm ⟨U+202E⟩fdp.exe");
+  });
+
+  it("ForkGlyph keeps no raw bidi character in a branch attribute", () => {
+    const { container } = render(
+      <ForkGlyph size="sm" label="x" options={[{ label: "a‮b", chosen: true }, { label: "c", chosen: false }]} decidedBy="supervisor" />,
+    );
+    expect(container.querySelector("[data-branch]")?.getAttribute("data-branch")).toBe("a⟨U+202E⟩b");
   });
 });

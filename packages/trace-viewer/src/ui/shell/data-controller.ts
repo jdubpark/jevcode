@@ -138,6 +138,7 @@ export function createDataController(options: DataControllerOptions): DataContro
   let pollTimer: unknown = null;
   let yieldTimer: unknown = null;
   let failures = 0;
+  let foldPoisoned = false;
 
   function flush(): void {
     if (visible === latest) return;
@@ -169,16 +170,32 @@ export function createDataController(options: DataControllerOptions): DataContro
     });
   }
 
-  function commitNow(caughtUp: boolean): void {
-    if (fold === null || lastPage === null) return;
+  /** A fold that throws is a bug, not a connection loss: it surfaces as an error state with Retry and stops the poll loop. */
+  function failFold(error: unknown, poisoned: boolean): void {
+    // A pending commit or poll from the failed generation must not flip the error back to ready.
+    clearTimers();
+    generation += 1;
+    foldPoisoned = poisoned;
+    emit({ ...latest, status: statusFromError(error, "trace:rows") });
+  }
+
+  /** False when the fold threw (the error state is already emitted). */
+  function commitNow(caughtUp: boolean): boolean {
+    if (fold === null || lastPage === null) return true;
     const page = lastPage;
     const startedAt = scheduler.now();
-    const session = finalize(fold, {
-      live: !isTerminalState(page.state),
-      state: page.state,
-      throughSeq: cursor,
-      nowMs: source.now(),
-    });
+    let session: TraceSession;
+    try {
+      session = finalize(fold, {
+        live: !isTerminalState(page.state),
+        state: page.state,
+        throughSeq: cursor,
+        nowMs: source.now(),
+      });
+    } catch (error) {
+      failFold(error, false);
+      return false;
+    }
     lastCommitAt = scheduler.now();
     lastCommitCostMs = lastCommitAt - startedAt;
     failures = 0;
@@ -191,6 +208,7 @@ export function createDataController(options: DataControllerOptions): DataContro
       terminal: caughtUp && isTerminalState(page.state),
       rows: fold.received,
     });
+    return true;
   }
 
   function schedulePoll(gen: number, delayMs: number): void {
@@ -224,16 +242,14 @@ export function createDataController(options: DataControllerOptions): DataContro
     const gapMs = caughtUp ? minCommitGapMs : Math.max(minCommitGapMs, COMMIT_COST_FACTOR * lastCommitCostMs);
     const wait = lastCommitAt + gapMs - scheduler.now();
     if (wait <= 0) {
-      commitNow(caughtUp);
-      afterCommit(gen, caughtUp);
+      if (commitNow(caughtUp)) afterCommit(gen, caughtUp);
       return;
     }
     commitTimer = scheduler.setTimeout(() => {
       commitTimer = null;
       if (gen !== generation) return;
       const done = commitCaughtUp;
-      commitNow(done);
-      afterCommit(gen, done);
+      if (commitNow(done)) afterCommit(gen, done);
     }, wait);
   }
 
@@ -264,7 +280,12 @@ export function createDataController(options: DataControllerOptions): DataContro
         lastPage === null ||
         next.state !== lastPage.state ||
         next.lastSeq !== lastPage.lastSeq;
-      accumulateAll(fold, next.rows);
+      try {
+        accumulateAll(fold, next.rows);
+      } catch (error) {
+        failFold(error, true);
+        return;
+      }
       lastPage = next;
       cursor = cursorAfter(next);
       if (next.nextAfterSeq !== null) {
@@ -326,6 +347,7 @@ export function createDataController(options: DataControllerOptions): DataContro
     lastCommitCostMs = 0;
     commitCaughtUp = false;
     failures = 0;
+    foldPoisoned = false;
   }
 
   return {
@@ -342,7 +364,7 @@ export function createDataController(options: DataControllerOptions): DataContro
     },
     retry() {
       if (!running) return;
-      if (fold !== null && latest.session !== null) {
+      if (fold !== null && latest.session !== null && !foldPoisoned) {
         clearTimers();
         generation += 1;
         void poll(generation);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { TRACE_LIVE_POLL_MS } from "@jevcode/contracts";
 
@@ -7,6 +7,9 @@ import type { TraceSource } from "../../source.js";
 import type { ViewerLocation } from "../state/location.js";
 import { createViewStore, ViewStoreContext } from "../state/store.js";
 import { initialViewState } from "../state/view-state.js";
+import base from "../tokens/base.module.css";
+import { tokenStyle } from "../tokens/tokens.js";
+import { ErrorBoundary } from "./ErrorBoundary.js";
 import { createDataController } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
 import { Shell } from "./Shell.js";
@@ -36,13 +39,22 @@ export function TraceViewer({ source, host, location, pollMs, initialFollow }: T
 
   return (
     <ViewStoreContext.Provider value={store}>
-      <Shell
-        sessionId={source.sessionId}
-        host={shellHost}
-        controller={controller}
-        location={location}
-        initialFollow={initialFollow}
-      />
+      <ErrorBoundary
+        region="Trace viewer"
+        onError={(error) =>
+          shellHost.onDiagnostics?.({ errors: [`Trace viewer: ${error.message}`], maxAnchorDriftPx: 0, selectedTitle: null })
+        }
+        fallbackClassName={base.root}
+        fallbackStyle={tokenStyle() as CSSProperties}
+      >
+        <Shell
+          sessionId={source.sessionId}
+          host={shellHost}
+          controller={controller}
+          location={location}
+          initialFollow={initialFollow}
+        />
+      </ErrorBoundary>
     </ViewStoreContext.Provider>
   );
 }
