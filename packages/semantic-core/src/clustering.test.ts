@@ -568,6 +568,20 @@ describe("clustering: unit to agent call join (agentCallIds)", () => {
     expect(other !== undefined && "agentCallIds" in other).toBe(false);
   });
 
+  it("links a test fact hosted by several units to every host once", () => {
+    // A test file gets its own unit; the bucket's validation lands on both.
+    const files = ["src/feature.ts", "src/feature.test.ts"];
+    const result = run([
+      ...files.map((file, index) =>
+        seq({ fact: hunk(file, tsOf(0, index)), factId: `f${index + 1}`, seq: index + 1, batchId: 0 }),
+      ),
+      seq({ fact: withCall(testResult(tsOf(0, 10), { passed: 2 }), "turn_a:item_5"), factId: "f9", seq: 9, batchId: 0 }),
+    ]);
+    const hosts = result.units.filter((unit) => unit.evidence.includes("f9"));
+    expect(hosts).toHaveLength(2);
+    for (const unit of hosts) expect(unit.agentCallIds).toEqual(["turn_a:item_5"]);
+  });
+
   it("omits the key when a unit has no linked call", () => {
     const result = run([
       seq({ fact: fileChanged("src/a.ts", "modified", tsOf(0)), factId: "f1", seq: 1, batchId: 0 }),
