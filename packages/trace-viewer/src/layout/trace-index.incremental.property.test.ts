@@ -8,7 +8,7 @@ import type { TraceSession, UnitStableId } from "../model/index.js";
 import { arbTraceSession } from "../test-support/arbitraries.js";
 import { FIXTURE_NAMES, loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { arbEdit, editSession } from "../test-support/session-edits.js";
-import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
+import { arbDenseRowSession, arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder } from "../test-support/trace-builder.js";
 import { buildTraceIndex, traceIndexChanges, traceIndexWork, type TraceIndex } from "./trace-index.js";
 
@@ -76,6 +76,15 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
   it("random rows: after every commit, live or not", () => {
     fc.assert(
       fc.property(arbRowSession(), cutsArb, fc.boolean(), ({ meta, rows }, cuts, live) => {
+        checkChain(foldChain(meta, rows, cuts, live));
+      }),
+      { numRuns: Number(process.env["INDEX_RUNS"] ?? 300) },
+    );
+  }, 600_000);
+
+  it("dense id pools: after every commit, live or not", () => {
+    fc.assert(
+      fc.property(arbDenseRowSession(), cutsArb, fc.boolean(), ({ meta, rows }, cuts, live) => {
         checkChain(foldChain(meta, rows, cuts, live));
       }),
       { numRuns: Number(process.env["INDEX_RUNS"] ?? 300) },
