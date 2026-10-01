@@ -82,6 +82,12 @@ export function chapterShortTitle(input: { title: string; category: ChangeCatego
   // Graphemes are cut whole and control characters are kept, so a later displayUntrusted token is never split.
   const title = input.title.replace(EDGE_SPACES, "").replace(SPACES, " ");
   if (!isPlaceholderTitle(title)) return shortenTitle(title);
+  return chapterFilesLabel(input);
+}
+
+/** The label a placeholder-titled chapter gets: its category noun and focus file ("Security · service", spec §6.6).
+ *  A decision-born chapter shows it too, so the decision alone carries the title. */
+export function chapterFilesLabel(input: { category: ChangeCategory; files: readonly string[] }): string {
   const focus = input.files.find((file) => !isLockfilePath(file));
   if (focus === undefined && input.files.length > 0) return "Lockfile";
   const noun = CATEGORY_NOUN[input.category];

@@ -13,7 +13,8 @@ export type SpineRow =
   | {
       t: "noise"; key: `noise:${number}`; steps: number[]; label: string;
       /** Set on a Chapter-level Jev review group: consecutive Jev-lane rows (guardrail clamps with their
-       *  warning findings, attention and pipeline rows) folded into one row (visual audit 1-1). A
+       *  warning findings, attention and pipeline rows, and agent lifecycle noise such as "Turn ended")
+       *  folded into one row (visual audit 1-1). A
        *  renderer that ignores it shows the group as a noise row with its label. */
       jev?: JevGroup;
     }
@@ -184,16 +185,17 @@ function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsI
 
 const TONE_RANK: { readonly [T in Tone]: number } = { good: 0, neutral: 1, bad: 2 };
 
-/** Jev-lane rows that may fold into a review group; a critical finding, a failure, the playhead,
- *  the selection and a search match keep their own row. */
+/** Jev-lane rows that may fold into a review group, and the agent's lifecycle noise beside them (the
+ *  turn's "Turn ended", lane re-review 1-1); a critical finding, a failure, the playhead, the selection
+ *  and a search match keep their own row. */
 function foldableJev(step: Step, i: number, index: TraceIndex, input: SpineRowsInput, playheadStep: number, selectedStep: number): boolean {
-  return step.lane === "jev" && i !== playheadStep && i !== selectedStep && step.status !== "failed"
+  return (step.lane === "jev" || step.noise === "lifecycle") && i !== playheadStep && i !== selectedStep && step.status !== "failed"
     && !(input.matches?.has(step.id) ?? false) && worstSeverity(step, index.findingsById) !== "critical";
 }
 
 /** Start index → end index of every Chapter-level Jev review group: a maximal run of foldable Jev
- *  rows with no separator (turn, idle break, gap) between them, at least two rows long and holding
- *  at least one guardrail hit (a guardrail row with a finding). Attention and info-only clamp rows
+ *  rows with no separator (turn, idle break, gap) between them, at least two Jev-lane rows long (the lifecycle
+ *  row does not count) and holding at least one guardrail hit (a guardrail row with a finding). Attention and info-only clamp rows
  *  alone stay plain pipeline noise runs. */
 function jevRunEnds(
   session: TraceSession, index: TraceIndex, scale: TimeScale, input: SpineRowsInput, gapSeqs: readonly number[],
@@ -202,10 +204,13 @@ function jevRunEnds(
   const runs = new Map<number, number>();
   let start = -1;
   let guardrails = 0;
+  let jevRows = 0;
   const close = (end: number): void => {
-    if (start >= 0 && end > start && guardrails > 0) runs.set(start, end);
+    // The lifecycle row folds in beside Jev rows but does not count toward the two-row minimum.
+    if (start >= 0 && end > start && guardrails > 0 && jevRows >= 2) runs.set(start, end);
     start = -1;
     guardrails = 0;
+    jevRows = 0;
   };
   for (let i = i0; i <= i1; i += 1) {
     const step = session.steps[i];
@@ -218,6 +223,7 @@ function jevRunEnds(
       close(i - 1);
       start = i;
     }
+    if (step.lane === "jev") jevRows += 1;
     if (isGuardrailHit(step)) guardrails += 1;
   }
   close(i1);

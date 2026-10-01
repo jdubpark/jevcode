@@ -1,3 +1,4 @@
+import { chapterLabel } from "../../../../../layout/chapter-label.js";
 import type { SpineRow } from "../../../../../layout/spine-rows.js";
 import { describeGraphic, displayUntrusted, formatDuration, formatOffset, LANES, pickGraphic, type TraceSession } from "../../../../../model/index.js";
 import { Graphic } from "../../../../graphics/Graphic.js";
@@ -36,10 +37,10 @@ export function GroupRow({
         <span className={styles.graphic}>
           {graphic === null ? null : <Graphic spec={graphic} size="xs" label={describeGraphic(graphic)} />}
         </span>
-        {/* The short title reads in the row; the full title is the tooltip and, as hidden text the row's
-            aria-labelledby points at, the name. */}
+        {/* The short label reads in the row (a decision-born chapter reads its files: the decision row above carries
+            the title); the full title is the tooltip and, as hidden text the row's aria-labelledby points at, the name. */}
         <span className={styles.line} title={fullTitle}>
-          <span aria-hidden="true">{displayUntrusted(chapter.shortTitle ?? chapter.title)}</span>
+          <span aria-hidden="true">{displayUntrusted(chapterLabel(chapter, session))}</span>
           <span id={lineId} className={styles.srOnly}>{fullTitle}</span>
         </span>
         <span className={styles.metric}>
