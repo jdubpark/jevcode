@@ -448,9 +448,18 @@ export function stepPositions(steps: readonly Step[], previous?: StepPositions):
   return { steps, stepPosition, decidedStep: decisions ? decidedSteps(steps) : previous.decidedStep };
 }
 
-/** The latest session's positions, so the next Live session derives its own from them (one generation kept). */
-let lastEntityPositions: EntityPositions | undefined;
-let lastStepPositions: StepPositions | undefined;
+/**
+ * The latest session's positions, so the next Live session derives its own from them (one generation kept). Held
+ * weakly: the session's own lookups keep them alive while it is, and a closed view's session is not retained here.
+ */
+let lastEntityPositions: WeakRef<EntityPositions> | undefined;
+let lastStepPositions: WeakRef<StepPositions> | undefined;
+
+/** Drops the slots, so the next lookups are built from scratch. For tests that compare against a fresh build. */
+export function resetGraphicLookups(): void {
+  lastEntityPositions = undefined;
+  lastStepPositions = undefined;
+}
 
 function lazyLookups(session: TraceSession): GraphicLookups {
   let entitiesByPath: ReadonlyMap<string, readonly number[]> | undefined;
@@ -458,15 +467,15 @@ function lazyLookups(session: TraceSession): GraphicLookups {
   let bornFrom: Map<string, string> | undefined;
   const stepMaps = (): StepPositions => {
     if (steps !== undefined) return steps;
-    steps = stepPositions(session.steps, lastStepPositions);
-    lastStepPositions = steps;
+    steps = stepPositions(session.steps, lastStepPositions?.deref());
+    lastStepPositions = new WeakRef(steps);
     return steps;
   };
   return {
     get entitiesByPath() {
       if (entitiesByPath !== undefined) return entitiesByPath;
-      const positions = entityPositions(session.entities, lastEntityPositions);
-      lastEntityPositions = positions;
+      const positions = entityPositions(session.entities, lastEntityPositions?.deref());
+      lastEntityPositions = new WeakRef(positions);
       return (entitiesByPath = positions.byPath);
     },
     get stepPosition() {

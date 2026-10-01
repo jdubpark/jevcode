@@ -11,6 +11,7 @@ import {
   formatOffset,
   pickGraphic,
 } from "../../../model/index.js";
+import { resetGraphicLookups } from "../../../model/format.js";
 import { arbRowSession, soakShapedRows } from "../../../test-support/row-arbitraries.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import { foldFixture } from "../../../test-support/ui-harness.js";
@@ -275,7 +276,11 @@ describe("buildOutlineRows across Live commits", () => {
       for (const [index, batch] of batches.entries()) {
         accumulateAll(state, batch);
         const session = finalize(state, { live: true, nowMs: index });
-        expect(buildOutlineRows(session, input)).toStrictEqual(buildOutlineRows(structuredClone(session), input));
+        const rows = buildOutlineRows(session, input);
+        // The reference starts from empty lookup slots: otherwise it would chain from the maps the call above just
+        // derived and share them (review 3 m4).
+        resetGraphicLookups();
+        expect(rows).toStrictEqual(buildOutlineRows(structuredClone(session), input));
       }
     }
   }
