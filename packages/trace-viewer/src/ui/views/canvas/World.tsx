@@ -18,6 +18,8 @@ export interface CullRange {
 export interface WorldProps {
   layout: CanvasLayout | null;
   ctx: FrameContext | null;
+  /** Keys of the frames with a running own step (FrameMarks.running); derived from the layout when omitted. */
+  running?: ReadonlySet<string> | undefined;
   level: Level;
   /** Frame key of the selection. */
   selectedKey: string | null;
@@ -101,9 +103,12 @@ function WorldView(props: WorldProps): React.JSX.Element {
   const { layout, ctx, selectedKey, nowMs } = props;
   const order = useMemo(() => new Map(layout?.frames.map((frame, i) => [frame.key, i]) ?? []), [layout]);
   // Per (layout, ctx): which frames the live tick must reach.
+  const given = props.running;
   const running = useMemo(
-    () => new Set(layout === null || ctx === null ? [] : layout.frames.filter((frame) => frameRunning(frame, ctx)).map((frame) => frame.key)),
-    [layout, ctx],
+    () =>
+      given ??
+      new Set(layout === null || ctx === null ? [] : layout.frames.filter((frame) => frameRunning(frame, ctx)).map((frame) => frame.key)),
+    [given, layout, ctx],
   );
   const focusKey =
     layout !== null && selectedKey !== null && layout.frameByKey.has(selectedKey) ? selectedKey : (layout?.frames[0]?.key ?? null);

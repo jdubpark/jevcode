@@ -1,7 +1,7 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
-import { buildSearchIndex, formatOffset } from "../../../model/index.js";
+import { buildSearchIndex, formatOffset, type SearchIndex, type TraceSession } from "../../../model/index.js";
 import { Graphic } from "../../graphics/Graphic.js";
 import { Icon } from "../../icons/Icon.js";
 import { useDispatch, useView } from "../../state/store.js";
@@ -72,7 +72,12 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
     () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax })),
     [session, open, showAll, fileTitleMax],
   );
-  const searchIndex = useMemo(() => (session === null ? null : buildSearchIndex(session)), [session]);
+  // Built on the first keystroke for a session, not per Live commit (only a query reads it).
+  const searchIndex = useRef<{ session: TraceSession; index: SearchIndex } | null>(null);
+  const searchIndexOf = (current: TraceSession): SearchIndex => {
+    if (searchIndex.current?.session !== current) searchIndex.current = { session: current, index: buildSearchIndex(current) };
+    return searchIndex.current.index;
+  };
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
   const currentChapter = session === null ? undefined : index.chapterAtSeq(playheadSeq)?.id;
 
@@ -174,8 +179,8 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
 
   const onSearchChange = (value: string): void => {
     setQuery(value);
-    if (session === null || searchIndex === null) return;
-    dispatch({ type: "search/set", query: value, matchIds: searchMatches(session, searchIndex, value) });
+    if (session === null) return;
+    dispatch({ type: "search/set", query: value, matchIds: searchMatches(session, searchIndexOf(session), value) });
   };
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {

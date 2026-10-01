@@ -7,9 +7,11 @@ import {
   normalizeCommand,
   pickGraphic,
   searchSteps,
+  sessionStep,
   shortenTitle,
   truncateMiddle,
   type Chapter,
+  type Entity,
   type Finding,
   type FindingId,
   type GraphicSpec,
@@ -92,6 +94,28 @@ export interface OutlineInput {
 
 function isPresent<T>(value: T | undefined | null): value is T {
   return value !== undefined && value !== null;
+}
+
+// Row caches keyed by the session object a row reads. finalize never mutates a session it returned
+// and keeps an unchanged step or entity the same object across commits (model/fold-finalize.ts), so
+// a Live tick builds rows only for what changed. A hand-built session gets fresh objects, so it only
+// misses.
+const fileRowCache = new WeakMap<Entity, { titleMax: number; shield: boolean; tMs: number; row: OutlineItemRow }>();
+const commandRowCache = new WeakMap<Step, OutlineItemRow>();
+const testRowCache = new WeakMap<Step, OutlineItemRow>();
+
+/** The step with this id: steps are in firstSeq order and a step id is step:<firstSeq>. */
+function stepWithId(steps: readonly Step[], id: StepId): Step | undefined {
+  const seq = Number(id.slice("step:".length));
+  let lo = 0;
+  let hi = steps.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((steps[mid]?.firstSeq ?? 0) < seq) lo = mid + 1;
+    else hi = mid;
+  }
+  const step = steps[lo];
+  return step?.id === id ? step : steps.find((candidate) => candidate.id === id);
 }
 
 function joinLabel(parts: ReadonlyArray<string | null | undefined | false>): string {
@@ -215,23 +239,55 @@ function decisionItem(step: Step, depth: 0 | 1, title: DecisionTitle, flag: Outl
   };
 }
 
+/** Chapters by the turn whose time span [turn.tMs, next turn's tMs) holds chapter.tMs, in session order. */
+function chaptersByTurn(session: TraceSession): Map<number, Chapter[]> {
+  const turns = session.turns;
+  const byTurn = new Map<number, Chapter[]>();
+  const add = (index: number, chapter: Chapter): void => {
+    const list = byTurn.get(index);
+    if (list === undefined) byTurn.set(index, [chapter]);
+    else list.push(chapter);
+  };
+  const sorted = turns.every((turn, position) => position === 0 || (turns[position - 1]?.tMs ?? 0) <= turn.tMs);
+  for (const chapter of session.chapters) {
+    if (!sorted) {
+      // Hand-built turns out of time order: test each span.
+      for (const turn of turns) {
+        const nextT = turns[turn.index + 1]?.tMs ?? Number.POSITIVE_INFINITY;
+        if (chapter.tMs >= turn.tMs && chapter.tMs < nextT) add(turn.index, chapter);
+      }
+      continue;
+    }
+    // The last turn starting at or before the chapter: its span holds the chapter.
+    let lo = 0;
+    let hi = turns.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((turns[mid]?.tMs ?? 0) <= chapter.tMs) lo = mid + 1;
+      else hi = mid;
+    }
+    const turn = turns[lo - 1];
+    if (turn !== undefined) add(turn.index, chapter);
+  }
+  return byTurn;
+}
+
 function storyRows(session: TraceSession): OutlineRow[] {
   const out: OutlineRow[] = [];
   const multi = session.turns.length > 1;
   const depth: 0 | 1 = multi ? 1 : 0;
-  const stepById = new Map<StepId, Step>(session.steps.map((step) => [step.id, step]));
   const findingById = new Map<FindingId, Finding>(session.findings.map((finding) => [finding.id, finding]));
+  const byTurn = chaptersByTurn(session);
   for (const turn of session.turns) {
-    const nextT = session.turns[turn.index + 1]?.tMs ?? Number.POSITIVE_INFINITY;
-    const inTurn = (tMs: number): boolean => tMs >= turn.tMs && tMs < nextT;
+    const turnChapters = byTurn.get(turn.index) ?? [];
     if (multi) {
       out.push({ t: "turn", key: `turn:${turn.index}`, turn: turn.index, label: `Turn ${turn.index + 1} · ${turn.trigger}`, tMs: turn.tMs });
     }
     const items: OutlineItemRow[] = [];
-    const steps = turn.stepIds.map((id) => stepById.get(id)).filter(isPresent);
+    const steps = turn.stepIds.map((id) => sessionStep(session, id)).filter(isPresent);
     const intent = steps.find((step) => step.kind === "instruction");
     if (intent !== undefined) items.push(stepItem(intent, depth, "Intent", "person", null));
-    const chapters = session.chapters.filter((chapter) => chapter.current && !chapter.noise && inTurn(chapter.tMs));
+    const chapters = turnChapters.filter((chapter) => chapter.current && !chapter.noise);
     const folded = new Set<UnitStableId>();
     for (const step of steps) {
       if (step.kind !== "decision") continue;
@@ -248,7 +304,7 @@ function storyRows(session: TraceSession): OutlineRow[] {
       if (!folded.has(chapter.id)) items.push(chapterItem(chapter, session, depth, findingById));
     }
     items.sort((a, b) => a.tMs - b.tMs || a.key.localeCompare(b.key));
-    const noise = session.chapters.filter((chapter) => chapter.current && chapter.noise && inTurn(chapter.tMs));
+    const noise = turnChapters.filter((chapter) => chapter.current && chapter.noise);
     const firstNoise = noise[0];
     if (firstNoise !== undefined) {
       items.push({
@@ -270,7 +326,7 @@ function storyRows(session: TraceSession): OutlineRow[] {
         openEvidence: false,
       });
     }
-    const claim = turn.claimStepId === undefined ? undefined : stepById.get(turn.claimStepId);
+    const claim = turn.claimStepId === undefined ? undefined : sessionStep(session, turn.claimStepId);
     if (claim !== undefined) {
       const contradicted = claim.findingIds.some((id) => findingById.get(id)?.ruleId === "claim_contradicted");
       items.push(stepItem(claim, depth, "Final claim", "quote", contradicted ? "neq" : null, contradicted ? "contradicts tests" : undefined));
@@ -286,37 +342,64 @@ function basename(path: string): string {
   return slash < 0 ? trimmed : trimmed.slice(slash + 1);
 }
 
-function fileRows(session: TraceSession, titleMax: number): OutlineItemRow[] {
+/** The first `limit` Files rows, and how many there are in all (one per entity with a step). */
+function fileRows(session: TraceSession, titleMax: number, limit: number): { rows: OutlineItemRow[]; count: number } {
+  let count = 0;
+  for (const entity of session.entities) if (entity.stepIds.length > 0) count += 1;
+  if (limit <= 0) return { rows: [], count };
   const clamped = new Set(session.chapters.filter((chapter) => chapter.clampIds.length > 0).map((chapter) => chapter.id));
-  const stepById = new Map<StepId, Step>(session.steps.map((step) => [step.id, step]));
   const out: OutlineItemRow[] = [];
   for (const entity of session.entities) {
+    if (out.length >= limit) break;
     const latest = entity.stepIds.at(-1);
     if (latest === undefined) continue;
-    const graphic: GraphicSpec = { kind: "diff", added: entity.added, removed: entity.removed };
-    const path = displayUntrusted(entity.path);
     const shield = entity.chapterIds.some((id) => clamped.has(id));
-    out.push({
-      t: "item",
-      key: entity.id,
-      section: "files",
-      depth: 0,
-      selId: latest,
-      icon: "file",
-      title: truncateMiddle(basename(entity.label), titleMax + (shield ? 0 : NO_SHIELD_GLYPHS)),
-      mono: true,
-      tMs: stepById.get(latest)?.tMs ?? 0,
-      flag: shield ? "shield" : null,
-      failed: false,
-      muted: false,
-      graphic,
-      chapterId: null,
-      label: joinLabel([path, describeGraphic(graphic)]),
-      hint: path,
-      openEvidence: true,
-    });
+    // The row reads its latest step's tMs, which the entity does not hold: part of the key (a binary search).
+    const tMs = stepWithId(session.steps, latest)?.tMs ?? 0;
+    const cached = fileRowCache.get(entity);
+    if (cached !== undefined && cached.titleMax === titleMax && cached.shield === shield && cached.tMs === tMs) {
+      out.push(cached.row);
+      continue;
+    }
+    const row = fileRow(entity, latest, tMs, titleMax, shield);
+    fileRowCache.set(entity, { titleMax, shield, tMs, row });
+    out.push(row);
   }
-  return out;
+  return { rows: out, count };
+}
+
+function fileRow(entity: Entity, latest: StepId, tMs: number, titleMax: number, shield: boolean): OutlineItemRow {
+  const graphic: GraphicSpec = { kind: "diff", added: entity.added, removed: entity.removed };
+  const path = displayUntrusted(entity.path);
+  return {
+    t: "item",
+    key: entity.id,
+    section: "files",
+    depth: 0,
+    selId: latest,
+    icon: "file",
+    title: truncateMiddle(basename(entity.label), titleMax + (shield ? 0 : NO_SHIELD_GLYPHS)),
+    mono: true,
+    tMs,
+    flag: shield ? "shield" : null,
+    failed: false,
+    muted: false,
+    graphic,
+    chapterId: null,
+    label: joinLabel([path, describeGraphic(graphic)]),
+    hint: path,
+    openEvidence: true,
+  };
+}
+
+/** The cached row of a step, else build(step) cached. */
+function cachedRow(cache: WeakMap<Step, OutlineItemRow>, step: Step, build: (step: Step) => OutlineItemRow): OutlineItemRow {
+  let row = cache.get(step);
+  if (row === undefined) {
+    row = build(step);
+    cache.set(step, row);
+  }
+  return row;
 }
 
 function commandTitle(step: Step): string {
@@ -326,56 +409,58 @@ function commandTitle(step: Step): string {
 function commandRows(session: TraceSession): OutlineItemRow[] {
   return session.steps
     .filter((step) => step.command !== undefined && (step.kind === "command" || step.kind === "test" || step.kind === "check"))
-    .map((step) => {
-      const title = commandTitle(step);
-      const failed = step.status === "failed";
-      return {
-        t: "item",
-        key: `cmd:${step.id}`,
-        section: "commands",
-        depth: 0,
-        selId: step.id,
-        icon: KIND_ICON[step.kind],
-        title,
-        mono: true,
-        tMs: step.tMs,
-        flag: failed ? "x" : null,
-        failed,
-        muted: false,
-        graphic: null,
-        chapterId: null,
-        label: joinLabel([title, failed ? "failed" : null, exitLabel(step.command?.exitCode ?? null), formatOffset(step.tMs)]),
-        openEvidence: false,
-      } satisfies OutlineItemRow;
-    });
+    .map((step) => cachedRow(commandRowCache, step, commandRow));
+}
+
+function commandRow(step: Step): OutlineItemRow {
+  const title = commandTitle(step);
+  const failed = step.status === "failed";
+  return {
+    t: "item",
+    key: `cmd:${step.id}`,
+    section: "commands",
+    depth: 0,
+    selId: step.id,
+    icon: KIND_ICON[step.kind],
+    title,
+    mono: true,
+    tMs: step.tMs,
+    flag: failed ? "x" : null,
+    failed,
+    muted: false,
+    graphic: null,
+    chapterId: null,
+    label: joinLabel([title, failed ? "failed" : null, exitLabel(step.command?.exitCode ?? null), formatOffset(step.tMs)]),
+    openEvidence: false,
+  };
 }
 
 function testRows(session: TraceSession): OutlineItemRow[] {
-  return session.steps
-    .filter((step) => step.tests !== undefined)
-    .map((step) => {
-      const tests = step.tests ?? { passed: 0, failed: 0, skipped: 0 };
-      const graphic: GraphicSpec = { kind: "tests", passed: tests.passed, failed: tests.failed, skipped: tests.skipped };
-      const title = commandTitle(step);
-      return {
-        t: "item",
-        key: `test:${step.id}`,
-        section: "tests",
-        depth: 0,
-        selId: step.id,
-        icon: KIND_ICON[step.kind],
-        title,
-        mono: true,
-        tMs: step.tMs,
-        flag: step.status === "failed" ? "x" : null,
-        failed: step.status === "failed",
-        muted: false,
-        graphic,
-        chapterId: null,
-        label: joinLabel([title, describeGraphic(graphic), formatOffset(step.tMs)]),
-        openEvidence: false,
-      } satisfies OutlineItemRow;
-    });
+  return session.steps.filter((step) => step.tests !== undefined).map((step) => cachedRow(testRowCache, step, testRow));
+}
+
+function testRow(step: Step): OutlineItemRow {
+  const tests = step.tests ?? { passed: 0, failed: 0, skipped: 0 };
+  const graphic: GraphicSpec = { kind: "tests", passed: tests.passed, failed: tests.failed, skipped: tests.skipped };
+  const title = commandTitle(step);
+  return {
+    t: "item",
+    key: `test:${step.id}`,
+    section: "tests",
+    depth: 0,
+    selId: step.id,
+    icon: KIND_ICON[step.kind],
+    title,
+    mono: true,
+    tMs: step.tMs,
+    flag: step.status === "failed" ? "x" : null,
+    failed: step.status === "failed",
+    muted: false,
+    graphic,
+    chapterId: null,
+    label: joinLabel([title, describeGraphic(graphic), formatOffset(step.tMs)]),
+    openEvidence: false,
+  };
 }
 
 function pushSection(
@@ -383,7 +468,6 @@ function pushSection(
   section: OutlineSection,
   entries: readonly OutlineRow[],
   input: OutlineInput,
-  cap?: number,
 ): void {
   const open = input.open.has(section);
   rows.push({
@@ -394,19 +478,24 @@ function pushSection(
     count: entries.filter((entry) => entry.t === "item").length,
     open,
   });
+  if (open) rows.push(...entries);
+}
+
+/** Files: a closed section or the collapsed first FILES_COLLAPSE_ABOVE rows build only the rows they show. */
+function pushFiles(rows: OutlineRow[], session: TraceSession, input: OutlineInput): void {
+  const open = input.open.has("files");
+  const capped = !input.showAll.has("files");
+  const files = fileRows(session, input.fileTitleMax ?? FILE_TITLE_MAX, !open ? 0 : capped ? FILES_COLLAPSE_ABOVE : Number.POSITIVE_INFINITY);
+  rows.push({ t: "section", key: "section:files", section: "files", label: SECTION_LABEL.files, count: files.count, open });
   if (!open) return;
-  if (cap !== undefined && !input.showAll.has(section) && entries.length > cap) {
-    rows.push(...entries.slice(0, cap));
-    rows.push({ t: "more", key: `more:${section}`, section, hidden: entries.length - cap });
-    return;
-  }
-  rows.push(...entries);
+  rows.push(...files.rows);
+  if (capped && files.count > FILES_COLLAPSE_ABOVE) rows.push({ t: "more", key: "more:files", section: "files", hidden: files.count - FILES_COLLAPSE_ABOVE });
 }
 
 export function buildOutlineRows(session: TraceSession, input: OutlineInput): OutlineRow[] {
   const rows: OutlineRow[] = [];
   pushSection(rows, "story", storyRows(session), input);
-  pushSection(rows, "files", fileRows(session, input.fileTitleMax ?? FILE_TITLE_MAX), input, FILES_COLLAPSE_ABOVE);
+  pushFiles(rows, session, input);
   pushSection(rows, "commands", commandRows(session), input);
   pushSection(rows, "tests", testRows(session), input);
   return rows;

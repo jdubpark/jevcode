@@ -18,7 +18,7 @@ import {
 } from "./fold-state.js";
 import { normalizeCommand, truncateMiddle } from "./format.js";
 import { commandKind } from "./registry.js";
-import { fileStableId, type DiffState, type Entity, type FileStableId, type Step } from "./types.js";
+import { fileStableId, type DiffState, type Entity, type Step, type UnitStableId } from "./types.js";
 
 type CallFact = Extract<EvidenceFact, { type: "command_executed" | "test_result" }>;
 type PathFact = Extract<EvidenceFact, { type: "git_hunk" | "file_changed" | "symbol_delta" }>;
@@ -63,7 +63,7 @@ function attachCall(state: FoldState, turn: TurnDraft, ctx: RowContext, fact: Ca
 
 function foldCallFact(state: FoldState, turn: TurnDraft, ctx: RowContext, fact: CallFact): void {
   const step = attachCall(state, turn, ctx, fact);
-  if (step.seqs[0] !== ctx.seq) addRowToStep(step, ctx, true);
+  if (step.seqs[0] !== ctx.seq) addRowToStep(state, step, ctx, true);
   else step.evidenceSeqs.push(ctx.seq);
   state.evidence.stepByEvidenceSeq.set(ctx.seq, step);
   if (fact.type !== "test_result") return;
@@ -80,7 +80,7 @@ function foldCallFact(state: FoldState, turn: TurnDraft, ctx: RowContext, fact: 
     })),
     resultSeq: ctx.seq,
   };
-  setKind(step, testKind(fact.command));
+  setKind(state, step, testKind(fact.command));
   state.evidence.testRunByKey.set(`${normalizeCommand(fact.command)}\u0000${fact.ts}`, step);
 }
 
@@ -154,7 +154,7 @@ function foldPathFact(state: FoldState, turn: TurnDraft, ctx: RowContext, fact: 
       step = createRepoEditStep(state, turn, ctx, fact);
       turn.edits.set(path, step);
     } else {
-      addRowToStep(step, ctx, true);
+      addRowToStep(state, step, ctx, true);
     }
     evidence.hunkKeyByStep.set(step.id, key);
     applyHunk(step, ctx, fact);
@@ -167,7 +167,7 @@ function foldPathFact(state: FoldState, turn: TurnDraft, ctx: RowContext, fact: 
     step = createRepoEditStep(state, turn, ctx, fact);
     turn.edits.set(path, step);
   } else {
-    addRowToStep(step, ctx, true);
+    addRowToStep(state, step, ctx, true);
   }
   if (step.edit !== undefined) {
     step.edit.observed = true;
@@ -212,7 +212,10 @@ function foldPointFact(
 export function foldEvidenceFact(state: FoldState, row: TraceRow, fact: EvidenceFact, ctx: RowContext): void {
   if (row.factId !== undefined) {
     state.capabilities.add("fact_links");
-    if (!state.evidence.factSeqById.has(row.factId)) state.evidence.factSeqById.set(row.factId, ctx.seq);
+    if (!state.evidence.factSeqById.has(row.factId)) {
+      state.evidence.factSeqById.set(row.factId, ctx.seq);
+      state.changes.factIds.add(row.factId);
+    }
   }
   const turn = currentTurn(state, ctx);
   touchTurn(turn, ctx);
@@ -237,43 +240,45 @@ export function foldEvidenceFact(state: FoldState, row: TraceRow, fact: Evidence
  *  step in any turn with the same command. It adds evidence; test counts come from test_result. */
 export function foldValidation(state: FoldState, validation: ValidationResult, ctx: RowContext): void {
   const evidence = state.evidence;
-  if (!evidence.validationSeqById.has(validation.id)) evidence.validationSeqById.set(validation.id, ctx.seq);
+  if (!evidence.validationSeqById.has(validation.id)) {
+    evidence.validationSeqById.set(validation.id, ctx.seq);
+    state.changes.validationIds.add(validation.id);
+  }
   const normalized = normalizeCommand(validation.command);
   let step = evidence.testRunByKey.get(`${normalized}\u0000${validation.ts}`);
   for (let index = state.turns.length - 1; step === undefined && index >= 0; index -= 1) {
     step = state.turns[index]?.commands.get(normalized);
   }
   if (step === undefined) return;
-  addRowToStep(step, ctx, true);
+  addRowToStep(state, step, ctx, true);
   evidence.stepByEvidenceSeq.set(ctx.seq, step);
-  if (validation.kind !== "test" && step.kind !== "check") setKind(step, "check");
+  if (validation.kind !== "test" && step.kind !== "check") setKind(state, step, "check");
 }
 
-/** Files only in v1. added/removed come from the path's latest hunk (hunks are cumulative
- *  against the base commit); duplicate_poll steps are left out of stepIds. */
-export function buildEntities(steps: readonly Step[], duplicates: ReadonlySet<string>): Entity[] {
-  const byPath = new Map<string, Entity>();
-  for (const step of steps) {
-    if (step.kind !== "edit" || step.edit === undefined) continue;
+/** The file entity of one path (files only in v1), from the path's edit steps in seq order and the
+ *  ids of the chapters whose files list it. added/removed come from the path's latest hunk (hunks
+ *  are cumulative against the base commit); duplicate_poll steps are left out of stepIds. */
+export function buildEntity(
+  path: string,
+  edits: readonly Step[],
+  duplicates: ReadonlySet<string>,
+  chapterIds: UnitStableId[],
+): Entity {
+  const entity: Entity = {
+    id: fileStableId(path),
+    kind: "file",
+    path,
+    label: truncateMiddle(path, 48),
+    added: 0,
+    removed: 0,
+    claimed: false,
+    observed: false,
+    stepIds: [],
+    chapterIds,
+  };
+  for (const step of edits) {
     const edit = step.edit;
-    const id: FileStableId = fileStableId(edit.path);
-    step.entityIds = [id];
-    let entity = byPath.get(edit.path);
-    if (entity === undefined) {
-      entity = {
-        id,
-        kind: "file",
-        path: edit.path,
-        label: truncateMiddle(edit.path, 48),
-        added: 0,
-        removed: 0,
-        claimed: false,
-        observed: false,
-        stepIds: [],
-        chapterIds: [],
-      };
-      byPath.set(edit.path, entity);
-    }
+    if (edit === undefined) continue;
     entity.claimed = entity.claimed || edit.claimed;
     entity.observed = entity.observed || edit.observed;
     if (duplicates.has(step.id)) continue;
@@ -283,5 +288,5 @@ export function buildEntities(steps: readonly Step[], duplicates: ReadonlySet<st
       entity.removed = edit.removed;
     }
   }
-  return [...byPath.values()];
+  return entity;
 }

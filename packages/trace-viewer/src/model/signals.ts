@@ -24,6 +24,113 @@ import {
 
 export interface SignalInput {
   session: Omit<TraceSession, "findings" | "coverage">;
+  /** Lookups the finalize already maintains (fold-finalize.ts); built from session when absent. */
+  index?: SignalIndex;
+  /**
+   * The positions of the steps each rule reads (buildSignalScan of session.steps). Rules then visit only those steps,
+   * in list order, instead of every step; the findings are the same. Ignored unless built from this session.steps.
+   */
+  scan?: SignalScan;
+}
+
+// ------------------------------------------------------------ scan
+
+const RUN = 1;
+const TARGET = 2;
+const EDIT = 4;
+const DESTRUCTIVE = 8;
+const GUARD = 16;
+
+/**
+ * Per step position, what the rules test it for: a run (test or check) and whether it has a target, a non-duplicate
+ * edit, a destructive command, a severe guardrail clamp. Built from the previous scan: a position holding the same
+ * Step object keeps its category (a finalized Step never changes, spec §6.4), so a Live commit categorizes only the
+ * steps it changed. Step ids are assumed unique (a finalize's steps are).
+ */
+export interface SignalScan {
+  readonly steps: readonly Step[];
+  readonly cats: Uint8Array;
+  /** Positions, ascending, of runs (any target), non-duplicate edits, destructive commands and severe guardrails. */
+  readonly runs: readonly number[];
+  readonly edits: readonly number[];
+  readonly destructive: readonly number[];
+  readonly guards: readonly number[];
+  /** Steps categorized by this build (not kept): a regression gauge for tests. */
+  readonly categorized: number;
+}
+
+function categoryOf(step: Step): number {
+  let cat = 0;
+  if (isRun(step)) cat |= RUN;
+  if (step.target !== undefined) cat |= TARGET;
+  if (step.kind === "edit" && step.noise !== "duplicate_poll") cat |= EDIT;
+  if (step.command?.destructivePattern !== undefined) cat |= DESTRUCTIVE;
+  if (step.kind === "guardrail" && step.guardrail !== undefined && hasSevereClamp(step)) cat |= GUARD;
+  return cat;
+}
+
+export function buildSignalScan(steps: readonly Step[], previous?: SignalScan): SignalScan {
+  const before = previous?.steps;
+  const cats = new Uint8Array(steps.length);
+  const runs: number[] = [];
+  const edits: number[] = [];
+  const destructive: number[] = [];
+  const guards: number[] = [];
+  let categorized = 0;
+  for (let position = 0; position < steps.length; position += 1) {
+    const step = steps[position] as Step;
+    let cat: number;
+    if (before !== undefined && before[position] === step) {
+      cat = previous?.cats[position] ?? 0;
+    } else {
+      cat = categoryOf(step);
+      categorized += 1;
+    }
+    cats[position] = cat;
+    if (cat === 0) continue;
+    if ((cat & RUN) !== 0) runs.push(position);
+    if ((cat & EDIT) !== 0) edits.push(position);
+    if ((cat & DESTRUCTIVE) !== 0) destructive.push(position);
+    if ((cat & GUARD) !== 0) guards.push(position);
+  }
+  return { steps, cats, runs, edits, destructive, guards, categorized };
+}
+
+function scanOf(input: SignalInput): SignalScan | undefined {
+  const scan = input.scan;
+  return scan !== undefined && scan.steps === input.session.steps ? scan : undefined;
+}
+
+/** The steps at `positions`, in order. */
+function at(scan: SignalScan, positions: readonly number[]): Step[] {
+  return positions.map((position) => scan.steps[position] as Step);
+}
+
+/** Two ascending position lists merged, ascending. */
+function merged(a: readonly number[], b: readonly number[]): number[] {
+  const out: number[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    const x = a[i];
+    const y = b[j];
+    if (y === undefined || (x !== undefined && x <= y)) {
+      if (x !== undefined) out.push(x);
+      if (x === y) j += 1;
+      i += 1;
+    } else {
+      out.push(y);
+      j += 1;
+    }
+  }
+  return out;
+}
+
+export interface SignalIndex {
+  stepById: ReadonlyMap<StepId, Step>;
+  chapterById: ReadonlyMap<UnitStableId, Chapter>;
+  /** runChapters(run, chapterById), kept up to date as chapters change. */
+  runChapters(run: Step): UnitStableId[];
 }
 
 export interface FindingDraft {
@@ -50,6 +157,19 @@ export interface SignalRule extends SignalMeta {
 }
 
 // ------------------------------------------------------------ shared helpers
+
+/** normalizeCommand memo: signals run on every finalize, over every run step. Bounded. */
+const normalized = new Map<string, string>();
+
+function commandKey(command: string): string {
+  let key = normalized.get(command);
+  if (key === undefined) {
+    if (normalized.size >= 4_096) normalized.clear();
+    key = normalizeCommand(command);
+    normalized.set(command, key);
+  }
+  return key;
+}
 
 function isRun(step: Step): boolean {
   return step.kind === "test" || step.kind === "check";
@@ -81,7 +201,7 @@ function sortStepIds(ids: readonly StepId[], steps: ReadonlyMap<StepId, Step>): 
  *  that own the failure count: of the run's chapters, those whose unit failed or whose files hold a
  *  failing test's file, else the latest of them (session order). This keeps a shared validation from
  *  making every chapter a finding chapter and from clearing noise on lockfile or formatting chapters. */
-function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
+export function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>): UnitStableId[] {
   const owners = run.chapterIds.filter((id) => {
     const chapter = chapterById.get(id);
     return chapter !== undefined && ownsRunOutcome(chapter, run);
@@ -91,8 +211,11 @@ function runChapters(run: Step, chapterById: ReadonlyMap<UnitStableId, Chapter>)
   return latest === undefined ? [] : [latest];
 }
 
-function chaptersById(session: SignalInput["session"]): Map<UnitStableId, Chapter> {
-  return new Map(session.chapters.map((chapter) => [chapter.id, chapter]));
+function chaptersOf(input: SignalInput): (run: Step) => UnitStableId[] {
+  const index = input.index;
+  if (index !== undefined) return (run) => index.runChapters(run);
+  const chapterById = new Map(input.session.chapters.map((chapter) => [chapter.id, chapter]));
+  return (run) => runChapters(run, chapterById);
 }
 
 // ------------------------------------------------------------ claim lexicon (R10)
@@ -147,30 +270,29 @@ export function isPlanText(text: string): boolean {
   return PLAN_LEAD.test(text) || (text.match(LIST_ITEM) ?? []).length >= 2;
 }
 
-/** Sets Turn.planStepId (the first plan message before the turn's first edit) and
- *  Turn.claimStepId (the turn's last success claim) (R25). finalize calls it before signals, and
- *  claim_contradicted checks only claimStepId. */
-export function markTurns(turns: readonly Turn[], stepById: ReadonlyMap<StepId, Step>): void {
-  for (const turn of turns) {
-    const steps = turn.stepIds
-      .map((id) => stepById.get(id))
-      .filter((step): step is Step => step !== undefined);
-    const firstEdit = steps.find((step) => step.kind === "edit");
-    const plan = steps.find(
-      (step) =>
-        step.kind === "message" &&
-        (firstEdit === undefined || step.firstSeq < firstEdit.firstSeq) &&
-        isPlanText(step.text ?? ""),
-    );
-    if (plan !== undefined) turn.planStepId = plan.id;
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      const step = steps[index];
-      if (step !== undefined && step.kind === "message" && isSuccessClaim(step.text ?? "")) {
-        turn.claimStepId = step.id;
-        break;
-      }
+/** Turn.planStepId (the first plan message before the turn's first edit) and Turn.claimStepId (the
+ *  turn's last success claim) of a turn's steps in order (R25). claim_contradicted checks only
+ *  claimStepId. isPlan and isClaim default to isPlanText and isSuccessClaim of the step's text. */
+export function turnMarks(
+  steps: readonly Step[],
+  isPlan: (step: Step) => boolean = (step) => isPlanText(step.text ?? ""),
+  isClaim: (step: Step) => boolean = (step) => isSuccessClaim(step.text ?? ""),
+): Pick<Turn, "planStepId" | "claimStepId"> {
+  const marks: Pick<Turn, "planStepId" | "claimStepId"> = {};
+  const firstEdit = steps.find((step) => step.kind === "edit");
+  const plan = steps.find(
+    (step) =>
+      step.kind === "message" && (firstEdit === undefined || step.firstSeq < firstEdit.firstSeq) && isPlan(step),
+  );
+  if (plan !== undefined) marks.planStepId = plan.id;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (step !== undefined && step.kind === "message" && isClaim(step)) {
+      marks.claimStepId = step.id;
+      break;
     }
   }
+  return marks;
 }
 
 // ------------------------------------------------------------ the five v1 signals (R11)
@@ -187,18 +309,32 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
     "Before M1a, reasoning text was stored as assistant messages (packages/agent-codex/src/jsonl.ts:178-189), so a thought can read as a claim.",
   ],
   requires: ["agent_messages", "test_results"],
-  evaluate({ session }) {
-    const stepById = new Map(session.steps.map((step) => [step.id, step]));
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const stepById = input.index?.stepById ?? new Map(session.steps.map((step) => [step.id, step]));
+    const chaptersOfRun = chaptersOf(input);
     // Only each turn's claimStepId (its last success claim, set by markTurns) is checked (R25).
     const claimIds = new Set<StepId>();
     for (const turn of session.turns) if (turn.claimStepId !== undefined) claimIds.add(turn.claimStepId);
-    // One pass in seq order: the latest run of each command seen so far.
+    // One pass in seq order: the latest run of each command seen so far. With a scan, only the runs with a target and
+    // the claim steps are visited.
+    const scan = scanOf(input);
+    let visit: readonly Step[] = session.steps;
+    if (scan !== undefined) {
+      const claimPositions: number[] = [];
+      for (const id of claimIds) {
+        const claim = stepById.get(id);
+        const position = claim === undefined ? -1 : scan.steps.indexOf(claim);
+        if (position >= 0) claimPositions.push(position);
+      }
+      const targeted = scan.runs.filter((position) => ((scan.cats[position] ?? 0) & TARGET) !== 0);
+      visit = at(scan, merged(targeted, claimPositions.sort((a, b) => a - b)));
+    }
     const latestByTarget = new Map<string, Step>();
     const drafts: FindingDraft[] = [];
-    for (const step of session.steps) {
+    for (const step of visit) {
       if (isRun(step) && step.target !== undefined) {
-        latestByTarget.set(normalizeCommand(step.target), step);
+        latestByTarget.set(commandKey(step.target), step);
         continue;
       }
       if (!claimIds.has(step.id)) continue;
@@ -216,7 +352,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
           tests.failed > 0 ? `${tests.failed} failing test${tests.failed === 1 ? "" : "s"}` : "a non-zero exit"
         }.`,
         stepIds: sortStepIds([step.id, failed.id], stepById),
-        chapterIds: runChapters(failed, chapterById),
+        chapterIds: chaptersOfRun(failed),
         evidenceSeqs: sortedUnique([runSeq(failed), step.firstSeq]),
         claim: {
           claim: { text, seq: step.firstSeq, tMs: step.tMs, stepId: step.id },
@@ -250,17 +386,20 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
     "Any runner-like stdout is parsed into a test result (apps/desktop/src/main/pipeline/pipeline-runtime.ts:750-753), so a command that prints a test summary it did not run can count.",
   ],
   requires: ["test_results"],
-  evaluate({ session }) {
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const chaptersOfRun = chaptersOf(input);
+    const scan = scanOf(input);
+    const runs = scan === undefined ? session.steps : at(scan, scan.runs);
     const finalRun = new Map<string, Step>();
-    for (const step of session.steps) {
-      if (isRun(step) && step.target !== undefined) finalRun.set(normalizeCommand(step.target), step);
+    for (const step of runs) {
+      if (isRun(step) && step.target !== undefined) finalRun.set(commandKey(step.target), step);
     }
-    return session.steps
+    return runs
       .filter((step) => isRun(step) && step.tests !== undefined && step.tests.failed > 0)
       .map((step) => {
         const tests = step.tests ?? { passed: 0, failed: 0, skipped: 0 };
-        const final = step.target !== undefined ? finalRun.get(normalizeCommand(step.target)) : undefined;
+        const final = step.target !== undefined ? finalRun.get(commandKey(step.target)) : undefined;
         const unresolved = final !== undefined && runFailed(final);
         return {
           anchorSeq: runSeq(step),
@@ -271,7 +410,7 @@ const failingTests: SignalRule & { readonly id: "failing_tests" } = {
             ? `${step.target ?? "The test command"} still fails in its final run.`
             : `${step.target ?? "The test command"} passed in a later run.`,
           stepIds: [step.id],
-          chapterIds: runChapters(step, chapterById),
+          chapterIds: chaptersOfRun(step),
           evidenceSeqs: [runSeq(step)],
         } satisfies FindingDraft;
       });
@@ -289,8 +428,9 @@ const destructiveCommand: SignalRule & { readonly id: "destructive_command" } = 
     "Any rm -rf matches whatever its target, including build output such as dist/.",
   ],
   requires: ["agent_commands"],
-  evaluate({ session }) {
-    return session.steps
+  evaluate(input) {
+    const scan = scanOf(input);
+    return (scan === undefined ? input.session.steps : at(scan, scan.destructive))
       .filter((step) => step.command?.destructivePattern !== undefined)
       .map((step) => ({
         anchorSeq: step.firstSeq,
@@ -318,8 +458,9 @@ const guardrailClamp: SignalRule & { readonly id: "guardrail_clamp" } = {
     "The security-path patterns match /token/i in tokenizer.ts and \\.env in .env.example (packages/jev-router/src/patterns.ts:11-19).",
   ],
   requires: ["jev_decisions"],
-  evaluate({ session }) {
-    return session.steps
+  evaluate(input) {
+    const scan = scanOf(input);
+    return (scan === undefined ? input.session.steps : at(scan, scan.guards))
       .filter((step) => step.kind === "guardrail" && step.guardrail !== undefined && hasSevereClamp(step))
       .map((step) => {
         const clampIds = step.guardrail?.clampIds ?? [];
@@ -351,17 +492,24 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
   rationale: "A run failed, the agent edited code, and a later run of the same command passed.",
   knownFalsePositives: ["The later run passed because tests were deleted or skipped rather than fixed."],
   requires: ["test_results"],
-  evaluate({ session }) {
-    const chapterById = chaptersById(session);
+  evaluate(input) {
+    const session = input.session;
+    const chaptersOfRun = chaptersOf(input);
     const drafts: FindingDraft[] = [];
     const openFailure = new Map<string, { failed: Step; edits: StepId[] }>();
-    for (const step of session.steps) {
+    // With a scan, only the non-duplicate edits and the runs with a target are visited, in list order.
+    const scan = scanOf(input);
+    const visit =
+      scan === undefined
+        ? session.steps
+        : at(scan, merged(scan.edits, scan.runs.filter((position) => ((scan.cats[position] ?? 0) & TARGET) !== 0)));
+    for (const step of visit) {
       if (step.kind === "edit") {
         if (step.noise !== "duplicate_poll") for (const pending of openFailure.values()) pending.edits.push(step.id);
         continue;
       }
       if (!isRun(step) || step.target === undefined) continue;
-      const target = normalizeCommand(step.target);
+      const target = commandKey(step.target);
       if (runFailed(step)) {
         const pending = openFailure.get(target);
         if (pending === undefined || pending.edits.length > 0) openFailure.set(target, { failed: step, edits: [] });
@@ -383,7 +531,7 @@ const recoveryArc: SignalRule & { readonly id: "recovery_arc" } = {
         stepIds: [pending.failed.id, ...pending.edits, step.id],
         // The chapters that owned the failure recovered; the passing run's chapters only when the
         // failed run has none.
-        chapterIds: runChapters(pending.failed.chapterIds.length > 0 ? pending.failed : step, chapterById),
+        chapterIds: chaptersOfRun(pending.failed.chapterIds.length > 0 ? pending.failed : step),
         evidenceSeqs: sortedUnique([runSeq(pending.failed), runSeq(step)]),
       });
     }
@@ -441,11 +589,12 @@ export function computeCoverage(
   return { capabilities: present, signals, approximateJoins, inferredSteps };
 }
 
-/** Evaluates the active signals, attaches findingIds to steps and chapters, un-collapses every
- *  step a finding names, and marks each contradicted claim step with the claim_contradicted
- *  problem. Runs after applyNoise. Findings are derived here and never persisted. */
-export function applySignals(input: SignalInput, coverage: Coverage): Finding[] {
-  const session = input.session;
+/** Evaluates the active signals: findings in (anchorSeq, id) order, the first draft of each id kept.
+ *  Signals read the steps and chapters before findings apply (finding ids empty, noise before a
+ *  finding clears it); the finalize then attaches findingIds to the steps and chapters each finding
+ *  names, un-collapses them, and marks each contradicted claim step with the claim_contradicted
+ *  problem. Findings are derived here and never persisted. */
+export function evaluateSignals(input: SignalInput, coverage: Coverage): Finding[] {
   const findings = new Map<string, Finding>();
   for (const signal of coverage.signals) {
     if (!signal.active) continue;
@@ -456,34 +605,5 @@ export function applySignals(input: SignalInput, coverage: Coverage): Finding[] 
       findings.set(id, { id, ruleId: rule.id, ruleVersion: rule.version, ...draft });
     }
   }
-  const sorted = [...findings.values()].sort((a, b) => a.anchorSeq - b.anchorSeq || a.id.localeCompare(b.id));
-  const stepById = new Map(session.steps.map((step) => [step.id, step]));
-  const chapterById = new Map(session.chapters.map((chapter) => [chapter.id, chapter]));
-  for (const finding of sorted) {
-    for (const stepId of finding.stepIds) {
-      const step = stepById.get(stepId);
-      if (step === undefined) continue;
-      step.findingIds.push(finding.id);
-      step.noise = null;
-    }
-    for (const chapterId of finding.chapterIds) {
-      const chapter = chapterById.get(chapterId);
-      if (chapter === undefined) continue;
-      chapter.findingIds.push(finding.id);
-      chapter.noise = false;
-      // A chapter a finding names keeps the finding's runs in its band footprint, including the
-      // latest chapter runChapters falls back to when no chapter owns a shared run (spec §6.6).
-      const validationOnly = chapter.validationOnlyStepIds;
-      if (validationOnly !== undefined && validationOnly.length > 0) {
-        chapter.validationOnlyStepIds = validationOnly.filter((stepId) => !finding.stepIds.includes(stepId));
-      }
-    }
-    if (finding.ruleId === "claim_contradicted" && finding.claim !== undefined) {
-      const claimStep = stepById.get(finding.claim.claim.stepId);
-      if (claimStep !== undefined && !claimStep.problems.includes("claim_contradicted")) {
-        claimStep.problems.push("claim_contradicted");
-      }
-    }
-  }
-  return sorted;
+  return [...findings.values()].sort((a, b) => a.anchorSeq - b.anchorSeq || a.id.localeCompare(b.id));
 }

@@ -32,7 +32,7 @@ import {
 import { canvasReadingOrder, createCanvasPort, frameForSelection, tailFrame } from "./canvas-port.js";
 import { CanvasRuler } from "./CanvasRuler.js";
 import styles from "./CanvasView.module.css";
-import { buildFrameContext, criticalFrameKeys, frameEnd, frameRunning, frameStart, zoomBand } from "./frame-label.js";
+import { buildFrameContext, buildFrameMarks, frameEnd, frameStart, zoomBand, type FrameMarks } from "./frame-label.js";
 import { Minimap } from "./Minimap.js";
 import { Overlay } from "./Overlay.js";
 import { CANVAS_SETTLE_ROUND_K, CULL_FRAMES, INV_K_EVERY_FRAME } from "./spike-rulings.js";
@@ -135,6 +135,8 @@ function markRelayout(viewport: HTMLElement | null, pinnedKey: string): void {
     pinned?.removeAttribute("data-pinned");
   }, RELAYOUT_MS);
 }
+
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** A cull range no frame overlaps. */
 const NOTHING: CullRange = { x0: Infinity, x1: -Infinity };
@@ -693,26 +695,29 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
   );
   const selectedKey = selectedFrame?.key ?? null;
 
+  // Tone, running and flag per frame, from the previous commit's marks: a Live commit re-derives only the frames whose
+  // members changed or list a step that flipped bad or running.
+  const marksRef = useRef<FrameMarks | undefined>(undefined);
+  const marks = useMemo(() => {
+    if (layout === null || ctx === null) return null;
+    const next = buildFrameMarks(layout, ctx, marksRef.current);
+    marksRef.current = next;
+    return next;
+  }, [layout, ctx]);
   // The minimap's critical outlines and strip ticks are the frames the main view paints red (lane review I-1).
-  const criticalKeys = useMemo(
-    () => (layout === null || ctx === null ? new Set<string>() : criticalFrameKeys(layout, ctx)),
-    [layout, ctx],
-  );
+  const criticalKeys = marks?.critical ?? NO_KEYS;
 
+  // The context already maps every step: no second map per commit.
   const problemTs = useMemo(() => {
-    if (session === null) return [];
-    const stepById = new Map(session.steps.map((step) => [step.id, step]));
+    if (session === null || ctx === null) return [];
     return session.findings
       .filter((finding) => finding.severity === "critical")
-      .map((finding) => stepById.get(finding.anchorStepId)?.tMs)
+      .map((finding) => ctx.stepById.get(finding.anchorStepId)?.tMs)
       .filter((t): t is number => t !== undefined);
-  }, [session]);
+  }, [session, ctx]);
 
   // Live running bars (C1a hand-off M-1): a 1 Hz tick while Live and not terminal, only when a frame is running.
-  const hasRunning = useMemo(
-    () => layout !== null && ctx !== null && layout.frames.some((frame) => frameRunning(frame, ctx)),
-    [layout, ctx],
-  );
+  const hasRunning = (marks?.running.size ?? 0) > 0;
   const [nowMs, setNowMs] = useState<number | null>(null);
   const nowT = view.nowT;
   const originMs = session?.originMs ?? 0;
@@ -790,6 +795,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
         <Overlay
           layout={layout}
           ctx={ctx}
+          flags={marks?.flags}
           level={level}
           selectedKey={selectedKey}
           onSelect={onSelect}
@@ -798,7 +804,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
           k={mountK}
         />
       ) : null,
-    [layout, ctx, level, selectedKey, onSelect, cullRange, setOverlayRoot, mountK],
+    [layout, ctx, marks, level, selectedKey, onSelect, cullRange, setOverlayRoot, mountK],
   );
 
   // Below this width the centered toolbar would run under the minimap: it moves to the left edge and the minimap
@@ -837,6 +843,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
         <World
           layout={layout}
           ctx={ctx}
+          running={marks?.running}
           level={level}
           selectedKey={selectedKey}
           expanded={expanded}
