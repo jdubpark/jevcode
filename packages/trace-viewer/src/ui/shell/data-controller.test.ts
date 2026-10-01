@@ -14,7 +14,7 @@ import {
   type Scheduler,
 } from "./data-controller.js";
 
-const foldFault = vi.hoisted(() => ({ on: false }));
+const foldFault = vi.hoisted(() => ({ on: false, accumulate: false }));
 vi.mock("../../model/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../model/index.js")>();
   return {
@@ -22,6 +22,10 @@ vi.mock("../../model/index.js", async (importOriginal) => {
     finalize: (...args: Parameters<typeof actual.finalize>) => {
       if (foldFault.on) throw new Error("fold exploded");
       return actual.finalize(...args);
+    },
+    accumulateAll: (...args: Parameters<typeof actual.accumulateAll>) => {
+      if (foldFault.accumulate) throw new Error("accumulate exploded");
+      return actual.accumulateAll(...args);
     },
   };
 });
@@ -624,6 +628,36 @@ describe("createDataController", () => {
       const calls = control.calls.length;
       await scheduler.run(2_500);
       expect(control.calls.length).toBeGreaterThan(calls);
+    });
+
+    it("keeps the error when accumulate throws mid-load, and Retry reloads from the start", async () => {
+      const scheduler = new FakeScheduler();
+      const { source, control } = fakeSource(messageRows(30), { state: "completed" });
+      control.onRows = () => {
+        scheduler.spend(60);
+        // Page 1 commits inline, page 2 arms the progressive commit timer, and the fold of page 3 throws
+        // while that timer is pending (the 4th request is the prefetch made before page 3 folds).
+        if (control.calls.length === 4) foldFault.accumulate = true;
+      };
+      const controller = createDataController({ source, pollMs: 1_000, pageSize: 3, scheduler, isHidden: () => false });
+      controller.start();
+      try {
+        await scheduler.run(5_000);
+      } finally {
+        foldFault.accumulate = false;
+      }
+      const status = controller.get().status;
+      expect(status.kind).toBe("error");
+      expect(status.kind === "error" ? status.message : "").toContain("accumulate exploded");
+      expect(scheduler.pending()).toBe(0);
+      const callsAtError = control.calls.length;
+      await scheduler.run(5_000);
+      expect(controller.get().status.kind).toBe("error");
+      expect(control.calls.length).toBe(callsAtError);
+      controller.retry();
+      await scheduler.run(5_000);
+      expect(controller.get().status.kind).toBe("ready");
+      expect(controller.get().session?.loadedThroughSeq).toBe(30);
     });
   });
 });
