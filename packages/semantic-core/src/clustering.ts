@@ -253,9 +253,16 @@ function attachAgentCallIds(
   const ownersByFactId = new Map<string, string[]>();
   for (const unit of units) {
     for (const entry of unitEvidenceFacts.get(unit.id) ?? []) {
-      const owners = ownersByFactId.get(entry.factId) ?? [];
-      if (!owners.includes(unit.id)) owners.push(unit.id);
-      ownersByFactId.set(entry.factId, owners);
+      let owners = ownersByFactId.get(entry.factId);
+      if (owners === undefined) {
+        owners = [];
+        ownersByFactId.set(entry.factId, owners);
+      }
+      // A unit's entries are visited together, so a repeat of this fact on
+      // this unit can only follow its own push. Checking the last owner keeps
+      // the list unique in O(1); owners.includes() made a validation fact
+      // hosted by thousands of units quadratic on every rebuild (M1b soak).
+      if (owners[owners.length - 1] !== unit.id) owners.push(unit.id);
       const fact = entry.fact;
       if (
         (fact.type === "command_executed" || fact.type === "test_result") &&
