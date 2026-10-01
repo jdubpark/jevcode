@@ -8,7 +8,7 @@ import type { Level, TraceSession } from "../model/index.js";
 import { arbTraceSession } from "../test-support/arbitraries.js";
 import { arbCanvasSession, oauthCanvasSession } from "../test-support/canvas-arbitraries.js";
 import { FIXTURE_NAMES, loadFixtureTrace } from "../test-support/fixture-rows.js";
-import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
+import { arbDenseRowSession, arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { arbEdit, editSession } from "../test-support/session-edits.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import {
@@ -249,6 +249,15 @@ describe("Canvas derivations built from the previous commit equal fresh ones aft
   it("random rows, live or not", () => {
     fc.assert(
       fc.property(arbRowSession(), cutsArb, fc.boolean(), levels, ({ meta, rows }, cuts, live, level) => {
+        checkCanvasChain(foldChain(meta, rows, cuts, live), level);
+      }),
+      { numRuns: Number(process.env["CANVAS_CHAIN_RUNS"] ?? 150) },
+    );
+  }, 600_000);
+
+  it("dense id pools, live or not", () => {
+    fc.assert(
+      fc.property(arbDenseRowSession(), cutsArb, fc.boolean(), levels, ({ meta, rows }, cuts, live, level) => {
         checkCanvasChain(foldChain(meta, rows, cuts, live), level);
       }),
       { numRuns: Number(process.env["CANVAS_CHAIN_RUNS"] ?? 150) },
