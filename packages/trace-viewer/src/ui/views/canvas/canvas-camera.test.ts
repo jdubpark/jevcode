@@ -196,6 +196,19 @@ describe("live follow and the N frames badge", () => {
     expect(frontierFollowCamera(layout, camera(0, 12, 1), view)).toEqual(camera(-464, 12, 1));
   });
 
+  it("keeps the frontier column's left edge in view when the viewport is narrower than the column", () => {
+    const column = layout.columns[layout.columns.length - 1];
+    if (column === undefined) throw new Error("no column");
+    const view: Size = { w: 120, h: 600 };
+    const target = frontierFollowCamera(layout, camera(0, 12, 1), view);
+    expect(target).not.toBeNull();
+    // The left edge sits inside the window (not panned off to the left), at the reveal inset.
+    expect(column.x * (target?.k ?? 1) + (target?.tx ?? Number.NaN)).toBeGreaterThanOrEqual(0);
+    expect(column.x + (target?.tx ?? Number.NaN)).toBeLessThan(view.w);
+    // Already there: following again must not request another pan.
+    expect(frontierFollowCamera(layout, target ?? camera(0, 12, 1), view)).toBeNull();
+  });
+
   it("counts frames that start beyond the right edge", () => {
     expect(framesAhead(layout, camera(-150, 0, 1), { w: 600, h: 600 })).toBe(1);
     expect(framesAhead(layout, camera(-464, 0, 1), { w: 600, h: 600 })).toBe(0);

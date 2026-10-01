@@ -26,6 +26,8 @@ export function arbSessionSeed(options: ArbSessionOptions = {}): fc.Arbitrary<Se
     alsoChapter: fc.option(fc.integer({ min: 0, max: Math.max(0, maxChapters - 1) }), { freq: 5, nil: null }),
     newTurn: fc.integer({ min: 0, max: 9 }).map((n) => n === 0),
     rows: fc.integer({ min: 1, max: 3 }),
+    /** The last such step of a turn becomes its success claim (Turn.claimStepId); half of them are contradicted. */
+    claim: fc.integer({ min: 0, max: 7 }),
     finding: fc.option(
       fc.record({ ruleId: fc.constantFrom(...SIGNAL_IDS), severity: fc.constantFrom<Severity>("info", "warning", "critical") }),
       { freq: 6, nil: null },
@@ -43,6 +45,7 @@ export function arbSessionSeed(options: ArbSessionOptions = {}): fc.Arbitrary<Se
       let turn = 0;
       const seeds: StepSeed[] = [];
       const findings: FindingSeed[] = [];
+      const claimOfTurn = new Map<number, number>();
       steps.forEach((s, i) => {
         if (i > 0 && s.newTurn && turn < maxTurns - 1) turn += 1;
         t += s.gapMs;
@@ -64,12 +67,19 @@ export function arbSessionSeed(options: ArbSessionOptions = {}): fc.Arbitrary<Se
           command: status === "unknown" ? { exitCode: -1 } : undefined,
         });
         if (timed && !running) t += s.durationMs;
+        if (s.claim < 2) {
+          claimOfTurn.set(turn, i);
+          if (s.claim === 0 && s.finding === null) findings.push({ ruleId: "claim_contradicted", severity: "critical", step: i });
+        }
         if (s.finding !== null) findings.push({ ruleId: s.finding.ruleId, severity: s.finding.severity, step: i });
       });
       return {
         live,
         state: live ? "running" : "completed",
-        turns: Array.from({ length: turn + 1 }, (_, k) => ({ trigger: k === 0 ? "initial" : "steer", prompt: `Turn ${k + 1}` })),
+        turns: Array.from({ length: turn + 1 }, (_, k) => {
+          const claimStep = claimOfTurn.get(k);
+          return { trigger: k === 0 ? "initial" : "steer", prompt: `Turn ${k + 1}`, ...(claimStep === undefined ? {} : { claimStep }) };
+        }),
         steps: seeds,
         chapters: Array.from({ length: chapters }, (_, k) => ({ id: `u${k}`, title: `Chapter ${k + 1}` })),
         findings,

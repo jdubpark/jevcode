@@ -132,7 +132,10 @@ export function frontierFollowCamera(layout: CanvasLayout, camera: UniformCamera
   const right = column.x + LEVEL_SPECS[layout.level].w;
   const limit = viewport.w - REVEAL_INSET_PX;
   if (right * camera.k + camera.tx <= limit) return null;
-  return { ...camera, tx: limit - right * camera.k };
+  // A viewport narrower than the column plus the inset cannot show it whole: keep its left edge at the inset
+  // instead of panning that edge off screen, and ask for no further pan once it sits there.
+  const tx = Math.max(limit - right * camera.k, REVEAL_INSET_PX - column.x * camera.k);
+  return Math.abs(tx - camera.tx) < 1e-6 ? null : { ...camera, tx };
 }
 
 export function framesAhead(layout: CanvasLayout, camera: UniformCamera, viewport: Size): number {

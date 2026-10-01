@@ -403,3 +403,31 @@ export function soakShapedRows(options: { units: number; runs: number; reemits: 
   }
   return { meta: testMeta({ lastEventSeq: b.rows.length }), rows: b.rows };
 }
+
+/** The pools folded onto their first two members: with 2 call ids, 2 facts, 1 validation, 2 units and 1 decision
+ *  most joins line up (several steps share a call id, every unit cites the same fact), where the 4-6 member pools
+ *  of arbRowSession leave them rare (review 1 M1c). */
+const DENSE_IDS: Readonly<Record<string, string>> = {
+  c3: "c1", c4: "c2", c5: "c1",
+  fact_3: "fact_1", fact_4: "fact_2", fact_5: "fact_1", fact_6: "fact_2",
+  val_2: "val_1", val_3: "val_1",
+  u3: "u1", u4: "u2",
+  d2: "d1",
+};
+
+function denseValue(value: unknown): unknown {
+  if (typeof value === "string") return DENSE_IDS[value] ?? value;
+  if (Array.isArray(value)) return value.map(denseValue);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, denseValue(inner)]));
+  }
+  return value;
+}
+
+/** arbRowSession over dense id pools: the same flows, with ids colliding far more often. */
+export function arbDenseRowSession(options: { maxOps?: number } = {}): fc.Arbitrary<RowSession> {
+  return arbRowSession(options).map(({ meta, rows }) => ({
+    meta,
+    rows: rows.map((row) => ({ ...row, payload: denseValue(row.payload) as typeof row.payload })),
+  }));
+}

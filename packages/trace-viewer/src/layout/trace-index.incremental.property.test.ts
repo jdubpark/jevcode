@@ -8,7 +8,7 @@ import type { TraceSession, UnitStableId } from "../model/index.js";
 import { arbTraceSession } from "../test-support/arbitraries.js";
 import { FIXTURE_NAMES, loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { arbEdit, editSession } from "../test-support/session-edits.js";
-import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
+import { arbDenseRowSession, arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder } from "../test-support/trace-builder.js";
 import { buildTraceIndex, traceIndexChanges, traceIndexWork, type TraceIndex } from "./trace-index.js";
 
@@ -82,6 +82,15 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
     );
   }, 600_000);
 
+  it("dense id pools: after every commit, live or not", () => {
+    fc.assert(
+      fc.property(arbDenseRowSession(), cutsArb, fc.boolean(), ({ meta, rows }, cuts, live) => {
+        checkChain(foldChain(meta, rows, cuts, live));
+      }),
+      { numRuns: Number(process.env["INDEX_RUNS"] ?? 300) },
+    );
+  }, 600_000);
+
   it("row by row", () => {
     fc.assert(
       fc.property(arbRowSession({ maxOps: 25 }), ({ meta, rows }) => {
@@ -126,6 +135,18 @@ describe("buildTraceIndex from the previous index equals a fresh build", () => {
     const chapters = [...session.chapters.slice(0, -1), session.chapters[session.chapters.length - 2] ?? session.chapters[0]];
     checkChain([session, { ...session, steps: steps.filter((s) => s !== undefined) }]);
     checkChain([session, { ...session, chapters: chapters.filter((c) => c !== undefined) }]);
+  });
+
+  it("a repeated id after a swap counts each earlier id once: [A, B, C] -> [B, A, A] (review 3 m1)", () => {
+    const { meta, rows } = soakShapedRows({ units: 6, runs: 2, reemits: 1 });
+    const [session] = foldChain(meta, rows, [], true);
+    if (session === undefined || session.steps.length < 4 || session.chapters.length < 4) throw new Error("session");
+    const swap = <T,>(list: readonly T[]): T[] => {
+      const [a, b] = list.slice(-3) as [T, T, T];
+      return [...list.slice(0, -3), b, a, a];
+    };
+    checkChain([session, { ...session, steps: swap(session.steps) }]);
+    checkChain([session, { ...session, chapters: swap(session.chapters) }]);
   });
 
   it("an index seeds one later build; a second build from it, or another session id, is fresh and still equal", () => {

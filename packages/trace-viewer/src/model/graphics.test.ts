@@ -1,10 +1,13 @@
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
+
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { loadFixtureTrace } from "../test-support/fixture-rows.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { foldRows } from "./fold.js";
-import { describeGraphic, entityPositions, pickGraphic, stepPositions } from "./format.js";
+import { describeGraphic, entityPositions, pickGraphic, sessionStep, stepPositions } from "./format.js";
 import type { Chapter, Entity, GraphicSpec, Step, TraceSession } from "./types.js";
 
 function hunk(file: string, added: number, removed: number) {
@@ -372,5 +375,27 @@ describe("graphic lookups built from the previous session's equal fresh ones", (
       }),
       { numRuns: 500 },
     );
+  });
+});
+
+describe("graphic lookup slots", () => {
+  it("do not keep a dropped session's steps alive", async () => {
+    setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as () => void;
+    const trace = loadFixtureTrace("oauth");
+    let session: TraceSession | undefined = foldRows(trace.meta, trace.rows, { live: false });
+    const first = session.steps[0];
+    if (first === undefined) throw new Error("no steps");
+    expect(sessionStep(session, first.id)).toBe(first);
+    const chapter = session.chapters.find((candidate) => candidate.files.length > 0);
+    if (chapter !== undefined) pickGraphic(chapter, session);
+    const steps = new WeakRef(session.steps);
+    const entities = new WeakRef(session.entities);
+    session = undefined;
+    // A WeakRef target stays alive until the end of the current job.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    gc();
+    expect(steps.deref()).toBeUndefined();
+    expect(entities.deref()).toBeUndefined();
   });
 });

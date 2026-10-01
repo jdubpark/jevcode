@@ -340,6 +340,8 @@ function diffList<T extends { id: string }>(
   onChanged: (item: T, position: number, was: T | undefined) => void,
 ): number {
   let kept = 0;
+  /** Ids the slow path has already counted: a repeated id keeps one earlier entry, not one per copy. */
+  const counted = new Set<string>();
   for (let position = 0; position < items.length; position += 1) {
     const item = items[position] as T;
     if (before[position] === item) {
@@ -348,9 +350,14 @@ function diffList<T extends { id: string }>(
     }
     const old = entries.get(item.id);
     const was = old?.kind === kind ? before[old.position] : undefined;
-    // Each earlier id counts once: a second copy of an id that still sits at its old position keeps nothing, so
-    // [A, B] -> [A, A] reports B as gone and the entry-count guard sees the repeat (review m1).
-    if (was !== undefined && was.id === item.id && (old?.position === position || items[old?.position ?? -1]?.id !== item.id)) {
+    // Each earlier id counts once: a second copy of an id that still sits at its old position keeps nothing, and
+    // a repeat anywhere keeps nothing more, so [A, B] -> [A, A] and [A, B, C] -> [B, A, A] report the removed ids
+    // as gone and the entry-count guard sees the repeat (review m1).
+    if (
+      was !== undefined && was.id === item.id && !counted.has(item.id) &&
+      (old?.position === position || items[old?.position ?? -1]?.id !== item.id)
+    ) {
+      counted.add(item.id);
       kept += 1;
     }
     onChanged(item, position, was?.id === item.id ? was : undefined);

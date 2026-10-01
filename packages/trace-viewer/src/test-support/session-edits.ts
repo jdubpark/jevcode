@@ -20,6 +20,8 @@ export type SessionEdit =
   | { op: "stepKind"; at: number; kind: StepKind }
   | { op: "stepNoise"; at: number }
   | { op: "findingSeverity"; at: number; severity: Severity }
+  | { op: "findingAnchor"; at: number; to: number }
+  | { op: "chapterNoise"; at: number }
   | { op: "chapterSteps"; at: number; keep: number; add: number }
   | { op: "chapterFacts"; at: number; seq: number }
   | { op: "chapterCurrent"; at: number }
@@ -46,6 +48,8 @@ export const arbEdit: fc.Arbitrary<SessionEdit> = fc.oneof(
   fc.record({ op: fc.constant("stepKind" as const), at: fc.nat(), kind: fc.constantFrom(...KINDS) }),
   fc.record({ op: fc.constant("stepNoise" as const), at: fc.nat() }),
   fc.record({ op: fc.constant("findingSeverity" as const), at: fc.nat(), severity: fc.constantFrom<Severity>("info", "warning", "critical") }),
+  fc.record({ op: fc.constant("findingAnchor" as const), at: fc.nat(), to: fc.nat() }),
+  fc.record({ op: fc.constant("chapterNoise" as const), at: fc.nat() }),
   fc.record({ op: fc.constant("chapterSteps" as const), at: fc.nat(), keep: fc.nat(), add: fc.nat() }),
   fc.record({ op: fc.constant("chapterFacts" as const), at: fc.nat(), seq: fc.nat({ max: 40 }) }),
   fc.record({ op: fc.constant("chapterCurrent" as const), at: fc.nat() }),
@@ -127,6 +131,17 @@ export function editSession(session: TraceSession, edits: readonly SessionEdit[]
       case "findingSeverity":
         replaceAt(findings, e.at, (f): Finding => ({ ...f, severity: e.severity }));
         findingsTouched = findings.length > 0;
+        break;
+      case "findingAnchor":
+        // Moves the step a finding anchors to (the anchor rule reads it); the finding's own list order is unchanged.
+        replaceAt(findings, e.at, (f): Finding => {
+          const to = steps[e.to % Math.max(1, steps.length)];
+          return to === undefined ? f : { ...f, anchorStepId: to.id, anchorSeq: to.firstSeq };
+        });
+        findingsTouched = findings.length > 0;
+        break;
+      case "chapterNoise":
+        setChapter(e.at, (c) => ({ ...c, noise: !c.noise }));
         break;
       case "chapterSteps":
         setChapter(e.at, (c) => ({ ...c, stepIds: [...c.stepIds.slice(0, e.keep % (c.stepIds.length + 1)), stepIdAt(e.add)] }));

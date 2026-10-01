@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
 import { FIXTURE_NAMES, loadFixtureTrace, stripCaptureFields } from "../test-support/fixture-rows.js";
-import { arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
+import { arbDenseRowSession, arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { accumulateAll, createTraceState, finalize, foldRows, type FinalizeOptions, type TraceState } from "./fold.js";
 import { lastFinalizeWork } from "./fold-finalize.js";
@@ -49,6 +49,8 @@ function checkIncremental(
     const options = optionsAt(index);
     const session = finalize(state, options);
     expect(session).toStrictEqual(foldRows(meta, rows.slice(0, seen), options));
+    // StepId is step:<firstSeq> and each seq belongs to one step, so ids are unique; the signal scan relies on it.
+    expect(new Set(session.steps.map((step) => step.id)).size).toBe(session.steps.length);
     returned.push({ session, copy: structuredClone(session) });
     // The rules over a scan chained through the previous batch's steps equal the rules over every step.
     scan = buildSignalScan(session.steps, scan);
@@ -80,6 +82,15 @@ describe("incremental finalize", () => {
         checkIncremental(meta, rows, cuts, optionsOf(options));
       }),
       // INC_RUNS=20000 for a longer local search.
+      { numRuns: Number(process.env["INC_RUNS"] ?? 400) },
+    );
+  }, 600_000);
+
+  it("dense id pools (2 call ids, 2 facts, 1 validation, 2 units): every batch finalizes to the fresh fold", () => {
+    fc.assert(
+      fc.property(arbDenseRowSession(), cutsArb, optionsArb, ({ meta, rows }, cuts, options) => {
+        checkIncremental(meta, rows, cuts, optionsOf(options));
+      }),
       { numRuns: Number(process.env["INC_RUNS"] ?? 400) },
     );
   }, 600_000);
