@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { chapterLabel } from "../../../../layout/chapter-label.js";
 import { buildOverviewIndex, type OverviewIndex } from "../../../../layout/overview-index.js";
 import {
   GUTTER_W,
@@ -476,8 +477,9 @@ export function Overview({ active, apiRef, spineWindow, onSettle, createContext 
                 .map((band) => {
                   const chapter = band.id === null ? undefined : chapterById.get(band.id);
                   // Chapter titles embed agent-written paths: neutralise bidi and control characters (lane review I-1).
-                  // The label shows the band's short title; the tooltip and the name carry the full title.
-                  const shortTitle = displayUntrusted(band.title);
+                  // The label shows the band's short title (chapterLabel: a decision-born chapter reads its files, as in the
+                  // spine and on the Canvas, beside the decision's pin); the tooltip and the name carry the full title.
+                  const shortTitle = displayUntrusted(chapter === undefined ? band.title : chapterLabel(chapter, session));
                   const title = displayUntrusted(chapter?.title ?? band.title);
                   return (
                     <button
