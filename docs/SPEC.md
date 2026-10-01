@@ -629,7 +629,7 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 | Trace viewer: canvas layout fresh / sticky (benchmark) | ≤2ms / ≤0.5ms |
 | Trace viewer: canvas pinch at Step level (Electron 33) | ≤5% frames dropped |
 | Trace viewer: view switch | restored in the toggle's frame |
-| Trace viewer: live tick (poll apply + selectors + commit) | ≤16ms p95 |
+| Trace viewer: live tick (poll apply + selectors + commit) | ≤16ms p95 (target; soak-scale miss accepted for v1, see docs/perf.md M5) |
 | Trace window: soak open, first paint / full load | ≤500ms / ≤3s |
 
 Measured values and their methods live in `docs/perf.md`.
