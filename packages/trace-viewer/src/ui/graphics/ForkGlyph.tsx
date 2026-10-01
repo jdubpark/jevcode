@@ -1,5 +1,6 @@
 import { memo, type JSX } from "react";
 
+import { displayUntrusted } from "../../model/index.js";
 import styles from "./graphics.module.css";
 import { graphicA11y, type GraphicBaseProps, type GraphicSize } from "./scales.js";
 
@@ -37,7 +38,7 @@ function ForkGlyphImpl({ size, label, options, decidedBy }: ForkGlyphProps): JSX
           return (
             <path
               key={`${branch.label}:${i}`}
-              data-branch={branch.label}
+              data-branch={displayUntrusted(branch.label)}
               data-chosen={solid ? "true" : "false"}
               className={solid ? styles.branchChosen : styles.branch}
               strokeDasharray={solid ? undefined : "2 2"}
