@@ -200,4 +200,74 @@ describe("Outline", () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "outside" }));
   });
+  it("marks exactly one row selected when several rows share a step", async () => {
+    const session = foldFixture("oauth");
+    const h = renderHarness(<Outline hiddenRows={0} />, session);
+    await act(async () => undefined);
+    const testStep = session.steps.find((step) => step.tests !== undefined);
+    expect(testStep).toBeDefined();
+    const key = `test:${testStep?.id ?? ""}`;
+    fireEvent.click(document.querySelector<HTMLElement>('[data-key="section:tests"]') as HTMLElement);
+    await act(async () => undefined);
+    fireEvent.click(document.querySelector<HTMLElement>(`[data-key="${key}"]`) as HTMLElement);
+    expect(h.store.get().selection).toBe(testStep?.id);
+    const selected = Array.from(document.querySelectorAll('[aria-selected="true"]')).map((el) => el.getAttribute("data-key"));
+    expect(selected).toEqual([key]);
+    // The same step also has a Commands row: it is not selected.
+    expect(document.querySelector(`[data-key="cmd:${testStep?.id ?? ""}"]`)?.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("expands a Files section past 12 rows with Show n more", async () => {
+    const base = foldFixture("oauth");
+    const seed = base.entities[0];
+    if (seed === undefined) throw new Error("fixture has no entity");
+    const extra = Array.from({ length: 15 }, (_, n) => ({ ...seed, id: `entity:extra-${n}` as typeof seed.id, path: `src/extra/f${n}.ts`, label: `src/extra/f${n}.ts` }));
+    const session = { ...base, entities: [...base.entities, ...extra] };
+    renderHarness(<Outline hiddenRows={0} />, session);
+    await act(async () => undefined);
+    const filesCount = (): number => document.querySelectorAll('[data-key^="entity:"]').length;
+    const more = document.querySelector<HTMLElement>('[data-key="more:files"]');
+    expect(more?.textContent).toBe(`Show ${base.entities.filter((e) => e.stepIds.length > 0).length + 15 - 12} more`);
+    const before = filesCount();
+    fireEvent.click(more as HTMLElement);
+    await act(async () => undefined);
+    expect(document.querySelector('[data-key="more:files"]')).toBeNull();
+    expect(filesCount()).toBeGreaterThan(before);
+  });
+
+  describe("section keys", () => {
+    const focusSection = async (name: string): Promise<HTMLElement> => {
+      const row = document.querySelector<HTMLElement>(`[data-key="section:${name}"]`) as HTMLElement;
+      await act(async () => row.focus());
+      return row;
+    };
+    const expanded = (name: string): string | null =>
+      document.querySelector(`[data-key="section:${name}"]`)?.getAttribute("aria-expanded") ?? null;
+
+    it("ArrowLeft closes an open section and ArrowRight reopens it", async () => {
+      renderHarness(<Outline hiddenRows={0} />, foldFixture("oauth"));
+      await act(async () => undefined);
+      const row = await focusSection("commands");
+      expect(expanded("commands")).toBe("true");
+      fireEvent.keyDown(row, { key: "ArrowLeft" });
+      expect(expanded("commands")).toBe("false");
+      fireEvent.keyDown(row, { key: "ArrowLeft" });
+      expect(expanded("commands")).toBe("false");
+      fireEvent.keyDown(row, { key: "ArrowRight" });
+      expect(expanded("commands")).toBe("true");
+      fireEvent.keyDown(row, { key: "ArrowRight" });
+      expect(expanded("commands")).toBe("true");
+    });
+
+    it("Enter toggles the section", async () => {
+      renderHarness(<Outline hiddenRows={0} />, foldFixture("oauth"));
+      await act(async () => undefined);
+      const row = await focusSection("tests");
+      expect(expanded("tests")).toBe("false");
+      fireEvent.keyDown(row, { key: "Enter" });
+      expect(expanded("tests")).toBe("true");
+      fireEvent.keyDown(row, { key: "Enter" });
+      expect(expanded("tests")).toBe("false");
+    });
+  });
 });
