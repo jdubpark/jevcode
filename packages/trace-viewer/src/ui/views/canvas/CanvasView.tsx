@@ -25,8 +25,8 @@ import {
   nearestFrameToCenter,
   pinFrameCamera,
   planFit,
+  planShow,
   revealCamera,
-  showCamera,
   zoomToSelection,
 } from "./canvas-camera.js";
 import { canvasReadingOrder, createCanvasPort, frameForSelection, tailFrame } from "./canvas-port.js";
@@ -370,7 +370,7 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
     // must not be revealed again from the pre-fit camera, which would replace the fit (C3-12 smoke).
     lastSelectionRef.current = state.selection;
     const selected = state.selection === null ? undefined : frameForSelection(current, s, state.selection);
-    const target = showCamera({
+    const plan = planShow({
       layout: current,
       session: s,
       index: idx,
@@ -379,8 +379,12 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
       viewport,
       selectionCard: selected?.card ?? null,
     });
-    if (target === null) sync();
-    else moveTo(target, true);
+    if (plan === null) sync();
+    else if (plan.kind === "switch") {
+      // The fit would be icon-only (spec §7.5): switch to Session and show again once that layout lands.
+      pendingShowRef.current = true;
+      store.dispatch({ type: "level/set", level: plan.level, by: "canvas" });
+    } else moveTo(plan.camera, true);
   }, [moveTo, store, sync]);
 
   const fitAll = useCallback(() => {

@@ -38,6 +38,11 @@ function rawFitK(rect: Rect, viewport: Size): number {
   );
 }
 
+/** The width-only fit a whole-session show makes (it keeps ty, so height never binds). */
+function rawShowK(rect: Rect, viewport: Size): number {
+  return (viewport.w - 2 * FIT_PADDING_PX) / Math.max(1, rect.w);
+}
+
 function unionRect(rects: readonly Rect[]): Rect {
   const x0 = Math.min(...rects.map((rect) => rect.x));
   const y0 = Math.min(...rects.map((rect) => rect.y));
@@ -186,6 +191,23 @@ export function showCamera(input: ShowCameraInput): UniformCamera | null {
   };
   const revealed = input.selectionCard === null ? null : revealCamera(fitted, input.selectionCard, viewport);
   return revealed ?? fitted;
+}
+
+export type ShowPlan = { kind: "switch"; level: "session" } | { kind: "camera"; camera: UniformCamera };
+
+/**
+ * The open (show) path of the Fit rule (spec §7.5, §7.8 rule 3): a whole-session show at Chapter or Step whose raw
+ * fit falls below FIT_LEVEL_SWITCH_K switches to Session first, as planFit does, so the cards never open icon-only.
+ * A brushed show keeps the level the person chose.
+ */
+export function planShow(input: ShowCameraInput): ShowPlan | null {
+  const { layout, viewport } = input;
+  if (!hasArea(viewport) || layout.frames.length === 0) return null;
+  if (layout.level !== "session" && input.brush.kind === "session" && rawShowK(layout.bounds, viewport) < FIT_LEVEL_SWITCH_K) {
+    return { kind: "switch", level: "session" };
+  }
+  const camera = showCamera(input);
+  return camera === null ? null : { kind: "camera", camera };
 }
 
 export interface BrushWindowInput {
