@@ -29,7 +29,7 @@ import type {
   UiSpecPatchPayload,
   UiSpecPayload,
 } from "../payload-types.js";
-import { composerReducer, initialComposer } from "./composer-prefill.js";
+import { composerReducer, initialComposer, traceNoteTarget } from "./composer-prefill.js";
 import { TaskPrompt } from "./TaskPrompt.js";
 
 interface WorkspaceHostProps {
@@ -340,6 +340,10 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
   const instruction = composer.draft;
   const traceNote = composer.held;
   const focusPending = composer.focusPending;
+  const noteSessionId = traceNote?.note.sessionId ?? null;
+  const repoId = props.repo?.repoId ?? null;
+  // The held note's session, named by its prompt once the repo's sessions answer (the id until then).
+  const [noteTarget, setNoteTarget] = useState<{ sessionId: string; prompt: string | undefined } | null>(null);
   const setInstruction = (draft: string) => dispatchComposer({ type: "edit", draft });
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [sending, setSending] = useState(false);
@@ -365,6 +369,21 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
     setFilter("overview");
     setActionError(null);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (noteSessionId === null || repoId === null) return undefined;
+    let cancelled = false;
+    void bridge.repo
+      .listSessions(repoId)
+      .then((sessions) => {
+        if (cancelled) return;
+        setNoteTarget({ sessionId: noteSessionId, prompt: sessions.find((s) => s.sessionId === noteSessionId)?.prompt });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, repoId, noteSessionId]);
 
   // The draft belongs to a session: a switch resets it, then applies a note
   // held for the new session (composerReducer, spec §8.5).
@@ -815,6 +834,14 @@ export function WorkspaceHost(props: WorkspaceHostProps) {
               {traceNote.replaced
                 ? "Newer trace note for another session replaced the earlier one"
                 : "Trace note for another session"}{" "}
+              <span className="composer-trace-note-target">
+                (
+                {traceNoteTarget(
+                  noteTarget?.sessionId === noteSessionId ? noteTarget?.prompt : undefined,
+                  noteSessionId ?? "",
+                )}
+                )
+              </span>{" "}
               ·{" "}
               <button type="button" className="link-button" onClick={switchToTraceNote}>
                 Switch
