@@ -74,6 +74,28 @@ Remaining known cost: a rebuild still re-clusters the full session. The
 debounce bounds this to one rebuild per burst instead of one per batch window.
 Full incremental clustering is out of scope (documented in SPEC §19).
 
+## Capture ingest at the M1b exit (2026-10-01, trace viewer spec §12 M1b)
+
+Budget: the median `ingestMs` over 3 default soaks (`node scripts/soak.mjs`, 9,993 records) is at most 1.10 × the median over 3 soaks at the merge base `6b3e131`. The two sides alternate, so drift during the hour affects both.
+
+| Run | Merge base `6b3e131` | Head | Ratio |
+|---|---|---|---|
+| A1 lane head `7a8eba3` (2026-10-01 09:15 to 10:40, load 5.5 to 15.6) | 645,711 / 639,013 / 644,800 ms, median 644,800, units 4,901 | 1,070,018 / 1,009,812 / 1,056,469 ms, median 1,056,469, units 4,901 | 1.638, FAIL |
+| `main` + `tv/m1b-ingest` (2026-10-01 11:36 to 12:59, load 6.7 to 16.1) | 644,317 / 1,501,824 / 657,070 ms, median 657,070, units 4,901 | 659,404 / 659,808 / 664,473 ms, median 659,808, units 4,901 | 1.004, PASS |
+
+The cause was in `attachAgentCallIds`, which A1 added to `packages/semantic-core/src/clustering.ts`. It checked `owners.includes(unit.id)` for every evidence entry of every unit. A soak burst lands in one idle bucket, so every validation fact belongs to every unit, and the check grows quadratically. The coordinator reruns `clusterSession` on every rebuild.
+
+Profile at 5,000 events:
+
+| Commit | Ingest | `attachAgentCallIds` self time | `clusterSession` |
+|---|---|---|---|
+| Base | 92.2 s | (not listed) | 23.4 s |
+| A1 head | 155.9 s | 26.1 s | 65.6 s |
+
+The fix (commit 113902b) compares only the last owner added, since one unit's entries are visited in one inner loop. The output is unchanged. `clustering.bench.ts` (vitest bench only) covers it: 4,496 ms before and 1,663 ms after at 200 bursts.
+
+The base run at 1,501,824 ms coincided with a load spike from other sessions; the median absorbs it. A second, older quadratic exists at the base (`bucketUnits.includes(draft.id)` in the unit loop, about 15.8 s at 5,000 events) and is left for later.
+
 ## Trace read (trace viewer, spec §10 M2 budgets)
 
 Measured 2026-09-30 on both soak profiles.
