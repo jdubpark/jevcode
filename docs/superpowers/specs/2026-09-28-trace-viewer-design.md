@@ -1433,6 +1433,8 @@ Reference inputs: the trace-profile soak bundle (`JEVCODE_SOAK_PROFILE=trace`, `
 
 If the live-tick budget is missed, selectors switch to incremental appends before the fold moves to a worker.
 
+**v1 decision (2026-10-01, product owner).** Incremental appends landed in the fold, TraceIndex, overview index, Outline and Canvas layout. The soak live tick still measures p95 33.3 ms in Hybrid and 55.3 ms in Canvas (headless Chrome, docs/perf.md M5), and about half of a tick is garbage collection and the browser's commit. The owner accepted these numbers for v1: the 16 ms row stays the target, a soak miss is recorded as a known v1 limit rather than an M5 blocker, and moving the fold to a worker stays deferred.
+
 ## 11. Testing strategy
 
 Tests extend existing suites where they exist, use fixtures as inputs, and derive expectations from the fixtures' known content (oauth's failed test, the claim at +0:43), not from implementation code. New dev dependencies in `packages/trace-viewer`: jsdom 30.1.0 (already locked through vitest), `@testing-library/react` 16.3.3, fast-check 4.10.1 (locked, pnpm-lock.yaml:1541).
