@@ -1,7 +1,22 @@
+import { truncateMiddle } from "@jevcode/trace-viewer/model";
+
 /** A trace window's review note (composer:prefill, spec §8.5). */
 export interface ComposerPrefill {
   sessionId: string;
   text: string;
+}
+
+/** The longest session name the notice shows, in characters. */
+const NOTE_TARGET_MAX = 48;
+
+/**
+ * How the "note for another session" notice names its session: the prompt on one line, cut in the middle, with bidi
+ * and control characters shown as tokens (the prompt is agent-facing user text, the id is opaque). Falls back to the
+ * session id when the prompt is unknown or blank.
+ */
+export function traceNoteTarget(prompt: string | undefined, sessionId: string): string {
+  const oneLine = (prompt ?? "").replace(/\s+/g, " ").trim();
+  return truncateMiddle(oneLine.length > 0 ? oneLine : sessionId, NOTE_TARGET_MAX);
 }
 
 export type PrefillDecision =

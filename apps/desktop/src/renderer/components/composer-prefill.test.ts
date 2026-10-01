@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendPrefill, clearSent, composerReducer, decidePrefill, initialComposer } from "./composer-prefill.js";
+import { appendPrefill, clearSent, composerReducer, decidePrefill, initialComposer, traceNoteTarget } from "./composer-prefill.js";
 
 const NOTE = 'Re: trace s1 +0:43 "Claim contradicts tests" (seq 48; evidence seq 46)\n> all checks pass';
 
@@ -153,5 +153,26 @@ describe("composerReducer", () => {
     const first = composerReducer(start, { type: "prefill", payload: note("s2") });
     const again = composerReducer(first, { type: "prefill", payload: note("s2") });
     expect(again.held?.replaced).toBe(false);
+  });
+});
+
+describe("traceNoteTarget", () => {
+  it("names the session by its prompt on one line, cut in the middle", () => {
+    expect(traceNoteTarget("Add a rate limiter", "sess_1")).toBe("Add a rate limiter");
+    expect(traceNoteTarget("Add a\n  rate   limiter", "sess_1")).toBe("Add a rate limiter");
+    const long = traceNoteTarget(`Start ${"x".repeat(200)} end`, "sess_1");
+    expect(long.length).toBeLessThanOrEqual(48);
+    expect(long.startsWith("Start")).toBe(true);
+    expect(long.endsWith("end")).toBe(true);
+  });
+
+  it("shows bidi controls in a prompt as visible tokens", () => {
+    expect(traceNoteTarget("fix \u202Eevil", "sess_1")).toBe("fix ⟨U+202E⟩evil");
+  });
+
+  it("falls back to the session id when the prompt is unknown or blank", () => {
+    expect(traceNoteTarget(undefined, "sess_abc")).toBe("sess_abc");
+    expect(traceNoteTarget("  \n ", "sess_abc")).toBe("sess_abc");
+    expect(traceNoteTarget(undefined, "s".repeat(80)).length).toBeLessThanOrEqual(48);
   });
 });
