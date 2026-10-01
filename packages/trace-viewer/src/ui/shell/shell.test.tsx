@@ -151,6 +151,35 @@ describe("Shell", () => {
     expect(h.store.get().selection).toBe(selected);
   });
 
+  it("a region boundary reports its error through the diagnostics sink", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const reportError = vi.fn();
+    renderHarness(
+      <ErrorBoundary region="Outline">
+        <Broken />
+      </ErrorBoundary>,
+      foldFixture("oauth"),
+      { diagnostics: { enabled: true, reportDrift: () => undefined, reportError, flush: () => undefined } },
+    );
+    expect(reportError).toHaveBeenCalledWith("Outline: boom");
+  });
+
+  it("a throw in the Shell's own work shows a top-level boundary, reports through onDiagnostics, and Retry recovers", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const onDiagnostics = vi.fn();
+    let armed = true;
+    const onReady = vi.fn(() => {
+      if (armed) throw new Error("shell exploded");
+    });
+    render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} host={{ onReady, onDiagnostics }} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Trace viewer failed to render");
+    expect(onDiagnostics.mock.calls.some(([d]) => d.errors.some((e: string) => e.includes("shell exploded")))).toBe(true);
+    armed = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("banner")).toBeTruthy());
+  });
+
   it("a view boundary offers a switch to the other view", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const views: readonly ViewDefinition[] = [
