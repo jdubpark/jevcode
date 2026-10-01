@@ -8,6 +8,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
+import { LEVEL_SPECS } from "../../../layout/canvas-levels.js";
 import { samplePath } from "../../../layout/canvas-routes.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type TraceSession } from "../../../model/index.js";
@@ -389,14 +390,25 @@ describe("frame labels below zoom 1 (C3b lane review minor 7: crowded at 1000 px
       expect(pairs.length).toBeGreaterThan(0);
       for (let k = 0.35; k <= 2; k += 0.05) {
         for (const { upper, lower } of pairs) {
-          const rect = labelRectAt(lower, k);
+          const rect = labelRectAt(lower, k, of === layout ? "chapter" : "step");
           expect(rect.y, `${lower.key} at k ${k.toFixed(2)}`).toBeGreaterThanOrEqual(upper.card.y + upper.card.h);
           expect(rect.y + rect.h).toBeLessThan(lower.card.y);
         }
       }
     }
+    // The gap comes from the frame's own level, not a hardcoded Chapter value.
+    const step = LEVEL_SPECS.step as { rowGap: number };
+    const saved = step.rowGap;
+    try {
+      const pair = stacked(stepLayout)[0];
+      const before = labelRectAt(pair?.lower as CanvasFrame, 0.5, "step");
+      step.rowGap = saved + 40;
+      expect(labelRectAt(pair?.lower as CanvasFrame, 0.5, "step")).not.toEqual(before);
+    } finally {
+      step.rowGap = saved;
+    }
     // At zoom 1 the label keeps the §7.5 slot: a 16 px row 6 px above the card.
-    expect(labelRectAt(linkingTest, 1)).toEqual(linkingTest.label);
+    expect(labelRectAt(linkingTest, 1, "chapter")).toEqual(linkingTest.label);
     const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
     expect(css).toContain("clamp(1px, calc((var(--slot) * var(--tv-k, 1) * 1px - var(--label-h)) / 2), 6px)");
   });
