@@ -149,6 +149,19 @@ describe("Jev review groups at Chapter level (visual audit 1-1)", () => {
     expect(rowsOf(session, { expanded: new Set([rows[2]?.key ?? ""]) }).filter((r) => r.t === "step")).toHaveLength(8);
   });
 
+  it("take in the agent's lifecycle row that ends the turn beside them (lane re-review 1-1)", () => {
+    // The bundles end "Turn ended" (agent lane, lifecycle noise) at the same time as the Jev review.
+    const ended: StepSeed = { kind: "lifecycle", tMs: 45_000, headline: "Turn ended", noise: "lifecycle" };
+    const before = buildSession({ steps: [...tail.slice(0, 2), ended, ...tail.slice(2)], findings: warnings.map((w) => ({ ...w, step: w.step + 1 })) });
+    expect(rowsOf(before).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3, 4, 5, 6, 7, 8]]);
+    expect(rowsOf(before)[2]).toMatchObject({ label: "Jev review · 2 guardrails", jev: { guardrails: 2 } });
+    const after = buildSession({ steps: [...tail, ended], findings: warnings });
+    expect(rowsOf(after).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3, 4, 5, 6, 7, 8]]);
+    // Without a guardrail hit there is no group to join: the lifecycle row stays agent noise.
+    const quiet = buildSession({ steps: [...tail.slice(0, 2), ended, { kind: "attention", tMs: 45_000, noise: "pipeline" }] });
+    expect(rowsOf(quiet).map((r) => (r.t === "noise" ? r.label : r.t))).toEqual(["step", "step", "2 noise steps: lifecycle events, pipeline events"]);
+  });
+
   it("keep critical findings, the playhead and the selection as their own rows; Step level never groups", () => {
     const critical = buildSession({ steps: tail, findings: [...warnings, { ruleId: "guardrail_clamp", severity: "critical", step: 4 }] });
     expect(rowsOf(critical).map((r) => (r.t === "noise" ? r.steps : r.t === "step" ? r.step : r.t))).toEqual([0, 1, [2, 3], 4, [5, 6, 7]]);
