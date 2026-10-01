@@ -13,6 +13,7 @@ import {
   DEFAULT_OPEN_SECTIONS,
   fileTitleBudget,
   searchMatches,
+  storyTitleBudget,
   type OutlineRow,
   type OutlineSection,
 } from "./outline-rows.js";
@@ -47,6 +48,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const pendingFocus = useRef<string | null>(null);
   const [columnW, setColumnW] = useState(0);
   const fileTitleMax = fileTitleBudget(columnW);
+  const storyTitleMax = storyTitleBudget(columnW);
 
   // Files basenames are cut in the middle to what the column holds (216 px, 200 px under 1180 px).
   useEffect(() => {
@@ -71,8 +73,8 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   }, [search]);
 
   const rows = useMemo<OutlineRow[]>(
-    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax })),
-    [session, open, showAll, fileTitleMax],
+    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax, storyTitleMax })),
+    [session, open, showAll, fileTitleMax, storyTitleMax],
   );
   // Built on the first keystroke for a session, not per Live commit (only a query reads it).
   const searchIndex = useRef<{ session: TraceSession; index: SearchIndex } | null>(null);
