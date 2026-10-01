@@ -194,8 +194,8 @@ function foldableJev(step: Step, i: number, index: TraceIndex, input: SpineRowsI
 }
 
 /** Start index → end index of every Chapter-level Jev review group: a maximal run of foldable Jev
- *  rows with no separator (turn, idle break, gap) between them, at least two rows long and holding
- *  at least one guardrail hit (a guardrail row with a finding). Attention and info-only clamp rows
+ *  rows with no separator (turn, idle break, gap) between them, at least two Jev-lane rows long (the lifecycle
+ *  row does not count) and holding at least one guardrail hit (a guardrail row with a finding). Attention and info-only clamp rows
  *  alone stay plain pipeline noise runs. */
 function jevRunEnds(
   session: TraceSession, index: TraceIndex, scale: TimeScale, input: SpineRowsInput, gapSeqs: readonly number[],
@@ -204,10 +204,13 @@ function jevRunEnds(
   const runs = new Map<number, number>();
   let start = -1;
   let guardrails = 0;
+  let jevRows = 0;
   const close = (end: number): void => {
-    if (start >= 0 && end > start && guardrails > 0) runs.set(start, end);
+    // The lifecycle row folds in beside Jev rows but does not count toward the two-row minimum.
+    if (start >= 0 && end > start && guardrails > 0 && jevRows >= 2) runs.set(start, end);
     start = -1;
     guardrails = 0;
+    jevRows = 0;
   };
   for (let i = i0; i <= i1; i += 1) {
     const step = session.steps[i];
@@ -220,6 +223,7 @@ function jevRunEnds(
       close(i - 1);
       start = i;
     }
+    if (step.lane === "jev") jevRows += 1;
     if (isGuardrailHit(step)) guardrails += 1;
   }
   close(i1);
