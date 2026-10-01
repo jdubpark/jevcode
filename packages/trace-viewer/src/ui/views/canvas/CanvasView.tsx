@@ -802,9 +802,10 @@ export function CanvasView({ active }: ViewProps): React.JSX.Element {
           cullRange={cullRange}
           rootRef={setOverlayRoot}
           k={mountK}
+          expanded={expanded}
         />
       ) : null,
-    [layout, ctx, marks, level, selectedKey, onSelect, cullRange, setOverlayRoot, mountK],
+    [layout, ctx, marks, level, selectedKey, onSelect, cullRange, setOverlayRoot, mountK, expanded],
   );
 
   // Below this width the centered toolbar would run under the minimap: it moves to the left edge and the minimap
