@@ -121,17 +121,16 @@ function labelSlotPx(frame: CanvasFrame): number {
 }
 
 /** Where the frame's label row sits at zoom k, in world px (the badge and the time chip avoid it). */
-export function labelRectAt(frame: CanvasFrame, k: number): Rect {
-  const between = (labelSlotPx(frame) + rowGapOf(frame)) * k;
+export function labelRectAt(frame: CanvasFrame, k: number, level: Level): Rect {
+  const between = (labelSlotPx(frame) + rowGapOf(frame, level)) * k;
   const h = clamp(LABEL_ROW_MIN_PX, between - 2 * LABEL_GAP_MIN_PX, LABEL_ROW_MAX_PX);
   const gap = clamp(LABEL_GAP_MIN_PX, (between - h) / 2, LABEL_GAP_MAX_PX);
   return { x: frame.card.x, y: frame.card.y - (gap + h) / k, w: frame.card.w, h: h / k };
 }
 
 /** labelH + rowGap of the frame's level, the world px between a card and the card over it in its column. */
-function rowGapOf(frame: CanvasFrame): number {
-  // Labelled levels (Chapter, Step) share rowGap 16; the label slot is labelH.
-  return frame.label === null ? 0 : LEVEL_SPECS.chapter.rowGap;
+function rowGapOf(frame: CanvasFrame, level: Level): number {
+  return frame.label === null ? 0 : LEVEL_SPECS[level].rowGap;
 }
 
 /** Below this card width on screen a label drops its time offset; the title keeps the room (C3b lane review minor 7). */
@@ -186,7 +185,7 @@ export function timeChipPlacement(
       (frame) =>
         frame.key !== selected.key &&
         (hits(frame.card, rect.x, rect.x + rect.w, rect.y, rect.y + rect.h) ||
-          (frame.label !== null && hits(labelRectAt(frame, k), rect.x, rect.x + rect.w, rect.y, rect.y + rect.h))),
+          (frame.label !== null && hits(labelRectAt(frame, k, level), rect.x, rect.x + rect.w, rect.y, rect.y + rect.h))),
     );
   const below = timeChipRect(selected, text, k);
   if (free(below)) return { place: "below", rect: below };
@@ -200,10 +199,10 @@ function hits(rect: Rect | null, x0: number, x1: number, y0: number, y1: number)
 }
 
 /** Cards, their label rows at zoom k and the selection's chip: anything the word may not cover. */
-function blocked(frames: readonly CanvasFrame[], chip: Rect | null, k: number, x0: number, x1: number, y0: number, y1: number): boolean {
+function blocked(frames: readonly CanvasFrame[], chip: Rect | null, level: Level, k: number, x0: number, x1: number, y0: number, y1: number): boolean {
   return (
     hits(chip, x0, x1, y0, y1) ||
-    frames.some((frame) => hits(frame.card, x0, x1, y0, y1) || (frame.label !== null && hits(labelRectAt(frame, k), x0, x1, y0, y1)))
+    frames.some((frame) => hits(frame.card, x0, x1, y0, y1) || (frame.label !== null && hits(labelRectAt(frame, k, level), x0, x1, y0, y1)))
   );
 }
 
@@ -222,7 +221,7 @@ export interface BadgeSideOptions {
  * The word goes left of the ≠ mark (mockup) unless a card, a frame label or the selection's chip lies there, then
  * right; when both sides are blocked only the mark shows and the word moves to its tooltip (lane review I-4).
  */
-export function badgeSide(layout: Pick<CanvasLayout, "frames">, point: Point, options: BadgeSideOptions = {}): BadgeSide {
+export function badgeSide(layout: Pick<CanvasLayout, "frames" | "level">, point: Point, options: BadgeSideOptions = {}): BadgeSide {
   const k = options.k ?? 1;
   const frames = options.frames ?? layout.frames;
   const chip = options.chip ?? null;
@@ -230,19 +229,20 @@ export function badgeSide(layout: Pick<CanvasLayout, "frames">, point: Point, op
   const word = BADGE_WORD_PX / k;
   const y0 = point.y - half;
   const y1 = point.y + half;
-  if (!blocked(frames, chip, k, point.x - half - word, point.x - half, y0, y1)) return "left";
-  if (!blocked(frames, chip, k, point.x + half, point.x + half + word, y0, y1)) return "right";
+  if (!blocked(frames, chip, layout.level, k, point.x - half - word, point.x - half, y0, y1)) return "left";
+  if (!blocked(frames, chip, layout.level, k, point.x + half, point.x + half + word, y0, y1)) return "right";
   return "mark";
 }
 
 interface FrameLabelProps {
   frame: CanvasFrame;
+  level: Level;
   model: LabelModel;
   selected: boolean;
   onSelect(frame: CanvasFrame): void;
 }
 
-const FrameLabel = memo(function FrameLabel({ frame, model, selected, onSelect }: FrameLabelProps): React.JSX.Element | null {
+const FrameLabel = memo(function FrameLabel({ frame, level, model, selected, onSelect }: FrameLabelProps): React.JSX.Element | null {
   if (frame.label === null) return null;
   return (
     <div
@@ -250,7 +250,7 @@ const FrameLabel = memo(function FrameLabel({ frame, model, selected, onSelect }
       data-label-for={frame.key}
       data-selected={selected ? "" : undefined}
       title={model.fullTitle}
-      style={place({ x: frame.label.x, cy: frame.card.y, w: frame.label.w, slot: labelSlotPx(frame) + rowGapOf(frame) })}
+      style={place({ x: frame.label.x, cy: frame.card.y, w: frame.label.w, slot: labelSlotPx(frame) + rowGapOf(frame, level) })}
       onClick={() => onSelect(frame)}
     >
       <Icon name={model.icon} size={14} className={styles.labelIcon} />
@@ -335,7 +335,7 @@ function OverlayView(props: OverlayProps): React.JSX.Element {
       {labels.map((frame) => {
         const model = models.get(frame.key);
         return model === undefined ? null : (
-          <FrameLabel key={frame.key} frame={frame} model={model} selected={frame.key === selectedKey} onSelect={onSelect} />
+          <FrameLabel key={frame.key} frame={frame} level={level} model={model} selected={frame.key === selectedKey} onSelect={onSelect} />
         );
       })}
       {cullSeparators(layout.separators, cullRange).map((sep) => (
