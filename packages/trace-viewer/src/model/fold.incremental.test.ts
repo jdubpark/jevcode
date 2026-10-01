@@ -49,6 +49,8 @@ function checkIncremental(
     const options = optionsAt(index);
     const session = finalize(state, options);
     expect(session).toStrictEqual(foldRows(meta, rows.slice(0, seen), options));
+    // StepId is step:<firstSeq> and each seq belongs to one step, so ids are unique; the signal scan relies on it.
+    expect(new Set(session.steps.map((step) => step.id)).size).toBe(session.steps.length);
     returned.push({ session, copy: structuredClone(session) });
     // The rules over a scan chained through the previous batch's steps equal the rules over every step.
     scan = buildSignalScan(session.steps, scan);

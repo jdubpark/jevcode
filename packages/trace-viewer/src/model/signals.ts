@@ -45,7 +45,7 @@ const GUARD = 16;
  * Per step position, what the rules test it for: a run (test or check) and whether it has a target, a non-duplicate
  * edit, a destructive command, a severe guardrail clamp. Built from the previous scan: a position holding the same
  * Step object keeps its category (a finalized Step never changes, spec §6.4), so a Live commit categorizes only the
- * steps it changed. Step ids are assumed unique (a finalize's steps are).
+ * steps it changed. Step ids are assumed unique: a StepId is `step:<firstSeq>` and each seq belongs to one step.
  */
 export interface SignalScan {
   readonly steps: readonly Step[];
@@ -99,6 +99,24 @@ export function buildSignalScan(steps: readonly Step[], previous?: SignalScan): 
 function scanOf(input: SignalInput): SignalScan | undefined {
   const scan = input.scan;
   return scan !== undefined && scan.steps === input.session.steps ? scan : undefined;
+}
+
+/**
+ * The position of `step` in `steps`: a binary search on firstSeq (steps are in seq order), checked by identity, with
+ * a linear scan if the list is not in that order.
+ */
+function positionOf(steps: readonly Step[], step: Step): number {
+  let low = 0;
+  let high = steps.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const at = steps[mid] as Step;
+    if (at === step) return mid;
+    if (at.firstSeq < step.firstSeq) low = mid + 1;
+    else if (at.firstSeq > step.firstSeq) high = mid - 1;
+    else break;
+  }
+  return steps.indexOf(step);
 }
 
 /** The steps at `positions`, in order. */
@@ -324,7 +342,7 @@ const claimContradicted: SignalRule & { readonly id: "claim_contradicted" } = {
       const claimPositions: number[] = [];
       for (const id of claimIds) {
         const claim = stepById.get(id);
-        const position = claim === undefined ? -1 : scan.steps.indexOf(claim);
+        const position = claim === undefined ? -1 : positionOf(scan.steps, claim);
         if (position >= 0) claimPositions.push(position);
       }
       const targeted = scan.runs.filter((position) => ((scan.cats[position] ?? 0) & TARGET) !== 0);
