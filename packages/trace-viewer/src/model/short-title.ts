@@ -41,6 +41,8 @@ const TRAILING_PUNCT = /(?:[,;:.·–—-]|[^\S\n\v\f\r])+$/u;
 
 /** Cuts to max graphemes with a trailing "…", at the last space when that keeps at least half. */
 function clipTitle(text: string, max: number): string {
+  // A grapheme holds at least one UTF-16 code unit, so a text this short has at most max graphemes.
+  if (text.length <= max) return text;
   const parts = graphemes(text);
   if (parts.length <= max) return text;
   let head = parts.slice(0, max - 1).join("");

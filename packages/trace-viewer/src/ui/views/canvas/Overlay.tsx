@@ -25,6 +25,8 @@ import styles from "./World.module.css";
 export interface OverlayProps {
   layout: CanvasLayout;
   ctx: FrameContext;
+  /** Each frame's flag (FrameMarks.flags); derived per frame when omitted. */
+  flags?: ReadonlyMap<string, FrameFlag> | undefined;
   level: Level;
   selectedKey: string | null;
   onSelect(frame: CanvasFrame): void;
@@ -62,14 +64,18 @@ interface LabelModel {
 }
 
 /** Label text per frame, derived once per (layout, ctx): selection changes and camera ticks reuse it. */
-function labelModels(layout: CanvasLayout, ctx: FrameContext): ReadonlyMap<string, LabelModel> {
+function labelModels(
+  layout: CanvasLayout,
+  ctx: FrameContext,
+  flags: ReadonlyMap<string, FrameFlag> | undefined,
+): ReadonlyMap<string, LabelModel> {
   const out = new Map<string, LabelModel>();
   for (const frame of layout.frames) {
     out.set(frame.key, {
       title: frameTitle(frame, ctx),
       fullTitle: frameFullTitle(frame, ctx),
       icon: frameIcon(frame, ctx),
-      flag: frameFlag(frame, ctx),
+      flag: flags?.has(frame.key) === true ? (flags.get(frame.key) ?? null) : frameFlag(frame, ctx),
       start: frameStart(frame, ctx),
       approx: frameApprox(frame, ctx),
     });
@@ -178,8 +184,8 @@ function Selection({ frame, chip }: { frame: CanvasFrame; chip: string }): React
   );
 }
 
-function OverlayView({ layout, ctx, level, selectedKey, onSelect, cullRange = null, rootRef, k = 1 }: OverlayProps): React.JSX.Element {
-  const models = useMemo(() => labelModels(layout, ctx), [layout, ctx]);
+function OverlayView({ layout, ctx, flags, level, selectedKey, onSelect, cullRange = null, rootRef, k = 1 }: OverlayProps): React.JSX.Element {
+  const models = useMemo(() => labelModels(layout, ctx, flags), [layout, ctx, flags]);
   const selected = selectedKey === null ? undefined : layout.frameByKey.get(selectedKey);
   const culled = useMemo(() => cullFrames(layout.frames, cullRange), [layout, cullRange]);
   const labelled = level === "session" ? [] : culled;

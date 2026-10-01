@@ -94,8 +94,8 @@ function openCall(
     const host = latestOpenCommand(turn, normalized);
     if (host !== undefined) {
       // A test run inside the command that launched it: one step (fixtures/*/events.jsonl).
-      addRowToStep(host, ctx, false);
-      if (host.kind === "command") setKind(host, "test");
+      addRowToStep(state, host, ctx, false);
+      if (host.kind === "command") setKind(state, host, "test");
       enqueue(turn, queueKey("test", normalized), { step: host, nested: true });
       return;
     }
@@ -151,7 +151,7 @@ function closeCall(
       queue.splice(index, 1);
       if (entry.nested) {
         // test_completed inside its command: the command_completed closes the step.
-        addRowToStep(entry.step, ctx, false);
+        addRowToStep(state, entry.step, ctx, false);
         return;
       }
       step = entry.step;
@@ -176,7 +176,7 @@ function closeCall(
     }
     return;
   }
-  addRowToStep(step, ctx, false);
+  addRowToStep(state, step, ctx, false);
   step.open = false;
   step.endTs = ctx.sourceTs;
   step.endTMs = ctx.t;
@@ -203,7 +203,7 @@ function foldClaim(
 ): void {
   const existing = turn.edits.get(event.path);
   if (existing !== undefined && existing.edit !== undefined && !existing.edit.claimed) {
-    addRowToStep(existing, ctx, false);
+    addRowToStep(state, existing, ctx, false);
     existing.edit.claimed = true;
     existing.actor = "agent";
     if (event.callId !== undefined && existing.callId === undefined) {
@@ -242,7 +242,7 @@ function deliverInstruction(state: FoldState, turn: TurnDraft, ctx: RowContext, 
   const answered = state.answeredPrompts.get(key);
   if (answered !== undefined) {
     state.answeredPrompts.delete(key);
-    addRowToStep(answered.step, ctx, false);
+    addRowToStep(state, answered.step, ctx, false);
     turn.prompt = answered.title;
     turn.instruction = null;
     return;
@@ -251,7 +251,7 @@ function deliverInstruction(state: FoldState, turn: TurnDraft, ctx: RowContext, 
   const queued = index >= 0 ? state.undelivered[index] : undefined;
   if (queued !== undefined) {
     state.undelivered.splice(index, 1);
-    addRowToStep(queued, ctx, false);
+    addRowToStep(state, queued, ctx, false);
     // Delivered as an instruction, so no longer a candidate decision answer.
     if (state.pendingAnswer?.step === queued) state.pendingAnswer = null;
     turn.instruction = queued;
@@ -301,7 +301,7 @@ export function foldAgentEvent(state: FoldState, event: NormalizedAgentEvent, ct
       ) {
         // A steer echoes its relaunch's prompt right after the agent_started: one instruction step
         // holds both rows (spec §6.6 "Instruction dedupe"). It may still be a decision answer.
-        addRowToStep(opening, ctx, false);
+        addRowToStep(state, opening, ctx, false);
         state.pendingAnswer = { step: opening, seq: ctx.seq, t: ctx.t, sourceTs: ctx.sourceTs };
         break;
       }

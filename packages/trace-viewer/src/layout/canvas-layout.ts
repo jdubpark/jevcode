@@ -1,5 +1,5 @@
-import type { Finding, FindingId, Level, Step, TraceSession, Turn, UnitStableId } from "../model/index.js";
-import { routeEdges, type CanvasEdge } from "./canvas-routes.js";
+import type { Chapter, Finding, FindingId, Level, Step, TraceSession, Turn, UnitStableId } from "../model/index.js";
+import { routeEdges, type CanvasEdge, type RouteMemo, type RouteWork } from "./canvas-routes.js";
 import {
   LABEL_ROW_PX,
   LEVEL_SPECS,
@@ -53,18 +53,34 @@ function turnLocator(turns: readonly Turn[]): (t: number) => number {
   };
 }
 
-/** Equal keys keep the first (by selection id) and suffix the rest with .1, .2, … */
+/**
+ * Equal keys keep the first (by selection id) and suffix the rest with .1, .2, … Keys are almost always unique, so a
+ * group list is made only for a key seen twice; the output order does not matter (the caller sorts by a total order).
+ */
 function disambiguate(items: CanvasItem[]): CanvasItem[] {
-  const groups = new Map<string, CanvasItem[]>();
+  const first = new Map<string, CanvasItem>();
+  let groups: Map<string, CanvasItem[]> | null = null;
   for (const item of items) {
+    const seen = first.get(item.key);
+    if (seen === undefined) {
+      first.set(item.key, item);
+      continue;
+    }
+    groups ??= new Map();
     const group = groups.get(item.key);
-    if (group === undefined) groups.set(item.key, [item]);
+    if (group === undefined) groups.set(item.key, [seen, item]);
     else group.push(item);
   }
+  if (groups === null) return items;
   const out: CanvasItem[] = [];
-  for (const [key, group] of groups) {
+  for (const [key, item] of first) {
+    const group = groups.get(key);
+    if (group === undefined) {
+      out.push(item);
+      continue;
+    }
     group.sort((a, b) => compareText(a.selId, b.selId) || compareText(a.kind, b.kind));
-    group.forEach((item, index) => out.push(index === 0 ? item : { ...item, key: `${key}.${index}` }));
+    group.forEach((member, index) => out.push(index === 0 ? member : { ...member, key: `${key}.${index}` }));
   }
   return out;
 }
@@ -75,16 +91,51 @@ function compareItems(a: CanvasItem, b: CanvasItem): number {
 
 const NO_STEP_IDS: ReadonlySet<string> = new Set();
 
+/**
+ * What collectItems derived that the next commit's call may keep: the anchoring steps and, per current chapter, its
+ * noise flag and item. Holds this call's objects only.
+ */
+interface ItemsMemo {
+  /** Steps that anchor a finding and that stepOf resolves to themselves. */
+  anchoring: ReadonlySet<string>;
+  chapters: ReadonlyMap<string, ChapterItem>;
+}
+
+interface ChapterItem {
+  chapter: Chapter;
+  flagged: boolean;
+  item: CanvasItem;
+}
+
+/** Chapter links collectItems read for noise flags: a regression gauge for tests. */
+export interface ItemsWork {
+  flagLinks: number;
+}
+
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
+}
+
 /** Spec §7.5 "Items": story items per turn, decisions, current chapters and loose finding steps. */
 export function collectItems(
   session: TraceSession,
   index: TraceIndex,
   stepOf: (id: string) => Step | undefined = stepFinder(session.steps),
 ): CanvasItem[] {
+  return collect(session, index, stepOf, undefined).items;
+}
+
+function collect(
+  session: TraceSession,
+  index: TraceIndex,
+  stepOf: (id: string) => Step | undefined,
+  previous: ItemsMemo | undefined,
+): { items: CanvasItem[]; memo: ItemsMemo; work: ItemsWork } {
+  const work: ItemsWork = { flagLinks: 0 };
   const findingsById = new Map<FindingId, Finding>(session.findings.map((finding) => [finding.id, finding]));
-  const currentChapters = new Set<string>(
-    session.chapters.filter((chapter) => chapter.current).map((chapter) => chapter.id),
-  );
+  let currentChapters: Set<string> | undefined;
   const turnAt = turnLocator(session.turns);
   // First step (session order) holding each seq; built only if a turn's startSeq is not in the step at or before it.
   let stepBySeq: Map<number, Step> | undefined;
@@ -146,43 +197,78 @@ export function collectItems(
 
   // Steps that anchor a finding (anchor rule), found once: few steps carry findings, while the soak bundle links every
   // chapter to ~33 steps (31 shared test runs), so a per-link stepOf and anchoredFindings pass cost ~50 ms a layout.
-  const anchoring = new Set<string>();
+  // Only those stepOf resolves to themselves count (a chapter reaches its steps by id through stepOf).
+  const found = new Set<string>();
   for (const step of session.steps) {
-    if (step.findingIds.length > 0 && anchoredFindings(step, findingsById).length > 0) anchoring.add(step.id);
+    if (step.findingIds.length > 0 && anchoredFindings(step, findingsById).length > 0 && stepOf(step.id)?.id === step.id) {
+      found.add(step.id);
+    }
+  }
+  const anchoringSame = previous !== undefined && sameSet(previous.anchoring, found);
+  const anchoring: ReadonlySet<string> = anchoringSame ? previous.anchoring : found;
+  // Ids whose anchoring changed since the previous call: only a chapter listing one can change its noise flag.
+  let anchoringFlips: Set<string> | null = null;
+  if (previous !== undefined && !anchoringSame) {
+    anchoringFlips = new Set<string>();
+    for (const id of previous.anchoring) if (!anchoring.has(id)) anchoringFlips.add(id);
+    for (const id of anchoring) if (!previous.anchoring.has(id)) anchoringFlips.add(id);
   }
 
+  // Spec §7.5: a noise chapter stays in its stack unless a finding names it or one of its own steps anchors one. A shared
+  // test run it reaches only through a validation (validationOnlyStepIds) is not its own (lane review I-3), and a
+  // finding that merely cites a step does not count (anchor rule). The flag reads the chapter and the anchoring set, so
+  // an unchanged chapter keeps it unless it lists a step whose anchoring changed.
+  const flaggedOf = (chapter: Chapter, kept: ChapterItem | undefined): boolean => {
+    if (chapter.findingIds.length > 0) return true;
+    if (kept !== undefined && kept.chapter === chapter) {
+      if (anchoringFlips === null) return kept.flagged;
+      work.flagLinks += chapter.stepIds.length;
+      if (!chapter.stepIds.some((id) => anchoringFlips?.has(id) === true)) return kept.flagged;
+    }
+    if (anchoring.size === 0) return false;
+    const validationOnly: ReadonlySet<string> =
+      chapter.validationOnlyStepIds === undefined || chapter.validationOnlyStepIds.length === 0
+        ? NO_STEP_IDS
+        : new Set(chapter.validationOnlyStepIds);
+    work.flagLinks += chapter.stepIds.length;
+    return chapter.stepIds.some((id) => anchoring.has(id) && !validationOnly.has(id));
+  };
+
+  const chapterItems = new Map<string, ChapterItem>();
   for (const chapter of session.chapters) {
     if (!chapter.current) continue;
     const key = index.chapterKey(chapter.id);
     // Same rule as trace-index, which already computed it: min over factSeqs and step firstSeqs (spec §7.5).
     const anchorSeq = index.chapterAnchor(chapter.id);
     if (key === undefined || anchorSeq === undefined) continue;
-    // Spec §7.5: a noise chapter stays in its stack unless a finding names it or one of its own steps anchors one. A
-    // shared test run it reaches only through a validation (validationOnlyStepIds) is not its own (lane review I-3), and
-    // a finding that merely cites a step does not count (anchor rule).
-    const validationOnly: ReadonlySet<string> =
-      chapter.validationOnlyStepIds === undefined || chapter.validationOnlyStepIds.length === 0
-        ? NO_STEP_IDS
-        : new Set(chapter.validationOnlyStepIds);
-    const flagged =
-      chapter.findingIds.length > 0 ||
-      (anchoring.size > 0 &&
-        chapter.stepIds.some((id) => anchoring.has(id) && !validationOnly.has(id) && stepOf(id)?.id === id));
-    items.push({
-      key,
-      selId: chapter.id,
-      kind: chapter.noise && !flagged ? "noise" : "chapter",
-      band: "work",
-      start: chapter.tMs,
-      end: Math.max(chapter.tMs, chapter.endTMs),
-      anchorSeq,
-      turn: turnAt(chapter.tMs),
-    });
+    const kept = previous?.chapters.get(chapter.id);
+    const flagged = flaggedOf(chapter, kept);
+    const kind = chapter.noise && !flagged ? "noise" : "chapter";
+    const turn = turnAt(chapter.tMs);
+    const was = kept?.chapter === chapter ? kept.item : undefined;
+    const item: CanvasItem =
+      was !== undefined && was.key === key && was.kind === kind && was.anchorSeq === anchorSeq && was.turn === turn
+        ? was
+        : {
+            key,
+            selId: chapter.id,
+            kind,
+            band: "work",
+            start: chapter.tMs,
+            end: Math.max(chapter.tMs, chapter.endTMs),
+            anchorSeq,
+            turn,
+          };
+    // A repeated chapter id keeps the last one's entry, as a Map by id does everywhere else.
+    chapterItems.set(chapter.id, { chapter, flagged, item });
+    items.push(item);
   }
 
   for (const step of session.steps) {
     if (step.findingIds.length === 0 || storySteps.has(step.id)) continue;
-    if (step.chapterIds.some((id) => currentChapters.has(id))) continue;
+    currentChapters ??= new Set<string>(session.chapters.filter((chapter) => chapter.current).map((chapter) => chapter.id));
+    const current = currentChapters;
+    if (step.chapterIds.some((id) => current.has(id))) continue;
     const severity = worstSeverity(step, findingsById);
     if (severity !== "warning" && severity !== "critical") continue;
     items.push({
@@ -197,7 +283,7 @@ export function collectItems(
     });
   }
 
-  return disambiguate(items).sort(compareItems);
+  return { items: disambiguate(items).sort(compareItems), memo: { anchoring, chapters: chapterItems }, work };
 }
 
 // ------------------------------------------------------------ public layout types
@@ -516,12 +602,36 @@ function frameKindOf(item: CanvasItemKind): CanvasFrame["kind"] {
   return "loose";
 }
 
+/**
+ * What a layout derived beyond its public fields, for the next layout chained through it (same level and session). It
+ * holds this layout's objects only, never an earlier memo, so a Live chain keeps one generation.
+ */
+interface LayoutMemo {
+  items: ItemsMemo;
+  route: RouteMemo;
+}
+
+/** Work a layout did: a regression gauge for tests. */
+export interface CanvasLayoutWork {
+  items: ItemsWork;
+  route: RouteWork;
+}
+
+const MEMOS = new WeakMap<CanvasLayout, LayoutMemo>();
+const WORK = new WeakMap<CanvasLayout, CanvasLayoutWork>();
+
+export function canvasLayoutWork(layout: CanvasLayout): CanvasLayoutWork | undefined {
+  return WORK.get(layout);
+}
+
 function finalize(
   run: Run,
   session: TraceSession,
   itemByKey: ReadonlyMap<string, CanvasItem>,
   stepOf: (id: string) => Step | undefined,
   chapterAnchor: (id: UnitStableId) => number | undefined,
+  memo: LayoutMemo | undefined,
+  collected: { memo: ItemsMemo; work: ItemsWork },
 ): CanvasLayout {
   const { st, spec } = run;
   const frames: CanvasFrame[] = [];
@@ -576,11 +686,11 @@ function finalize(
   const frameByKey = new Map(frames.map((frame) => [frame.key, frame]));
   // st.slots is in first-placement order, which sticky state preserves, so route age follows append order.
   const order = new Map(st.slots.map((slot, i) => [slot.id, i] as const));
-  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf, chapterAnchor });
+  const routed = routeEdges({ session, frames, frameByKey, columns, spec, order, stepOf, chapterAnchor, previous: memo?.route });
   const edges: readonly CanvasEdge[] = routed.edges;
   const junctions: readonly Point[] = routed.junctions;
   const hiddenEdges = routed.hiddenEdges;
-  return {
+  const layout: CanvasLayout = {
     level: st.level,
     sessionId: st.sessionId,
     frames,
@@ -607,6 +717,9 @@ function finalize(
     },
     state: packState(st),
   };
+  MEMOS.set(layout, { items: collected.memo, route: routed.memo });
+  WORK.set(layout, { items: collected.work, route: routed.work });
+  return layout;
 }
 
 /** Pure, deterministic and sticky (spec §7.5; P1–P10). A different level or session lays out fresh. */
@@ -619,14 +732,15 @@ export function layoutCanvas(
 ): CanvasLayout {
   const spec = LEVEL_SPECS[level];
   const sessionId = session.meta.sessionId;
-  const st =
-    prev !== undefined && prev.level === level && prev.sessionId === sessionId
-      ? cloneState(unpackState(prev.state))
-      : emptyState(level, sessionId);
+  const chained = prev !== undefined && prev.level === level && prev.sessionId === sessionId;
+  const st = chained ? cloneState(unpackState(prev.state)) : emptyState(level, sessionId);
+  const memo = chained ? MEMOS.get(prev) : undefined;
   const run: Run = { st, spec, scale, slotById: new Map(st.slots.map((slot) => [slot.id, slot])) };
   const stepOf = stepFinder(session.steps);
-  const items = collectItems(session, index, stepOf);
-  const itemByKey = new Map(items.map((item) => [item.key, item]));
+  const collected = collect(session, index, stepOf, memo?.items);
+  const items = collected.items;
+  const itemByKey = new Map<string, CanvasItem>();
+  for (const item of items) itemByKey.set(item.key, item);
   for (const item of items) {
     const slotId = st.memberSlot[item.key];
     const slot = slotId === undefined ? undefined : run.slotById.get(slotId);
@@ -642,7 +756,7 @@ export function layoutCanvas(
       if (col !== undefined) putItem(run, col, item, true);
     }
   }
-  return finalize(run, session, itemByKey, stepOf, (id) => index.chapterAnchor(id));
+  return finalize(run, session, itemByKey, stepOf, (id) => index.chapterAnchor(id), memo, collected);
 }
 
 /** World x ↔ display time over the breakpoints, linear in toU between them, pps past the last. */

@@ -1,6 +1,5 @@
 import { AttentionDecisionSchema, type ChangeUnit, type Decision, type JevDecisionLog } from "@jevcode/contracts";
 
-import { ownsRunOutcome } from "./classify.js";
 import {
   addRowToStep,
   createStep,
@@ -11,6 +10,7 @@ import {
   type RowContext,
   type StepDraft,
   type UnitAttention,
+  type UnitEntry,
 } from "./fold-state.js";
 import { clampMeta } from "./registry.js";
 import { chapterShortTitle } from "./short-title.js";
@@ -20,7 +20,6 @@ import {
   type Chapter,
   type DecisionDetail,
   type DecisionStableId,
-  type Entity,
   type Step,
   type StepId,
   type StepStatus,
@@ -30,6 +29,7 @@ import {
 export const APPROX_WINDOW_SLACK_MS = 5_000;
 
 export function foldChangeUnit(state: FoldState, unit: ChangeUnit, ctx: RowContext): void {
+  state.changes.units.add(unit.id);
   const entry = state.chapters.units.get(unit.id);
   if (entry === undefined) {
     state.chapters.units.set(unit.id, { unit, firstSeq: ctx.seq, lastSeq: ctx.seq, versions: 1 });
@@ -75,7 +75,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   touchTurn(turn, ctx);
   const answer = state.pendingAnswer;
   state.pendingAnswer = null;
-  state.chapters.decisionUnits.set(decision.id, [...decision.affectedChangeUnits]);
+  setDecisionUnits(state, decision.id, decision.affectedChangeUnits);
   const closes = decision.status === "answered" || decision.status === "delegated";
   if (closes) turn.decisionAnswered = true;
   const existing = state.chapters.decisionSteps.get(decision.id);
@@ -84,7 +84,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     // Only the row that closes the decision ends its wait; the Jev projection pass re-emits
     // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
     const closing = existing.status === "running" && decisionStatus(decision) !== "running";
-    addRowToStep(existing, ctx, false);
+    addRowToStep(state, existing, ctx, false);
     existing.decision = decisionDetail(decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
     let end: { t: number; sourceTs: string } = ctx;
@@ -119,7 +119,25 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     target: decision.id,
   });
   step.decision = decisionDetail(decision);
+  state.chapters.decisionOrder.set(decision.id, state.chapters.decisionSteps.size);
   state.chapters.decisionSteps.set(decision.id, step);
+  state.changes.decisionIds.add(decision.id);
+}
+
+/** Records a decision row's affectedChangeUnits and marks the units it adds or drops. */
+function setDecisionUnits(state: FoldState, decisionId: string, affected: readonly string[]): void {
+  const chapters = state.chapters;
+  for (const unitId of chapters.decisionUnits.get(decisionId) ?? []) {
+    chapters.decisionsByUnit.get(unitId)?.delete(decisionId);
+    state.changes.units.add(unitId);
+  }
+  chapters.decisionUnits.set(decisionId, [...affected]);
+  for (const unitId of affected) {
+    let set = chapters.decisionsByUnit.get(unitId);
+    if (set === undefined) chapters.decisionsByUnit.set(unitId, (set = new Set()));
+    set.add(decisionId);
+    state.changes.units.add(unitId);
+  }
 }
 
 /** shouldSurface of a Pass A row (an attention decision or a guardrail suppression), else
@@ -135,6 +153,7 @@ function passASurface(log: JevDecisionLog): boolean | undefined {
 /** A jev_decision with clamps is a guardrail step; one without is an attention step. */
 export function foldJevDecision(state: FoldState, log: JevDecisionLog, ctx: RowContext): void {
   state.capabilities.add("jev_decisions");
+  if (log.changeUnitId !== undefined) state.changes.units.add(log.changeUnitId);
   const surface = passASurface(log);
   if (log.changeUnitId !== undefined && surface !== undefined) state.chapters.surfaceByUnit.set(log.changeUnitId, surface);
   if (log.changeUnitId !== undefined && log.pass !== "B") {
@@ -183,28 +202,20 @@ function offset(origin: number, ts: string): number {
   return Math.max(0, parsed - origin);
 }
 
-/** Edit steps per path, duplicate_poll steps left out; built once per finalize. */
-function editsByPath(steps: readonly Step[], duplicates: ReadonlySet<string>): Map<string, Step[]> {
-  const byPath = new Map<string, Step[]>();
-  for (const step of steps) {
-    if (step.kind !== "edit" || step.edit === undefined || duplicates.has(step.id)) continue;
-    const list = byPath.get(step.edit.path);
-    if (list === undefined) byPath.set(step.edit.path, [step]);
-    else list.push(step);
-  }
-  return byPath;
-}
+/** A step the D11 fallback can join: an edit step's fields it reads. */
+type EditCandidate = Pick<Step, "id" | "startTs" | "evidenceSeqs">;
 
 /** D11: edit steps on unit.files inside [createdAt, updatedAt] widened by the slack; for a file
- *  with none there, its latest edit at or before the window's end. */
-function approximateSteps(unit: ChangeUnit, edits: ReadonlyMap<string, Step[]>): Step[] {
+ *  with none there, its latest edit at or before the window's end. edits holds each path's edit
+ *  steps in seq order, duplicate_poll steps left out. */
+function approximateSteps<S extends EditCandidate>(unit: ChangeUnit, edits: ReadonlyMap<string, readonly S[]>): S[] {
   const from = Date.parse(unit.createdAt) - APPROX_WINDOW_SLACK_MS;
   const to = Date.parse(unit.updatedAt) + APPROX_WINDOW_SLACK_MS;
-  const picked: Step[] = [];
+  const picked: S[] = [];
   for (const file of new Set(unit.files)) {
     const candidates = edits.get(file) ?? [];
     let inWindow = 0;
-    let latestBefore: Step | undefined;
+    let latestBefore: S | undefined;
     for (const step of candidates) {
       const t = Date.parse(step.startTs);
       if (!Number.isNaN(t) && t >= from && t <= to) {
@@ -230,10 +241,10 @@ function triadOf(unit: ChangeUnit, attention: UnitAttention | undefined): Chapte
 }
 
 /** True when the chapter joins at least one edit and every joined edit is a lockfile or a
- *  formatting-only change (R25). applySignals clears it for a chapter a finding names. */
+ *  formatting-only change (R25). The finalize clears it for a chapter a finding names. */
 function isNoiseChapter(
   stepIds: readonly StepId[],
-  stepById: ReadonlyMap<StepId, Step>,
+  stepById: ReadonlyMap<StepId, StepDraft>,
   duplicates: ReadonlySet<string>,
 ): boolean {
   let edits = 0;
@@ -246,147 +257,123 @@ function isNoiseChapter(
   return edits > 0;
 }
 
-/** One chapter per change unit, from its latest version (R10). Also fills step.chapterIds and
- *  entity.chapterIds. */
-export function buildChapters(
-  state: FoldState,
-  steps: readonly Step[],
-  stepById: ReadonlyMap<StepId, Step>,
-  entities: readonly Entity[],
-): Chapter[] {
+/** The decision ids a unit links, in decisionSteps order: those its latest version relates and
+ *  those whose latest decision row lists it as affected. */
+function unitDecisions(state: FoldState, unit: ChangeUnit): string[] {
+  const chapters = state.chapters;
+  const candidates = new Set<string>();
+  for (const decisionId of unit.relatedDecisions) if (chapters.decisionSteps.has(decisionId)) candidates.add(decisionId);
+  for (const decisionId of chapters.decisionsByUnit.get(unit.id) ?? []) {
+    if (chapters.decisionUnits.get(decisionId)?.includes(unit.id) === true) candidates.add(decisionId);
+  }
+  return [...candidates].sort((a, b) => (chapters.decisionOrder.get(a) ?? 0) - (chapters.decisionOrder.get(b) ?? 0));
+}
+
+/**
+ * The chapter of one change unit, from its latest version (R10), before the session-wide passes:
+ * validationOnlyStepIds is empty, findingIds is empty and noise is the chapter's own. Reads only the
+ * fold state; edits holds each path's non-duplicate edit steps in seq order (the D11 fallback).
+ * Step.chapterIds and Entity.chapterIds are the finalize's (fold-finalize.ts).
+ */
+export function buildChapter(state: FoldState, entry: UnitEntry, edits: ReadonlyMap<string, readonly StepDraft[]>): Chapter {
   const evidence = state.evidence;
   const chapters = state.chapters;
+  const stepById = state.stepById;
   const origin = state.clock.origin;
-  const edits = editsByPath(steps, evidence.duplicates);
-  const entries = [...chapters.units.values()].sort(
-    (a, b) => a.firstSeq - b.firstSeq || a.unit.id.localeCompare(b.unit.id),
-  );
-  const result: Chapter[] = [];
-  for (const entry of entries) {
-    const unit = entry.unit;
-    const id = unitStableId(unit.id);
-    const linked = new Set<StepId>();
-    const pick = (draft: StepDraft | Step | undefined): void => {
-      if (draft !== undefined) linked.add(draft.id);
-    };
-    const factIds = [...new Set(unit.evidence.filter((evidenceId) => evidenceId.startsWith("fact_")))];
-    const resolvedSeqs: number[] = [];
-    for (const factId of factIds) {
-      const seq = evidence.factSeqById.get(factId);
-      if (seq === undefined) continue;
-      resolvedSeqs.push(seq);
-      pick(evidence.stepByEvidenceSeq.get(seq));
-    }
-    // spec §6.6 join: every step whose callId the unit cites. One Codex file_change item gives its
-    // callId to one edit per path and A1-8 cites it from every unit owning one of those paths, so an
-    // edit step joins only the unit whose files hold its path. A call id counts toward the link only
-    // when it joins at least one step.
-    const unitFiles = new Set(unit.files);
-    let callLinks = 0;
-    for (const callId of new Set(unit.agentCallIds ?? [])) {
-      let joined = false;
-      for (const draft of state.allStepsByCallId.get(callId) ?? []) {
-        if (draft.edit !== undefined && !unitFiles.has(draft.edit.path)) continue;
-        joined = true;
-        pick(draft);
-      }
-      if (joined) callLinks += 1;
-    }
-    // Content-hash and call-id joins decide the link. A unit that cites neither (a failure-only
-    // unit) is joined by plain ids below and stays observed.
-    const citesJoins = factIds.length > 0 || (unit.agentCallIds ?? []).length > 0;
-    const observed = !citesJoins || resolvedSeqs.length > 0 || callLinks > 0;
-    const validationSteps = new Set<StepId>();
-    for (const validationId of unit.validationResults) {
-      const seq = evidence.validationSeqById.get(validationId);
-      if (seq === undefined) continue;
-      const draft = evidence.stepByEvidenceSeq.get(seq);
+  const unit = entry.unit;
+  const id = unitStableId(unit.id);
+  const linked = new Set<StepId>();
+  const pick = (draft: StepDraft | undefined): void => {
+    if (draft !== undefined) linked.add(draft.id);
+  };
+  const factIds = [...new Set(unit.evidence.filter((evidenceId) => evidenceId.startsWith("fact_")))];
+  const resolvedSeqs: number[] = [];
+  for (const factId of factIds) {
+    const seq = evidence.factSeqById.get(factId);
+    if (seq === undefined) continue;
+    resolvedSeqs.push(seq);
+    pick(evidence.stepByEvidenceSeq.get(seq));
+  }
+  // spec §6.6 join: every step whose callId the unit cites. One Codex file_change item gives its
+  // callId to one edit per path and A1-8 cites it from every unit owning one of those paths, so an
+  // edit step joins only the unit whose files hold its path. A call id counts toward the link only
+  // when it joins at least one step.
+  const unitFiles = new Set(unit.files);
+  let callLinks = 0;
+  for (const callId of new Set(unit.agentCallIds ?? [])) {
+    let joined = false;
+    for (const draft of state.allStepsByCallId.get(callId) ?? []) {
+      if (draft.edit !== undefined && !unitFiles.has(draft.edit.path)) continue;
+      joined = true;
       pick(draft);
-      if (draft !== undefined) validationSteps.add(draft.id);
     }
-    const decisionIds: DecisionStableId[] = [];
-    for (const [decisionId, draft] of chapters.decisionSteps) {
-      const related = unit.relatedDecisions.includes(decisionId);
-      const affected = chapters.decisionUnits.get(decisionId)?.includes(unit.id) ?? false;
-      if (related || affected) {
-        decisionIds.push(decisionStableId(decisionId));
-        pick(draft);
-      }
+    if (joined) callLinks += 1;
+  }
+  // Content-hash and call-id joins decide the link. A unit that cites neither (a failure-only
+  // unit) is joined by plain ids below and stays observed.
+  const citesJoins = factIds.length > 0 || (unit.agentCallIds ?? []).length > 0;
+  const observed = !citesJoins || resolvedSeqs.length > 0 || callLinks > 0;
+  const validationSteps = new Set<StepId>();
+  for (const validationId of unit.validationResults) {
+    const seq = evidence.validationSeqById.get(validationId);
+    if (seq === undefined) continue;
+    const draft = evidence.stepByEvidenceSeq.get(seq);
+    pick(draft);
+    if (draft !== undefined) validationSteps.add(draft.id);
+  }
+  const decisionIds: DecisionStableId[] = [];
+  for (const decisionId of unitDecisions(state, unit)) {
+    decisionIds.push(decisionStableId(decisionId));
+    pick(chapters.decisionSteps.get(decisionId));
+  }
+  const clampIds: string[] = [];
+  for (const draft of chapters.jevStepsByUnit.get(unit.id) ?? []) {
+    pick(draft);
+    for (const clampId of draft.guardrail?.clampIds ?? []) if (!clampIds.includes(clampId)) clampIds.push(clampId);
+  }
+  const factSeqs = new Set(resolvedSeqs);
+  let approx = 0;
+  if (!observed) {
+    for (const step of approximateSteps(unit, edits)) {
+      if (linked.has(step.id)) continue;
+      approx += 1;
+      linked.add(step.id);
+      for (const seq of step.evidenceSeqs) factSeqs.add(seq);
     }
-    const clampIds: string[] = [];
-    for (const draft of chapters.jevStepsByUnit.get(unit.id) ?? []) {
-      pick(draft);
-      for (const clampId of draft.guardrail?.clampIds ?? []) if (!clampIds.includes(clampId)) clampIds.push(clampId);
-    }
-    const factSeqs = new Set(resolvedSeqs);
-    let approx = 0;
-    if (!observed) {
-      for (const step of approximateSteps(unit, edits)) {
-        if (linked.has(step.id)) continue;
-        approx += 1;
-        linked.add(step.id);
-        for (const seq of step.evidenceSeqs) factSeqs.add(seq);
-      }
-    }
-    const bySeq = (a: StepId, b: StepId): number => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0);
-    const stepIds = [...linked].sort(bySeq);
-    for (const stepId of stepIds) stepById.get(stepId)?.chapterIds.push(id);
-    const tMs = offset(origin, unit.createdAt);
-    result.push({
-      id,
-      changeUnitId: unit.id,
-      title: unit.title,
-      shortTitle: chapterShortTitle(unit),
-      ...(unit.intent !== undefined ? { intent: unit.intent } : {}),
-      category: unit.category,
-      status: unit.status,
-      current: unit.status !== "superseded",
-      noise: isNoiseChapter(stepIds, stepById, evidence.duplicates) || chapters.surfaceByUnit.get(unit.id) === false,
-      files: [...unit.files],
-      link: observed ? "observed" : "inferred",
-      evidenceLinks: { cited: factIds.length, resolved: resolvedSeqs.length, approx },
-      firstSeq: entry.firstSeq,
-      lastSeq: entry.lastSeq,
-      versions: entry.versions,
-      startTs: unit.createdAt,
-      endTs: unit.updatedAt,
-      tMs,
-      endTMs: Math.max(tMs, offset(origin, unit.updatedAt)),
-      stepIds,
-      factSeqs: [...factSeqs].sort((a, b) => a - b),
-      decisionIds,
-      validationIds: [...unit.validationResults],
-      validationStepIds: [...validationSteps].sort(bySeq),
-      validationOnlyStepIds: [],
-      clampIds,
-      triad: triadOf(unit, chapters.attentionByUnit.get(unit.id)),
-      schemaChanges: unit.schemaChanges.map((change) => ({ ...change })),
-      dependencyChanges: unit.dependencyChanges.map((change) => ({ ...change })),
-      findingIds: [],
-    });
   }
-  // A test or check run that several current chapters join (one validation cited by every unit,
-  // together with the run's own test_result fact and call id) belongs only to the chapters that own
-  // its outcome; for the rest it is validation-only, and the overview band footprint skips it
-  // (spec §6.6, §7.6.1).
-  // Counted once per run: a validation every unit cites is in every chapter's stepIds, so a
-  // per-chapter count would be O(chapters²) per shared run.
-  const currentChapters = new Map<StepId, number>();
-  for (const chapter of result) {
-    if (!chapter.current) continue;
-    for (const stepId of chapter.stepIds) currentChapters.set(stepId, (currentChapters.get(stepId) ?? 0) + 1);
-  }
-  for (const chapter of result) {
-    chapter.validationOnlyStepIds = chapter.stepIds.filter((stepId) => {
-      const step = stepById.get(stepId);
-      if (step === undefined || (step.kind !== "test" && step.kind !== "check")) return false;
-      const shared = (currentChapters.get(stepId) ?? 0) > 1;
-      return shared && !ownsRunOutcome(chapter, step);
-    });
-  }
-  const byPath = new Map(entities.map((entity) => [entity.path, entity]));
-  for (const chapter of result) {
-    for (const file of chapter.files) byPath.get(file)?.chapterIds.push(chapter.id);
-  }
-  return result;
+  const bySeq = (a: StepId, b: StepId): number => (stepById.get(a)?.firstSeq ?? 0) - (stepById.get(b)?.firstSeq ?? 0);
+  const stepIds = [...linked].sort(bySeq);
+  const tMs = offset(origin, unit.createdAt);
+  return {
+    id,
+    changeUnitId: unit.id,
+    title: unit.title,
+    shortTitle: chapterShortTitle(unit),
+    ...(unit.intent !== undefined ? { intent: unit.intent } : {}),
+    category: unit.category,
+    status: unit.status,
+    current: unit.status !== "superseded",
+    noise: isNoiseChapter(stepIds, stepById, evidence.duplicates) || chapters.surfaceByUnit.get(unit.id) === false,
+    files: [...unit.files],
+    link: observed ? "observed" : "inferred",
+    evidenceLinks: { cited: factIds.length, resolved: resolvedSeqs.length, approx },
+    firstSeq: entry.firstSeq,
+    lastSeq: entry.lastSeq,
+    versions: entry.versions,
+    startTs: unit.createdAt,
+    endTs: unit.updatedAt,
+    tMs,
+    endTMs: Math.max(tMs, offset(origin, unit.updatedAt)),
+    stepIds,
+    factSeqs: [...factSeqs].sort((a, b) => a - b),
+    decisionIds,
+    validationIds: [...unit.validationResults],
+    validationStepIds: [...validationSteps].sort(bySeq),
+    validationOnlyStepIds: [],
+    clampIds,
+    triad: triadOf(unit, chapters.attentionByUnit.get(unit.id)),
+    schemaChanges: unit.schemaChanges.map((change) => ({ ...change })),
+    dependencyChanges: unit.dependencyChanges.map((change) => ({ ...change })),
+    findingIds: [],
+  };
 }

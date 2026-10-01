@@ -81,6 +81,11 @@ export interface StepDraft extends Step {
   source: string;
   /** Headline text for lifecycle and guardrail steps (not public Step.text). */
   label: string | null;
+  /** A row changed this step since the last finalize: it is in FoldState.touchedSteps. Every row
+   *  that changes a step creates it or adds its seq to it (createStep, addRowToStep; setKind follows
+   *  one of them), so those helpers are the only places that set it. finalize clears it
+   *  (fold-finalize.ts). */
+  dirty: boolean;
 }
 
 /** A user message that may answer an open decision: the step holding it and its own seq. The step
@@ -181,6 +186,38 @@ export interface ChapterState {
   /** change unit id -> its latest non-Pass-B row whose output parses with AttentionDecisionSchema
    *  (Chapter.triad, UI index §1.4 B-5). */
   readonly attentionByUnit: Map<string, UnitAttention>;
+  /** decision id -> its position in decisionSteps (Chapter.decisionIds order). */
+  readonly decisionOrder: Map<string, number>;
+  /** change unit id -> ids of the decisions whose latest row lists it in affectedChangeUnits. */
+  readonly decisionsByUnit: Map<string, Set<string>>;
+}
+
+/** What rows changed since the last finalize, beyond StepDraft.dirty: the keys an incremental
+ *  finalize maps to the chapters it must rebuild (fold-finalize.ts). finalize clears it. */
+export interface FoldChanges {
+  /** change unit ids whose own rows, jev_decision rows or decision links changed. */
+  readonly units: Set<string>;
+  /** call ids that gained a step. */
+  readonly callIds: Set<string>;
+  /** row factIds seen for the first time. */
+  readonly factIds: Set<string>;
+  /** validation ids seen for the first time. */
+  readonly validationIds: Set<string>;
+  /** decision ids that got their step. */
+  readonly decisionIds: Set<string>;
+  /** Steps removeStep dropped. */
+  readonly removedSteps: StepDraft[];
+}
+
+export function createChanges(): FoldChanges {
+  return {
+    units: new Set(),
+    callIds: new Set(),
+    factIds: new Set(),
+    validationIds: new Set(),
+    decisionIds: new Set(),
+    removedSteps: [],
+  };
 }
 
 export class FoldState {
@@ -224,7 +261,14 @@ export class FoldState {
     jevStepsByUnit: new Map(),
     surfaceByUnit: new Map(),
     attentionByUnit: new Map(),
+    decisionOrder: new Map(),
+    decisionsByUnit: new Map(),
   };
+  readonly changes: FoldChanges = createChanges();
+  /** Steps with dirty set, in the order they were first touched. */
+  readonly touchedSteps: StepDraft[] = [];
+  /** The incremental finalize's derived state (fold-finalize.ts); null until the first finalize. */
+  derived: unknown = null;
 
   constructor(readonly meta: TraceSessionSummary) {
     this.clock = createClock();
@@ -333,7 +377,9 @@ export function createStep(state: FoldState, turn: TurnDraft, ctx: RowContext, i
     family: null,
     source: init.source,
     label: init.label ?? null,
+    dirty: false,
   };
+  markDirty(state, step);
   state.steps.push(step);
   state.stepById.set(step.id, step);
   turn.stepIds.push(step.id);
@@ -343,27 +389,38 @@ export function createStep(state: FoldState, turn: TurnDraft, ctx: RowContext, i
 
 /** Records that a step took a callId: the latest step for pairing, and every step for joins. */
 export function indexCallId(state: FoldState, callId: string, step: StepDraft): void {
+  state.changes.callIds.add(callId);
   state.stepsByCallId.set(callId, step);
   const list = state.allStepsByCallId.get(callId);
   if (list === undefined) state.allStepsByCallId.set(callId, [step]);
   else if (!list.includes(step)) list.push(step);
 }
 
+/** Records that a row changed a step (StepDraft.dirty). */
+export function markDirty(state: FoldState, step: StepDraft): void {
+  if (step.dirty) return;
+  step.dirty = true;
+  state.touchedSteps.push(step);
+}
+
 /** Folds one more row into a step. Rows arrive in ascending seq, so seqs stay sorted. */
-export function addRowToStep(step: StepDraft, ctx: RowContext, evidence: boolean): void {
+export function addRowToStep(state: FoldState, step: StepDraft, ctx: RowContext, evidence: boolean): void {
+  markDirty(state, step);
   step.seqs.push(ctx.seq);
   step.lastSeq = Math.max(step.lastSeq, ctx.seq);
   if (evidence) step.evidenceSeqs.push(ctx.seq);
 }
 
 /** Changes a step's kind and moves it to that kind's lane. */
-export function setKind(step: StepDraft, kind: StepKind): void {
+export function setKind(state: FoldState, step: StepDraft, kind: StepKind): void {
+  markDirty(state, step);
   step.kind = kind;
   step.lane = KIND_META[kind].lane;
 }
 
 /** Drops a step from the fold: a user message absorbed into a decision step (R25). */
 export function removeStep(state: FoldState, step: StepDraft): void {
+  state.changes.removedSteps.push(step);
   const index = state.steps.indexOf(step);
   if (index >= 0) state.steps.splice(index, 1);
   const queued = state.undelivered.indexOf(step);
