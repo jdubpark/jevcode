@@ -40,6 +40,8 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const [open, setOpen] = useState<ReadonlySet<OutlineSection>>(DEFAULT_OPEN_SECTIONS);
   const [showAll, setShowAll] = useState<ReadonlySet<OutlineSection>>(new Set());
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // Rows of different sections can share one step; the row the user chose is the selected one.
+  const [chosenKey, setChosenKey] = useState<string | null>(null);
   const [query, setQuery] = useState(search?.query ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
@@ -83,7 +85,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
 
   const isSelected = (row: OutlineRow): boolean =>
     row.t === "item" && selection !== null && (row.selId === selection || row.alsoSelects === selection);
-  const selectedKey = rows.find(isSelected)?.key;
+  const selectedKey = (rows.find((row) => row.key === chosenKey && isSelected(row)) ?? rows.find(isSelected))?.key;
   const tabKey =
     focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
 
@@ -135,6 +137,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
     if (row.t === "section") setOpen((current) => toggled(current, row.section));
     else if (row.t === "more") setShowAll((current) => toggled(current, row.section));
     else if (row.t === "item") {
+      setChosenKey(row.key);
       dispatch({ type: "select", id: row.selId, by: "shell" });
       if (row.openEvidence) dispatch({ type: "inspector/tab", tab: "evidence" });
     }
@@ -298,7 +301,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   role="treeitem"
                   aria-level={row.depth + 2}
                   aria-label={row.label}
-                  aria-selected={isSelected(row)}
+                  aria-selected={row.key === selectedKey}
                   aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
                   data-depth={row.depth}
                   data-match={
