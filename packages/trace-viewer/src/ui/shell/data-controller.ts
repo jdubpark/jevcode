@@ -172,6 +172,9 @@ export function createDataController(options: DataControllerOptions): DataContro
 
   /** A fold that throws is a bug, not a connection loss: it surfaces as an error state with Retry and stops the poll loop. */
   function failFold(error: unknown, poisoned: boolean): void {
+    // A pending commit or poll from the failed generation must not flip the error back to ready.
+    clearTimers();
+    generation += 1;
     foldPoisoned = poisoned;
     emit({ ...latest, status: statusFromError(error, "trace:rows") });
   }
