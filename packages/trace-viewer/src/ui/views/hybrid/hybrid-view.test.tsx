@@ -27,6 +27,7 @@ afterEach(() => {
   cleanup();
   layout.restore();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function WithKeys({ children }: { children: ReactNode }) {
@@ -47,10 +48,9 @@ function spineKeys(): string[] {
   return articles().map((node) => node.dataset.key ?? "");
 }
 
-async function settle(): Promise<void> {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 60));
-  });
+/** Flushes pending effects and microtasks, for asserting that something did NOT happen (waitFor cannot show absence). */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 3; i += 1) await act(async () => {});
 }
 
 describe("HybridView", () => {
@@ -59,11 +59,10 @@ describe("HybridView", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-slot="title"]')?.textContent).toBe("Claim contradicts tests"),
     );
-    await settle();
     const claim = foldFixture("oauth").findings.find((finding) => finding.ruleId === "claim_contradicted");
-    const row = document.querySelector<HTMLElement>(`[role="feed"] article[data-key="${claim?.anchorStepId ?? ""}"]`);
-    expect(row?.textContent).toContain("+0:43");
-    expect(row?.querySelector("[data-expanded]")).not.toBeNull();
+    const rowOf = () => document.querySelector<HTMLElement>(`[role="feed"] article[data-key="${claim?.anchorStepId ?? ""}"]`);
+    await waitFor(() => expect(rowOf()?.querySelector("[data-expanded]")).not.toBeNull());
+    expect(rowOf()?.textContent).toContain("+0:43");
     expect(screen.getByRole("button", { name: /Review/ }).getAttribute("aria-pressed")).toBe("true");
     // The hidden Canvas stays mounted under <Activity> (display: none, out of the tab order), so count the shown view.
     const hybrid = screen.getByRole("main").querySelector('[data-view="hybrid"]');
@@ -85,26 +84,28 @@ describe("HybridView", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-slot="title"]')?.textContent).toBe("Claim contradicts tests"),
     );
-    await settle();
     // Title bar (spec §7.1): the level name at its preset; overview toolbar (spec §7.6.1): k / k_preset.
-    const titleBar = document.querySelector('header button[aria-haspopup="true"]')?.textContent;
-    const toolbar = Array.from(document.querySelectorAll<HTMLElement>("[data-overview-lanes] ~ * span, span"))
-      .map((node) => node.textContent ?? "")
-      .find((text) => /^\d+%$/.test(text));
-    expect(titleBar).toBe("Chapter");
-    expect(toolbar).toBe("100%");
+    const titleBar = () => document.querySelector('header button[aria-haspopup="true"]')?.textContent;
+    const toolbar = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-overview-lanes] ~ * span, span"))
+        .map((node) => node.textContent ?? "")
+        .find((text) => /^\d+%$/.test(text));
+    await waitFor(() => {
+      expect(titleBar()).toBe("Chapter");
+      expect(toolbar()).toBe("100%");
+    });
     // Moving the selection (and the playhead) out of that chapter is not a zoom: both readouts keep their value.
     fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
-    await settle();
-    expect(document.querySelector('[data-slot="title"]')?.textContent).not.toBe("Claim contradicts tests");
-    expect(document.querySelector('header button[aria-haspopup="true"]')?.textContent).toBe("Chapter");
+    await waitFor(() => expect(document.querySelector('[data-slot="title"]')?.textContent).not.toBe("Claim contradicts tests"));
+    expect(titleBar()).toBe("Chapter");
+    expect(toolbar()).toBe("100%");
   });
 
   it("registers a port whose reading order equals the spine's step keys", async () => {
     const session = foldFixture("oauth");
     const h = renderHarness(<HybridView active />, session);
     act(() => applyOpenDefaults(h, session));
-    await settle();
+    await waitFor(() => expect(spineKeys().length).toBeGreaterThan(0));
     const order = h.registry.get("hybrid")?.readingOrder() ?? [];
     expect(order.length).toBeGreaterThan(0);
     expect(order).toEqual(spineKeys().filter((key) => key.startsWith("step:")));
@@ -124,9 +125,9 @@ describe("HybridView", () => {
       h.store.dispatch({ type: "brush/set", brush: { kind: "range", fromSeq: a?.firstSeq ?? 1, toSeq: c?.firstSeq ?? 1 }, by: "hybrid" }),
     );
     act(() => h.store.dispatch({ type: "select", id: c?.id ?? null, by: "shell" }));
-    await settle();
+    await waitFor(() => expect(spineKeys()).toContain(c?.id ?? ""));
     fireEvent.keyDown(document.body, { code: "KeyJ", key: "j" });
-    await settle();
+    await waitFor(() => expect(h.store.get().selection).not.toBe(c?.id));
     const selected = session.steps.find((step) => step.id === h.store.get().selection);
     const brush = h.store.get().brush;
     expect(selected?.firstSeq ?? 0).toBeGreaterThan(c?.firstSeq ?? 0);
@@ -157,7 +158,7 @@ describe("HybridView", () => {
     // A 200 px window of 32 px rows at offset 0 (a shell select does not scroll): the next row after steps[8]
     // (288..320 px) lies below the window, so the press has to scroll.
     act(() => h.store.dispatch({ type: "select", id: session.steps[8]?.id ?? null, by: "shell" }));
-    await settle();
+    await waitFor(() => expect(spineKeys()).toContain(session.steps[9]?.id ?? ""));
     const feed = document.querySelector<HTMLElement>("[data-scroll-root]") as HTMLElement;
     let top = feed.scrollTop;
     let reads = 0;
@@ -246,18 +247,21 @@ describe("HybridView", () => {
     await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Chapter"));
     h.result.rerender(h.wrap(<HybridView active={false} />));
     act(() => h.store.dispatch({ type: "level/set", level: "session", by: "canvas" }));
-    await settle();
+    await flush();
     expect(h.registry.get("hybrid")?.zoom.label()).not.toBe("Session");
     h.result.rerender(h.wrap(<HybridView active />));
     await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Session"));
   });
 
   it("syncs only the camera of the latest preset move", async () => {
+    // Reduced motion makes each move settle without an animation, so a superseded move's write would arrive within
+    // the microtask flush below instead of after an animation's duration.
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {} }));
     const session = foldFixture("oauth");
     const h = renderHarness(<HybridView active />, session);
     act(() => applyOpenDefaults(h, session));
     await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Chapter"));
-    await settle();
+    await flush();
     const seen: unknown[] = [];
     const stop = h.store.subscribe(() => {
       const camera = h.store.get().cameras.hybrid;
@@ -270,7 +274,8 @@ describe("HybridView", () => {
       h.registry.get("hybrid")?.zoom.applyPreset("step");
     });
     await waitFor(() => expect(h.registry.get("hybrid")?.zoom.label()).toBe("Step"));
-    await settle();
+    await waitFor(() => expect(seen).toHaveLength(1));
+    await flush();
     stop();
     expect(seen).toHaveLength(1);
   });
@@ -281,11 +286,9 @@ describe("HybridView", () => {
     });
     render(<TraceViewer source={source} pollMs={50} />);
     await waitFor(() => expect(spineKeys().length).toBeGreaterThan(0));
-    await settle();
-    expect(screen.getByRole("button", { name: /Live/ }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Live/ }).getAttribute("aria-pressed")).toBe("true"));
     fireEvent.keyDown(document.body, { code: "Equal", key: "=" });
-    await settle();
-    expect(screen.getByRole("button", { name: /Review/ }).getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Review/ }).getAttribute("aria-pressed")).toBe("true"));
   });
 
   it("keeps the playhead at the live edge while following", async () => {
