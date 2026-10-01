@@ -200,6 +200,20 @@ describe("Overview band labels", () => {
     expect(labels.some((label) => (label.textContent ?? "") === "a\u27E8U+202E\u27E9b")).toBe(true);
   });
 
+  it("names a decision-born chapter's band by its files, as the spine and the Canvas do", async () => {
+    const base = foldFixture("oauth");
+    const restated = "Account-linking policy for existing users signing in through Google is unspecified.";
+    const session = {
+      ...base,
+      chapters: base.chapters.map((chapter) =>
+        chapter.decisionIds.length > 0 && chapter.tMs === 26_000 ? { ...chapter, title: restated, shortTitle: "Account-linking policy…" } : chapter,
+      ),
+    };
+    await renderOverview({ state: { level: "session" } }, session);
+    const label = Array.from(document.querySelectorAll<HTMLElement>("[data-band-label]")).find((el) => el.getAttribute("aria-label") === restated);
+    expect(label?.textContent).toBe("Security · service");
+  });
+
   it("falls back to the full title when a chapter has no short title", async () => {
     const base = foldFixture("oauth");
     const session = {

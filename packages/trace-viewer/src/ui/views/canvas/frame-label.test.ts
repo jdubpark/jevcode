@@ -86,6 +86,25 @@ describe("frame titles", () => {
     expect(frameFullTitle(linkingTest, ctx)).toBe("OAuth account-linking test failure");
   });
 
+  it("names a decision-born chapter by its files, so the decision's title reads once, at Chapter and Session level", () => {
+    // oauth: the decision and the chapter born from it share the title "Account-linking policy for Google sign-in"
+    // (C3b lane review minor 4). The decision frame keeps it; the chapter reads its category and focus file (§6.6).
+    for (const level of ["chapter", "session"] as const) {
+      const levelLayout = layoutCanvas(oauth, buildTraceIndex(oauth), canvasScale(oauth), level);
+      const at = (predicate: (candidate: CanvasFrame) => boolean): CanvasFrame => {
+        const found = levelLayout.frames.find(predicate);
+        if (found === undefined) throw new Error("frame not found");
+        return found;
+      };
+      const born = at((f) => f.selId === "unit:oauth-account-linking-decision");
+      expect(frameTitle(at((f) => f.item === "decision"), ctx)).toBe("Account-linking policy…");
+      expect(frameTitle(born, ctx)).toBe("Security · service");
+      expect(frameFullTitle(born, ctx)).toBe("Account-linking policy for Google sign-in");
+      // The identity layer links the decision but starts before it, so it is not born from it and keeps its title.
+      expect(frameTitle(at((f) => f.selId === "unit:oauth-identity-layer"), ctx)).toBe("Google OAuth identity…");
+    }
+  });
+
   it("shows a bidi override in a chapter title as a visible token in the title, full title and label", () => {
     const session = buildCanvasSession([{ atMs: 1_000, kind: "chapter", title: "Rename src/‮txt.exe" }]);
     const hostile = chapterFrameOf(session);
