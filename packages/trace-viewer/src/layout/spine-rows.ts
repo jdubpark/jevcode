@@ -13,7 +13,8 @@ export type SpineRow =
   | {
       t: "noise"; key: `noise:${number}`; steps: number[]; label: string;
       /** Set on a Chapter-level Jev review group: consecutive Jev-lane rows (guardrail clamps with their
-       *  warning findings, attention and pipeline rows) folded into one row (visual audit 1-1). A
+       *  warning findings, attention and pipeline rows, and agent lifecycle noise such as "Turn ended")
+       *  folded into one row (visual audit 1-1). A
        *  renderer that ignores it shows the group as a noise row with its label. */
       jev?: JevGroup;
     }
@@ -184,10 +185,11 @@ function sessionRows(session: TraceSession, index: TraceIndex, input: SpineRowsI
 
 const TONE_RANK: { readonly [T in Tone]: number } = { good: 0, neutral: 1, bad: 2 };
 
-/** Jev-lane rows that may fold into a review group; a critical finding, a failure, the playhead,
- *  the selection and a search match keep their own row. */
+/** Jev-lane rows that may fold into a review group, and the agent's lifecycle noise beside them (the
+ *  turn's "Turn ended", lane re-review 1-1); a critical finding, a failure, the playhead, the selection
+ *  and a search match keep their own row. */
 function foldableJev(step: Step, i: number, index: TraceIndex, input: SpineRowsInput, playheadStep: number, selectedStep: number): boolean {
-  return step.lane === "jev" && i !== playheadStep && i !== selectedStep && step.status !== "failed"
+  return (step.lane === "jev" || step.noise === "lifecycle") && i !== playheadStep && i !== selectedStep && step.status !== "failed"
     && !(input.matches?.has(step.id) ?? false) && worstSeverity(step, index.findingsById) !== "critical";
 }
 
