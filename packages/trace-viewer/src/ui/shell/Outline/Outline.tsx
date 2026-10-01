@@ -13,6 +13,7 @@ import {
   DEFAULT_OPEN_SECTIONS,
   fileTitleBudget,
   searchMatches,
+  storyTitleBudget,
   type OutlineRow,
   type OutlineSection,
 } from "./outline-rows.js";
@@ -40,11 +41,14 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   const [open, setOpen] = useState<ReadonlySet<OutlineSection>>(DEFAULT_OPEN_SECTIONS);
   const [showAll, setShowAll] = useState<ReadonlySet<OutlineSection>>(new Set());
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // Rows of different sections can share one step; the row the user chose is the selected one.
+  const [chosenKey, setChosenKey] = useState<string | null>(null);
   const [query, setQuery] = useState(search?.query ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
   const [columnW, setColumnW] = useState(0);
   const fileTitleMax = fileTitleBudget(columnW);
+  const storyTitleMax = storyTitleBudget(columnW);
 
   // Files basenames are cut in the middle to what the column holds (216 px, 200 px under 1180 px).
   useEffect(() => {
@@ -69,8 +73,8 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
   }, [search]);
 
   const rows = useMemo<OutlineRow[]>(
-    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax })),
-    [session, open, showAll, fileTitleMax],
+    () => (session === null ? [] : buildOutlineRows(session, { open, showAll, fileTitleMax, storyTitleMax })),
+    [session, open, showAll, fileTitleMax, storyTitleMax],
   );
   // Built on the first keystroke for a session, not per Live commit (only a query reads it).
   const searchIndex = useRef<{ session: TraceSession; index: SearchIndex } | null>(null);
@@ -83,7 +87,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
 
   const isSelected = (row: OutlineRow): boolean =>
     row.t === "item" && selection !== null && (row.selId === selection || row.alsoSelects === selection);
-  const selectedKey = rows.find(isSelected)?.key;
+  const selectedKey = (rows.find((row) => row.key === chosenKey && isSelected(row)) ?? rows.find(isSelected))?.key;
   const tabKey =
     focusKey !== null && rows.some((row) => row.key === focusKey) ? focusKey : (selectedKey ?? rows[0]?.key ?? null);
 
@@ -135,6 +139,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
     if (row.t === "section") setOpen((current) => toggled(current, row.section));
     else if (row.t === "more") setShowAll((current) => toggled(current, row.section));
     else if (row.t === "item") {
+      setChosenKey(row.key);
       dispatch({ type: "select", id: row.selId, by: "shell" });
       if (row.openEvidence) dispatch({ type: "inspector/tab", tab: "evidence" });
     }
@@ -298,7 +303,7 @@ function OutlineBody({ hiddenRows }: OutlineProps) {
                   role="treeitem"
                   aria-level={row.depth + 2}
                   aria-label={row.label}
-                  aria-selected={isSelected(row)}
+                  aria-selected={row.key === selectedKey}
                   aria-current={row.chapterId !== null && row.chapterId === currentChapter ? "true" : undefined}
                   data-depth={row.depth}
                   data-match={

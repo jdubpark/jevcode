@@ -262,7 +262,7 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
         regionOf(target) === "main" || (pointerTarget !== null && pointerTarget.closest("[data-pannable]") !== null);
       const command = resolveKey(
         input,
-        { view: store.get().view, spaceOverPannable: pannable, hasTextSelection: hasTextSelection() },
+        { view: store.get().view, spaceOverPannable: pannable, hasTextSelection: hasTextSelection(win) },
         phase,
       );
       if (command === null) return;

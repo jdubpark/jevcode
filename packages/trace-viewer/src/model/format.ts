@@ -706,17 +706,17 @@ export function describeGraphic(spec: GraphicSpec): string {
       if (spec.running) return "running";
       return spec.durationMs === null ? spec.status : `${formatDuration(spec.durationMs)}, ${spec.status}`;
     case "fork": {
-      const chosen = spec.options.filter((option) => option.chosen).map((option) => option.label);
+      const chosen = spec.options.filter((option) => option.chosen).map((option) => displayUntrusted(option.label));
       const who = spec.decidedBy === "supervisor" ? "you chose" : spec.decidedBy === "delegated" ? "delegated:" : "open";
       return `${plural(spec.options.length, "option")}; ${who}${chosen.length > 0 ? ` ${chosen.join(", ")}` : ""}`;
     }
     case "flow":
-      return spec.nodes.join(" → ");
+      return spec.nodes.map((node) => displayUntrusted(node)).join(" → ");
     case "table":
       return spec.tables
-        .map((table) => `${table.name} (${table.role}${table.columns > 0 ? `, ${plural(table.columns, "column")}` : ""})`)
+        .map((table) => `${displayUntrusted(table.name)} (${table.role}${table.columns > 0 ? `, ${plural(table.columns, "column")}` : ""})`)
         .join("; ");
     case "claim":
-      return `Claimed "${spec.claim.text}"; ${spec.observed.command} had ${spec.observed.passed} passed, ${spec.observed.failed} failed`;
+      return `Claimed "${displayUntrusted(spec.claim.text)}"; ${displayUntrusted(spec.observed.command)} had ${spec.observed.passed} passed, ${spec.observed.failed} failed`;
   }
 }
