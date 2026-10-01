@@ -1,5 +1,6 @@
 import type { SelectionId } from "../../../layout/trace-index.js";
 import {
+  bornChapters,
   describeGraphic,
   displayUntrusted,
   exitLabel,
@@ -209,17 +210,6 @@ function stepItem(
   };
 }
 
-/** The chapter a decision gave birth to: the first one at or after the decision that links it (§7.1 one row). */
-function decisionBornChapter(step: Step, chapters: readonly Chapter[], taken: ReadonlySet<UnitStableId>): Chapter | undefined {
-  const id = `decision:${step.decision?.decisionId ?? ""}`;
-  let born: Chapter | undefined;
-  for (const chapter of chapters) {
-    if (taken.has(chapter.id) || chapter.tMs < step.tMs || !chapter.decisionIds.some((linked) => linked === id)) continue;
-    if (born === undefined || chapter.tMs < born.tMs) born = chapter;
-  }
-  return born;
-}
-
 /** One row for a decision and its decision-born chapter: the decision's title and ForkGlyph, the chapter's flag. */
 function decisionRow(
   step: Step,
@@ -314,10 +304,11 @@ function storyRows(session: TraceSession, titleMax: number | undefined): Outline
     if (intent !== undefined) items.push(stepItem(intent, depth, "Intent", "person", null));
     const chapters = turnChapters.filter((chapter) => chapter.current && !chapter.noise);
     const folded = new Set<UnitStableId>();
+    const bornFrom = bornChapters(session);
     for (const step of steps) {
       if (step.kind !== "decision") continue;
       const title = decisionTitle(step, titleMax);
-      const born = step.decision === undefined ? undefined : decisionBornChapter(step, chapters, folded);
+      const born = step.decision === undefined ? undefined : chapters.find((chapter) => bornFrom.get(chapter.id) === step.decision?.decisionId);
       if (born === undefined) {
         items.push(decisionItem(step, depth, title, null));
         continue;

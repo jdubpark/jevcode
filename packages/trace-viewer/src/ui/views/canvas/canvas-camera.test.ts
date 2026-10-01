@@ -16,6 +16,7 @@ import {
   levelLimits,
   pinFrameCamera,
   planFit,
+  planShow,
   revealCamera,
   screenXMap,
   showCamera,
@@ -217,6 +218,25 @@ describe("live follow and the N frames badge", () => {
   it("neither pans nor counts for a 0x0 viewport", () => {
     expect(frontierFollowCamera(layout, camera(0, 12, 1), { w: 0, h: 0 })).toBeNull();
     expect(framesAhead(layout, camera(-150, 0, 1), { w: 0, h: 0 })).toBe(0);
+  });
+});
+
+describe("planShow (open path of the fit rule, spec §7.5/§7.8)", () => {
+  const index = buildTraceIndex(oauth);
+  const input = (target: CanvasLayout, brush: Parameters<typeof showCamera>[0]["brush"], w: number) => ({
+    layout: target, session: oauth, index, brush, camera: camera(0, 0, 1), viewport: { w, h: 700 } as Size, selectionCard: null,
+  });
+
+  it("switches to Session when a whole-session show at Step fits below 0.35 (a 1000 px window's ~540 px main area)", () => {
+    const step = fresh(oauth, "step");
+    expect(planShow(input(step, { kind: "session" }, 540))).toEqual({ kind: "switch", level: "session" });
+    expect(planShow(input(fresh(oauth, "chapter"), { kind: "session" }, 540))?.kind).toBe("camera");
+    expect(planShow(input(fresh(oauth, "session"), { kind: "session" }, 300))?.kind).toBe("camera");
+  });
+
+  it("leaves a brushed show at the level the person chose", () => {
+    const step = fresh(oauth, "step");
+    expect(planShow(input(step, { kind: "range", fromSeq: 0, toSeq: 1 }, 540))?.kind).toBe("camera");
   });
 });
 

@@ -219,6 +219,27 @@ describe("Spine", () => {
     expect(item.querySelectorAll("[aria-label]:not([role])")).toHaveLength(0);
   });
 
+  it("names a decision-born chapter row by its files at Session level, so the decision's title reads once", async () => {
+    layout = stubLayout({ height: 2_000 });
+    const base = foldFixture("oauth");
+    // The replayed bundle titles the decision-born unit with the decision's own words (lane re-review 1-14).
+    const restated = "Account-linking policy for existing users signing in through Google is unspecified.";
+    const session: TraceSession = {
+      ...base,
+      chapters: base.chapters.map((chapter) =>
+        chapter.decisionIds.length > 0 && chapter.tMs === 26_000 ? { ...chapter, title: restated, shortTitle: "Account-linking policy…" } : chapter,
+      ),
+    };
+    renderSpine(session, { state: { level: "session" } });
+    await settle();
+    // The decision row reads the title; the chapter row reads its category and focus file (spec §6.6), and keeps its
+    // own full title as the tooltip and the name.
+    expect(screen.getByRole("article", { name: /^Account-linking policy for Google sign-in/ })).toBeDefined();
+    const item = screen.getByRole("article", { name: restated });
+    const line = item.querySelector<HTMLElement>(`[title="${restated}"]`);
+    expect(line?.querySelector('[aria-hidden="true"]')?.textContent).toBe("Security · service");
+  });
+
   it("renders a Chapter-level Jev review group as one shield row that expands on click", async () => {
     layout = stubLayout({ height: 4_000 });
     // The oauth bundle's tail (the test fixture has no Jev rows): warning clamps with findings among attention rows.

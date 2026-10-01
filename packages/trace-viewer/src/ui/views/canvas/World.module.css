@@ -97,7 +97,11 @@
   pointer-events: none;
 }
 
+/* Overlay.tsx labelRectAt mirrors this geometry. --slot is the world px between a card and the card over it (labelH +
+   rowGap); the row centers in that gap at the camera zoom, 6 px above its card at zoom 1, at least 1 px clear of the
+   card above, and shrinks from 16 px to 11 px (10 px type) at rest before labels hide at 0.35 (C3b lane review minor 7). */
 .label {
+  --label-h: clamp(11px, calc(var(--slot) * var(--tv-kw, 1) * 1px - 2px), 16px);
   contain: layout style;
   position: absolute;
   left: 0;
@@ -105,9 +109,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 16px;
-  font-size: 12px;
-  line-height: 16px;
+  height: var(--label-h);
+  font-size: clamp(10px, calc(var(--label-h) - 4px), 12px);
+  line-height: var(--label-h);
   color: var(--tv-ink-2);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -117,7 +121,10 @@
   background: var(--tv-canvas);
   transform: translate(
     calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px),
-    calc(var(--tv-ty, 0px) + var(--cy) * var(--tv-k, 1) * 1px - 22px)
+    calc(
+      var(--tv-ty, 0px) + var(--cy) * var(--tv-k, 1) * 1px - var(--label-h) -
+        clamp(1px, calc((var(--slot) * var(--tv-k, 1) * 1px - var(--label-h)) / 2), 6px)
+    )
   );
   /* --tv-kw follows --tv-k at rest only, so a zoom frame does not re-lay out the label text. */
   max-width: calc(var(--w) * var(--tv-kw, 1) * 1px);
@@ -125,7 +132,14 @@
 
 .labelIcon {
   flex: none;
+  width: min(14px, var(--label-h));
+  height: min(14px, var(--label-h));
   color: var(--tv-ink-3);
+}
+
+/* Narrow cards (Overlay.tsx showsLabelOffsets): the title keeps the room the time offset took. */
+.overlay[data-offsets-hidden] .labelOffset {
+  display: none;
 }
 
 .label[data-selected],
@@ -188,6 +202,14 @@
   transform: translate(
     calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 50%),
     calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px + 8px)
+  );
+}
+
+/* Across the card's bottom edge when the place under the card holds another frame or label (timeChipPlacement). */
+.timeChip[data-place="edge"] {
+  transform: translate(
+    calc(var(--tv-tx, 0px) + var(--x) * var(--tv-k, 1) * 1px - 50%),
+    calc(var(--tv-ty, 0px) + var(--y) * var(--tv-k, 1) * 1px - 9px)
   );
 }
 

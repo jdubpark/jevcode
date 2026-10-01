@@ -584,12 +584,12 @@ function forkSpec(decision: DecisionDetail): GraphicSpec {
 }
 
 /**
- * Decision-born chapters (the Outline's one-row rule, §7.1): for each decision step in order, the earliest current,
+ * The one source of the decision-born rule (the Outline, the spine, the Canvas and chapterLabel all read it). Decision-born chapters (the Outline's one-row rule, §7.1): for each decision step in order, the earliest current,
  * non-noise chapter of the same turn that lists the decision and starts at or after it, unless an earlier decision
  * already took that chapter. A chapter that links the decision but starts before it (oauth's Identity layer) is not
  * born from it.
  */
-function bornChapters(session: TraceSession): Map<string, string> {
+export function bornChapters(session: TraceSession): Map<string, string> {
   const bornFrom = new Map<string, string>();
   for (const step of session.steps) {
     const decisionId = step.decision?.decisionId;

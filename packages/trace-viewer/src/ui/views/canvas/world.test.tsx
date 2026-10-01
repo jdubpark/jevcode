@@ -8,6 +8,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { layoutCanvas, type CanvasFrame, type CanvasLayout } from "../../../layout/canvas-layout.js";
+import { LEVEL_SPECS } from "../../../layout/canvas-levels.js";
 import { samplePath } from "../../../layout/canvas-routes.js";
 import { buildTraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, type TraceSession } from "../../../model/index.js";
@@ -15,7 +16,7 @@ import { canvasScale, oauthCanvasSession, oauthReplaySession } from "../../../te
 import { drawnEdges } from "./EdgeLayer.js";
 import type { FrameProps } from "./Frame.js";
 import { buildFrameContext, frameFullTitle, frameTitle } from "./frame-label.js";
-import { Overlay, badgeSide, timeChipRect } from "./Overlay.js";
+import { Overlay, badgeSide, labelRectAt, showsLabelOffsets, timeChipPlacement, timeChipRect } from "./Overlay.js";
 import { World, cullFrames, focusFrameElement, type WorldProps } from "./World.js";
 import styles from "./World.module.css";
 
@@ -365,6 +366,91 @@ describe("badgeSide", () => {
     expect(badge?.getAttribute("data-side")).toBe("mark");
     expect(badge?.textContent).not.toContain("contradicts");
     expect(badge?.getAttribute("title")).toBe("contradicts");
+  });
+});
+
+describe("frame labels below zoom 1 (C3b lane review minor 7: crowded at 1000 px)", () => {
+  const sessionLayout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "session");
+  const stepLayout = layoutCanvas(session, buildTraceIndex(session), canvasScale(session), "step");
+  /** Pairs of frames in one column where `lower` is the next frame under `upper`. */
+  function stacked(of: CanvasLayout): Array<{ upper: CanvasFrame; lower: CanvasFrame }> {
+    const pairs: Array<{ upper: CanvasFrame; lower: CanvasFrame }> = [];
+    for (const upper of of.frames) {
+      const below = of.frames
+        .filter((other) => other.card.x === upper.card.x && other.card.y > upper.card.y)
+        .sort((a, b) => a.card.y - b.card.y)[0];
+      if (below !== undefined) pairs.push({ upper, lower: below });
+    }
+    return pairs;
+  }
+
+  it("sit between the card above and their own card at every zoom that shows them (0.35 to 2)", () => {
+    for (const of of [layout, stepLayout]) {
+      const pairs = stacked(of);
+      expect(pairs.length).toBeGreaterThan(0);
+      for (let k = 0.35; k <= 2; k += 0.05) {
+        for (const { upper, lower } of pairs) {
+          const rect = labelRectAt(lower, k, of === layout ? "chapter" : "step");
+          expect(rect.y, `${lower.key} at k ${k.toFixed(2)}`).toBeGreaterThanOrEqual(upper.card.y + upper.card.h);
+          expect(rect.y + rect.h).toBeLessThan(lower.card.y);
+        }
+      }
+    }
+    // The gap comes from the frame's own level, not a hardcoded Chapter value.
+    const step = LEVEL_SPECS.step as { rowGap: number };
+    const saved = step.rowGap;
+    try {
+      const pair = stacked(stepLayout)[0];
+      const before = labelRectAt(pair?.lower as CanvasFrame, 0.5, "step");
+      step.rowGap = saved + 40;
+      expect(labelRectAt(pair?.lower as CanvasFrame, 0.5, "step")).not.toEqual(before);
+    } finally {
+      step.rowGap = saved;
+    }
+    // At zoom 1 the label keeps the §7.5 slot: a 16 px row 6 px above the card.
+    expect(labelRectAt(linkingTest, 1, "chapter")).toEqual(linkingTest.label);
+    const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "World.module.css"), "utf8");
+    expect(css).toContain("clamp(1px, calc((var(--slot) * var(--tv-k, 1) * 1px - var(--label-h)) / 2), 6px)");
+  });
+
+  it("drop the time offset while the card is under 168 px on screen, so the title keeps the room", () => {
+    expect(showsLabelOffsets("chapter", 0.83)).toBe(true); // 1440 px fit: 186 px cards
+    expect(showsLabelOffsets("chapter", 0.58)).toBe(false); // 1180 px fit: 130 px cards
+    expect(showsLabelOffsets("step", 0.6)).toBe(true); // 192 px cards
+    const view = render(<Overlay layout={layout} ctx={ctx} level="chapter" selectedKey={null} onSelect={() => undefined} k={0.58} />);
+    expect(view.container.querySelector("[data-tv-overlay]")?.hasAttribute("data-offsets-hidden")).toBe(true);
+    view.rerender(<Overlay layout={layout} ctx={ctx} level="chapter" selectedKey={null} onSelect={() => undefined} k={0.83} />);
+    expect(view.container.querySelector("[data-tv-overlay]")?.hasAttribute("data-offsets-hidden")).toBe(false);
+  });
+
+  it("place the selection's time chip under the card, on its bottom edge, or nowhere: never over another frame or label", () => {
+    const { upper } = stacked(layout).find(({ upper: frame }) => frame.kind === "chapter") ?? {};
+    if (upper === undefined) throw new Error("no stacked chapter");
+    // Under the card the chip (8–26 px down) meets the next label (16–32 px down at zoom 1).
+    expect(timeChipPlacement(layout.frames, upper, "+0:17 – +0:45", "chapter", 1).place).toBe("edge");
+    expect(timeChipPlacement(layout.frames, upper, "+0:17 – +0:45", "chapter", 0.83).place).toBe("edge");
+    // Below 0.75 the card's 12 px bottom padding is under 9 screen px: the chip would cover its footer.
+    expect(timeChipPlacement(layout.frames, upper, "+0:17 – +0:45", "chapter", 0.6).place).toBe("none");
+    // The claim's column is empty under it (spec §7.5 oauth table): the mockup's place.
+    expect(timeChipPlacement(layout.frames, claim, "+0:43", "chapter", 0.45).place).toBe("below");
+    // Session chips stand 8 px apart and center their text: a stacked chip gets none, the column's last gets "below".
+    const session0 = stacked(sessionLayout)[0];
+    if (session0 === undefined) throw new Error("no stacked session chip");
+    expect(timeChipPlacement(sessionLayout.frames, session0.upper, "+0:17", "session", 1.27).place).toBe("none");
+    const last = sessionLayout.frames.find((frame) => !sessionLayout.frames.some((other) => other.card.x === frame.card.x && other.card.y > frame.card.y));
+    if (last === undefined) throw new Error("no last chip");
+    expect(timeChipPlacement(sessionLayout.frames, last, "+0:17", "session", 1.27).place).toBe("below");
+  });
+
+  it("render the chip where it is placed", () => {
+    const { upper } = stacked(layout).find(({ upper: frame }) => frame.kind === "chapter") ?? {};
+    if (upper === undefined) throw new Error("no stacked chapter");
+    const view = render(<Overlay layout={layout} ctx={ctx} level="chapter" selectedKey={upper.key} onSelect={() => undefined} k={1} />);
+    expect(view.container.querySelector("[data-time-chip]")?.getAttribute("data-place")).toBe("edge");
+    view.rerender(<Overlay layout={layout} ctx={ctx} level="chapter" selectedKey={upper.key} onSelect={() => undefined} k={0.6} />);
+    expect(view.container.querySelector("[data-time-chip]")).toBeNull();
+    // The handles still mark the selection.
+    expect(view.container.querySelectorAll("[data-handle]")).toHaveLength(4);
   });
 });
 

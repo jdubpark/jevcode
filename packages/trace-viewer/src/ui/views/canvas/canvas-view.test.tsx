@@ -479,6 +479,14 @@ describe("CanvasView camera writes", () => {
     expect(numericCamera().k).toBe(1.5);
   });
 
+  it("opens at Session when the whole-session fit at Step would fall below 0.35 (spec §7.5 Fit)", () => {
+    const { frames } = setup(540, 700);
+    const harness = renderWithViewer(<CanvasView active />, { session: oauthCanvasSession(), state: { follow: false, level: "step" } });
+    act(() => frames.flush());
+    expect(harness.store.get().level).toBe("session");
+    expect(numericCamera().k).toBeGreaterThanOrEqual(0.35);
+  });
+
   it("opens at the show fit when the first data and the selection land in one commit (C3-12 smoke)", () => {
     const { frames } = setup(900, 600);
     stubReducedMotion(false);

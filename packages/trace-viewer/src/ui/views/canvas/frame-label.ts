@@ -1,4 +1,5 @@
 import type { CanvasFrame } from "../../../layout/canvas-layout.js";
+import { chapterLabel } from "../../../layout/chapter-label.js";
 import { frameSize, GRAPHIC_MIN_K, ICON_ONLY_K, LEVEL_SPECS, STEP_LIST_ROWS } from "../../../layout/canvas-levels.js";
 import { anchoredFindings, stepTone } from "../../../layout/tone.js";
 import {
@@ -179,7 +180,7 @@ function titles(frame: CanvasFrame, ctx: FrameContext): { short: string; full: s
       if (frame.kind === "noise") return fixed("Noise ×1");
       const chapter = ctx.chapterById.get(frame.selId);
       if (chapter === undefined) return fixed("Chapter");
-      return { short: displayUntrusted(chapter.shortTitle ?? chapter.title), full: displayUntrusted(chapter.title) };
+      return { short: displayUntrusted(chapterLabel(chapter, ctx.session)), full: displayUntrusted(chapter.title) };
     }
     case "loose": {
       const headline = displayUntrusted(step?.headline ?? "Step");
@@ -188,7 +189,8 @@ function titles(frame: CanvasFrame, ctx: FrameContext): { short: string; full: s
   }
 }
 
-/** The visible title: a chapter's `shortTitle ?? title`, a shortened decision title, through displayUntrusted. */
+/** The visible title: a chapter's chapterLabel (`shortTitle ?? title`, or its files beside its decision), a shortened
+ *  decision title, through displayUntrusted. */
 export function frameTitle(frame: CanvasFrame, ctx: FrameContext): string {
   return titles(frame, ctx).short;
 }
