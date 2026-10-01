@@ -19,6 +19,7 @@ import {
   DEFAULT_OPEN_SECTIONS,
   FILE_TITLE_MAX,
   fileTitleBudget,
+  storyTitleBudget,
   searchMatches,
   type OutlineItemRow,
   type OutlineRow,
@@ -32,6 +33,30 @@ function itemsOf(rows: readonly OutlineRow[], section: OutlineSection): OutlineI
 const ALL_OPEN = { open: new Set<OutlineSection>(["story", "files", "commands", "tests"]), showAll: new Set<OutlineSection>() };
 
 describe("buildOutlineRows", () => {
+  it("names a contradicted or failed chapter in words, not by flag color alone", () => {
+    const base = foldFixture("oauth");
+    const rows = itemsOf(buildOutlineRows(base, ALL_OPEN), "story");
+    const contradicted = rows.find((row) => row.chapterId !== null && row.flag === "neq");
+    expect(contradicted?.label).toContain("contradicts tests");
+    const target = base.chapters.find((chapter) => chapter.current && !chapter.noise && chapter.findingIds.length === 0);
+    const session = { ...base, chapters: base.chapters.map((chapter) => (chapter === target ? { ...chapter, status: "failed" as const } : chapter)) };
+    const failed = itemsOf(buildOutlineRows(session, ALL_OPEN), "story").find((row) => row.chapterId === target?.id);
+    expect(failed?.flag).toBe("x");
+    expect(failed?.label).toContain("failed");
+  });
+
+  it("cuts a long story title in the middle and keeps the full one in the tooltip and name", () => {
+    const base = foldFixture("oauth");
+    const full = "Account-linking policy for Google sign-in";
+    const rows = itemsOf(buildOutlineRows(base, { ...ALL_OPEN, storyTitleMax: storyTitleBudget(216) }), "story");
+    const decision = rows.find((row) => row.icon === "fork");
+    expect(decision?.title).toMatch(/^Account.+…\S+$/u);
+    expect(decision?.title.length).toBeLessThanOrEqual(storyTitleBudget(216));
+    expect(decision?.hint).toBe(full);
+    expect(decision?.label.startsWith(full)).toBe(true);
+    expect(decision?.title.endsWith("…")).toBe(false);
+  });
+
   it("lists Intent, chapters and decisions in time order, one noise row, then the final claim", () => {
     // The oauth lockfile and formatting chapters are noise once the shared pnpm test validation no
     // longer names every chapter in the failing-test findings (orchestrator ruling M1).
