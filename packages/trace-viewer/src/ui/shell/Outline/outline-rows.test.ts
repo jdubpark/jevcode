@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   accumulateAll,
+  chapterFilesLabel,
   buildSearchIndex,
   createTraceState,
   describeGraphic,
@@ -11,7 +12,8 @@ import {
   formatOffset,
   pickGraphic,
 } from "../../../model/index.js";
-import { resetGraphicLookups } from "../../../model/format.js";
+import { bornChapters, resetGraphicLookups } from "../../../model/format.js";
+import { chapterLabel } from "../../../layout/chapter-label.js";
 import { arbRowSession, soakShapedRows } from "../../../test-support/row-arbitraries.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import { foldFixture } from "../../../test-support/ui-harness.js";
@@ -337,5 +339,23 @@ describe("buildOutlineRows across Live commits", () => {
     const batches = [];
     for (let start = 0; start < rows.length; start += 37) batches.push(rows.slice(start, start + 37));
     checkCommits(meta, batches);
+  });
+});
+
+describe("decision-born chapter rule has one source (P2 review 1)", () => {
+  it("the Outline folds exactly the chapters bornChapters names, and chapterLabel reads their files", () => {
+    for (const name of ["oauth", "api-break"] as const) {
+      const session = foldFixture(name);
+      const born = bornChapters(session);
+      if (name === "oauth") expect(born.size).toBeGreaterThan(0);
+      const folded = new Set(
+        buildOutlineRows(session, ALL_OPEN)
+          .flatMap((row) => (row.t === "item" && row.alsoSelects !== undefined ? [row.alsoSelects] : [])),
+      );
+      expect(folded, name).toEqual(new Set(born.keys()));
+      for (const chapter of session.chapters) {
+        if (born.has(chapter.id)) expect(chapterLabel(chapter, session)).toBe(chapterFilesLabel(chapter));
+      }
+    }
   });
 });
