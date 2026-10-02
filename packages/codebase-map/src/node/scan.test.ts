@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -159,6 +160,21 @@ describe("scanRepo (spec §5.1, §10)", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(scanRepo(repo(PNPM_WORKSPACE_REPO).root, { signal: controller.signal })).rejects.toThrow(/abort/i);
+  });
+
+  it("skips a path over 1,024 characters before reading and does not count it", async () => {
+    const fixture = repo({ "src/a.ts": "export const a = 1;\n", "src/b.ts": "export const b = 1;\n", "src/c.ts": "export const c = 1;\n" });
+    // macOS cannot create a file this deep (PATH_MAX), so the path enters the git index only, as git
+    // lists it on any platform; where it can exist on disk it would be read and mapped.
+    const long = `src/${"deep/".repeat(205)}x.ts`;
+    expect(long.length).toBeGreaterThan(1_024);
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: fixture.root, input: "export const x = 1;\n" })
+      .toString()
+      .trim();
+    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},${long}`], { cwd: fixture.root });
+    const scan = await scanRepo(fixture.root, { maxFiles: 2 });
+    expect(scan.files.map((f) => f.path)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect([scan.partial, scan.totalFiles]).toEqual([true, 3]);
   });
 
   it("maps a Python repo to components with imports not analyzed (Review Focus 1)", async () => {

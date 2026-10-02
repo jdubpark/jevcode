@@ -36,6 +36,14 @@ describe("isSkippedPath (spec §5.1, §10)", () => {
   ])("%s → %s", (path, expected) => {
     expect(isSkippedPath(path)).toBe(expected);
   });
+
+  it("skips paths over 1,024 characters, the snapshot's path cap", () => {
+    const at = (length: number): string => `src/${"a".repeat(length - 7)}.ts`;
+    expect(at(1_024)).toHaveLength(1_024);
+    expect(at(1_025)).toHaveLength(1_025);
+    expect(isSkippedPath(at(1_024))).toBe(false);
+    expect(isSkippedPath(at(1_025))).toBe(true);
+  });
 });
 
 describe("normalizePath", () => {

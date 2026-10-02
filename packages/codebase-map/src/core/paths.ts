@@ -104,11 +104,16 @@ const SECRET_NAME =
   /^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.envrc|\.npmrc|\.pypirc|\.netrc|\.htpasswd|\.git-credentials|credentials(\.json)?|service-account.*\.json|.+\.(pem|key|p8|p12|pfx|jks|keystore|asc|gpg|tfvars))$/i;
 const SECRET_TEMPLATE = /^\.env\.(example|sample|template)$/i;
 
+/** Interfaces §8.1 K-2: snapshot paths are 1–1,024 characters, so a longer path is never mapped. */
+export const MAX_PATH_LENGTH = 1_024;
+
 /**
  * Spec §5.1 and §10: dependency and build output directories, lockfiles and minified or
  * generated files, binaries by extension, and secret-like files are never read or mapped.
+ * Paths over 1,024 characters are skipped too, so one cannot fail the whole snapshot row.
  */
 export function isSkippedPath(path: string): boolean {
+  if (path.length > MAX_PATH_LENGTH) return true;
   const segments = path.split("/");
   if (segments.slice(0, -1).some((segment) => SKIP_DIRS.has(segment))) return true;
   const base = segments[segments.length - 1] ?? "";
