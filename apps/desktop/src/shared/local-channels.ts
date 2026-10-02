@@ -12,6 +12,7 @@ import {
   AGENT_MODEL_OPTIONS,
   REASONING_EFFORT_OPTIONS,
 } from "./prefs.js";
+import { NARRATOR_AVAILABILITY, NarratorCallRecordSchema } from "./narrator-log.js";
 
 export const RendererToMainLocalChannels = {
   repoBrowse: "repo:browse",
@@ -22,6 +23,7 @@ export const RendererToMainLocalChannels = {
   debugListTelemetry: "debug:listTelemetry",
   debugListEvents: "debug:listEvents",
   debugListJevDecisions: "debug:listJevDecisions",
+  debugListNarratorCalls: "debug:listNarratorCalls",
   preferencesGet: "preferences:get",
   preferencesSet: "preferences:set",
   traceListSessions: "trace:listSessions",
@@ -127,6 +129,17 @@ export const DebugJevDecisionsPayloadSchema = z.object({
 export type DebugJevDecisionsPayload = z.infer<
   typeof DebugJevDecisionsPayloadSchema
 >;
+
+export const DebugListNarratorCallsPayloadSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+});
+
+export const DebugNarratorCallsPayloadSchema = z.object({
+  availability: z.enum(NARRATOR_AVAILABILITY),
+  calls: z.array(NarratorCallRecordSchema),
+});
+
+export type DebugNarratorCallsPayload = z.infer<typeof DebugNarratorCallsPayloadSchema>;
 
 export const LocalTelemetryEventSchema = z.object({
   id: z.string().min(1).optional(),
@@ -277,6 +290,8 @@ export const localToMain = {
   [RendererToMainLocalChannels.debugListEvents]: DebugListEventsPayloadSchema,
   [RendererToMainLocalChannels.debugListJevDecisions]:
     DebugListJevDecisionsPayloadSchema,
+  [RendererToMainLocalChannels.debugListNarratorCalls]:
+    DebugListNarratorCallsPayloadSchema,
   [RendererToMainLocalChannels.preferencesGet]: PreferencesGetPayloadSchema,
   [RendererToMainLocalChannels.preferencesSet]: PreferencesSetPayloadSchema,
   [RendererToMainLocalChannels.traceListSessions]: TraceListSessionsPayloadSchema,

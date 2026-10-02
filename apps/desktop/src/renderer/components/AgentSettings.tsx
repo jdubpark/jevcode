@@ -2,6 +2,7 @@ import {
   AGENT_MODEL_OPTIONS,
   REASONING_EFFORT_OPTIONS,
 } from "../../shared/prefs.js";
+import { narratorSettingNote } from "./narrator-format.js";
 import type {
   AgentModelOption,
   AgentPreferences,
@@ -88,6 +89,18 @@ export function AgentSettings(props: AgentSettingsProps) {
       <div className="budget-value">
         {budgetUnknown ? "unknown (assumes 40%)" : `${budgetPercent}%`}
       </div>
+      <label className="agent-settings-row narrator-setting">
+        <span>Explain with a model</span>
+        <input
+          type="checkbox"
+          checked={prefs.explainWithModel}
+          aria-describedby="narrator-setting-note"
+          onChange={(event) => props.onSet({ explainWithModel: event.target.checked })}
+        />
+      </label>
+      <p id="narrator-setting-note" className="narrator-note">
+        {narratorSettingNote(prefs.explainWithModel)}
+      </p>
     </section>
   );
 }

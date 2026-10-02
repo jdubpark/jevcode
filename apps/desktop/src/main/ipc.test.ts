@@ -9,7 +9,10 @@ import { deserializeIpcError } from "../shared/api.js";
 import { registerIpcHandlers } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
+import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
 
@@ -319,6 +322,59 @@ describe("explainer wiring (console-explainer M-6)", () => {
     await expect(handlers.get(RendererToMainChannels.repoClose)!(TRUSTED_EVENT, { repoId: "repo_a" })).resolves.toBeNull();
     expect(state.repo).toBeNull();
     expect(log).toHaveBeenCalledWith("explainer repoClosed failed: stage exploded");
+    db.close();
+  });
+});
+
+describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
+  function narratorStub(availability: "on" | "off_setting" = "on") {
+    const setEnabled = vi.fn();
+    const narrator: NarratorSwitch = {
+      current: () => null,
+      availability: () => availability,
+      setEnabled,
+      subscribe: () => () => undefined,
+    };
+    return { narrator, setEnabled };
+  }
+
+  it("preferences:set explainWithModel false turns the narrator off and persists the choice", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { narrator, setEnabled } = narratorStub();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator });
+    const result = await handlers.get("preferences:set")!(TRUSTED_EVENT, { explainWithModel: false });
+    expect(result).toMatchObject({ explainWithModel: false });
+    expect(setEnabled).toHaveBeenCalledWith(false);
+    expect(db.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)).toBe(false);
+    db.close();
+  });
+
+  it("debug:listNarratorCalls returns availability and the newest calls first", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const narratorCalls = createNarratorCallLog();
+    for (const id of ["narr_a", "narr_b"]) {
+      narratorCalls.record({
+        id, ts: "2026-10-02T09:00:00.000Z", repoRoot: "/a", question: "describeComponents", model: "claude-haiku-4-5-20251001",
+        ms: 5, batchSize: 1, accepted: 1, dropped: 0, discarded: false, inputTokens: null, outputTokens: null, costUsd: null, error: null, reasons: [],
+      });
+    }
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator: narratorStub("off_setting").narrator, narratorCalls });
+    const result = (await handlers.get("debug:listNarratorCalls")!(TRUSTED_EVENT, { limit: 10 })) as {
+      availability: string;
+      calls: { id: string }[];
+    };
+    expect(result.availability).toBe("off_setting");
+    expect(result.calls.map((call) => call.id)).toEqual(["narr_b", "narr_a"]);
+    db.close();
+  });
+
+  it("denies debug:listNarratorCalls to a trace window", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), narratorCalls: createNarratorCallLog() });
+    await expect(handlers.get("debug:listNarratorCalls")!(TRUSTED_EVENT, {})).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
     db.close();
   });
 });

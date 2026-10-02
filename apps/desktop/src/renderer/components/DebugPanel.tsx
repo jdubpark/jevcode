@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 
 import type { AgentInstructionStatePayload } from "../../shared/api.js";
+import type { DebugNarratorCallsPayload } from "../../shared/local-channels.js";
 import type {
   LocalTelemetryEvent,
   StoredEventSummary,
 } from "../../shared/local-channels.js";
 import { getBridge } from "../bridge.js";
+import { narratorAvailabilityLabel, narratorCallRow } from "./narrator-format.js";
 
-type DebugTab = "events" | "jev" | "logs" | "telemetry" | "instructions";
+type DebugTab = "events" | "jev" | "narrator" | "logs" | "telemetry" | "instructions";
 
 interface DebugPanelProps {
   sessionId: string | undefined;
@@ -20,6 +22,7 @@ export function DebugPanel(props: DebugPanelProps) {
   const tabs: { id: DebugTab; label: string }[] = [
     { id: "events", label: "Events" },
     { id: "jev", label: "Jev" },
+    { id: "narrator", label: "Narrator" },
     { id: "logs", label: "Logs" },
     { id: "telemetry", label: "Telemetry" },
     { id: "instructions", label: "Instructions" },
@@ -47,6 +50,7 @@ export function DebugPanel(props: DebugPanelProps) {
       <div className="debug-body">
         {tab === "events" && <EventsTab sessionId={props.sessionId} />}
         {tab === "jev" && <JevTab sessionId={props.sessionId} />}
+        {tab === "narrator" && <NarratorTab />}
         {tab === "logs" && <LogsTab sessionId={props.sessionId} />}
         {tab === "telemetry" && <TelemetryTab sessionId={props.sessionId} />}
         {tab === "instructions" && <InstructionsTab sessionId={props.sessionId} />}
@@ -181,6 +185,65 @@ function JevTab({ sessionId }: { sessionId: string | undefined }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function NarratorTab() {
+  const bridge = getBridge();
+  const [payload, setPayload] = useState<DebugNarratorCallsPayload | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void bridge.debug
+        .listNarratorCalls(50)
+        .then((next) => {
+          if (!cancelled) setPayload(next);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = setInterval(refresh, 2_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [bridge]);
+
+  if (!payload) return <p className="dim">Loading narrator calls…</p>;
+  const rows = payload.calls.map(narratorCallRow);
+  return (
+    <div>
+      <p className="dim narrator-availability">{narratorAvailabilityLabel(payload.availability)}</p>
+      {rows.length === 0 ? (
+        <p className="dim">No narrator calls yet.</p>
+      ) : (
+        <table className="debug-table">
+          <thead>
+            <tr>
+              <th>question</th>
+              <th>status</th>
+              <th>kept</th>
+              <th>latency</th>
+              <th>cost</th>
+              <th>model</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.question}</td>
+                <td>{row.status}</td>
+                <td>{row.counts}</td>
+                <td>{row.latency}</td>
+                <td>{row.cost}</td>
+                <td>{row.model}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
