@@ -5,15 +5,20 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
-import type { z } from "zod";
+import { z } from "zod";
 
 import {
   ChangeUnitSchema,
+  ComponentSchema,
   DecisionSchema,
   EVENT_TYPES,
   EvidenceFactSchema,
+  ExplainerRecordSchema,
   JevDecisionLogSchema,
   NormalizedAgentEventSchema,
+  OVERVIEW_SNAPSHOT_MAX_BYTES,
+  OverviewSnapshotSchema,
+  RoleSchema,
   ValidationResultSchema,
 } from "@jevcode/contracts";
 import type {
@@ -24,6 +29,8 @@ import type {
   EvidenceFact,
   JevDecisionLog,
   NormalizedAgentEvent,
+  OverviewSnapshot,
+  Role,
   ValidationResult,
 } from "@jevcode/contracts";
 import { newId, nowIso, classifyDestructive } from "@jevcode/contracts";
@@ -71,7 +78,35 @@ const eventStoreSchemas = {
   command: CommandRecordSchema,
   semantic_event: SemanticEventRecordSchema,
   telemetry: TelemetryEventSchema,
+  overview_snapshot: OverviewSnapshotSchema,
+  explainer: ExplainerRecordSchema,
 } as const satisfies Record<EventStoreType, z.ZodTypeAny>;
+
+/** A cached narrator description (console-explainer spec §6.4), keyed by (repo root, component id, content hash). */
+export interface ComponentTextValue {
+  purpose: string | null;
+  role: Role;
+  model: string;
+}
+
+/** The latest overview of a repo and its cached narrative (spec §6.4). */
+export interface OverviewStateValue {
+  snapshot: OverviewSnapshot;
+  narrativeInputsHash: string | null;
+  narrative: OverviewSnapshot["narrative"];
+}
+
+const ComponentTextValueSchema = z.object({
+  purpose: ComponentSchema.shape.purpose,
+  role: RoleSchema,
+  model: z.string().min(1),
+}) satisfies z.ZodType<ComponentTextValue>;
+
+const OverviewStateValueSchema = z.object({
+  snapshot: OverviewSnapshotSchema,
+  narrativeInputsHash: z.string().min(1).nullable(),
+  narrative: OverviewSnapshotSchema.shape.narrative,
+}) satisfies z.ZodType<OverviewStateValue>;
 
 export function isEventStoreType(value: string): value is EventStoreType {
   return (EVENT_TYPES as readonly string[]).includes(value);
@@ -261,12 +296,22 @@ export class JevcodeDb {
         `appendEvent(${type}): payload sessionId ${String(value.sessionId)} does not match event sessionId ${sessionId}`,
       );
     }
+    const payloadJson = JSON.stringify(value);
+    if (type === "overview_snapshot") {
+      // Spec §5.5: measured on exactly what is stored, before a seq is taken.
+      const bytes = Buffer.byteLength(payloadJson, "utf8");
+      if (bytes > OVERVIEW_SNAPSHOT_MAX_BYTES) {
+        throw new TypeError(
+          `appendEvent(overview_snapshot): payload is ${bytes} bytes, over the ${OVERVIEW_SNAPSHOT_MAX_BYTES}-byte cap`,
+        );
+      }
+    }
     const event: EventRow = {
       id: newId("evt"),
       sessionId,
       seq: 0,
       type,
-      payloadJson: JSON.stringify(value),
+      payloadJson,
       ts: nowIso(),
     };
     const apply = this.db.transaction(() => {
@@ -941,6 +986,92 @@ export class JevcodeDb {
   }
 
   // ------------------------------------------------------------------
+  // Explainer cache (console-explainer spec §6.4). Caches only: a row this
+  // build cannot parse reads as a miss, and puts validate before writing.
+  // ------------------------------------------------------------------
+
+  getComponentText(
+    repoRoot: string,
+    componentId: string,
+    contentHash: string,
+  ): ComponentTextValue | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT purpose, role, model FROM component_text_cache WHERE repo_root = ? AND component_id = ? AND content_hash = ?",
+      )
+      .get(repoRoot, componentId, contentHash) as unknown;
+    if (row === undefined) return undefined;
+    const parsed = ComponentTextValueSchema.safeParse(row);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  putComponentText(
+    repoRoot: string,
+    componentId: string,
+    contentHash: string,
+    value: ComponentTextValue,
+  ): void {
+    const parsed = ComponentTextValueSchema.safeParse(value);
+    if (!parsed.success) {
+      throw new TypeError(`putComponentText(${componentId}): invalid value: ${parsed.error.message}`);
+    }
+    this.db
+      .prepare(
+        "INSERT INTO component_text_cache (repo_root, component_id, content_hash, purpose, role, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT(repo_root, component_id, content_hash) DO UPDATE SET purpose = excluded.purpose, role = excluded.role, model = excluded.model, created_at = excluded.created_at",
+      )
+      .run(repoRoot, componentId, contentHash, parsed.data.purpose, parsed.data.role, parsed.data.model, nowIso());
+  }
+
+  getOverviewState(repoRoot: string): OverviewStateValue | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT snapshot_json, narrative_inputs_hash, narrative_json FROM overview_state WHERE repo_root = ?",
+      )
+      .get(repoRoot) as
+      | { snapshot_json: string; narrative_inputs_hash: string | null; narrative_json: string | null }
+      | undefined;
+    if (row === undefined) return undefined;
+    let raw: unknown;
+    try {
+      raw = {
+        snapshot: JSON.parse(row.snapshot_json) as unknown,
+        narrativeInputsHash: row.narrative_inputs_hash,
+        narrative: row.narrative_json === null ? null : (JSON.parse(row.narrative_json) as unknown),
+      };
+    } catch {
+      return undefined;
+    }
+    const parsed = OverviewStateValueSchema.safeParse(raw);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  putOverviewState(repoRoot: string, state: OverviewStateValue): void {
+    const parsed = OverviewStateValueSchema.safeParse(state);
+    if (!parsed.success) {
+      throw new TypeError(`putOverviewState(${repoRoot}): invalid state: ${parsed.error.message}`);
+    }
+    const { snapshot, narrativeInputsHash, narrative } = parsed.data;
+    if (snapshot.repoRoot !== repoRoot) {
+      throw new TypeError(
+        `putOverviewState(${repoRoot}): snapshot repoRoot ${snapshot.repoRoot} does not match`,
+      );
+    }
+    this.db
+      .prepare(
+        "INSERT INTO overview_state (repo_root, snapshot_json, narrative_inputs_hash, narrative_json, updated_at) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT(repo_root) DO UPDATE SET snapshot_json = excluded.snapshot_json, narrative_inputs_hash = excluded.narrative_inputs_hash, narrative_json = excluded.narrative_json, updated_at = excluded.updated_at",
+      )
+      .run(
+        repoRoot,
+        JSON.stringify(snapshot),
+        narrativeInputsHash,
+        narrative === null ? null : JSON.stringify(narrative),
+        nowIso(),
+      );
+  }
+
+  // ------------------------------------------------------------------
   // Preferences
   // ------------------------------------------------------------------
 
@@ -1038,6 +1169,10 @@ export class JevcodeDb {
         break;
       case "telemetry":
         this.applyTelemetry(event);
+        break;
+      case "overview_snapshot":
+      case "explainer":
+        // No projection table: the viewer reads these rows through TraceReader.
         break;
     }
   }

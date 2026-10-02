@@ -10,8 +10,10 @@ import {
   makeAgentEvent,
   makeChangeUnit,
   makeDecision,
+  makeExplainerStory,
   makeFact,
   makeJevLog,
+  makeOverviewSnapshot,
 } from "./fixtures.js";
 import type { JevcodeDb } from "./index.js";
 import { openSessionDb, tempDbPath } from "./test-utils.js";
@@ -77,6 +79,26 @@ describe("openTraceReader", () => {
     db.close();
   });
 
+
+  it("serves overview_snapshot and explainer rows through rows() and payloads()", () => {
+    const db = openSessionDb();
+    db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "Seed", ts: TS });
+    db.appendEvent(SESSION, "overview_snapshot", makeOverviewSnapshot());
+    db.appendTelemetry("agent_event_count", {}, SESSION);
+    db.appendEvent(SESSION, "explainer", makeExplainerStory());
+    const reader = openTraceReader(db.dbPath);
+    const page = reader.rows(SESSION, 0, 50, TRACE_ROW_TYPES);
+    expect(page.rows.map((row) => [row.seq, row.type])).toEqual([
+      [1, "agent_event"],
+      [2, "overview_snapshot"],
+      [4, "explainer"],
+    ]);
+    expect(page.lastSeq).toBe(4);
+    expect(JSON.parse(page.rows[1]?.payloadJson ?? "null")).toEqual(makeOverviewSnapshot());
+    expect(reader.payloads(SESSION, [2, 4]).map((row) => row.type)).toEqual(["overview_snapshot", "explainer"]);
+    reader.close();
+    db.close();
+  });
   it("pages stay gapless while the writer appends", () => {
     const db = openSessionDb();
     for (let i = 0; i < 5; i += 1) {

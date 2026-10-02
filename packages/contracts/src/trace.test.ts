@@ -5,6 +5,7 @@ import {
   EventStoreTypeSchema,
   TRACE_BUNDLE_FORMAT,
   TRACE_BUNDLE_VERSION,
+  TRACE_BUNDLE_VERSIONS_SUPPORTED,
   TRACE_CLIP_CHARS,
   TRACE_LIST_SESSIONS_DEFAULT,
   TRACE_LIST_SESSIONS_MAX,
@@ -39,7 +40,7 @@ const row = {
 };
 
 describe("trace read-path contracts", () => {
-  it("lists the fourteen event-log envelope types in storage order", () => {
+  it("lists the sixteen event-log envelope types in storage order", () => {
     expect(EVENT_TYPES).toEqual([
       "agent_event",
       "evidence_fact",
@@ -55,12 +56,16 @@ describe("trace read-path contracts", () => {
       "command",
       "semantic_event",
       "telemetry",
+      "overview_snapshot",
+      "explainer",
     ]);
     expect(EventStoreTypeSchema.safeParse("telemetry").success).toBe(true);
+    expect(EventStoreTypeSchema.safeParse("overview_snapshot").success).toBe(true);
+    expect(EventStoreTypeSchema.safeParse("explainer").success).toBe(true);
     expect(EventStoreTypeSchema.safeParse("future_row").success).toBe(false);
   });
 
-  it("serves exactly the six envelope types the fold consumes", () => {
+  it("serves the eight envelope types the fold consumes, overview and explainer rows included", () => {
     expect(TRACE_ROW_TYPES).toEqual([
       "agent_event",
       "evidence_fact",
@@ -68,8 +73,12 @@ describe("trace read-path contracts", () => {
       "decision",
       "validation",
       "jev_decision",
+      "overview_snapshot",
+      "explainer",
     ]);
     expect(isTraceRowType("agent_event")).toBe(true);
+    expect(isTraceRowType("overview_snapshot")).toBe(true);
+    expect(isTraceRowType("explainer")).toBe(true);
     expect(isTraceRowType("telemetry")).toBe(false);
     expect(isTraceRowType("graph_node")).toBe(false);
   });
@@ -106,17 +115,32 @@ describe("trace read-path contracts", () => {
     expect(TraceRowsPageSchema.parse({ ...last, nextAfterSeq: 1 }).nextAfterSeq).toBe(1);
   });
 
-  it("accepts a v1 jevcode.trace bundle and rejects other versions and formats", () => {
-    const bundle = {
+  it("writes v2, accepts v1 and v2 jevcode.trace bundles and rejects other versions and formats", () => {
+    expect(TRACE_BUNDLE_VERSION).toBe(2);
+    expect(TRACE_BUNDLE_VERSIONS_SUPPORTED).toEqual([1, 2]);
+    expect(TRACE_BUNDLE_VERSIONS_SUPPORTED).toContain(TRACE_BUNDLE_VERSION);
+    const v1 = {
       format: TRACE_BUNDLE_FORMAT,
-      version: TRACE_BUNDLE_VERSION,
+      version: 1,
       exportedAt: "2026-09-28T11:00:00.000Z",
       redactionCount: 2,
       session: summary,
       rows: [row],
     };
-    expect(TraceBundleSchema.parse(bundle)).toEqual(bundle);
-    expect(TraceBundleSchema.safeParse({ ...bundle, version: 2 }).success).toBe(false);
-    expect(TraceBundleSchema.safeParse({ ...bundle, format: "jevcode.replay" }).success).toBe(false);
+    expect(TraceBundleSchema.parse(v1)).toEqual(v1);
+    const v2 = {
+      ...v1,
+      version: 2,
+      rows: [
+        row,
+        { seq: 2, type: "overview_snapshot", ts: "2026-09-28T10:00:01.000Z", payload: { repoRoot: "/work/demo" } },
+        { seq: 3, type: "explainer", ts: "2026-09-28T10:00:02.000Z", payload: { kind: "story" } },
+      ],
+    };
+    expect(TraceBundleSchema.parse(v2)).toEqual(v2);
+    for (const version of [0, 3, "2", null, 1.5]) {
+      expect(TraceBundleSchema.safeParse({ ...v1, version }).success, String(version)).toBe(false);
+    }
+    expect(TraceBundleSchema.safeParse({ ...v1, format: "jevcode.replay" }).success).toBe(false);
   });
 });

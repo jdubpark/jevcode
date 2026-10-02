@@ -36,4 +36,11 @@ describe("trace window channel allowlist", () => {
     expect(isChannelAllowed("trace:export", "trace")).toBe(false);
     expect(isChannelAllowed("", "trace")).toBe(false);
   });
+
+  it("keeps overview:rescan to the main window", () => {
+    expect(toMainChannelNames()).toContain("overview:rescan");
+    expect(isChannelAllowed("overview:rescan", "main")).toBe(true);
+    expect(isChannelAllowed("overview:rescan", "trace")).toBe(false);
+    expect(isChannelAllowed("overview:rescan", "other")).toBe(false);
+  });
 });

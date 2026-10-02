@@ -198,3 +198,26 @@ describe("per-sender allowlist in the handle wrapper (spec 8.6)", () => {
     db.close();
   });
 });
+
+describe("explainWithModel preference (spec E15)", () => {
+  it("defaults to on, persists an off switch and keeps it through other patches", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const handlers = registerAndCapture(makeDeps(db, runtime, state));
+    const get = handlers.get("preferences:get")!;
+    const set = handlers.get("preferences:set")!;
+
+    await expect(get(TRUSTED_EVENT, {})).resolves.toMatchObject({ explainWithModel: true });
+    await expect(set(TRUSTED_EVENT, { explainWithModel: false })).resolves.toMatchObject({
+      model: "auto",
+      explainWithModel: false,
+    });
+    expect(db.getPreference("explainer.withModel")).toBe(false);
+    await expect(get(TRUSTED_EVENT, {})).resolves.toMatchObject({ explainWithModel: false });
+    await expect(set(TRUSTED_EVENT, { model: "gpt-5.6-sol" })).resolves.toMatchObject({
+      model: "gpt-5.6-sol",
+      explainWithModel: false,
+    });
+    db.close();
+  });
+});

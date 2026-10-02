@@ -106,6 +106,18 @@ describe("ipc channel registry", () => {
     ).toThrowError(IpcError);
   });
 
+  it("registers the trace:rowsAvailable hint and the overview:rescan request from the contracts", () => {
+    expect(parseFromMain("trace:rowsAvailable", { sessionId: "s1", lastSeq: 12 })).toEqual({
+      sessionId: "s1",
+      lastSeq: 12,
+    });
+    expect(() =>
+      parseFromMain("trace:rowsAvailable", { sessionId: "s1", lastSeq: 12, rows: [] }),
+    ).toThrowError(IpcError);
+    expect(parseToMain("overview:rescan", { repoRoot: "/work/repo" })).toEqual({ repoRoot: "/work/repo" });
+    expect(() => parseToMain("overview:rescan", {})).toThrowError(IpcError);
+  });
+
   it("bounds the read-only trace channels", () => {
     expect(parseToMain("trace:listSessions", {})).toEqual({});
     expect(parseToMain("trace:listSessions", { repoId: "r1", limit: 500 })).toEqual({

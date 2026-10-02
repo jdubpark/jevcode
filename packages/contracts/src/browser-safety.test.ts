@@ -47,7 +47,7 @@ describe("contracts barrel browser safety", () => {
 
   it("reaches the whole barrel", () => {
     expect(graph.visited).toEqual(
-      expect.arrayContaining(["agent-events.ts", "evidence.ts", "id.ts", "semantic.ts", "ui/components.ts"]),
+      expect.arrayContaining(["agent-events.ts", "evidence.ts", "id.ts", "overview.ts", "semantic.ts", "ui/components.ts"]),
     );
   });
 

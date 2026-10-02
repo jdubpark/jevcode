@@ -27,7 +27,7 @@ export interface ReplayResult {
   decisionCount: number;
   specCount: number;
   errors: string[];
-  /** <outDir>/trace.json: a TraceBundle (format jevcode.trace v1) of the replayed session. */
+  /** <outDir>/trace.json: a TraceBundle (format jevcode.trace, TRACE_BUNDLE_VERSION) of the replayed session. */
   bundlePath: string;
 }
 

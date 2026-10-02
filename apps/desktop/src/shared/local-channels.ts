@@ -188,6 +188,7 @@ export const AgentPreferencesSchema = z.object({
   model: AGENT_MODEL_ENUM,
   reasoningEffort: REASONING_EFFORT_ENUM,
   usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]),
+  explainWithModel: z.boolean(),
 });
 
 export type AgentPreferencesPayload = z.infer<typeof AgentPreferencesSchema>;
@@ -199,12 +200,14 @@ export const PreferencesSetPayloadSchema = z
     model: AGENT_MODEL_ENUM.optional(),
     reasoningEffort: REASONING_EFFORT_ENUM.optional(),
     usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]).optional(),
+    explainWithModel: z.boolean().optional(),
   })
   .refine(
     (patch) =>
       patch.model !== undefined ||
       patch.reasoningEffort !== undefined ||
-      patch.usageBudgetFraction !== undefined,
+      patch.usageBudgetFraction !== undefined ||
+      patch.explainWithModel !== undefined,
     { message: "at least one preference must be set" },
   );
 

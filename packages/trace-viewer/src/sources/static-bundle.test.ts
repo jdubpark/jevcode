@@ -31,13 +31,31 @@ afterEach(() => { vi.useRealTimers(); });
 describe("parseTraceBundle", () => {
   it("accepts a v1 bundle", () => {
     const parsed = parseTraceBundle(JSON.parse(JSON.stringify(bundle())));
-    expect(parsed.ok).toBe(true);
+    expect(parsed).toMatchObject({ ok: true, bundle: { version: 1 } });
+  });
+
+  it("accepts a v2 bundle with overview_snapshot and explainer rows", () => {
+    const v2 = {
+      ...bundle(),
+      version: 2,
+      rows: [
+        ...bundle().rows,
+        { seq: 8, type: "overview_snapshot", ts: iso(8_000), payload: { repoRoot: "/work/acme" } },
+        { seq: 9, type: "explainer", ts: iso(9_000), payload: { kind: "story" } },
+      ],
+    };
+    const parsed = parseTraceBundle(JSON.parse(JSON.stringify(v2)));
+    expect(parsed).toMatchObject({ ok: true, bundle: { version: 2 } });
+    expect(parsed.ok && parsed.bundle.rows.map((r) => r.type).slice(-2)).toEqual(["overview_snapshot", "explainer"]);
   });
 
   it("names a wrong file and an unsupported version", () => {
     expect(parseTraceBundle({})).toEqual({ ok: false, code: "NOT_A_TRACE", message: "Not a jevcode trace" });
     expect(parseTraceBundle("garbage")).toEqual({ ok: false, code: "NOT_A_TRACE", message: "Not a jevcode trace" });
-    expect(parseTraceBundle({ ...bundle(), version: 2 })).toEqual({ ok: false, code: "UNSUPPORTED_VERSION", message: "Trace format v2 is not supported" });
+    expect(parseTraceBundle({ ...bundle(), version: 3 })).toEqual({ ok: false, code: "UNSUPPORTED_VERSION", message: "Trace format v3 is not supported" });
+    expect(parseTraceBundle({ ...bundle(), version: 0 })).toEqual({ ok: false, code: "UNSUPPORTED_VERSION", message: "Trace format v0 is not supported" });
+    // The version must be the number, not its string.
+    expect(parseTraceBundle({ ...bundle(), version: "2" })).toMatchObject({ ok: false, code: "UNSUPPORTED_VERSION" });
     expect(parseTraceBundle({ ...bundle(), rows: "nope" })).toMatchObject({ ok: false, code: "NOT_A_TRACE" });
   });
 });
