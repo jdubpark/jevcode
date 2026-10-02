@@ -23,14 +23,16 @@ export type ResolvedSpecifier =
   | { kind: "unresolved" };
 
 /**
- * What one resolution read from `ctx.files`, so a caller that caches results knows which file
- * additions and removals can change them (`probeCandidatesFor`, and `under` for a directory).
+ * What one resolution read from `ctx.files` and what each lookup answered. A resolution is a
+ * function of these answers, so a cached result stays valid while every traced lookup still
+ * answers the same: `probeFile(candidate, files)` for a probe (`probeCandidatesFor` lists the
+ * candidates a path can affect), and the smallest path under `dir` for an `under` lookup.
  */
 export interface ResolveTrace {
-  /** The resolution looked for `candidate` with every probe suffix (see `probeCandidatesFor`). */
-  probe(candidate: string): void;
-  /** The resolution took the first file under `dir`: any file added or removed under it can change it. */
-  under(dir: string): void;
+  /** The resolution looked for `candidate` with every probe suffix and found `hit` (or nothing). */
+  probe(candidate: string, hit: string | null): void;
+  /** The resolution took the smallest path under `dir`, which was `first` (or there was none). */
+  under(dir: string, first: string | null): void;
 }
 
 export interface ImportExtractor {
@@ -159,9 +161,9 @@ function joinBase(base: string | null, rest: string): string | null {
   return normalize(base === null || base === "" || base === "." ? rest : `${base}/${rest}`);
 }
 
-function probeFile(candidate: string | null, files: ReadonlySet<string>, trace: ResolveTrace | undefined): string | null {
-  if (candidate === null || candidate === "") return null;
-  trace?.probe(candidate);
+/** The file one probe lookup finds: `candidate` with the first probe suffix that exists, else a TS twin of a JS name. */
+export function probeFile(candidate: string, files: ReadonlySet<string>): string | null {
+  if (candidate === "") return null;
   for (const suffix of PROBE_SUFFIXES) {
     if (files.has(`${candidate}${suffix}`)) return `${candidate}${suffix}`;
   }
@@ -173,6 +175,13 @@ function probeFile(candidate: string | null, files: ReadonlySet<string>, trace: 
     }
   }
   return null;
+}
+
+function probe(candidate: string | null, files: ReadonlySet<string>, trace: ResolveTrace | undefined): string | null {
+  if (candidate === null || candidate === "") return null;
+  const hit = probeFile(candidate, files);
+  trace?.probe(candidate, hit);
+  return hit;
 }
 
 /**
@@ -215,7 +224,7 @@ function resolveTsPath(specifier: string, ctx: ResolveContext, trace: ResolveTra
   }
   if (best === null) return null;
   for (const target of best.targets) {
-    const hit = probeFile(joinBase(ctx.baseUrl, target.replace("*", () => best.wildcard)), ctx.files, trace);
+    const hit = probe(joinBase(ctx.baseUrl, target.replace("*", () => best.wildcard)), ctx.files, trace);
     if (hit !== null) return hit;
   }
   return null;
@@ -236,7 +245,6 @@ function workspaceNames(ctx: ResolveContext): readonly string[] {
 
 /** The smallest path under `dir`, cached per context: a context's `files` must not change. */
 function firstFileUnder(dir: string, ctx: ResolveContext, trace: ResolveTrace | undefined): string | null {
-  trace?.under(dir);
   let cache = firstFileCache.get(ctx);
   if (cache === undefined) {
     cache = new Map();
@@ -249,7 +257,9 @@ function firstFileUnder(dir: string, ctx: ResolveContext, trace: ResolveTrace | 
     }
     cache.set(dir, first);
   }
-  return cache.get(dir) ?? null;
+  const first = cache.get(dir) ?? null;
+  trace?.under(dir, first);
+  return first;
 }
 
 function resolveWorkspace(specifier: string, ctx: ResolveContext, trace: ResolveTrace | undefined): string | null {
@@ -259,7 +269,7 @@ function resolveWorkspace(specifier: string, ctx: ResolveContext, trace: Resolve
     const sub = specifier === name ? "" : specifier.slice(name.length + 1);
     const candidates = sub === "" ? [`${dir}/src/index`, `${dir}/index`, `${dir}/src/main`, `${dir}/main`] : [`${dir}/${sub}`, `${dir}/src/${sub}`];
     for (const candidate of candidates) {
-      const hit = probeFile(normalize(candidate), ctx.files, trace);
+      const hit = probe(normalize(candidate), ctx.files, trace);
       if (hit !== null) return hit;
     }
     // The package lives in the repo even when its entry is built output: any member file
@@ -286,7 +296,7 @@ export function resolveSpecifier(
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
     const slash = fromPath.lastIndexOf("/");
     const dir = slash === -1 ? "" : fromPath.slice(0, slash);
-    const hit = probeFile(normalize(dir === "" ? spec : `${dir}/${spec}`), ctx.files, trace);
+    const hit = probe(normalize(dir === "" ? spec : `${dir}/${spec}`), ctx.files, trace);
     return hit === null ? { kind: "unresolved" } : { kind: "file", path: hit };
   }
   const viaPaths = resolveTsPath(spec, ctx, trace);
@@ -294,7 +304,7 @@ export function resolveSpecifier(
   const viaWorkspace = resolveWorkspace(spec, ctx, trace);
   if (viaWorkspace !== null) return { kind: "file", path: viaWorkspace };
   if (ctx.baseUrl !== null) {
-    const hit = probeFile(joinBase(ctx.baseUrl, spec), ctx.files, trace);
+    const hit = probe(joinBase(ctx.baseUrl, spec), ctx.files, trace);
     if (hit !== null) return { kind: "file", path: hit };
   }
   if (spec.startsWith("node:") || BUILTINS.has(spec.split("/")[0] ?? "")) return { kind: "unresolved" };
