@@ -9,6 +9,7 @@ import {
   BACKOFF_MS,
   COMMIT_COST_FACTOR,
   createDataController,
+  HINT_COMMIT_GAP_MS,
   LIVE_TICK_START,
   TERMINAL_POLL_MS,
   type DataSnapshot,
@@ -718,5 +719,178 @@ describe("createDataController", () => {
       expect(controller.get().status.kind).toBe("ready");
       expect(controller.get().session?.loadedThroughSeq).toBe(30);
     });
+  });
+});
+
+/** A source with spec §7 push hints: hint(lastSeq) calls every subscribed listener. */
+function withHints(base: TraceSource) {
+  const listeners = new Set<(lastSeq: number) => void>();
+  const source: TraceSource = {
+    ...base,
+    onRowsAvailable(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  return {
+    source,
+    listeners,
+    hint(lastSeq: number): void {
+      for (const listener of [...listeners]) listener(lastSeq);
+    },
+  };
+}
+
+describe("push hints (spec E5, §8.7)", () => {
+  it("a hint past the cursor polls at once, commits within HINT_COMMIT_GAP_MS and restarts the poll timer", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(300);
+    expect(controller.get().session?.loadedThroughSeq).toBe(3);
+    const calls = control.calls.length;
+
+    control.released = 5;
+    hint(5);
+    await scheduler.run(HINT_COMMIT_GAP_MS);
+    expect(control.calls.length).toBe(calls + 1);
+    expect(control.calls.at(-1)?.afterSeq).toBe(3);
+    expect(controller.get().session?.loadedThroughSeq).toBe(5);
+
+    // The 1 s timer counts from the hint's poll (t = 300), not from the first commit (t = 0).
+    await scheduler.run(900);
+    expect(control.calls.length).toBe(calls + 1);
+    await scheduler.run(200);
+    expect(control.calls.length).toBe(calls + 2);
+  });
+
+  it("ignores a hint at or below the cursor", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(300);
+    const calls = control.calls.length;
+    hint(3);
+    hint(2);
+    await scheduler.run(10);
+    expect(control.calls.length).toBe(calls);
+  });
+
+  it("a hint during an in-flight poll polls once more right after it, never two at once", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(6), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(300);
+
+    control.deferNext = true;
+    await scheduler.run(800); // the timer poll at t = 1,000 is now in flight
+    expect(control.deferred).toHaveLength(1);
+    const calls = control.calls.length;
+
+    control.released = 6;
+    hint(6);
+    hint(6);
+    await scheduler.run(10);
+    expect(control.calls.length).toBe(calls);
+
+    control.deferred.shift()?.resolve({ rows: [], nextAfterSeq: null, lastSeq: 3, state: "running" });
+    await scheduler.run(10);
+    expect(control.calls.length).toBe(calls + 1);
+    expect(control.calls.at(-1)?.afterSeq).toBe(3);
+    expect(controller.get().session?.loadedThroughSeq).toBe(6);
+  });
+
+  it("keeps the reconnect backoff: a hint while reconnecting waits for the retry", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(300);
+
+    control.failures = 1;
+    await scheduler.run(1_000); // the poll at t = 1,000 fails; the retry waits BACKOFF_MS[0]
+    expect(controller.get().status.kind).toBe("reconnecting");
+    const calls = control.calls.length;
+    control.released = 5;
+    hint(5);
+    await scheduler.run(10);
+    expect(control.calls.length).toBe(calls);
+
+    await scheduler.run(BACKOFF_MS[0] ?? 1_000);
+    expect(control.calls.length).toBe(calls + 1);
+    expect(controller.get().status.kind).toBe("ready");
+    expect(controller.get().session?.loadedThroughSeq).toBe(5);
+  });
+
+  it("a hint wakes a terminal session before the slow poll", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "completed", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(300);
+    expect(controller.get().terminal).toBe(true);
+
+    control.state = "running";
+    control.released = 4;
+    hint(4);
+    await scheduler.run(HINT_COMMIT_GAP_MS);
+    expect(controller.get().terminal).toBe(false);
+    expect(controller.get().session?.loadedThroughSeq).toBe(4);
+    expect(scheduler.now()).toBeLessThan(TERMINAL_POLL_MS);
+  });
+
+  it("subscribes once per start and unsubscribes on stop", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const { source, hint, listeners } = withHints(base);
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    controller.start();
+    expect(listeners.size).toBe(1);
+    await scheduler.run(300);
+
+    controller.stop();
+    expect(listeners.size).toBe(0);
+    const calls = control.calls.length;
+    control.released = 5;
+    hint(5);
+    await scheduler.run(2_000);
+    expect(control.calls.length).toBe(calls);
+
+    controller.start();
+    expect(listeners.size).toBe(1);
+    controller.stop();
+  });
+
+  it("caps hint commits at COMMIT_COST_FACTOR times the last finalize", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: inner, control } = fakeSource(messageRows(8), { state: "running", released: 3 });
+    // commitNow reads the source clock once per finalize: each commit costs 30 ms on the fake clock.
+    const { source, hint } = withHints({ ...inner, now: () => (scheduler.spend(30), 0) });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    const seen = record(controller, scheduler);
+    controller.start();
+    await scheduler.run(300);
+    const commitsBefore = seen.filter((entry) => entry.snapshot.session !== null).length;
+
+    control.released = 4;
+    hint(4);
+    await scheduler.run(0);
+    control.released = 5;
+    hint(5);
+    await scheduler.run(500);
+    const commits = seen.filter((entry) => entry.snapshot.session !== null).slice(commitsBefore);
+    expect(commits.map((entry) => entry.snapshot.session?.loadedThroughSeq)).toEqual([4, 5]);
+    expect((commits[1]?.t ?? 0) - (commits[0]?.t ?? 0)).toBeGreaterThanOrEqual(COMMIT_COST_FACTOR * 30);
   });
 });
