@@ -280,4 +280,19 @@ describe("TitleBar", () => {
     expect(title?.textContent).not.toContain("\u202E");
     expect(title?.getAttribute("title")?.includes("\u202E")).toBe(false);
   });
+
+  it("names each view's number key in its title", () => {
+    renderHarness(<TitleBar onRetry={noop} />, foldFixture("oauth"), { views: [canvas, hybrid] });
+    expect(screen.getByRole("radio", { name: /Canvas/ }).getAttribute("title")).toBe("Canvas (1)");
+    expect(screen.getByRole("radio", { name: /Hybrid/ }).getAttribute("title")).toBe("Hybrid (2)");
+  });
+
+  it("the embedded bar shows no title and leaves the switch to the host", () => {
+    const session = foldFixture("oauth");
+    const firstLine = session.meta.prompt.split(/\r?\n/)[0] ?? "";
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" showSwitch={false} />, session, { views: [canvas, hybrid] });
+    expect(screen.queryByRole("radiogroup", { name: "View" })).toBeNull();
+    expect(screen.queryByText(firstLine)).toBeNull();
+    expect(screen.getByRole("group", { name: "Follow" })).toBeTruthy();
+  });
 });

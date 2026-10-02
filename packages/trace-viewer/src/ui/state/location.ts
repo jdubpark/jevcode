@@ -17,10 +17,14 @@ export const BrushSchema: z.ZodType<Brush> = z.union([
   z.object({ kind: z.literal("range"), fromSeq: seq, toSeq: z.union([seq, z.literal("live")]) }),
 ]);
 
+/** A built-in or host view kind (spec §8.5): a lower-case word. The viewer falls back to its default for a kind it lacks. */
+export const ViewKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
+
 export const ViewerLocationSchema = z.object({
   v: z.literal(1),
   sessionId: z.string().min(1),
-  view: z.enum(["canvas", "hybrid"]).default("hybrid"),
+  /** Absent: TraceViewer's initialView, else its chrome's default (openingView). */
+  view: ViewKindSchema.optional(),
   level: z.enum(LEVELS).default("chapter"),
   selected: StableIdSchema.optional(),
   playhead: PlayheadSchema.optional(),

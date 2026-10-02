@@ -7,7 +7,7 @@ const seq = fc.integer({ min: 1, max: 1_000_000 });
 const arbLocation: fc.Arbitrary<ViewerLocation> = fc.record({
   v: fc.constant(1 as const),
   sessionId: fc.constant("sess-1"),
-  view: fc.constantFrom("canvas" as const, "hybrid" as const),
+  view: fc.option(fc.constantFrom("console", "canvas", "hybrid", "map", "surfaces"), { nil: undefined }),
   level: fc.constantFrom("session" as const, "chapter" as const, "step" as const),
   selected: fc.option(fc.oneof(seq.map((n) => `step:${n}`), fc.string({ minLength: 1 }).map((s) => `unit:${s}`)), { nil: undefined }),
   playhead: fc.option(fc.oneof(
@@ -22,7 +22,7 @@ const arbLocation: fc.Arbitrary<ViewerLocation> = fc.record({
 
 describe("location codec", () => {
   it("never throws and falls back to defaults", () => {
-    const defaults = { v: 1, sessionId: "s", view: "hybrid", level: "chapter", brush: { kind: "session" } };
+    const defaults = { v: 1, sessionId: "s", level: "chapter", brush: { kind: "session" } };
     expect(decodeLocation("garbage", "s")).toEqual(defaults);
     expect(decodeLocation({ v: 1, sessionId: "other", view: "canvas" }, "s")).toEqual(defaults);
     expect(decodeLocation({ v: 1, sessionId: "s", brush: { kind: "range", fromSeq: 0, toSeq: 3 } }, "s")).toEqual(defaults);
@@ -39,5 +39,12 @@ describe("location codec", () => {
     fc.assert(fc.property(arbLocation, (location) => {
       expect(locationFromHash(locationToHash(location), location.sessionId)).toEqual(location);
     }));
+  });
+
+  it("accepts host view kinds and rejects a view that is not a lower-case word", () => {
+    expect(decodeLocation({ v: 1, sessionId: "s", view: "surfaces" }, "s").view).toBe("surfaces");
+    expect(decodeLocation({ v: 1, sessionId: "s", view: "console" }, "s").view).toBe("console");
+    expect(decodeLocation({ v: 1, sessionId: "s", view: "Not A View" }, "s").view).toBeUndefined();
+    expect(decodeLocation({ v: 1, sessionId: "s", view: "x".repeat(40) }, "s").view).toBeUndefined();
   });
 });

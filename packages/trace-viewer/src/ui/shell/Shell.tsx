@@ -50,11 +50,16 @@ export interface ShellProps {
   location?: ViewerLocation;
   /** Overrides "running opens in Live" (the selftest drips in Review). */
   initialFollow?: boolean;
+  /** "embedded" drops the title and the Outline (spec §8.5, deviation 7). Default "full". */
+  chrome?: "full" | "embedded";
+  /** Built-in then host views (TraceViewer composes them). Default VIEWS. */
+  views?: readonly ViewDefinition[];
+  /** false when the host places the view switcher. Default true. */
+  showSwitch?: boolean;
 }
 
 const EMPTY_SCALE_INPUT = { originMs: 0, work: [], awaitingFrom: [] } as const;
 
-const SHELL_VIEWS: readonly ViewDefinition[] = VIEWS;
 const KEEP_HIDDEN = KEEP_HIDDEN_VIEWS_MOUNTED;
 
 /** Maps a location's stable id to what the store selects: step and unit ids (spec §7.8). */
@@ -119,7 +124,16 @@ export function appendCapped<T>(list: readonly T[], item: T, cap: number): T[] {
   return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
-export function Shell({ sessionId, host, controller, location, initialFollow }: ShellProps) {
+export function Shell({
+  sessionId,
+  host,
+  controller,
+  location,
+  initialFollow,
+  chrome = "full",
+  views = VIEWS,
+  showSwitch = true,
+}: ShellProps) {
   const store = useViewStore();
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   // The open location and follow override apply once, at open; a parent passing a fresh
@@ -298,17 +312,19 @@ export function Shell({ sessionId, host, controller, location, initialFollow }: 
       <SessionContext.Provider value={sessionView}>
         <DiagnosticsContext.Provider value={diagnostics}>
           <ViewPortRegistryContext.Provider value={registry}>
-            <ViewDefinitionsContext.Provider value={SHELL_VIEWS}>
+            <ViewDefinitionsContext.Provider value={views}>
               <LiveRegion>
-                <div className={styles.grid}>
+                <div className={styles.grid} data-chrome={chrome}>
                   <header className={styles.title} data-region="title">
-                    <TitleBar onRetry={() => controller.retry()} />
+                    <TitleBar onRetry={() => controller.retry()} chrome={chrome} showSwitch={showSwitch} />
                   </header>
-                  <nav className={styles.outline} aria-label="Outline" data-region="outline">
-                    <Outline hiddenRows={hiddenRows} />
-                  </nav>
+                  {chrome === "full" ? (
+                    <nav className={styles.outline} aria-label="Outline" data-region="outline">
+                      <Outline hiddenRows={hiddenRows} />
+                    </nav>
+                  ) : null}
                   <main className={styles.main} data-region="main" tabIndex={-1}>
-                    <ViewSlot views={SHELL_VIEWS} keepHiddenMounted={KEEP_HIDDEN} />
+                    <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
                   </main>
                   <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
                     <Inspector host={host} />

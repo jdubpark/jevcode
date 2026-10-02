@@ -6,7 +6,7 @@ import { buildReviewNote } from "../inspector/review-note.js";
 import { resolveKey, type KeyCommand, type KeyInput } from "../state/keymap.js";
 import { useViewStore } from "../state/store.js";
 import type { Tool } from "../state/view-state.js";
-import { useViewPortRegistry, ViewDefinitionsContext } from "../views/view-port.js";
+import { hostViewsOf, useViewPortRegistry, ViewDefinitionsContext } from "../views/view-port.js";
 import { useAnnounce } from "./LiveRegion.js";
 import { markAfterPaint, PERF } from "./perf.js";
 import {
@@ -14,6 +14,7 @@ import {
   focusRegion,
   hasTextSelection,
   isEditableTarget,
+  isFocusable,
   nextInOrder,
   nextRegion,
   regionOf,
@@ -147,6 +148,19 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
           latest.current.announce(`${definition.label} view`);
           return;
         }
+        case "hostView": {
+          const definition = hostViewsOf(definitions)[command.position];
+          if (definition === undefined || state.view === definition.kind) return;
+          store.dispatch({ type: "view/switch", view: definition.kind });
+          latest.current.announce(`${definition.label} view`);
+          return;
+        }
+        case "brief": {
+          if (state.selection === null) return;
+          store.dispatch({ type: "brief/toggle" });
+          latest.current.announce(store.get().brief ? "Brief" : "Inspector");
+          return;
+        }
         case "level":
           store.dispatch({ type: "level/set", level: command.level, by: "shell" });
           return;
@@ -190,9 +204,12 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
         case "brushChapter":
           store.dispatch({ type: "brush/chapter" });
           return;
-        case "search":
-          root.querySelector<HTMLInputElement>("[data-outline-search]")?.focus();
+        case "search": {
+          // The Outline's field in full chrome; a view's own field (data-view-search) when the Outline is absent.
+          const fields = root.querySelectorAll<HTMLInputElement>("[data-outline-search], [data-view-search]");
+          Array.from(fields).find(isFocusable)?.focus();
           return;
+        }
         case "help":
           if (latest.current.helpOpen) {
             closeHelp(true);

@@ -29,6 +29,13 @@ describe("resolveKey (spec §7.9, R21)", () => {
     expect(resolveKey(key("KeyG", { shiftKey: true }), hybrid, "down")).toEqual({ cmd: "last" });
     expect(resolveKey(key("Digit1"), hybrid, "down")).toEqual({ cmd: "view", view: "canvas" });
     expect(resolveKey(key("Digit2"), canvas, "down")).toEqual({ cmd: "view", view: "hybrid" });
+    expect(resolveKey(key("Digit0"), hybrid, "down")).toEqual({ cmd: "view", view: "console" });
+    expect(resolveKey(key("Digit3"), hybrid, "down")).toEqual({ cmd: "view", view: "map" });
+    expect(resolveKey(key("Digit4"), hybrid, "down")).toEqual({ cmd: "hostView", position: 0 });
+    expect(resolveKey(key("Digit9"), hybrid, "down")).toEqual({ cmd: "hostView", position: 5 });
+    expect(resolveKey(key("Digit0", { shiftKey: true }), hybrid, "down")).toEqual({ cmd: "zoom", op: "preset" });
+    expect(resolveKey(key("Digit3", { shiftKey: true }), hybrid, "down")).toBeNull();
+    expect(resolveKey(key("Digit4", { shiftKey: true }), hybrid, "down")).toBeNull();
     expect(resolveKey(key("Digit1", { shiftKey: true }), hybrid, "down")).toEqual({ cmd: "fit", target: "all" });
     expect(resolveKey(key("Digit2", { shiftKey: true }), hybrid, "down")).toEqual({ cmd: "fit", target: "selection" });
     expect(resolveKey(key("Digit2", { altKey: true }), hybrid, "down")).toEqual({ cmd: "level", level: "chapter" });
@@ -43,6 +50,8 @@ describe("resolveKey (spec §7.9, R21)", () => {
     expect(resolveKey(key("KeyB"), hybrid, "down")).toEqual({ cmd: "brushChapter" });
     expect(resolveKey(key("BracketLeft", { shiftKey: true }), canvas, "down")).toBeNull();
     expect(resolveKey(key("KeyB"), canvas, "down")).toBeNull();
+    expect(resolveKey(key("KeyB", { shiftKey: true }), hybrid, "down")).toEqual({ cmd: "brief" });
+    expect(resolveKey(key("KeyB", { shiftKey: true }), canvas, "down")).toEqual({ cmd: "brief" });
   });
 
   it("Space pans only over a pannable surface, on down and up", () => {
@@ -71,7 +80,7 @@ describe("resolveKey (spec §7.9, R21)", () => {
       [key("Minus"), { cmd: "zoom", op: "out" }],
       [key("Equal"), { cmd: "zoom", op: "in" }],
       [key("Equal", { shiftKey: true }), { cmd: "zoom", op: "in" }],
-      [key("Digit0"), { cmd: "zoom", op: "preset" }],
+      [key("Digit0", { shiftKey: true }), { cmd: "zoom", op: "preset" }],
       [key("KeyV"), { cmd: "tool", tool: "select" }],
       [key("KeyH"), { cmd: "tool", tool: "hand" }],
       [key("Slash"), { cmd: "search" }],

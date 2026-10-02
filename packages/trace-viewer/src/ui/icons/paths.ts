@@ -45,4 +45,10 @@ export const ICON_PATHS: { readonly [K in IconName]: readonly string[] } = {
   file: ["M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6z", "M9 2v4h4"],
   "view-canvas": ["M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z", "M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"],
   "view-hybrid": ["M2.25 3.25h11.5M2.25 6h11.5", "M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"],
+  // The terminal prompt glyph (spec §3.6): a caret and a cursor line.
+  "view-console": ["M3.25 4.25 6.75 8l-3.5 3.75", "M8.5 11.75h4.25"],
+  // Three components and their links (spec §3.4).
+  "view-map": ["M2.25 3.25h4v3h-4zM9.75 3.25h4v3h-4zM6 9.75h4v3H6z", "M4.25 6.25v1.5h7.5v-1.5M8 7.75v2"],
+  "view-surfaces": ["M3.75 2.75h8.5a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z", "M2.75 6h10.5M6.5 6v7.25"],
+  brief: ["M4 2.25h8a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1z", "M5.5 5.25h5M5.5 8h5M5.5 10.75h3"],
 };
