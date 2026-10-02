@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EXTRACT_CONCURRENCY,
   FILES_SETTLE_MS,
+  NO_NARRATION,
   SCAN_PROGRESS_AFTER_MS,
   SNAPSHOT_WRITE_INTERVAL_MS,
   createExplainerRegistry,
@@ -590,7 +591,73 @@ describe("ExplainerStage narration seam (interfaces §5, lane 05)", () => {
   });
 });
 
+describe("ExplainerStage dispose (quit path)", () => {
+  it("still disposes the stage when the narration seam's dispose throws, and logs it", async () => {
+    const narration = (): NarrationSeam => ({
+      ...NO_NARRATION,
+      dispose: () => {
+        throw new Error("seam stuck");
+      },
+    });
+    const h = harness({ narration });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+
+    expect(() => stage.dispose()).not.toThrow();
+    expect(h.logs).toContainEqual({ kind: "error", where: "dispose", message: "seam stuck" });
+    h.clock.advance(FILES_SETTLE_MS + SNAPSHOT_WRITE_INTERVAL_MS);
+    stage.onFilesChanged(["packages/db/src/index.ts"]);
+    stage.rescan();
+    h.clock.advance(FILES_SETTLE_MS + SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    expect(h.calls.scanPaths).toEqual([]);
+    expect(h.calls.scan).toBe(1);
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+  });
+});
+
 describe("createExplainerRegistry", () => {
+  it("forgets a stage whose dispose throws, logs it, and goes on", () => {
+    const made: string[] = [];
+    const logs: string[] = [];
+    const registry = createExplainerRegistry(
+      (repoRoot) => {
+        made.push(repoRoot);
+        return {
+          onRepoOpened: () => {},
+          onSessionStarted: () => {},
+          onFilesChanged: () => {},
+          onPipelineSync: () => {},
+          rescan: () => {},
+          status: () => ({ phase: "idle", done: 0, total: 0, error: null }),
+          whenIdle: async () => {},
+          dispose: () => {
+            throw new Error(`stuck ${repoRoot}`);
+          },
+        };
+      },
+      (message) => logs.push(message),
+    );
+    registry.repoOpened("/a");
+    expect(() => registry.repoClosed("/a")).not.toThrow();
+    expect(registry.get("/a")).toBeUndefined();
+    registry.repoOpened("/a");
+    expect(() => registry.repoOpened("/b")).not.toThrow();
+    expect(registry.get("/a")).toBeUndefined();
+    expect(registry.get("/b")).toBeDefined();
+    expect(() => registry.dispose()).not.toThrow();
+    expect(registry.get("/b")).toBeUndefined();
+    expect(made).toEqual(["/a", "/a", "/b"]);
+    expect(logs).toEqual([
+      "explainer stage for /a failed to dispose: stuck /a",
+      "explainer stage for /a failed to dispose: stuck /a",
+      "explainer stage for /b failed to dispose: stuck /b",
+    ]);
+  });
+
   it("keeps one stage for the open repo and ignores calls for other repos", () => {
     const made: string[] = [];
     const calls: string[] = [];
