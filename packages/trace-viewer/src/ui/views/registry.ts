@@ -1,3 +1,4 @@
+import { ViewKindSchema } from "../state/location.js";
 import type { ViewKind } from "../state/view-state.js";
 import { CanvasView } from "./canvas/CanvasView.js";
 import { HybridView } from "./hybrid/HybridView.js";
@@ -20,12 +21,24 @@ export const VIEWS: readonly ViewDefinition[] = [
 /** true: hidden views stay mounted under <Activity mode="hidden">; the spike risk 6 ruling sets false (unmount). */
 export const KEEP_HIDDEN_VIEWS_MOUNTED = true;
 
+const warnedKinds = new Set<string>();
+function warnInvalidKind(kind: string): void {
+  if (warnedKinds.has(kind)) return;
+  warnedKinds.add(kind);
+  console.warn(`Trace viewer: host view kind "${kind}" is not a valid view kind; dropped`);
+}
+
 /** VIEWS followed by the host's views (spec §8.5). A host view whose kind is taken (built in or earlier) is dropped. */
 export function composeViews(hostViews: readonly ViewDefinition[] | undefined): readonly ViewDefinition[] {
   if (hostViews === undefined || hostViews.length === 0) return VIEWS;
   const taken = new Set<string>(VIEWS.map((view) => view.kind));
   const extra: ViewDefinition[] = [];
   for (const view of hostViews) {
+    if (!ViewKindSchema.safeParse(view.kind).success) {
+      // A kind outside the location grammar could never be restored from a location.
+      warnInvalidKind(view.kind);
+      continue;
+    }
     if (taken.has(view.kind)) continue;
     taken.add(view.kind);
     extra.push(view);

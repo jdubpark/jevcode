@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { TRACE_LIVE_POLL_MS } from "@jevcode/contracts";
 
@@ -49,7 +49,12 @@ export function TraceViewer({
   initialView,
   renderSwitch,
 }: TraceViewerProps) {
-  const views = useMemo(() => composeViews(hostViews), [hostViews]);
+  const composed = composeViews(hostViews);
+  const kindKey = composed.map((view) => view.kind).join("\u0000");
+  // Stable across a new-but-equal hostViews array: it keys on the composed kind list (the registry is fixed per mount).
+  const views = useMemo(() => composed, [kindKey]);
+  const renderSwitchRef = useRef(renderSwitch);
+  renderSwitchRef.current = renderSwitch;
   const [controller] = useState(() => createDataController({ source, pollMs: pollMs ?? TRACE_LIVE_POLL_MS }));
   const [store] = useState(() =>
     createViewStore(
@@ -66,10 +71,11 @@ export function TraceViewer({
   }, [controller]);
 
   useLayoutEffect(() => {
-    if (!hostPlacesSwitch || renderSwitch === undefined) return undefined;
-    renderSwitch(<HostViewSwitch store={store} views={views} />);
-    return () => renderSwitch(null);
-  }, [hostPlacesSwitch, renderSwitch, store, views]);
+    const place = renderSwitchRef.current;
+    if (!hostPlacesSwitch || place === undefined) return undefined;
+    place(<HostViewSwitch store={store} views={views} />);
+    return () => place(null);
+  }, [hostPlacesSwitch, store, views]);
 
   return (
     <ViewStoreContext.Provider value={store}>
