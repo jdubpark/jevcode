@@ -46,6 +46,8 @@ interface SessionSlot {
   pendingSeq: number;
   lastSentAt: number;
   timer: unknown | null;
+  /** A trailing timer fired for this slot; it may be pruned after a quiet interval. */
+  trailed: boolean;
 }
 
 /**
@@ -62,15 +64,26 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
 
   function send(sessionId: string, slot: SessionSlot): void {
     slot.timer = null;
-    const payload = parseFromMain(ROWS_AVAILABLE_CHANNEL, {
-      sessionId,
-      lastSeq: slot.pendingSeq,
-    }) as RowsAvailablePayload;
     slot.lastSentAt = deps.now();
-    for (const target of deps.targets(sessionId)) {
+    let payload: RowsAvailablePayload;
+    let targets: readonly RowsAvailableTarget[];
+    try {
+      payload = parseFromMain(ROWS_AVAILABLE_CHANNEL, {
+        sessionId,
+        lastSeq: slot.pendingSeq,
+      }) as RowsAvailablePayload;
+      targets = deps.targets(sessionId);
+    } catch (error) {
+      // Runs inside a timer: a throw here would be an uncaught main-process exception.
+      deps.log?.(
+        `${ROWS_AVAILABLE_CHANNEL} for ${sessionId} not sent: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    for (const target of targets) {
       if (!isPushAllowed(ROWS_AVAILABLE_CHANNEL, target.kind)) continue;
-      if (target.contents.isDestroyed()) continue;
       try {
+        if (target.contents.isDestroyed()) continue;
         target.contents.send(ROWS_AVAILABLE_CHANNEL, payload);
       } catch (error) {
         deps.log?.(
@@ -80,12 +93,21 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
     }
   }
 
+  /** Bounded memory: drop slots whose trailing timer fired and that were quiet for a full interval. */
+  function pruneIdle(): void {
+    const now = deps.now();
+    for (const [id, slot] of slots) {
+      if (slot.trailed && slot.timer === null && now - slot.lastSentAt >= interval) slots.delete(id);
+    }
+  }
+
   return {
     notify(sessionId, lastSeq) {
       if (disposed || sessionId.length === 0 || !Number.isInteger(lastSeq) || lastSeq <= 0) return;
+      pruneIdle();
       let slot = slots.get(sessionId);
       if (slot === undefined) {
-        slot = { pendingSeq: 0, lastSentAt: Number.NEGATIVE_INFINITY, timer: null };
+        slot = { pendingSeq: 0, lastSentAt: Number.NEGATIVE_INFINITY, timer: null, trailed: false };
         slots.set(sessionId, slot);
       }
       if (lastSeq <= slot.pendingSeq) return;
@@ -98,7 +120,9 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
       }
       const due = slot;
       due.timer = deps.setTimeout(() => {
-        if (!disposed) send(sessionId, due);
+        if (disposed) return;
+        due.trailed = true;
+        send(sessionId, due);
       }, wait);
     },
     dispose() {
