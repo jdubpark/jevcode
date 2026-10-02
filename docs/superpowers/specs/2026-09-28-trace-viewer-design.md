@@ -1455,6 +1455,8 @@ Tests extend existing suites where they exist, use fixtures as inputs, and deriv
 
 **VoiceOver check.** At the M4a exit a person runs C2-16 Step 6 in desktop Chrome on macOS, with oauth in Hybrid at 1440 px or wider. Pass requires all four: Tab moves Outline → main → Inspector and Shift+Tab walks back; the selected spine row reads "+0:43" and "Claim contradicts tests"; the Playhead slider reads "+0:43, Claim contradicts tests, step n of m"; after Alt+3 (Step level) the Range start and Range end sliders each read a "+m:ss" value. A fail returns C2-8, C2-12 or C2-11 to iteration, and the answers go in the spike doc's "M4a exit" section.
 
+**v1 decisions on human checks (2026-10-02, product owner).** Screen-reader (VoiceOver) support is out of v1: the keyboard model, focus order and accessible names stay in the code, but the VoiceOver check above and spike risk 4's VoiceOver half are no longer exit criteria. The blind A/B gesture trial (spike risk 1) is waived; its automated metrics passed. Spike risk 2 is judged at the panel's measured 120 Hz, which is stricter than the 60 Hz the budget assumed: the real Canvas on the soak bundle drops 0 to 4.17% of frames at Step level (pass); the 60 Hz rerun is dropped.
+
 **Not tested, and why.** Pixel equality with the mockups (the smoke produces screenshots for human comparison; the layout table and invariants carry the geometry). Real Codex multi-turn resumes (no recording exists; turn logic is covered by synthetic rows). Gesture feel (the spike judges it by hand). VoiceOver output in automation (checked by hand: spike risk 4 and the M4a-exit VoiceOver check above). Frame budgets in CI (machine-dependent; the HUD and spike measure them). Playwright is not added.
 
 ## 12. Milestones and exit criteria
