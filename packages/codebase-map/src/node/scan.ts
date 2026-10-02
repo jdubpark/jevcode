@@ -10,6 +10,19 @@ import type { ScannedFile, TsconfigPaths, WorkspaceManifest } from "../core/type
 
 const execFileAsync = promisify(execFile);
 
+export type ScanErrorCode = "not-a-repo" | "git-unavailable" | "git-failed";
+
+/** A scan that could not list files. The message never carries the command line or git's stderr. */
+export class ScanError extends Error {
+  readonly code: ScanErrorCode;
+
+  constructor(code: ScanErrorCode, message: string) {
+    super(message);
+    this.name = "ScanError";
+    this.code = code;
+  }
+}
+
 /** Spec §5.1: hard cap on mapped files; past it the map is partial. */
 export const MAX_SCAN_FILES = 20_000;
 /** Spec §5.1: larger files are skipped. */
@@ -85,12 +98,30 @@ async function readCandidate(repoRoot: string, rel: string, maxBytes: number): P
 }
 
 async function gitListFiles(repoRoot: string, pathspecs: readonly string[], signal?: AbortSignal): Promise<string[]> {
-  const { stdout } = await execFileAsync(
-    "git",
-    ["-C", repoRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard", ...(pathspecs.length > 0 ? ["--", ...pathspecs] : [])],
-    { maxBuffer: GIT_MAX_BUFFER, signal, encoding: "utf8" },
-  );
-  return stdout.split("\0").filter((entry) => entry !== "");
+  if (repoRoot === "") throw new ScanError("git-failed", "Repository path is empty.");
+  // Drop every GIT_* variable (GIT_DIR, GIT_INDEX_FILE, ...) so an inherited one cannot redirect the listing.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      [
+        "-c", "core.fsmonitor=false",
+        "-C", repoRoot,
+        "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+        ...(pathspecs.length > 0 ? ["--", ...pathspecs] : []),
+      ],
+      { maxBuffer: GIT_MAX_BUFFER, signal, encoding: "utf8", env },
+    );
+    return stdout.split("\0").filter((entry) => entry !== "");
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    const failure = error as { code?: unknown; stderr?: unknown };
+    if (failure.code === "ENOENT") throw new ScanError("git-unavailable", "git is not available.");
+    if (failure.code === 128 && /not a git repository/i.test(String(failure.stderr ?? ""))) {
+      throw new ScanError("not-a-repo", "The folder is not a git repository.");
+    }
+    throw new ScanError("git-failed", "git could not list the repository files.");
+  }
 }
 
 /** Tracked files plus untracked files that .gitignore does not exclude, sorted and unique. */
@@ -107,14 +138,21 @@ async function readAll(
   const maxBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   let next = 0;
   let done = 0;
+  let failed = false;
   const worker = async (): Promise<void> => {
     for (;;) {
       options.signal?.throwIfAborted();
+      if (failed) return;
       const index = next;
       next += 1;
       if (index >= rels.length) return;
       const rel = rels[index] as string;
-      await onFile(await readCandidate(repoRoot, rel, maxBytes), rel);
+      try {
+        await onFile(await readCandidate(repoRoot, rel, maxBytes), rel);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
       done += 1;
       if (done % PROGRESS_EVERY === 0 || done === rels.length) options.onProgress?.(done, rels.length);
     }
@@ -126,6 +164,9 @@ async function readAll(
 export async function scanRepo(repoRoot: string, options: ScanOptions = {}): Promise<ScanResult> {
   const maxFiles = options.maxFiles ?? MAX_SCAN_FILES;
   const candidates = (await listRepoFiles(repoRoot, options.signal)).filter((rel) => !isSkippedPath(rel));
+  // The cap bounds candidates (before any read) to bound disk reads, so mapped files can fall below
+  // the cap when candidates are content-skipped (binary, LFS, oversized). `partial` means the
+  // candidates exceeded the cap, and `totalFiles` is that candidate count.
   const partial = candidates.length > maxFiles;
   const selected = partial ? candidates.slice(0, maxFiles) : candidates;
   const files: ScannedFile[] = [];
