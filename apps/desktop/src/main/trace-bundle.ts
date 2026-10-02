@@ -100,11 +100,12 @@ const fields =
 // fields (component ids, contentHash) and enums are left out: no redaction rule matches inside
 // `cmp_` + 12 hex or 40 hex, and truncation could not restore a pattern anyway.
 const ID = str(128);
+const SNAPSHOT_SESSION = str(256);
 const PATH = str(1024);
 const SENTENCE = fields({ text: str(220), citations: each(fields({ id: str(512) })) });
 
 const capSnapshot = fields({
-  sessionId: ID,
+  sessionId: SNAPSHOT_SESSION,
   repoRoot: PATH,
   scanId: ID,
   counts: fields({ languages: each(str(40)) }),
