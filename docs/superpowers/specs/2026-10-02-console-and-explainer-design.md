@@ -96,20 +96,21 @@ In the trace window the Brief is the same component, read-only, with no prompt l
 
 ### 3.4 Map view (codebase overview)
 
-- **Top.** A short overview narrative (4 to 8 sentences: what the system is, its main flows, its tech stack) with citation chips. It is collapsible, and the rule-based header ("12 components · TypeScript · pnpm workspace") shows when the narrator is off.
-- **Body.** Component cards placed in role bands, left to right:
+- **Top.** A header with the rule-based headline ("12 components", languages beside it in muted ink; the narrator being off changes nothing here) and a row of quiet notes (partial map, imports not analyzed, scan progress, narrator state). Below it sits the short overview narrative (4 to 8 sentences: what the system is, its main flows, its tech stack) as plain sentences. Component names in a sentence are quiet links (ink with a faint underline); hovering a link behaves like hovering its card, and the selected component's link turns accent. The first two sentences show, followed by a quiet "More". An Overview toggle collapses all of it. There are no citation chips in this header.
+- **Body.** Component cards placed in role bands, left to right. Each band is a full-height light lane with a header (role icon, label, muted count):
   - The main bands are UI → API/IPC → agent/integration → domain → storage.
-  - Tests, tooling and config sit in a narrow side band.
-  - External dependencies are small chips beside the components that use them.
-- **Card contents:**
-  - role icon, name and one-line purpose
-  - file count and main language
-  - an import-weight bar
-  - session state (phase C): new, changed, touched by a decision or failing test, using `--tv-accent` for selection and red only for failures
+  - Tests, tooling and config sit in a narrower side band labelled "Support".
+  - External packages do not appear on the canvas as chips. The detail-level card shows its top two packages inside itself, and the Inspector lists all of them.
+- **Card contents:** every card is the same size at every zoom level; only its content changes with the level.
+  - the full name (two lines at most) and a footer with the role icon and a file-count bar (length is √(files ÷ the largest component's files))
+  - at the card level the count joins the footer; at the detail level the footer reads "n files" and the card adds its one-line purpose (or root path), the top two packages, and, for a hub, a fan-in glyph with its importer count
+  - the main language is in the Inspector, not on the card. Import weight is shown by edge width and by bars in the Inspector's lists
+  - session state (phase C): new, changed, touched by a decision or failing test, as a mark in the footer in place of the count, using `--tv-accent` for selection and red only for failures
 - **Edges.**
-  - Width follows the import count (1 to 3 px buckets), with neutral ink.
-  - Selecting a card lights its one-hop edges in accent and dims the rest to 30% (as on the Canvas).
-  - With the session overlay on (phase C), edges the session touched are emphasized.
+  - Smooth curves in the gutters and the gap rows between cards. Width follows the import count (1, 1.6 or 2.4 px buckets) in a light neutral ink.
+  - At rest only band-to-band edges are drawn, and edges into a hub (a component imported by at least `max(6, ceil(n / 4))` others) are left out; a short three-line stub marks the hub's port. Same-band edges and a hub's edges appear when their card is selected or hovered.
+  - Selecting or hovering a card draws all of its edges in accent on top and dims every other edge to 22% (as on the Canvas).
+  - With the session overlay on (phase C), edges whose two ends the session touched are emphasized and always drawn.
 - **Inspector for a component:**
   - purpose and role (with "rule-based" or "described by model" provenance)
   - files (middle-truncated, top 20, then "n more")
@@ -117,7 +118,7 @@ In the trace window the Brief is the same component, read-only, with no prompt l
   - external dependencies
   - this session's changes and decisions touching it
   - citations
-- **Zoom and pan.** Same controller and keys as the Canvas. Fit shows the whole map.
+- **Zoom and pan.** Same controller and keys as the Canvas. Fit shows the whole map, centered on both axes and filling the stage (20 px at the sides and top, 68 px at the bottom for the zoom bar), at no more than 100%; it refits on a viewport resize while the camera is still where Fit left it. On the 1440 px layout Fit lands at the card level (about 77%); on the 1000 px layout at the chip level (about 52%) with every name still shown. Zoom bands: chip below 70%, card below 140%, detail from 140%; below 48% names hide and the tooltip carries them.
 - **Without import edges.** For repos whose languages have no edges, the cards show structure only, with a quiet "imports not analyzed for Python" note.
 
 ### 3.5 Decisions (phase C)
@@ -229,7 +230,7 @@ Cut rules (E8):
 
 ### 5.4 Roles
 
-`Role = "ui" | "api" | "agent" | "domain" | "storage" | "tests" | "tooling" | "config"`, plus `external` for dependency chips. Rule-based guess, first match wins:
+`Role = "ui" | "api" | "agent" | "domain" | "storage" | "tests" | "tooling" | "config"`, plus `external` for external packages. Rule-based guess, first match wins:
 
 1. Path or name contains `renderer`, `ui`, `web`, `components` or `views`, or the component imports react, vue or svelte: **ui**.
 2. Path or name contains `ipc`, `api`, `routes`, `server` or `handlers`, or the component imports express, fastify, hono or electron's ipcMain: **api**.
@@ -349,14 +350,16 @@ Rows are appended through the existing event store with a gapless seq, carry `ts
 
 - **Bands.** One band per role, in a fixed order.
 - **Order within a band.** A barycenter heuristic over import edges, 4 sweeps, deterministic tie-break by name.
-- **Card sizes.** Fixed by zoom level band (`chip` < 0.5 ≤ `card` < 1.2 ≤ `detail`).
+- **Card sizes.** One fixed geometry for every zoom level (140 × 76 world units; the side band is 104 wide; rows 16 apart; gutters 22; margin 16; band label 44), so a level change never moves a card. The level (`chip` < 0.7 ≤ `card` < 1.4 ≤ `detail`) only changes what a card shows.
 - **Stickiness.** With `prev` for the same repo, existing components keep their order and only new ones are inserted at their barycenter position. Like Canvas P6, a live update never reorders placed cards.
-- **Edges.** Routed as straight or one-bend paths between band gutters, with constant screen width.
+- **Edges.** Smooth curves with constant screen width. A card has one port per side, at its vertical center. Edges between adjacent bands are one S-curve in the gutter. Edges between bands two or more apart leave through the gutter, run along the gap row between cards (every band shares one row pitch, so the gap row is free in every column) and return through the gutter before the target; edges leaving one card toward one side share that channel and read as one line. Same-band edges are a shallow bulge on the less loaded side. Each edge carries `kind` (`adjacent`, `long` or `same`), and `mapHubIds` names the hubs the view hides at rest.
 - **Properties:**
   - no card overlap
-  - edges never cross cards other than their endpoints
-  - sticky under append
+  - edges never pass under a card other than their endpoints (curves included)
+  - every edge starts and ends on side centers of its two cards
+  - sticky under append, and an adjacent or long edge between two cards that keep their positions keeps its path
   - deterministic for equal input
+  - Fit centers and fills (checked with the camera, lane 06 P-3)
 
 ### 8.4 Brief
 

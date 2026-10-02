@@ -395,7 +395,12 @@ The lane files were drafted against the real code, and some names above had to c
 - **Push hints.** `HINT_COMMIT_GAP_MS = 50`, and hints are ignored while reconnecting. `StaticBundleSource.onRowsAvailable` is added.
 - **Map and model.**
   - Lane 06 replaces lane 02's `MapPlaceholder` in `VIEWS`.
-  - `MapLayout` gains `level` and `bands`.
+  - `MapLayout` gains `level` and `bands`. `MapBandColumn` is `{ band, x, w, count }`; `MapLevelSpec` is `{ w, h, rowGap, gutter, sideW, chips: 0 }` with one shared geometry for all three levels.
+  - `MapEdgePath` gains `kind: "adjacent" | "long" | "same"` (`MapEdgeKind`); additive to §6.6.
+  - `src/layout/map-layout.ts` also exports `mapHubIds(layoutEdges, componentCount): ReadonlySet<string>` (components with at least `max(6, ceil(n / 4))` distinct importers), `mapImporterCounts(layoutEdges): ReadonlyMap<string, number>`, `MAP_MARGIN` (16), `MAP_BAND_LABEL_H` (44), `MAP_LANE_PAD` (6, view only) and `MAP_SWEEPS`. `layoutMap` places no external chips (`externals` is always `[]`).
+  - Zoom bands are `chip` < 0.7 ≤ `card` < 1.4 ≤ `detail` (`mapLevelForZoom`); `map-camera.ts` has `MAP_FIT_PADDING` (`{ x: 20, top: 20, bottom: 68 }`) and `MAP_ICON_ONLY_K` (0.48), and `planMapFit` makes one layout.
+  - `src/ui/views/map/MapEdges.tsx` exports `MAP_EDGE_STROKE` (1, 1.6, 2.4 px) and `hubStubPath`; `map-text.ts` exports `linkSentence`; `MapHeader` gains the optional props `selectedId` and `onHoverComponent`.
+  - The `role-*` icons gain `fan-in` (the hub glyph). `src/layout/map-details.ts` exports `topPackages`, `fileBarPercent`, `listBarPx` and `LIST_BAR_MAX_PX`.
   - `buildOverviewModel` and `overviewStatusOf` are exported.
   - R6: lane 06's P-1 creates `src/model/component-path.ts` with `componentIdForPath`, and lane 07 consumes it.
   - Lane 07 fills the `mapOverlayOf` seam in `ui/views/map/overlay.ts`.

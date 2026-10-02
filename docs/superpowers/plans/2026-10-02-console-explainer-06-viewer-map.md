@@ -4,7 +4,7 @@
 
 **Goal:** Fold `overview_snapshot` rows into `TraceSession.overview`, lay the snapshot out as a pure, sticky role-band map (`layoutMap`), render it as the **Map** view with the viewer's own camera controller and a component Inspector, add the Brief's architecture card, and ship a dev-host fixture of this repository with screenshots compared against approved mockups.
 
-**Architecture:** `src/model/fold-overview.ts` keeps the latest snapshot row (replace semantics) and builds an `OverviewModel` in which an unchanged component keeps its object identity between `finalize` calls. `src/layout/map-layout.ts` is React-free and clock-free: role bands left to right (`MAP_BAND_ORDER`), barycenter order within a band (4 sweeps, tie-break by name then id), sticky order across snapshots of the same repo, fixed card sizes per zoom level, and edges routed through band gutters and the gap rows between cards so no edge crosses a card. `src/ui/views/map/MapView.tsx` draws DOM cards and one SVG edge layer in a world layer moved by `createViewportController` (no React Flow), keeps its own component selection (`ViewState.mapSelection`), and hands it to `ComponentInspector`. The Brief's architecture part comes from `briefArchitecture(session)`, called by lane 02's `buildBrief`.
+**Architecture:** `src/model/fold-overview.ts` keeps the latest snapshot row (replace semantics) and builds an `OverviewModel` in which an unchanged component keeps its object identity between `finalize` calls. `src/layout/map-layout.ts` is React-free and clock-free: role bands left to right (`MAP_BAND_ORDER`), barycenter order within a band (4 sweeps, tie-break by name then id), sticky order across snapshots of the same repo, one fixed card geometry for every zoom level, and smooth edges routed through band gutters and the gap rows between cards so no edge passes under a card. `src/ui/views/map/MapView.tsx` draws light band lanes, DOM cards and one SVG edge layer in a world layer moved by `createViewportController` (no React Flow), keeps its own component selection (`ViewState.mapSelection`), and hands it to `ComponentInspector`. The Brief's architecture part comes from `briefArchitecture(session)`, called by lane 02's `buildBrief`.
 
 **Tech Stack:** TypeScript 5.9 (strict, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`), React 19.2, zod 3 via `@jevcode/contracts`, vitest 3 (`vitest bench` for budgets), fast-check 4.10.1, @testing-library/react 16 and user-event 14.6.7 on jsdom 30, Vite 5 for the dev host, headless Google Chrome for screenshots.
 
@@ -15,12 +15,12 @@
 Every name in interfaces §1.2 and §6.4–§6.6 is kept with its type. These additions and changes were needed against the real code:
 
 1. **`MapLayout` gains two fields** (P-2): `level: MapLevel` (the level the layout was made for, so the view and the Brief thumbnail never re-derive it) and `bands: readonly MapBandColumn[]` (`{ band, x, w, count }` per non-empty band, for the band labels and for keyboard navigation between bands). `MapCard.band` and `MAP_BAND_ORDER` are typed with the alias `MapBand = Role | "side"`, which is the interfaces' `Role | "side"`.
-2. **New exports from `src/layout/map-layout.ts`** (P-2): `MapBand`, `MapBandColumn`, `MapExternalChip` (the interfaces' inline external type), `MapLevelSpec`, `MAP_LEVEL_SPECS`, `MAP_MARGIN`, `MAP_BAND_LABEL_H`, `MAP_CHIP`, `MAP_LANE_STEP`, `MAP_PORT_STEP`, `MAP_SWEEPS`, `mapLevelForZoom(k)`, `mapEdgeWidth(count)`, `bandOf(role)` and `componentForPath(overview, path)`. `layoutMap`'s signature is unchanged.
+2. **New exports from `src/layout/map-layout.ts`** (P-2): `MapBand`, `MapBandColumn`, `MapExternalChip` (the interfaces' inline external type; `layoutMap` never fills it), `MapEdgeKind`, `MapLevelSpec` (`sideW` replaces the plan's earlier `sideGutter`; `chips` is always 0), `MAP_LEVEL_SPECS` (one geometry for all three levels), `MAP_MARGIN`, `MAP_BAND_LABEL_H`, `MAP_LANE_PAD` (used by the view only), `MAP_SWEEPS`, `mapLevelForZoom(k)`, `mapEdgeWidth(count)`, `bandOf(role)`, `mapImporterCounts(edges)`, `mapHubIds(edges, n)` and `componentForPath(overview, path)`. `layoutMap`'s signature is unchanged. **`MapEdgePath` gains `kind: "adjacent" | "long" | "same"`**, an additive deviation from interfaces §6.6 (recorded in interfaces §8.4); `mapHubIds` is new beside it.
 3. **`buildOverviewModel(snapshot, seq, previous?)`** is exported from `@jevcode/trace-viewer/model` (P-1). Test builders and the UI tests need an `OverviewModel` without folding rows; the fold uses the same function, so there is one way to make the model.
 4. **`ViewState.mapSelection: string | null` and the action `{ type: "map/select"; componentId: string | null }`** (P-3). A component is not a step or a unit, so it cannot be a `SelectionId` without touching `trace-index`, `lookup`, `location` and every view. The Map keeps its own selection; the Inspector shows `ComponentInspector` while the view is `"map"` and `mapSelection` is set, and (after the 02b rebase, P-4 Step 1) lane 02's `RightPanel` shows that Inspector instead of the Brief in the same case; Esc on the Map clears `mapSelection` before anything else. The component selection is not written to the location hash.
-5. **Session-overlay seam for lane 07** (P-3): `src/ui/views/map/overlay.ts` exports `type MapCardState = "new" | "changed" | "decision" | "failing"`, `interface MapOverlay { cardState: ReadonlyMap<string, MapCardState>; emphasizedEdges: ReadonlySet<string> }` (edge keys `"<from>><to>"`) and `mapOverlayOf(session: TraceSession): MapOverlay | null`, which returns `null` in phase B. `MapView` already renders a card's state dot and emphasized edges from it. Lane 07 (S-5) replaces only the body of `mapOverlayOf` (and adds an on/off toggle if its mockup has one); it does not edit `MapView`'s render.
-6. **Role icons** (P-3): `ICON_NAMES` gains `role-ui`, `role-api`, `role-agent`, `role-domain`, `role-storage`, `role-tooling`, `role-config`; `kind-icons.ts` gains `ROLE_ICON: { readonly [K in Role]: IconName }` (tests → `test`) and `ROLE_LABEL`. External packages use the existing `pkg` icon. `view-map` is consumed from lane 02 (V-2).
-7. **`src/layout/map-details.ts`** (P-3): `componentDetails(overview, componentId, session)`, `importTotals(overview)` and `DETAIL_FILES_SHOWN`, pure helpers for the component Inspector and the cards' import-weight bar.
+5. **Session-overlay seam for lane 07** (P-3): `src/ui/views/map/overlay.ts` exports `type MapCardState = "new" | "changed" | "decision" | "failing"`, `interface MapOverlay { cardState: ReadonlyMap<string, MapCardState>; emphasizedEdges: ReadonlySet<string> }` (edge keys `"<from>><to>"`) and `mapOverlayOf(session: TraceSession): MapOverlay | null`, which returns `null` in phase B. `MapView` already renders a card's state mark (in the footer, in place of the file count) and emphasized edges (both ends touched) from it. Lane 07 (S-5) replaces only the body of `mapOverlayOf` (and adds an on/off toggle if its mockup has one); it does not edit `MapView`'s render.
+6. **Role icons** (P-3): `ICON_NAMES` gains `role-ui`, `role-api`, `role-agent`, `role-domain`, `role-storage`, `role-tooling`, `role-config` and `fan-in` (the hub glyph); `kind-icons.ts` gains `ROLE_ICON: { readonly [K in Role]: IconName }` (tests → `test`) and `ROLE_LABEL`. External packages use the existing `pkg` icon. `view-map` is consumed from lane 02 (V-2).
+7. **`src/layout/map-details.ts`** (P-3): `componentDetails(overview, componentId, session)`, `DETAIL_FILES_SHOWN`, `topPackages(component, n)`, `fileBarPercent(files, maxFiles)`, `listBarPx(count, max)` and `LIST_BAR_MAX_PX`, pure helpers for the component Inspector, the cards' file-count bar and the Inspector's list bars.
 8. **`src/layout/brief-architecture.ts`** (P-4): `briefArchitecture(session): BriefArchitecture | null`, returning lane 02's `BriefArchitecture` (`NonNullable<BriefModel["architecture"]>`). `buildBrief(session, index)` keeps the interfaces signature and calls it; `scanning` is filled from a running scan (ruling R3, deviation 11). The Brief's look comes from lane 02's private `Architecture` part in `Brief.tsx`, which P-4 extends with an `overview` prop, a `MapThumbnail` (`src/ui/inspector/MapThumbnail.tsx`) and a `data-brief-architecture` hook; its strings ("<n> components · <k> touched", "Descriptions pending", "Open the map") stay lane 02's.
 9. **`ViewerHost.rescanOverview` is reached through lane 02's `useViewerHost()`** (V-4, merged with 02b), so the Retry button lands in P-4, after the rebase; P-3's `MapHeader` takes an optional `onRetry` and shows no Retry until P-4 passes it.
 10. **Fixtures outside `fixtures/`** (P-5): `packages/trace-viewer/fixtures/overview-jevcode.json` and `overview-jevcode-rule.json`, written by `packages/trace-viewer/scripts/overview-fixture.mjs`. `evals/src/runner.ts` `listScenarioNames` treats every directory under the root `fixtures/` as a scenario, so a new directory there would break the evals runner.
@@ -33,11 +33,11 @@ Points where the spec's text and this lane's build differ. None blocks the lane;
 
 1. **Scan progress and scan failure** (spec §3.3, §6.1 "Mapping codebase · 3,200 / 9,800 files", §6.6 "Codebase map unavailable with Retry") had no data path to the viewer in the spec's snapshot. Ruling R3 adds `status.scan` (deviation 11), and this lane renders it. Before the first snapshot row the Brief keeps lane 02's quiet "Appears here once this repository is scanned." and the Map shows "No codebase map yet".
 2. **Narrator off versus pending** (Review Focus 5 asks for "descriptions pending" or "off") could not be told apart from `narrative: null` alone. Ruling R3 adds `status.narrator`; the Map header and the Brief say "Descriptions off", "Descriptions unavailable" or "Descriptions pending" in quiet ink, and nothing when it is `ready`.
-3. **The rule-based header names no workspace kind** ("12 components · TypeScript · pnpm workspace", spec §3.4). The snapshot has no workspace field; the header reads "12 components · TypeScript, JSON" from `counts.languages`.
-4. **Edge routes.** Spec §8.3 says "straight or one-bend paths between band gutters" and also "edges never cross cards other than their endpoints". An edge between bands that are not adjacent must pass the bands between them, so this lane routes it orthogonally through the gutter next to its source, along the gap row below the source card (all bands share one row pitch per level, so gap rows line up), and through the gutter next to its target. Adjacent-band edges are straight when their ports line up and one-bend otherwise; same-band edges loop through the band's left gutter.
-5. **External chips sit under their card**, in the top of the gap row, not beside it: beside a card is the gutter the edges use. They show at the `card` and `detail` levels only, at most two per card, 108 px wide so a package name stays readable; the Inspector lists all of a component's packages.
-6. **Selection dims edges, not cards** (spec §3.4 "dims the rest to 30%"): the selected card gets the accent ring, its one-hop edges turn accent, and every other edge drops to 30% opacity. Cards stay legible so the reader can pick the next one.
-7. **Fit at narrow widths.** At 1440 px the fit lands at the `chip` level near k = 0.49, where 24 px world names read at about 12 px. At 1000 px the main column is 552 px wide and the fit reaches about k = 0.28; below `MAP_ICON_ONLY_K = 0.375` cards show only their role tile (names stay in the tooltip and the accessible name). P-0's mockups show both, and gate H2 settles the numbers. `MAP_LEVEL_SPECS` holds them, so a ruling is a constants-only change in P-2.
+3. **The rule-based header names no workspace kind** ("12 components · TypeScript · pnpm workspace", spec §3.4). The snapshot has no workspace field; the header reads "12 components" with "TypeScript · JSON" beside it in muted ink, from `counts.languages`.
+4. **Edge routes.** Spec §8.3 said "straight or one-bend paths between band gutters" and also "edges never cross cards other than their endpoints"; the approved H2 Map mockup draws smooth curves instead. An edge between adjacent bands is one S-curve in the gutter. An edge between bands two or more apart leaves through the gutter next to the lower-column card, runs along the gap row between cards (all bands share one row pitch, so the gap rows line up and are free in every column) and returns through the gutter next to the other card; edges leaving one card toward one side share that channel exactly and read as one line. A same-band edge is a shallow bulge on the less loaded side. Each card has one port per side, at its vertical center; direction is not drawn (the Inspector carries imports in and out).
+5. **No external chips on the canvas.** Spec §3.4 puts external dependencies in "small chips beside the components"; the approved mockup shows packages only inside detail-level cards (the top two, one row) and in the Inspector's full list. `layoutMap` therefore places no chips at any level (`externals: []`).
+6. **Selection dims edges, not cards, to 22%** (spec §3.4 said 30%): the selected or hovered card gets the accent ring (selection only), all of its edges turn accent and draw on top, and every other edge drops to 22% opacity. Cards stay legible so the reader can pick the next one. At rest the Map draws band-to-band edges only; same-band edges and edges into a hub appear with their card's selection or hover (the spec §3.4 text needs this rule). Cards show a file-count bar, not an import-weight bar (spec §3.4 said "an import-weight bar"); import weight is shown by edge width and the Inspector's list bars. Cards no longer show the main language; the Inspector does.
+7. **Fit centers and fills the stage.** `k = min((vw − 40) / W, (vh − 88) / H, 1)`, centered on both axes; the bottom 68 px clear the zoom bar. At 1440 px the map runs the full height at about k = 0.77 (the card level, about 104 px of side margin); at 1000 px it runs the full width at about k = 0.52 (the chip level, names at about 11 px). Zoom bands are chip below 0.7, card below 1.4, detail from 1.4 (spec §8.3 said 0.5 and 1.2); Fit never picks detail. Below `MAP_ICON_ONLY_K = 0.48` card names hide and only the footer icon and bar remain (names stay in the tooltip and the accessible name); neither approved width reaches it. `MAP_LEVEL_SPECS` and the thresholds live in P-2 and `map-camera.ts`, so a ruling is a constants-only change.
 8. **Selection survives view switches (spec §3.1) for steps only.** The Map's component selection lives in `ViewState` and survives a switch away and back, but it is not part of the location hash and other views ignore it (deviation 4).
 
 ## Lane prerequisites
@@ -77,7 +77,7 @@ The index's Global Constraints apply in full (visual system, untrusted text, vie
 - **Purity:** `src/model/**` and `src/layout/**` stay React-free, DOM-free and clock-free. `src/layout/map-layout.ts` may cache per `OverviewModel` in a `WeakMap`; it never reads time or randomness.
 - **DOM globals** in `src/ui/**` only through `element.ownerDocument` and `.defaultView`, with `typeof` guards (lessons-w2). No bare `window`, `document`, `ResizeObserver`, `requestAnimationFrame` or `performance`.
 - **Focus** moves only after a user action (a pending-focus ref consumed once), never on a data rebuild or a new snapshot.
-- **Untrusted text:** component names, root paths, file paths, language names, external package names, purposes and narrative sentences render through `displayUntrusted` (or `truncateMiddle`, which calls it) in every slot: card text, band and chip text, tooltips (`title`) and accessible names. Narrator text (purposes, sentences) never fills a title, chip or badge slot; component names (from paths) may fill chips.
+- **Untrusted text:** component names, root paths, file paths, language names, external package names, purposes and narrative sentences render through `displayUntrusted` (or `truncateMiddle`, which calls it) in every slot: card text, band labels, sentence links, tooltips (`title`) and accessible names. Narrator text (purposes, sentences) never fills a title, chip or badge slot; component names (from paths) may fill sentence links and labels.
 - **Identity:** `finalize` never mutates a returned session; between calls with the same `live`, `session.overview` is the same object until a new snapshot row arrives, and an unchanged component is the same object across snapshots (viewer spec §6.4).
 - **Budgets:** `layoutMap` fresh ≤ 8 ms and sticky ≤ 2 ms at 200 components and 1,000 edges (spec §11); a benchmark, not a CI gate. A miss is reported in the lane hand-off.
 - **Commits:** one conventional commit per task listing its files in `git add`, as `git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m "…"`. No `Claude-Session:` and no `Co-Authored-By` trailers.
@@ -87,7 +87,7 @@ The index's Global Constraints apply in full (visual system, untrusted text, vie
 The index assigns this lane three owning tests. Each lives in the task that owns the code.
 
 1. **Review Focus 1 (UI part): an unsupported-language, huge or partial repo.** The Map shows its components with a quiet "Imports not analyzed for Python" note and no edges, or a "Partial map · 20,000 files mapped" note, and a 200-component, 1,000-edge partial snapshot renders every card. Tests: **P-3** `map-view.test.tsx` "a Python repo shows its components and a quiet imports-not-analyzed note, with no edges", "a partial map says so with its file count", "a 200-component partial snapshot renders every card".
-2. **Review Focus 2 (render part): hostile narrator or repo text.** A purpose and a component name carrying U+202E, Markdown, a URL and an `<img onerror>` string render as visible plain text with `⟨U+202E⟩` tokens on the card, in its tooltip and accessible name, in the overview narrative and in the component Inspector; no `strong`, `em`, `a` or `img` element appears. Test: **P-3** `map-view.test.tsx` "Review Focus 2: hostile purpose, name and narrative render as plain text".
+2. **Review Focus 2 (render part): hostile narrator or repo text.** A purpose and a component name carrying U+202E, Markdown, a URL and an `<img onerror>` string render as visible plain text with `⟨U+202E⟩` tokens on the card (the name at every level, the purpose and packages on the detail level), in its tooltip and accessible name, in the overview narrative links and in the component Inspector; no `strong`, `em`, `a` or `img` element appears (narrative links are buttons). Tests: **P-3** `map-view.test.tsx` "Review Focus 2: hostile purpose, name and narrative render as plain text" and `map-card.test.tsx` "Review Focus 2: a hostile purpose, name and package render as plain text on the detail card".
 3. **Review Focus 5 (Brief part): narrator off or offline.** With `narrative: null` the Brief's Architecture part renders from rule-based data (thumbnail, "3 components · 2 touched") with a quiet "Descriptions pending" note (or "Descriptions off" / "Descriptions unavailable" from `status.narrator`), no alert role and no error or Retry text; with no snapshot at all it keeps lane 02's quiet empty state, draws no thumbnail and raises no alert. Tests: **P-4** `architecture-card.test.tsx` "Review Focus 5: narrative null shows rule-based data and a quiet pending note", "Review Focus 5: narrator off or unavailable reads quietly" and "no snapshot: the quiet empty state, no thumbnail and no alert"; **P-3** `map-view.test.tsx` "Review Focus 5: the Map says the narrator is off, quietly".
 
 ## File structure
@@ -106,16 +106,15 @@ All paths are under `packages/trace-viewer/` unless a path starts with `apps/` o
 | `src/test-support/overview-builder.ts`, `src/test-support/overview-arbitraries.ts` | Test-only snapshot builders, a synthetic generator, fast-check arbitraries | P-1 (P-2 adds the arbitraries) |
 | `src/test-support/trace-builder.ts`, `row-arbitraries.ts`, `session-builder.ts`, `canvas-arbitraries.ts` | `TraceBuilder.overview`; overview rows in the random row sessions; `overview` in built sessions | P-1 |
 | `src/model/fold-overview.test.ts`, `src/model/fold.incremental.test.ts` (appended block) | Fold, identity and incremental-equals-fresh tests | P-1 |
-| `src/layout/map-layout.ts` | `layoutMap`, bands, barycenter order, stickiness, routing, externals, `componentForPath` | P-2 |
-| `src/test-support/map-checks.ts` | Test-only overlap and crossing checks shared by the property and fixture tests | P-2 |
+| `src/layout/map-layout.ts` | `layoutMap`, bands, barycenter order, stickiness, curve routing, `mapHubIds`, `componentForPath` | P-2 |
+| `src/test-support/map-checks.ts` | Test-only overlap, port and crossing checks (curves sampled) shared by the property and fixture tests | P-2 |
 | `src/layout/map-layout.test.ts`, `map-layout.property.test.ts`, `map-layout.bench.ts` | Unit, property and bench | P-2 |
-| `src/layout/map-details.ts`, `map-details.test.ts` | Component Inspector data and import totals | P-3 |
+| `src/layout/map-details.ts`, `map-details.test.ts` | Component Inspector data and the bar scales | P-3 |
 | `src/ui/icons/icon-names.ts`, `paths.ts`, `kind-icons.ts`, `icons.test.tsx` | Role icons, `ROLE_ICON`, `ROLE_LABEL` | P-3 |
 | `src/ui/state/view-state.ts`, `view-state.test.ts` | `mapSelection`, `map/select`, Esc | P-3 |
-| `src/ui/graphics/ImportBar.tsx`, `src/ui/graphics/bars.test.tsx` | Import-weight mini graphic | P-3 |
 | `src/ui/views/map/MapView.tsx`, `MapCard.tsx`, `MapEdges.tsx`, `MapHeader.tsx`, `MapView.module.css` | The Map view | P-3 |
-| `src/ui/views/map/map-camera.ts`, `map-nav.ts`, `map-text.ts`, `overlay.ts` | Fit and reveal, keyboard neighbors, header text, lane 07 seam | P-3 |
-| `src/ui/views/map/map-camera.test.ts`, `map-nav.test.ts`, `map-view.test.tsx` | Tests (Review Focus 1 UI, Review Focus 2 render) | P-3 |
+| `src/ui/views/map/map-camera.ts`, `map-nav.ts`, `map-text.ts`, `overlay.ts` | Fit and reveal, keyboard neighbors, header text and sentence links, lane 07 seam | P-3 |
+| `src/ui/views/map/map-camera.test.ts`, `map-nav.test.ts`, `map-text.test.ts`, `map-card.test.tsx`, `map-view.test.tsx` | Tests (Review Focus 1 UI, Review Focus 2 render) | P-3 |
 | `src/ui/inspector/ComponentInspector.tsx`, `ComponentInspector.module.css`, `component-inspector.test.tsx`, `Inspector.tsx` | Component Inspector and the Inspector switch | P-3 |
 | `src/ui/views/registry.ts` | The `map` entry points at `MapView` | P-3 |
 | `apps/trace-viewer-dev/src/overview-sample.ts`, `src/host.tsx`, `scripts/smoke.mjs` | `?overview=` and `?brief=1`; the `map`, `map-brief` and `map-rule` smoke screenshots | P-3 (P-4 and P-5 extend) |
@@ -145,15 +144,17 @@ Order: P-0 runs first and its gate H2 blocks P-3 and P-4 only. P-1 → P-2 run a
 
 **Interfaces:**
 - Consumes: the viewer's light tokens (`src/ui/tokens/tokens.ts` `LIGHT_TOKENS`), the Shell grid (`src/ui/shell/Shell.module.css`: 216 px Outline, 280 px Inspector, 200 px and 248 px under a 1180 px container), the icon family (`src/ui/icons/paths.ts`).
-- Produces: the approved PNGs that P-3, P-4 and P-5 compare their screenshots with, and the numbers P-2 encodes in `MAP_LEVEL_SPECS` (chip 220 × 48, row gap 20, gutter 40, side gutter 64; card 224 × 84, row gap 40, gutter 72, side gutter 112; two package chips of 108 × 18 under a card; `MAP_ICON_ONLY_K = 0.375`). A ruling at H2 that changes a number changes only these constants.
+- Produces: the approved PNGs that P-3, P-4 and P-5 compare their screenshots with, and the numbers P-2 and P-3 encode (one geometry for every level: 140 × 76 cards, side band 104 wide, row gap 16, gutter 22, margin 16, band label 44, no package chips; smooth edges; zoom bands at 0.7 and 1.4; `MAP_ICON_ONLY_K = 0.48`; Fit padding 20, 20 and 68 px). A ruling at H2 that changes a number changes only these constants. The revised mockups (commit `20404f9` on `ce/mockups`, "revise the Map for fit, edges, names and mini graphics") are the reference; the HTML listing in Step 2 is the first draft and is superseded by that file.
 
-The mockups draw what P-2 and P-3 build: role bands as columns (UI → API · IPC → Agents → Domain → Storage, then the side band), cards placed by the same constants, edges routed by the same rules (gutters and gap rows), the chip level at Fit, the card level when zoomed, one-hop accent edges and 30% dimming on selection, the component Inspector, and the Brief with its architecture card. The data is this repository's curated component table (the one P-5's fixture uses).
+The mockups draw what P-2 and P-3 build: role bands as columns (UI → API · IPC → Agents → Domain → Storage, then the side band), cards placed by the same constants, edges routed by the same rules (smooth curves through the gutters and the gap rows), Fit centered and filling the stage (the card level at 1440 px, the chip level at 1000 px), the detail level when zoomed, all of the selected card's edges in accent with the rest at 22%, the component Inspector, and the Brief with its architecture card. The data is this repository's curated component table (the one P-5's fixture uses).
 
 - [ ] **Step 1: Read the visual references**
 
 Read `~/.claude/projects/-jevcode/memory/ui-visual-taste.md`, the viewer spec §7.12 (tokens, rules, type, icon family), and look at `docs/superpowers/specs/2026-09-28-trace-viewer-mockups/canvas-1440.png` (Read shows PNGs). The Map mockup must read as the same product: light, color for state only, one shadow for elevation, no decorative borders, icons and mini graphics over text, tabular numbers, 12 px minimum text at the default zoom of each state.
 
 - [ ] **Step 2: Write `map.html`**
+
+The listing below is the first draft of `map.html` (chip 220 × 48 cards, package chips, dot grid, orthogonal edges). The approved revision replaced it (commit `20404f9` on `ce/mockups`); P-2 and P-3 follow the revision, so read its `map.html` and `map-revision-report.md` rather than copying this listing.
 
 Create `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map.html` (create the folder if V-0 has not):
 
@@ -504,7 +505,7 @@ camera(L, level === "chip" ? "fit" : "main");
 </html>
 ```
 
-The states: `default` (Fit, chip level, Brief with narrative), `zoomed` (card level at 92% centered on `desktop main`, external chips, Brief), `selected` (card level, `desktop main` selected, one-hop edges accent and the rest at 30%, component Inspector), `pending` (Fit, rule-based header with the partial, imports-not-analyzed and descriptions-pending notes, a Python component, rule-based fallbacks, the Brief card's pending note).
+The states (revised): `default` (Fit centered, card level at 1440 px, chip level at 1000 px, Brief with narrative), `zoomed` (detail level at 150%, packages inside the cards, Brief), `selected` (`desktop main` selected, all of its edges accent and the rest at 22%, component Inspector), `pending` (Fit, rule-based header with the partial, imports-not-analyzed and descriptions-pending notes, a Python component, rule-based fallbacks, the Brief card's pending note).
 
 - [ ] **Step 3: Write `brief-architecture.html`**
 
@@ -621,11 +622,11 @@ Expected: the last line is `RENDER_OK 10 png` (about a minute).
 
 Open each PNG with the Read tool. Check, and fix the HTML and re-render until each holds:
 
-- `map-1440.png`: six band columns left to right with their icons, names and counts; every card is a single row (role tile and name) at about 12 px; edges are thin neutral lines in the gutters and gap rows and none crosses a card; the header shows the headline, the Overview toggle and the narrative with component chips; the Brief on the right shows Now, Changes so far and the Architecture card with a thumbnail whose 4 touched cards are accent.
-- `map-1000.png`: the narrower Shell (200 px Outline, 248 px Inspector); the fit zoom is below 37.5%, so cards show only their role tiles and band labels show only icons and counts. This is the state the person rules on at H2 (spec alignment note 7).
-- `map-zoomed-*.png`: card-level cards with purpose, file count, language and the import-weight bar; up to two package chips under a card with readable names; 92% zoom label.
-- `map-selected-*.png`: `desktop main` has the accent ring and accent tile; its edges are accent; every other edge is at 30%; the component Inspector shows purpose, root path, files with "56 more", imports out and in with an example, external packages and This session.
-- `map-pending-*.png`: the header shows "22 components · TypeScript, JSON, Python", "Partial map · 20,000 files mapped", "Imports not analyzed for Python" and "Descriptions pending", all quiet ink with no red and no banner; cards fall back to their root paths at the card level; the Brief card says "Descriptions pending".
+- `map-1440.png`: six band lanes left to right with their icons, names and counts; the map is centered and runs the full stage height (k about 0.77); every name shows in full; every card has a footer with the role icon, a file-count bar and the count; edges are thin light curves in the gutters and gap rows, band-to-band only, and none passes under a card; the header shows the headline, the Overview toggle and two plain sentences with component links and "More"; the Brief on the right shows Now, Changes so far and the Architecture card with a thumbnail whose 4 touched cards are accent.
+- `map-1000.png`: the narrower Shell (200 px Outline, 248 px Inspector); the fit runs the full width (k about 0.52, the chip level) with every name readable at about 11 px.
+- `map-zoomed-*.png`: detail-level cards with the name, purpose, two packages, "n files" and the file-count bar; the hub glyph on `contracts`; 150% zoom label.
+- `map-selected-*.png`: `desktop main` has the accent ring; its edges, including same-band and hub edges, are accent and drawn last; every other edge is at 22%; the component Inspector shows purpose, root path, files with "56 more", imports out and in with an example, external packages and This session.
+- `map-pending-*.png`: the header shows "22 components" with "TypeScript · JSON · Python" in muted ink beside it, "Partial map · 20,000 files mapped", "Imports not analyzed for Python" and "Descriptions pending", all quiet ink with no red and no banner; cards fall back to their root paths at the card level; the Brief card says "Descriptions pending".
 - `brief-architecture-*.png`: six cards (three states at 280 and 248 px) with legible 12 px text.
 
 - [ ] **Step 6: Append the Phase B section to the mockups README**
@@ -635,17 +636,17 @@ If `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/README.md` d
 ```markdown
 ## Phase B: Map and Brief architecture card (P-0, gate H2)
 
-- `map.html` renders four states through `?state=`: `default` (Fit at the chip level, Brief), `zoomed` (card level at 92%, external chips), `selected` (`desktop main` selected, one-hop edges in accent, the rest at 30%, component Inspector), `pending` (rule-based header with the partial, imports-not-analyzed and descriptions-pending notes).
+- `map.html` renders four states through `?state=`: `default` (Fit centered, Brief), `zoomed` (detail level at 150%), `selected` (`desktop main` selected, all of its edges in accent, the rest at 22%, component Inspector), `pending` (rule-based header with the partial, imports-not-analyzed and descriptions-pending notes).
 - `brief-architecture.html` shows the Brief's architecture card at 280 px and 248 px: narrator text, narrator pending, fresh session.
 - PNGs: `map-1440.png`, `map-1000.png`, `map-zoomed-*.png`, `map-selected-*.png`, `map-pending-*.png`, `brief-architecture-*.png`; re-render with `bash render-p0.sh`.
-- Numbers the implementation encodes (`MAP_LEVEL_SPECS` in `packages/trace-viewer/src/layout/map-layout.ts`): chip 220 × 48, row gap 20, gutter 40, side gutter 64; card 224 × 84, row gap 40, gutter 72, side gutter 112; detail 280 × 124; two 108 × 18 package chips under a card; names hidden below 37.5% zoom.
+- Numbers the implementation encodes (`MAP_LEVEL_SPECS` in `packages/trace-viewer/src/layout/map-layout.ts`, `map-camera.ts`): one geometry for every level (140 × 76 cards, side band 104, row gap 16, gutter 22, margin 16, band label 44); zoom bands chip below 0.7, card below 1.4, detail from 1.4; Fit padding 20, 20 and 68 px; names hidden below 48% zoom; no package chips.
 
 Decisions for the person:
 
 1. Bands are columns, left to right: UI, API · IPC, Agents, Domain, Storage, then tests, tooling and config.
-2. Fit at 1440 px uses the chip level (names about 12 px); at 1000 px names hide below 37.5% and only role tiles show.
-3. Package chips sit under their card, two at most (108 px, so names stay readable); the Inspector lists all of them.
-4. Selecting a card dims other edges, not other cards.
+2. Fit centers the map and fills the stage: the card level at 1440 px, the chip level at 1000 px, with every name shown at both.
+3. Packages appear only inside detail-level cards (the top two); the Inspector lists all of them.
+4. At rest the Map draws band-to-band edges only; same-band and hub edges show when their card is selected or hovered. Selecting a card dims other edges, not other cards.
 5. Narrator states read as quiet words, never banners: "Descriptions pending" (shown), "Descriptions off" and "Descriptions unavailable" (ruling R3); a failed scan reads "Codebase map unavailable" with a Retry text button.
 
 H2 approval: PENDING
@@ -674,7 +675,7 @@ git add docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/README.m
 git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m "docs(mockups): record H2 approval of the Map mockups"
 ```
 
-Any ruling that changes a size, gutter or threshold is applied to `MAP_LEVEL_SPECS`, `MAP_CHIP` or `MAP_ICON_ONLY_K` in P-2 (if P-2 is done, as a P-3 pre-step, with the P-2 tests rerun). P-1 and P-2 do not wait for this gate.
+Any ruling that changes a size, gutter or threshold is applied to `MAP_LEVEL_SPECS`, the zoom thresholds or `MAP_ICON_ONLY_K` in P-2 (if P-2 is done, as a P-3 pre-step, with the P-2 tests rerun). P-1 and P-2 do not wait for this gate.
 
 ### Task P-1: Fold `overview_snapshot` into `TraceSession.overview` (incremental equals fresh)
 
@@ -1461,35 +1462,41 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
 export type MapBand = Role | "side";
 export const MAP_BAND_ORDER: readonly MapBand[];                 // ["ui", "api", "agent", "domain", "storage", "side"]
 export type MapLevel = "chip" | "card" | "detail";
-export interface MapLevelSpec { w: number; h: number; rowGap: number; gutter: number; sideGutter: number; chips: number }
-export const MAP_LEVEL_SPECS: { readonly [K in MapLevel]: MapLevelSpec };
-export const MAP_MARGIN: 48; MAP_BAND_LABEL_H: 32; MAP_CHIP: { w: 108; h: 18; gap: 4; top: 4 };
-export const MAP_LANE_STEP: 4; MAP_PORT_STEP: 4; MAP_SWEEPS: 4;
-export function mapLevelForZoom(k: number): MapLevel;            // chip < 0.5 ≤ card < 1.2 ≤ detail
-export function mapEdgeWidth(count: number): 1 | 2 | 3;          // ≤ 3 → 1, ≤ 15 → 2, else 3
+export interface MapLevelSpec { w: number; h: number; rowGap: number; gutter: number; sideW: number; chips: 0 }
+export const MAP_LEVEL_SPECS: { readonly [K in MapLevel]: MapLevelSpec };   // chip = card = detail = { w: 140, h: 76, sideW: 104, rowGap: 16, gutter: 22, chips: 0 }
+export const MAP_MARGIN: 16; MAP_BAND_LABEL_H: 44; MAP_LANE_PAD: 6 /* view only */; MAP_SWEEPS: 4;
+export function mapLevelForZoom(k: number): MapLevel;            // chip < 0.7 ≤ card < 1.4 ≤ detail
+export function mapEdgeWidth(count: number): 1 | 2 | 3;          // ≤ 3 → 1, ≤ 15 → 2, else 3 (px 1, 1.6, 2.4 in the view)
 export function bandOf(role: Role): MapBand;                     // tests, tooling, config → "side"
 export interface MapCard { id: string; band: MapBand; x: number; y: number; w: number; h: number }
-export interface MapEdgePath { from: string; to: string; count: number; width: 1 | 2 | 3; d: string }
-export interface MapExternalChip { name: string; x: number; y: number; nearComponent: string }
-export interface MapBandColumn { band: MapBand; x: number; w: number; count: number }
+export type MapEdgeKind = "adjacent" | "long" | "same";
+export interface MapEdgePath { from: string; to: string; count: number; width: 1 | 2 | 3; d: string; kind: MapEdgeKind }
+export interface MapExternalChip { name: string; x: number; y: number; nearComponent: string }   // type kept for interfaces §6.6; layoutMap never fills it
+export interface MapBandColumn { band: MapBand; x: number; w: number; count: number }          // w = spec.w, or spec.sideW for "side"
 export interface MapLayoutState { orderByBand: ReadonlyMap<string, readonly string[]>; repoRoot: string }
-export interface MapLayout { level: MapLevel; cards: readonly MapCard[]; edges: readonly MapEdgePath[]; externals: readonly MapExternalChip[];
+export interface MapLayout { level: MapLevel; cards: readonly MapCard[]; edges: readonly MapEdgePath[]; externals: readonly MapExternalChip[];   // externals is always []
   bands: readonly MapBandColumn[]; bounds: { w: number; h: number }; state: MapLayoutState }
 export function layoutMap(overview: OverviewModel, opts: { level: MapLevel }, prev?: MapLayoutState): MapLayout;
+export function mapImporterCounts(layoutEdges: readonly MapEdgePath[]): ReadonlyMap<string, number>;       // distinct importers per component (the hub glyph's number)
+export function mapHubIds(layoutEdges: readonly MapEdgePath[], componentCount: number): ReadonlySet<string>;  // ≥ max(6, ceil(n / 4)) distinct importers
 export function componentForPath(overview: OverviewModel, path: string): string | undefined;
 ```
 
-- Test-only: `arbOverviewSeed(options?)`, `arbOverviewSuccessor(seed)` (`overview-arbitraries.ts`); `expectNoOverlaps(layout)`, `expectNoCardCrossings(layout)`, `pathPoints(d)` (`map-checks.ts`).
+- Test-only: `arbOverviewSeed(options?)`, `arbOverviewSuccessor(seed)` (`overview-arbitraries.ts`); `expectNoOverlaps(layout)`, `expectNoCardCrossings(layout)`, `pathPoints(d)` (`map-checks.ts`; it parses `M`, `H`, `V`, `L` and `C`, sampling each cubic at t = 0, 1/8, …, 1).
 
-Rules (spec E12, §8.3), each pinned by a test below:
+Rules (spec E12, §8.3; the approved H2 Map mockup), each pinned by a test below:
 
-- **Bands.** One column per non-empty band in `MAP_BAND_ORDER`; empty bands take no space. The side band follows a wider gutter.
+- **Bands.** One column per non-empty band in `MAP_BAND_ORDER`; empty bands take no space. Every gutter is `spec.gutter` wide, the side band included; the side band's column and cards are `spec.sideW` wide, all others `spec.w`.
 - **Order within a band (fresh).** Start by name, then id; then 4 barycenter sweeps (left to right, right to left, …) over the bands with two or more cards. A card's barycenter is the count-weighted mean of its cross-band neighbors' normalized positions (index ÷ (band size − 1)); a card with no cross-band neighbor keeps its position; ties break by name, then id.
 - **Stickiness.** With `prev` for the same `repoRoot`, each band starts as `prev`'s order filtered to the components still in that band, and only new components (and those whose role moved them) are inserted, in name-then-id order, at `round(barycenter × band size)` over already placed neighbors, else at the end. A placed card never changes its order relative to another placed card in its band. A different `repoRoot` lays out fresh.
-- **Geometry.** Cards have the level's fixed size; card `y = MAP_MARGIN + MAP_BAND_LABEL_H + row × (h + rowGap)`, so every band shares one row pitch and the gap rows line up across bands.
-- **Edges.** Self edges, edges to unknown components and duplicate pairs are dropped. Same band: out of the left side, through the band's left gutter, into the target's left side. Adjacent bands: facing sides, straight when the ports line up, else one bend inside the gutter. Bands two or more apart: out through the gutter next to the source, along a lane in the gap row below the source card, through the gutter next to the target. Ports on one card side spread by `MAP_PORT_STEP` in the order of the other end's `y`; gutter and gap lanes are assigned in edge-key order (`from>to`), `MAP_LANE_STEP` apart. Width is `mapEdgeWidth(count)`.
-- **Externals.** At the `card` and `detail` levels each external goes under the card of its heaviest user (ties by component id), sorted by total count then name, at most `chips` per card; none at the `chip` level.
-- **Properties (property tests):** no card or chip overlap; no edge crosses a card other than its endpoints; every component appears exactly once; deterministic under shuffled components, edges and externals; sticky under drops, additions and role changes; an unchanged snapshot with `prev` reproduces `prev`'s cards.
+- **One geometry for all levels.** `MAP_LEVEL_SPECS.chip`, `.card` and `.detail` are the same object shape and values (`w` 140, `h` 76, `sideW` 104, `rowGap` 16, `gutter` 22, `chips` 0), so a zoom-level change never moves a card; only the view's card content changes. Card `y = MAP_MARGIN + MAP_BAND_LABEL_H + row × (h + rowGap)`, so every band shares one row pitch and the gap rows line up across bands. `bounds.w = lastColumn.x + lastColumn.w + MAP_MARGIN`; `bounds.h = MAP_MARGIN + MAP_BAND_LABEL_H + rows × (h + rowGap) − rowGap + MAP_MARGIN` (`MAP_MARGIN + MAP_BAND_LABEL_H + MAP_MARGIN` with no cards).
+- **Edge normalization and ports.** Self edges, edges to unknown components and duplicate pairs are dropped. For each kept edge `L` is the endpoint with the smaller column (for one column, the smaller row) and `R` the other. A card has one port per side, at the side's vertical center; ports do not spread and no gutter lane is assigned. `y1 = L.y + h/2`, `y2 = R.y + h/2`. Direction is not drawn (the Inspector carries imports in and out). Width is `mapEdgeWidth(count)`; `kind` is `"adjacent"`, `"long"` or `"same"`.
+- **Adjacent bands.** `x1 = L.x + L.w`, `x2 = R.x`, `mx = (x1 + x2) / 2`: `M x1 y1 C mx y1 mx y2 x2 y2`, a smooth S-curve inside the gutter (straight when `y1 = y2`).
+- **Bands two or more apart.** `b = clamp(y2 ≥ y1 ? L.row + 1 : L.row, 1, rows)` where `rows` is the largest band size; `yc = MAP_MARGIN + MAP_BAND_LABEL_H + b × (h + rowGap) − rowGap / 2` lies in a gap row and is free in every column. With `hh = gutter / 2`, `gx1 = x1 + gutter`, `gx2 = x2 − gutter`: `M x1 y1 C x1+hh y1 x1+hh yc gx1 yc H gx2 C gx2+hh yc gx2+hh y2 x2 y2`. Edges from one card toward the same side share `yc` exactly, which bundles them into one line.
+- **Same band.** `load[col] = { left, right }` counts the cross-band edges whose `R` (left) or `L` (right) is in that column; the first column's left and the last column's right are margins with load 0. Use the right side when `load.right ≤ load.left`, else the left; `x0` is that side's x and `bulge = min(gutter / 2 − 2, 4 + 3 × (R.row − L.row))`, `bx = x0 ± bulge`: `M x0 y1 C bx y1 bx y2 x0 y2`.
+- **Hubs.** `mapImporterCounts(edges)` counts the distinct importers (`from` ids) of each component; `mapHubIds(edges, n)` returns the components with at least `max(6, ceil(n / 4))` of them (`n` is the card count). The view hides edges into a hub at rest and shows the importer count in the hub glyph.
+- **Externals.** `layoutMap` places no chips at any level (`externals: []`). A card shows its top two `externalDeps` at the detail level inside itself (a view concern), and the Inspector lists all of them.
+- **Properties (property tests):** no card overlap; no edge crosses a card other than its endpoints (curves are sampled by `pathPoints`); every edge starts and ends on side centers of its two cards; every component appears exactly once; deterministic under shuffled components, edges and externals, with the same `d` and `kind` for every edge; sticky under drops, additions and role changes, and an edge between two cards that keep their positions keeps its adjacent or long path; an unchanged snapshot with `prev` reproduces `prev`'s cards and edges; the hub set is the importer-count rule, whatever the edge order.
 
 - [ ] **Step 1: Write the arbitraries and the shared checks**
 
@@ -1593,18 +1600,35 @@ Create `packages/trace-viewer/src/test-support/map-checks.ts`:
 // Test-only: geometric checks shared by the Map layout property and fixture tests. Excluded from the build.
 import { expect } from "vitest";
 
-import { MAP_CHIP, type MapLayout } from "../layout/map-layout.js";
+import type { MapLayout } from "../layout/map-layout.js";
 
 interface Box { label: string; x: number; y: number; w: number; h: number }
 
-/** The polyline of an edge path made of absolute M, H, V and L commands. */
+/**
+ * The polyline of an edge path made of absolute M, H, V, L and C commands. Each cubic is sampled at t = 0, 1/8, …, 1,
+ * so a curve is checked as eight chords; the layout keeps every curve inside a gutter or a gap row, far from a card edge.
+ */
 export function pathPoints(d: string): { x: number; y: number }[] {
   const points: { x: number; y: number }[] = [];
   let x = 0;
   let y = 0;
-  for (const match of d.matchAll(/([MHVL])([^MHVL]*)/g)) {
+  for (const match of d.matchAll(/([MHVLC])([^MHVLC]*)/g)) {
     const command = match[1];
     const values = (match[2] ?? "").trim().split(/[\s,]+/).filter((v) => v !== "").map(Number);
+    if (command === "C") {
+      const [c1x = x, c1y = y, c2x = x, c2y = y, ex = x, ey = y] = values;
+      for (let i = 0; i <= 8; i += 1) {
+        const t = i / 8;
+        const u = 1 - t;
+        points.push({
+          x: u * u * u * x + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * ex,
+          y: u * u * u * y + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ey,
+        });
+      }
+      x = ex;
+      y = ey;
+      continue;
+    }
     if (command === "H") x = values[0] ?? x;
     else if (command === "V") y = values[0] ?? y;
     else {
@@ -1640,10 +1664,7 @@ function segmentEnters(a: { x: number; y: number }, b: { x: number; y: number },
 }
 
 export function expectNoOverlaps(layout: MapLayout): void {
-  const boxes: Box[] = [
-    ...layout.cards.map((card) => ({ label: `card ${card.id}`, x: card.x, y: card.y, w: card.w, h: card.h })),
-    ...layout.externals.map((chip) => ({ label: `chip ${chip.name}@${chip.nearComponent}`, x: chip.x, y: chip.y, w: MAP_CHIP.w, h: MAP_CHIP.h })),
-  ];
+  const boxes: Box[] = layout.cards.map((card) => ({ label: `card ${card.id}`, x: card.x, y: card.y, w: card.w, h: card.h }));
   for (let i = 0; i < boxes.length; i += 1) {
     for (let j = i + 1; j < boxes.length; j += 1) {
       const a = boxes[i];
@@ -1655,6 +1676,7 @@ export function expectNoOverlaps(layout: MapLayout): void {
   }
 }
 
+/** No edge, curve or line, passes under a card other than its two endpoints (spec §8.3). */
 export function expectNoCardCrossings(layout: MapLayout): void {
   for (const edge of layout.edges) {
     const points = pathPoints(edge.d);
@@ -1666,6 +1688,20 @@ export function expectNoCardCrossings(layout: MapLayout): void {
         if (a === undefined || b === undefined) continue;
         expect(segmentEnters(a, b, { label: card.id, ...card }), `${edge.from}>${edge.to} crosses ${card.id}: ${edge.d}`).toBe(false);
       }
+    }
+  }
+}
+
+/** Every edge starts and ends at the vertical center of a side of its two cards (one port per side, no spreading). */
+export function expectEdgesOnPorts(layout: MapLayout): void {
+  for (const edge of layout.edges) {
+    const ends = [edge.from, edge.to].map((id) => layout.cards.find((card) => card.id === id));
+    const points = pathPoints(edge.d);
+    for (const point of [points[0], points.at(-1)]) {
+      const onPort = ends.some(
+        (card) => card !== undefined && point !== undefined && (point.x === card.x || point.x === card.x + card.w) && point.y === card.y + card.h / 2,
+      );
+      expect(onPort, `${edge.from}>${edge.to} has an end off a port: ${edge.d}`).toBe(true);
     }
   }
 }
@@ -1682,12 +1718,13 @@ import { buildOverviewModel } from "../model/index.js";
 import { componentId, overviewSnapshot, type OverviewSeed } from "../test-support/overview-builder.js";
 import {
   MAP_BAND_LABEL_H,
-  MAP_CHIP,
   MAP_LEVEL_SPECS,
   MAP_MARGIN,
   componentForPath,
   layoutMap,
   mapEdgeWidth,
+  mapHubIds,
+  mapImporterCounts,
   mapLevelForZoom,
   type MapCard,
   type MapEdgePath,
@@ -1695,8 +1732,9 @@ import {
   type MapLayoutState,
 } from "./map-layout.js";
 
-// Spec E12 and §8.3: role bands left to right, barycenter order within a band, sticky order, fixed card sizes per
-// level, edges through gutters and gap rows.
+// Spec E12 and §8.3 and the approved H2 Map mockup: role bands left to right, barycenter order within a band, sticky
+// order, one geometry for every level, smooth edges through gutters and gap rows. The literal paths below are worked by
+// hand from the geometry: top = 16 + 44 = 60, row pitch 92, column x = 16, 178, 340, 502, 664 (140 wide, 22 gutters).
 
 const model = (seed: OverviewSeed) => buildOverviewModel(overviewSnapshot(seed), 1);
 
@@ -1715,8 +1753,8 @@ function edge(layout: MapLayout, from: string, to: string): MapEdgePath {
 const order = (layout: MapLayout, band: string): readonly string[] => layout.state.orderByBand.get(band) ?? [];
 
 describe("mapLevelForZoom and mapEdgeWidth", () => {
-  it("switches level at 0.5 and 1.2 (spec §8.3)", () => {
-    expect([0.2, 0.49, 0.5, 1.19, 1.2, 2].map(mapLevelForZoom)).toEqual(["chip", "chip", "card", "card", "detail", "detail"]);
+  it("switches level at 0.7 and 1.4 (spec §8.3)", () => {
+    expect([0.2, 0.69, 0.7, 1.39, 1.4, 2].map(mapLevelForZoom)).toEqual(["chip", "chip", "card", "card", "detail", "detail"]);
   });
 
   it("buckets import counts into 1 to 3 px (spec §3.4)", () => {
@@ -1746,8 +1784,10 @@ describe("layoutMap bands and geometry", () => {
     expect([...xs].sort((a, b) => a - b)).toEqual(xs);
     const spec = MAP_LEVEL_SPECS.card;
     const [storage, side] = layout.bands.slice(-2);
-    expect((side?.x ?? 0) - ((storage?.x ?? 0) + spec.w)).toBe(spec.sideGutter);
-    expect(card(layout, "tests").band).toBe("side");
+    // The side band follows the normal gutter and is narrower; its cards fill it.
+    expect((side?.x ?? 0) - ((storage?.x ?? 0) + spec.w)).toBe(spec.gutter);
+    expect(side?.w).toBe(spec.sideW);
+    expect(card(layout, "tests")).toMatchObject({ band: "side", w: spec.sideW });
     expect(card(layout, "scripts").band).toBe("side");
   });
 
@@ -1757,7 +1797,18 @@ describe("layoutMap bands and geometry", () => {
     expect(card(layout, "pkg/db").x - (card(layout, "apps/web").x + MAP_LEVEL_SPECS.card.w)).toBe(MAP_LEVEL_SPECS.card.gutter);
   });
 
-  it("sizes and stacks cards by level, with one row pitch for every band", () => {
+  it("uses one geometry for every level, so a zoom change never moves a card", () => {
+    expect(MAP_LEVEL_SPECS.chip).toEqual({ w: 140, h: 76, sideW: 104, rowGap: 16, gutter: 22, chips: 0 });
+    expect(MAP_LEVEL_SPECS.card).toEqual(MAP_LEVEL_SPECS.chip);
+    expect(MAP_LEVEL_SPECS.detail).toEqual(MAP_LEVEL_SPECS.chip);
+    const layouts = (["chip", "card", "detail"] as const).map((level) => layoutMap(all, { level }));
+    for (const layout of layouts) {
+      expect(layout.cards).toEqual(layouts[0]?.cards);
+      expect(layout.bounds).toEqual(layouts[0]?.bounds);
+    }
+  });
+
+  it("sizes and stacks cards with one row pitch for every band, and bounds that end at the last card", () => {
     for (const level of ["chip", "card", "detail"] as const) {
       const spec = MAP_LEVEL_SPECS[level];
       const layout = layoutMap(model({ components: [{ rootPath: "pkg/a", role: "domain" }, { rootPath: "pkg/b", role: "domain" }] }), { level });
@@ -1765,7 +1816,10 @@ describe("layoutMap bands and geometry", () => {
       const [a, b] = layout.cards;
       expect(a).toMatchObject({ w: spec.w, h: spec.h, x: MAP_MARGIN, y: MAP_MARGIN + MAP_BAND_LABEL_H });
       expect((b?.y ?? 0) - (a?.y ?? 0)).toBe(spec.h + spec.rowGap);
-      expect(layout.bounds).toEqual({ w: MAP_MARGIN + spec.w + MAP_MARGIN, h: MAP_MARGIN + MAP_BAND_LABEL_H + 2 * (spec.h + spec.rowGap) + MAP_MARGIN });
+      expect(layout.bounds).toEqual({
+        w: MAP_MARGIN + spec.w + MAP_MARGIN,
+        h: MAP_MARGIN + MAP_BAND_LABEL_H + 2 * (spec.h + spec.rowGap) - spec.rowGap + MAP_MARGIN,
+      });
     }
   });
 
@@ -1786,7 +1840,7 @@ describe("layoutMap order within a band", () => {
     expect(order(layout, "domain")).toEqual(["pkg/a", "pkg/b", "pkg/c"].map(componentId));
   });
 
-  it("orders by barycenter so crossing edges uncross and run straight", () => {
+  it("orders by barycenter so crossing edges uncross and run flat", () => {
     // By name: ui [a, b], domain [x, y]; edges a→y and b→x cross. The sweeps give ui [b, a] and domain [x, y].
     const layout = layoutMap(
       model({
@@ -1798,15 +1852,24 @@ describe("layoutMap order within a band", () => {
     expect(order(layout, "ui")).toEqual(["apps/b", "apps/a"].map(componentId));
     expect(order(layout, "domain")).toEqual(["pkg/x", "pkg/y"].map(componentId));
     expect(card(layout, "apps/a").y).toBe(card(layout, "pkg/y").y);
-    expect(edge(layout, "apps/a", "pkg/y").d).toMatch(/^M-?[\d.]+ -?[\d.]+H-?[\d.]+$/);
-    expect(edge(layout, "apps/b", "pkg/x").d).toMatch(/^M-?[\d.]+ -?[\d.]+H-?[\d.]+$/);
+    // Equal port heights give a flat S-curve: M x y C mx y mx y x2 y.
+    const flat = /^M[\d.]+ ([\d.]+)C[\d.]+ \1 [\d.]+ \1 [\d.]+ \1$/;
+    expect(edge(layout, "apps/a", "pkg/y").d).toMatch(flat);
+    expect(edge(layout, "apps/b", "pkg/x").d).toMatch(flat);
   });
 });
 
 describe("layoutMap edge routes", () => {
   const spec = MAP_LEVEL_SPECS.card;
+  const FIVE = [
+    { rootPath: "apps/web", role: "ui" },
+    { rootPath: "srv/api", role: "api" },
+    { rootPath: "pkg/agent", role: "agent" },
+    { rootPath: "pkg/core", role: "domain" },
+    { rootPath: "pkg/db", role: "storage" },
+  ] as const;
 
-  it("routes an adjacent-band edge whose ports differ with one bend inside the gutter", () => {
+  it("routes an adjacent-band edge as one smooth S-curve in the gutter", () => {
     const layout = layoutMap(
       model({
         components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "srv/a", role: "api" }, { rootPath: "srv/b", role: "api" }],
@@ -1814,55 +1877,80 @@ describe("layoutMap edge routes", () => {
       }),
       { level: "card" },
     );
-    const web = card(layout, "apps/web");
-    const target = card(layout, "srv/b");
-    const match = /^M([\d.]+) ([\d.]+)H([\d.]+)L([\d.]+) ([\d.]+)$/.exec(edge(layout, "apps/web", "srv/b").d);
-    expect(match).not.toBeNull();
-    const [, sx, , gx, ex] = (match ?? []).map(Number);
-    expect(sx).toBe(web.x + web.w);
-    expect(ex).toBe(target.x);
-    expect(gx).toBeGreaterThan(web.x + web.w);
-    expect(gx).toBeLessThan(target.x);
+    const route = edge(layout, "apps/web", "srv/b");
+    // web: x 16..156, y 60..136 (port y 98); srv/b: x 178, row 1, y 152..228 (port y 190); mx = (156 + 178) / 2.
+    expect(route.d).toBe("M156 98C167 98 167 190 178 190");
+    expect(route.kind).toBe("adjacent");
+    expect(route.width).toBe(1);
   });
 
-  it("routes a same-band edge through the band's left gutter", () => {
+  it("routes an edge between bands two or more apart through the gap row below its source", () => {
+    const layout = layoutMap(model({ components: [...FIVE], edges: [{ from: "apps/web", to: "pkg/db", count: 20 }] }), { level: "card" });
+    const web = card(layout, "apps/web");
+    const route = edge(layout, "apps/web", "pkg/db");
+    expect(route.kind).toBe("long");
+    expect(route.width).toBe(3);
+    // The gap row below row 0 is y 136..152; its center 144 = 60 + 92 − 16 / 2. gx1 = 156 + 22, gx2 = 664 − 22.
+    expect(route.d).toBe("M156 98C167 98 167 144 178 144H642C653 144 653 98 664 98");
+    expect(144).toBeGreaterThan(web.y + web.h);
+    expect(144).toBeLessThan(web.y + web.h + spec.rowGap);
+  });
+
+  it("uses the gap row above the source when the target is higher", () => {
+    const layout = layoutMap(
+      model({
+        components: [
+          { rootPath: "apps/u1", role: "ui" },
+          { rootPath: "apps/u2", role: "ui" },
+          { rootPath: "srv/x", role: "api" },
+          { rootPath: "pkg/s", role: "storage" },
+          { rootPath: "pkg/t", role: "storage" },
+        ],
+        edges: [{ from: "apps/u2", to: "pkg/s", count: 5 }, { from: "apps/u2", to: "pkg/t", count: 5 }],
+      }),
+      { level: "card" },
+    );
+    // u2 is row 1 (port y 190). Toward s (row 0, port y 98) the channel is the gap above row 1: 60 + 92 − 8 = 144.
+    // Toward t (row 1, port y 190) it is the gap below row 1: 60 + 2 × 92 − 8 = 236.
+    expect(edge(layout, "apps/u2", "pkg/s").d).toBe("M156 190C167 190 167 144 178 144H318C329 144 329 98 340 98");
+    expect(edge(layout, "apps/u2", "pkg/t").d).toBe("M156 190C167 190 167 236 178 236H318C329 236 329 190 340 190");
+  });
+
+  it("bundles the edges that leave one card toward the same side onto one channel", () => {
+    const layout = layoutMap(
+      model({
+        components: [{ rootPath: "apps/u", role: "ui" }, { rootPath: "srv/x", role: "api" }, { rootPath: "pkg/s", role: "storage" }, { rootPath: "pkg/t", role: "storage" }],
+        edges: [{ from: "apps/u", to: "pkg/s", count: 1 }, { from: "apps/u", to: "pkg/t", count: 1 }],
+      }),
+      { level: "card" },
+    );
+    // Both targets are at or below u's port, so both use the gap below row 0 (y 144) and overlap from gx1 to gx2.
+    expect(edge(layout, "apps/u", "pkg/s").d).toBe("M156 98C167 98 167 144 178 144H318C329 144 329 98 340 98");
+    expect(edge(layout, "apps/u", "pkg/t").d).toBe("M156 98C167 98 167 144 178 144H318C329 144 329 190 340 190");
+  });
+
+  it("routes a same-band edge as a shallow bulge on the less loaded side", () => {
     const layout = layoutMap(
       model({ components: [{ rootPath: "pkg/a", role: "domain" }, { rootPath: "pkg/b", role: "domain" }], edges: [{ from: "pkg/a", to: "pkg/b", count: 1 }] }),
       { level: "card" },
     );
-    const a = card(layout, "pkg/a");
-    const b = card(layout, "pkg/b");
-    const match = /^M([\d.]+) [\d.]+H([\d.]+)V[\d.]+H([\d.]+)$/.exec(edge(layout, "pkg/a", "pkg/b").d);
-    expect(match).not.toBeNull();
-    const [, sx, gx, ex] = (match ?? []).map(Number);
-    expect(sx).toBe(a.x);
-    expect(ex).toBe(b.x);
-    expect(gx).toBeLessThan(a.x);
-    expect(gx).toBeGreaterThan(0);
-  });
-
-  it("routes a long edge along the gap row below its source, under the package chips", () => {
-    const layout = layoutMap(
+    // No cross-band edges: the loads tie and the right side wins. bulge = min(11 − 2, 4 + 3 × 1) = 7.
+    expect(edge(layout, "pkg/a", "pkg/b")).toMatchObject({ kind: "same", d: "M156 98C163 98 163 190 156 190" });
+    const loaded = layoutMap(
       model({
-        components: [
-          { rootPath: "apps/web", role: "ui" },
-          { rootPath: "srv/api", role: "api" },
-          { rootPath: "pkg/agent", role: "agent" },
-          { rootPath: "pkg/core", role: "domain" },
-          { rootPath: "pkg/db", role: "storage" },
-        ],
-        edges: [{ from: "apps/web", to: "pkg/db", count: 20 }],
+        components: [{ rootPath: "pkg/a", role: "domain" }, { rootPath: "pkg/b", role: "domain" }, { rootPath: "pkg/db", role: "storage" }],
+        edges: [{ from: "pkg/a", to: "pkg/b", count: 1 }, { from: "pkg/a", to: "pkg/db", count: 1 }],
       }),
       { level: "card" },
     );
-    const web = card(layout, "apps/web");
-    const route = edge(layout, "apps/web", "pkg/db");
-    expect(route.width).toBe(3);
-    const match = /^M[\d.]+ [\d.]+H[\d.]+V([\d.]+)H[\d.]+V[\d.]+H[\d.]+$/.exec(route.d);
-    expect(match).not.toBeNull();
-    const gy = Number(match?.[1]);
-    expect(gy).toBeGreaterThanOrEqual(web.y + web.h + MAP_CHIP.top + MAP_CHIP.h);
-    expect(gy).toBeLessThan(web.y + web.h + spec.rowGap);
+    // The edge to storage already leaves a's right side, so the same-band edge takes the left (the margin).
+    expect(edge(loaded, "pkg/a", "pkg/b").d).toBe("M16 98C9 98 9 190 16 190");
+  });
+
+  it("draws the same path whichever way the import points", () => {
+    const forward = layoutMap(model({ components: [...FIVE], edges: [{ from: "apps/web", to: "pkg/db", count: 2 }] }), { level: "card" });
+    const backward = layoutMap(model({ components: [...FIVE], edges: [{ from: "pkg/db", to: "apps/web", count: 2 }] }), { level: "card" });
+    expect(edge(forward, "apps/web", "pkg/db").d).toBe(edge(backward, "pkg/db", "apps/web").d);
   });
 
   it("drops self edges, edges to unknown components and duplicate pairs", () => {
@@ -1884,45 +1972,35 @@ describe("layoutMap edge routes", () => {
   });
 });
 
+describe("mapHubIds (a hub is imported by at least max(6, ceil(n / 4)) components)", () => {
+  const importers = (to: string, count: number): MapEdgePath[] =>
+    Array.from({ length: count }, (_, i) => ({ from: `cmp_${String(i).padStart(12, "0")}`, to, count: 1, width: 1 as const, d: "", kind: "adjacent" as const }));
+
+  it("uses the floor of 6 for a small map", () => {
+    expect([...mapHubIds([...importers("hub", 6), ...importers("near", 5)], 21)]).toEqual(["hub"]);
+  });
+
+  it("grows with the component count", () => {
+    // n = 40 needs 10 importers; n = 200 needs 50.
+    expect(mapHubIds(importers("hub", 9), 40).size).toBe(0);
+    expect(mapHubIds(importers("hub", 10), 40).size).toBe(1);
+    expect(mapHubIds(importers("hub", 49), 200).size).toBe(0);
+    expect(mapHubIds(importers("hub", 50), 200).size).toBe(1);
+  });
+
+  it("counts distinct importers, not edges", () => {
+    expect(mapHubIds([...importers("hub", 5), ...importers("hub", 5)], 21).size).toBe(0);
+    expect(mapImporterCounts([...importers("hub", 5), ...importers("hub", 5), ...importers("other", 2)])).toEqual(new Map([["hub", 5], ["other", 2]]));
+  });
+});
+
 describe("layoutMap externals", () => {
-  const seed: OverviewSeed = {
-    components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "pkg/db", role: "storage" }],
-    externals: [
-      { name: "react", usedBy: [{ rootPath: "apps/web", count: 12 }] },
-      { name: "d3-zoom", usedBy: [{ rootPath: "apps/web", count: 5 }] },
-      { name: "lodash", usedBy: [{ rootPath: "apps/web", count: 2 }] },
-      { name: "clsx", usedBy: [{ rootPath: "apps/web", count: 1 }] },
-      { name: "better-sqlite3", usedBy: [{ rootPath: "pkg/db", count: 9 }, { rootPath: "apps/web", count: 1 }] },
-    ],
-  };
-  const near = (layout: MapLayout, rootPath: string) =>
-    layout.externals.filter((chip) => chip.nearComponent === componentId(rootPath)).map((chip) => chip.name);
-
-  it("puts at most two chips under the card of each package's heaviest user, heaviest first", () => {
-    const layout = layoutMap(model(seed), { level: "card" });
-    const web = card(layout, "apps/web");
-    const db = card(layout, "pkg/db");
-    expect(MAP_LEVEL_SPECS.card.chips).toBe(2);
-    expect(near(layout, "apps/web")).toEqual(["react", "d3-zoom"]);
-    expect(near(layout, "pkg/db")).toEqual(["better-sqlite3"]);
-    expect(layout.externals.find((chip) => chip.name === "react")).toEqual({
-      name: "react", x: web.x, y: web.y + web.h + MAP_CHIP.top, nearComponent: componentId("apps/web"),
-    });
-    expect(layout.externals.find((chip) => chip.name === "d3-zoom")?.x).toBe(web.x + MAP_CHIP.w + MAP_CHIP.gap);
-    expect(layout.externals.some((chip) => chip.name === "lodash" || chip.name === "clsx")).toBe(false);
-    expect(layout.externals.find((chip) => chip.name === "better-sqlite3")?.x).toBe(db.x);
-  });
-
-  it("gives a tied package to the smaller component id", () => {
-    const tied = layoutMap(
-      model({ ...seed, externals: [{ name: "zod", usedBy: [{ rootPath: "pkg/db", count: 3 }, { rootPath: "apps/web", count: 3 }] }] }),
-      { level: "card" },
-    );
-    expect(tied.externals.map((chip) => chip.nearComponent)).toEqual([[componentId("apps/web"), componentId("pkg/db")].sort()[0]]);
-  });
-
-  it("shows no chips at the chip level", () => {
-    expect(layoutMap(model(seed), { level: "chip" }).externals).toEqual([]);
+  it("places no chips at any level; packages show inside detail cards and in the Inspector", () => {
+    const seed: OverviewSeed = {
+      components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "pkg/db", role: "storage" }],
+      externals: [{ name: "react", usedBy: [{ rootPath: "apps/web", count: 12 }] }],
+    };
+    for (const level of ["chip", "card", "detail"] as const) expect(layoutMap(model(seed), { level }).externals).toEqual([]);
   });
 });
 
@@ -1997,8 +2075,8 @@ Create `packages/trace-viewer/src/layout/map-layout.ts`:
 ```ts
 // Map layout (spec E12, §8.3): pure, React-free and clock-free. Role bands are columns left to right; a band's order
 // comes from a barycenter heuristic (4 sweeps, tie-break by name then id) and stays sticky across snapshots of the same
-// repo; cards have a fixed size per zoom level; edges run through band gutters and the gap rows between cards, so no
-// edge crosses a card other than its endpoints.
+// repo; cards have one fixed size for every zoom level; edges are smooth curves through band gutters and the gap rows
+// between cards, so no edge crosses a card other than its endpoints.
 import type { Component, ComponentEdge, Role } from "@jevcode/contracts";
 
 import { componentIdForPath, type OverviewModel } from "../model/index.js";
@@ -2012,31 +2090,31 @@ export type MapLevel = "chip" | "card" | "detail";
 export interface MapLevelSpec {
   w: number;
   h: number;
-  /** Space below each card: its package chips, then the gap-row edge lanes. */
+  /** Space between cards of a column; its center line is the channel long edges run along. */
   rowGap: number;
+  /** Width of every gutter between bands, the side band's included. */
   gutter: number;
-  /** Gutter before the side band. */
-  sideGutter: number;
-  /** Package chips under a card; 0 hides them. */
-  chips: number;
+  /** Width of the side band (tests, tooling, config); it follows the normal gutter. */
+  sideW: number;
+  /** Package chips beside cards: none at any level (packages show inside detail-level cards). */
+  chips: 0;
 }
 
-/** World px at zoom 1 (approved at gate H2, P-0). The chip level is drawn for zooms below 0.5, so its text is large. */
-export const MAP_LEVEL_SPECS: { readonly [K in MapLevel]: MapLevelSpec } = {
-  chip: { w: 220, h: 48, rowGap: 20, gutter: 40, sideGutter: 64, chips: 0 },
-  card: { w: 224, h: 84, rowGap: 40, gutter: 72, sideGutter: 112, chips: 2 },
-  detail: { w: 280, h: 124, rowGap: 40, gutter: 72, sideGutter: 112, chips: 2 },
-};
-export const MAP_MARGIN = 48;
-export const MAP_BAND_LABEL_H = 32;
-export const MAP_CHIP = { w: 108, h: 18, gap: 4, top: 4 } as const;
-export const MAP_LANE_STEP = 4;
-export const MAP_PORT_STEP = 4;
+/**
+ * World px (approved at gate H2, revised Map mockup). One geometry serves every level, so zooming never moves a card;
+ * only the card's content changes with the level.
+ */
+const GEOMETRY: MapLevelSpec = { w: 140, h: 76, sideW: 104, rowGap: 16, gutter: 22, chips: 0 };
+export const MAP_LEVEL_SPECS: { readonly [K in MapLevel]: MapLevelSpec } = { chip: GEOMETRY, card: GEOMETRY, detail: GEOMETRY };
+export const MAP_MARGIN = 16;
+export const MAP_BAND_LABEL_H = 44;
+/** The lane background extends this far beyond a band's cards; used by the view only. */
+export const MAP_LANE_PAD = 6;
 export const MAP_SWEEPS = 4;
 
-/** Spec §8.3 zoom bands: chip below 0.5, card from 0.5 to below 1.2, detail from 1.2. */
+/** Spec §8.3 zoom bands: chip below 0.7, card from 0.7 to below 1.4, detail from 1.4. */
 export function mapLevelForZoom(k: number): MapLevel {
-  return k < 0.5 ? "chip" : k < 1.2 ? "card" : "detail";
+  return k < 0.7 ? "chip" : k < 1.4 ? "card" : "detail";
 }
 
 /** Spec §3.4: edge width follows the import count in 1 to 3 px buckets. */
@@ -2049,7 +2127,10 @@ export function bandOf(role: Role): MapBand {
 }
 
 export interface MapCard { id: string; band: MapBand; x: number; y: number; w: number; h: number }
-export interface MapEdgePath { from: string; to: string; count: number; width: 1 | 2 | 3; d: string }
+/** `adjacent`: neighboring bands; `long`: two or more bands apart (gap channel); `same`: one band. Additive to interfaces §6.6. */
+export type MapEdgeKind = "adjacent" | "long" | "same";
+export interface MapEdgePath { from: string; to: string; count: number; width: 1 | 2 | 3; d: string; kind: MapEdgeKind }
+/** The interfaces' external type; layoutMap never fills it (spec alignment note 5). */
 export interface MapExternalChip { name: string; x: number; y: number; nearComponent: string }
 export interface MapBandColumn { band: MapBand; x: number; w: number; count: number }
 export interface MapLayoutState { orderByBand: ReadonlyMap<string, readonly string[]>; repoRoot: string }
@@ -2059,6 +2140,7 @@ export interface MapLayout {
   cards: readonly MapCard[];
   /** Sorted by `from>to`. */
   edges: readonly MapEdgePath[];
+  /** Always empty: packages show inside detail-level cards and in the Inspector. */
   externals: readonly MapExternalChip[];
   /** Non-empty bands, left to right. */
   bands: readonly MapBandColumn[];
@@ -2194,135 +2276,82 @@ function stickyOrder(graph: Graph, prev: MapLayoutState): Order {
 }
 
 interface Placed { card: MapCard; col: number; row: number }
-type Side = "L" | "R";
-interface Route {
-  edge: ComponentEdge;
-  a: Placed;
-  b: Placed;
-  kind: "same" | "adjacent" | "long";
-  aSide: Side;
-  bSide: Side;
-  g1: number;
-  g2: number;
-  aOffset: number;
-  bOffset: number;
-}
-interface PortEntry { route: Route; end: "a" | "b"; y: number }
 
-function routeEdges(graph: Graph, placed: ReadonlyMap<string, Placed>, bands: readonly MapBandColumn[], spec: MapLevelSpec, top: number): MapEdgePath[] {
+/**
+ * Smooth routes (revised Map mockup; spec §8.3). One port per card side, at its vertical center. Adjacent bands: one
+ * S-curve in the gutter. Bands two or more apart: leave into the gutter, run along the gap row between cards (all bands
+ * share one row pitch, so it is free in every column), come back through the gutter before the target. Same band: a
+ * shallow bulge on the less loaded side. Edges leaving one card toward one side at one channel share it exactly.
+ * No lane assignment, spreading or per-edge string keys: each edge is O(1) after one pass over the edges for loads.
+ */
+function routeEdges(graph: Graph, placed: ReadonlyMap<string, Placed>, bands: readonly MapBandColumn[], spec: MapLevelSpec, top: number, rows: number): MapEdgePath[] {
   // graph.edges is sorted by (from, to); component ids have one fixed length, so this is also edge-key order.
-  const routes: Route[] = [];
-  const ports = new Map<string, { L: PortEntry[]; R: PortEntry[] }>();
-  const port = (id: string, side: Side): PortEntry[] => {
-    let sides = ports.get(id);
-    if (sides === undefined) {
-      sides = { L: [], R: [] };
-      ports.set(id, sides);
-    }
-    return sides[side];
-  };
+  interface Normalized { edge: ComponentEdge; l: Placed; r: Placed }
+  const load = bands.map(() => ({ left: 0, right: 0 }));
+  const normalized: Normalized[] = [];
   for (const edge of graph.edges) {
     const a = placed.get(edge.from);
     const b = placed.get(edge.to);
     if (a === undefined || b === undefined) continue;
-    const d = b.col - a.col;
-    const right = d > 0;
-    const route: Route =
-      d === 0
-        ? { edge, a, b, kind: "same", aSide: "L", bSide: "L", g1: a.col, g2: a.col, aOffset: 0, bOffset: 0 }
-        : Math.abs(d) === 1
-          ? { edge, a, b, kind: "adjacent", aSide: right ? "R" : "L", bSide: right ? "L" : "R", g1: right ? b.col : a.col, g2: right ? b.col : a.col, aOffset: 0, bOffset: 0 }
-          : { edge, a, b, kind: "long", aSide: right ? "R" : "L", bSide: right ? "L" : "R", g1: right ? a.col + 1 : a.col, g2: right ? b.col : b.col + 1, aOffset: 0, bOffset: 0 };
-    routes.push(route);
-    port(a.card.id, route.aSide).push({ route, end: "a", y: b.card.y });
-    port(b.card.id, route.bSide).push({ route, end: "b", y: a.card.y });
+    const swap = b.col < a.col || (b.col === a.col && b.row < a.row);
+    const l = swap ? b : a;
+    const r = swap ? a : b;
+    normalized.push({ edge, l, r });
+    if (l.col === r.col) continue;
+    const right = load[l.col];
+    const left = load[r.col];
+    if (right !== undefined) right.right += 1;
+    if (left !== undefined) left.left += 1;
   }
-  // Ports: edges on one card side spread by MAP_PORT_STEP in the order of the other end's y, then edge order.
-  const maxOffset = spec.h / 2 - 6;
-  const order = new Map<Route, number>(routes.map((route, index) => [route, index]));
-  for (const sides of ports.values()) {
-    for (const list of [sides.L, sides.R]) {
-      if (list.length === 0) continue;
-      list.sort((p, q) => p.y - q.y || (order.get(p.route) ?? 0) - (order.get(q.route) ?? 0));
-      list.forEach((entry, index) => {
-        const offset = Math.max(-maxOffset, Math.min(maxOffset, (index - (list.length - 1) / 2) * MAP_PORT_STEP));
-        if (entry.end === "a") entry.route.aOffset = offset;
-        else entry.route.bOffset = offset;
-      });
-    }
-  }
-  const gutterUse = new Map<number, number>();
-  const gapUse = new Map<number, number>();
-  const take = (use: Map<number, number>, key: number): number => {
-    const n = use.get(key) ?? 0;
-    use.set(key, n + 1);
-    return n;
-  };
-  /** Lane x in the gutter left of column g (g = 0 is the left margin): center, then alternating ±MAP_LANE_STEP. */
-  const gutterX = (g: number, lane: number): number => {
-    const column = bands[g];
-    const before = bands[g - 1];
-    const left = before === undefined ? 0 : before.x + before.w;
-    const right = column === undefined ? left + MAP_MARGIN : column.x;
-    const half = Math.max(0, (right - left) / 2 - 8);
-    const slots = 2 * Math.floor(half / MAP_LANE_STEP) + 1;
-    const i = lane % slots;
-    const offset = i === 0 ? 0 : (i % 2 === 1 ? -1 : 1) * Math.ceil(i / 2) * MAP_LANE_STEP;
-    return (left + right) / 2 + offset;
-  };
   const pitch = spec.h + spec.rowGap;
-  const laneTop = spec.chips > 0 ? MAP_CHIP.top + MAP_CHIP.h + 4 : 4;
-  const laneCount = Math.max(1, Math.floor((spec.rowGap - 2 - laneTop) / MAP_LANE_STEP) + 1);
-  const gapY = (row: number, lane: number): number => top + row * pitch + spec.h + laneTop + (lane % laneCount) * MAP_LANE_STEP;
-
-  return routes.map((route) => {
-    const a = route.a.card;
-    const b = route.b.card;
-    const ax = route.aSide === "R" ? a.x + a.w : a.x;
-    const bx = route.bSide === "R" ? b.x + b.w : b.x;
-    const ay = a.y + a.h / 2 + route.aOffset;
-    const by = b.y + b.h / 2 + route.bOffset;
+  const hh = spec.gutter / 2;
+  return normalized.map(({ edge, l, r }) => {
+    const y1 = l.card.y + l.card.h / 2;
+    const y2 = r.card.y + r.card.h / 2;
+    const kind: MapEdgeKind = l.col === r.col ? "same" : r.col - l.col === 1 ? "adjacent" : "long";
     let d: string;
-    if (route.kind === "same") d = `M${ax} ${ay}H${gutterX(route.g1, take(gutterUse, route.g1))}V${by}H${bx}`;
-    else if (route.kind === "adjacent") {
-      d = ay === by ? `M${ax} ${ay}H${bx}` : `M${ax} ${ay}H${gutterX(route.g1, take(gutterUse, route.g1))}L${bx} ${by}`;
+    if (kind === "same") {
+      const use = load[l.col];
+      const right = use === undefined || use.right <= use.left;
+      const x0 = right ? l.card.x + l.card.w : l.card.x;
+      const bulge = Math.min(hh - 2, 4 + 3 * (r.row - l.row));
+      const bx = right ? x0 + bulge : x0 - bulge;
+      d = `M${x0} ${y1}C${bx} ${y1} ${bx} ${y2} ${x0} ${y2}`;
     } else {
-      const gx1 = gutterX(route.g1, take(gutterUse, route.g1));
-      const gy = gapY(route.a.row, take(gapUse, route.a.row));
-      const gx2 = gutterX(route.g2, take(gutterUse, route.g2));
-      d = `M${ax} ${ay}H${gx1}V${gy}H${gx2}V${by}H${bx}`;
+      const x1 = l.card.x + l.card.w;
+      const x2 = r.card.x;
+      if (kind === "adjacent") {
+        const mx = (x1 + x2) / 2;
+        d = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`;
+      } else {
+        const b = Math.max(1, Math.min(rows, y2 >= y1 ? l.row + 1 : l.row));
+        const yc = top + b * pitch - spec.rowGap / 2;
+        const gx1 = x1 + spec.gutter;
+        const gx2 = x2 - spec.gutter;
+        d = `M${x1} ${y1}C${x1 + hh} ${y1} ${x1 + hh} ${yc} ${gx1} ${yc}H${gx2}C${gx2 + hh} ${yc} ${gx2 + hh} ${y2} ${x2} ${y2}`;
+      }
     }
-    return { from: route.edge.from, to: route.edge.to, count: route.edge.count, width: mapEdgeWidth(route.edge.count), d };
+    return { from: edge.from, to: edge.to, count: edge.count, width: mapEdgeWidth(edge.count), d, kind };
   });
 }
 
-function placeExternals(overview: OverviewModel, cards: readonly MapCard[], spec: MapLevelSpec): MapExternalChip[] {
-  if (spec.chips === 0) return [];
-  const onMap = new Set(cards.map((card) => card.id));
-  const near = new Map<string, { name: string; total: number }[]>();
-  for (const ext of overview.snapshot.externals) {
-    let best: { componentId: string; count: number } | null = null;
-    let total = 0;
-    for (const use of ext.usedBy) {
-      total += use.count;
-      if (!onMap.has(use.componentId)) continue;
-      if (best === null || use.count > best.count || (use.count === best.count && use.componentId < best.componentId)) best = use;
-    }
-    if (best === null) continue;
-    const list = near.get(best.componentId);
-    if (list === undefined) near.set(best.componentId, [{ name: ext.name, total }]);
-    else list.push({ name: ext.name, total });
+/** Distinct importers per component: `edge.from` imports `edge.to`. Layout edges are already de-duplicated, but a set keeps this safe for any list. */
+export function mapImporterCounts(layoutEdges: readonly MapEdgePath[]): ReadonlyMap<string, number> {
+  const importers = new Map<string, Set<string>>();
+  for (const edge of layoutEdges) {
+    const set = importers.get(edge.to);
+    if (set === undefined) importers.set(edge.to, new Set([edge.from]));
+    else set.add(edge.from);
   }
-  const chips: MapExternalChip[] = [];
-  for (const card of cards) {
-    const list = near.get(card.id);
-    if (list === undefined) continue;
-    list.sort((a, b) => b.total - a.total || cmp(a.name, b.name));
-    list.slice(0, spec.chips).forEach((ext, index) => {
-      chips.push({ name: ext.name, x: card.x + index * (MAP_CHIP.w + MAP_CHIP.gap), y: card.y + card.h + MAP_CHIP.top, nearComponent: card.id });
-    });
-  }
-  return chips;
+  return new Map([...importers].map(([id, set]) => [id, set.size] as const));
+}
+
+/** A hub (revised Map mockup) is imported by at least max(6, ceil(n / 4)) distinct components; the view hides edges into it at rest. */
+export function mapHubIds(layoutEdges: readonly MapEdgePath[], componentCount: number): ReadonlySet<string> {
+  const threshold = Math.max(6, Math.ceil(componentCount / 4));
+  const hubs = new Set<string>();
+  for (const [id, count] of mapImporterCounts(layoutEdges)) if (count >= threshold) hubs.add(id);
+  return hubs;
 }
 
 export function layoutMap(overview: OverviewModel, opts: { level: MapLevel }, prev?: MapLayoutState): MapLayout {
@@ -2340,25 +2369,26 @@ export function layoutMap(overview: OverviewModel, opts: { level: MapLevel }, pr
   for (const band of MAP_BAND_ORDER) {
     const ids = listOf(order, band);
     if (ids.length === 0) continue;
-    if (bands.length > 0) x += band === "side" ? spec.sideGutter : spec.gutter;
+    if (bands.length > 0) x += spec.gutter;
     const col = bands.length;
-    bands.push({ band, x, w: spec.w, count: ids.length });
+    const w = band === "side" ? spec.sideW : spec.w;
+    bands.push({ band, x, w, count: ids.length });
     ids.forEach((id, row) => {
-      const card: MapCard = { id, band, x, y: top + row * pitch, w: spec.w, h: spec.h };
+      const card: MapCard = { id, band, x, y: top + row * pitch, w, h: spec.h };
       cards.push(card);
       placed.set(id, { card, col, row });
     });
     rows = Math.max(rows, ids.length);
-    x += spec.w;
+    x += w;
   }
   const last = bands.at(-1);
   return {
     level: opts.level,
     cards,
-    edges: routeEdges(graph, placed, bands, spec, top),
-    externals: placeExternals(overview, cards, spec),
+    edges: routeEdges(graph, placed, bands, spec, top, rows),
+    externals: [],
     bands,
-    bounds: { w: last === undefined ? 2 * MAP_MARGIN : last.x + last.w + MAP_MARGIN, h: top + rows * pitch + MAP_MARGIN },
+    bounds: { w: last === undefined ? 2 * MAP_MARGIN : last.x + last.w + MAP_MARGIN, h: top + Math.max(0, rows * pitch - spec.rowGap) + MAP_MARGIN },
     state: { orderByBand: new Map(MAP_BAND_ORDER.map((band) => [band, [...listOf(order, band)]] as const)), repoRoot },
   };
 }
@@ -2392,15 +2422,16 @@ import { describe, expect, it } from "vitest";
 import type { OverviewSnapshot } from "@jevcode/contracts";
 
 import { buildOverviewModel } from "../model/index.js";
-import { expectNoCardCrossings, expectNoOverlaps, pathPoints } from "../test-support/map-checks.js";
+import { expectEdgesOnPorts, expectNoCardCrossings, expectNoOverlaps, pathPoints as pathPointsOf } from "../test-support/map-checks.js";
 import { arbOverviewSeed, arbOverviewSuccessor } from "../test-support/overview-arbitraries.js";
 import { overviewSnapshot } from "../test-support/overview-builder.js";
-import { MAP_BAND_ORDER, layoutMap, mapEdgeWidth, type MapLevel } from "./map-layout.js";
+import { MAP_BAND_ORDER, layoutMap, mapEdgeWidth, mapHubIds, mapLevelForZoom, type MapLevel } from "./map-layout.js";
 
-// Spec §8.3 properties: no card overlap, edges never cross cards other than their endpoints, sticky under append,
-// deterministic for equal input.
+// Spec §8.3 properties: no card overlap, edges never pass under a card other than their endpoints (curves included),
+// sticky under append, deterministic for equal input (cards, paths and kinds), the zoom bands and the hub rule.
 
 const LEVELS = fc.constantFrom<MapLevel>("chip", "card", "detail");
+const LEVEL_RANK: Readonly<Record<MapLevel, number>> = { chip: 0, card: 1, detail: 2 };
 const RUNS = { numRuns: 150 };
 
 function shuffled<T>(items: readonly T[], salt: number): T[] {
@@ -2437,22 +2468,77 @@ describe("layoutMap properties", () => {
     );
   });
 
-  it("places every component exactly once, with no card or chip overlap and no edge through a card", () => {
+  it("places every component exactly once, with no card overlap, every edge on its ports and no edge under a card", () => {
     fc.assert(
       fc.property(arbOverviewSeed(), LEVELS, (seed, level) => {
         const snapshot = overviewSnapshot(seed);
         const layout = layoutMap(model(snapshot), { level });
         expect(layout.cards.map((card) => card.id).sort()).toEqual([...new Set(snapshot.components.map((component) => component.id))].sort());
+        expect(layout.externals).toEqual([]);
         expectNoOverlaps(layout);
+        expectEdgesOnPorts(layout);
         expectNoCardCrossings(layout);
+        for (const edge of layout.edges) expect(edge.width).toBe(mapEdgeWidth(edge.count));
+      }),
+      RUNS,
+    );
+  });
+
+  it("uses one geometry at every level: cards and bounds do not depend on the level", () => {
+    fc.assert(
+      fc.property(arbOverviewSeed(), (seed) => {
+        const overview = model(overviewSnapshot(seed));
+        const [chip, card, detail] = (["chip", "card", "detail"] as const).map((level) => layoutMap(overview, { level }));
+        expect(card?.cards).toEqual(chip?.cards);
+        expect(detail?.cards).toEqual(chip?.cards);
+        expect(detail?.edges.map((edge) => edge.d)).toEqual(chip?.edges.map((edge) => edge.d));
+        expect(detail?.bounds).toEqual(chip?.bounds);
+      }),
+      RUNS,
+    );
+  });
+
+  it("classifies edges by band distance and keeps every curve inside the bounds", () => {
+    fc.assert(
+      fc.property(arbOverviewSeed(), LEVELS, (seed, level) => {
+        const layout = layoutMap(model(overviewSnapshot(seed)), { level });
+        const column = new Map(layout.cards.map((card) => [card.id, layout.bands.findIndex((band) => band.band === card.band)] as const));
         for (const edge of layout.edges) {
-          expect(edge.width).toBe(mapEdgeWidth(edge.count));
-          const points = pathPoints(edge.d);
-          const from = layout.cards.find((card) => card.id === edge.from);
-          const to = layout.cards.find((card) => card.id === edge.to);
-          expect([from?.x, (from?.x ?? 0) + (from?.w ?? 0)]).toContain(points[0]?.x);
-          expect([to?.x, (to?.x ?? 0) + (to?.w ?? 0)]).toContain(points.at(-1)?.x);
+          const gap = Math.abs((column.get(edge.to) ?? 0) - (column.get(edge.from) ?? 0));
+          expect(edge.kind).toBe(gap === 0 ? "same" : gap === 1 ? "adjacent" : "long");
+          for (const point of pathPointsOf(edge.d)) {
+            expect(point.x).toBeGreaterThanOrEqual(0);
+            expect(point.x).toBeLessThanOrEqual(layout.bounds.w);
+            expect(point.y).toBeGreaterThanOrEqual(0);
+            expect(point.y).toBeLessThanOrEqual(layout.bounds.h);
+          }
         }
+      }),
+      RUNS,
+    );
+  });
+
+  it("the zoom bands are monotone: a higher zoom never picks a less detailed level", () => {
+    fc.assert(
+      fc.property(fc.double({ min: 0.05, max: 3, noNaN: true }), fc.double({ min: 0.05, max: 3, noNaN: true }), (a, b) => {
+        const [low, high] = a <= b ? [a, b] : [b, a];
+        expect(LEVEL_RANK[mapLevelForZoom(low)]).toBeLessThanOrEqual(LEVEL_RANK[mapLevelForZoom(high)]);
+      }),
+      RUNS,
+    );
+  });
+
+  it("a hub is a component with at least max(6, ceil(n / 4)) distinct importers, whatever the edge order", () => {
+    fc.assert(
+      fc.property(arbOverviewSeed({ maxComponents: 30 }), fc.nat(), (seed, salt) => {
+        const snapshot = overviewSnapshot(seed);
+        const layout = layoutMap(model(snapshot), { level: "card" });
+        const n = layout.cards.length;
+        const importers = new Map<string, Set<string>>();
+        for (const edge of layout.edges) importers.set(edge.to, (importers.get(edge.to) ?? new Set<string>()).add(edge.from));
+        const expected = [...importers].filter(([, from]) => from.size >= Math.max(6, Math.ceil(n / 4))).map(([id]) => id).sort();
+        expect([...mapHubIds(layout.edges, n)].sort()).toEqual(expected);
+        expect([...mapHubIds(shuffled(layout.edges, salt), n)].sort()).toEqual(expected);
       }),
       RUNS,
     );
@@ -2474,6 +2560,20 @@ describe("layoutMap properties", () => {
           }
           expectNoOverlaps(second);
           expectNoCardCrossings(second);
+          // Routing is a function of card positions, so an adjacent or long edge between two cards that kept their
+          // positions keeps its path (same-band bulges depend on the loads and may switch sides).
+          const at = (layout: typeof first, id: string) => layout.cards.find((card) => card.id === id);
+          for (const edge of second.edges) {
+            if (edge.kind === "same") continue;
+            const old = first.edges.find((item) => item.from === edge.from && item.to === edge.to);
+            if (old === undefined || old.kind === "same") continue;
+            const keeps = [edge.from, edge.to].every((id) => {
+              const a = at(first, id);
+              const b = at(second, id);
+              return a !== undefined && b !== undefined && a.x === b.x && a.y === b.y;
+            });
+            if (keeps) expect(edge.d).toBe(old.d);
+          }
         },
       ),
       RUNS,
@@ -2497,11 +2597,11 @@ describe("layoutMap properties", () => {
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout/map-layout.property.test.ts`
 
-Expected: PASS, 4 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 7: Prove the crossing property detects a straight long edge, then restore**
 
-In `map-layout.ts` `routeEdges`, temporarily replace the `long` branch's `d = \`M${ax} ${ay}H${gx1}V${gy}H${gx2}V${by}H${bx}\`;` with `d = \`M${ax} ${ay}H${bx}\`;` and rerun the property file. Expected: FAIL in "places every component exactly once, with no card or chip overlap and no edge through a card" with a message like `… crosses cmp_…`. Restore the line, rerun, expect PASS.
+In `map-layout.ts` `routeEdges`, temporarily replace the long branch's `d = \`M${x1} ${y1}C${x1 + hh} …\`;` (the assignment that ends `${x2} ${y2}\``) with `d = \`M${x1} ${y1}H${x2}\`;` and rerun the property file. Expected: FAIL in "places every component exactly once, with no card overlap, every edge on its ports and no edge under a card" with a message like `… crosses cmp_…` (and `has an end off a port`). Restore the line, rerun, expect PASS.
 
 - [ ] **Step 8: Write and run the benchmark**
 
@@ -2545,7 +2645,7 @@ describe("layoutMap, 200 components and 1,000 edges", () => {
 
 Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/map-layout.bench.ts`
 
-Expected: a table with `fresh`, `sticky, same components (a description pass)` and `sticky, one new component`; read the `mean` column (ms). Budgets: fresh ≤ 8, both sticky rows ≤ 2. On the plan author's machine (Node 22, Apple silicon) this code measured about 1.3 ms fresh and 0.9 ms sticky; routing the 1,000 edges dominates both, so keep `routeEdges` free of per-edge string keys. Record the three means for the commit message and the lane hand-off. A mean over budget is a finding to report, not a task failure (spec §11 benchmarks are not CI gates).
+Expected: a table with `fresh`, `sticky, same components (a description pass)` and `sticky, one new component`; read the `mean` column (ms). Budgets: fresh ≤ 8, both sticky rows ≤ 2. The earlier orthogonal router, which sorted ports per card side and assigned gutter and gap lanes, measured about 1.3 ms fresh and 0.9 ms sticky on the plan author's machine (Node 22, Apple silicon). The curve router does less per edge (one load count, one string template, no port sort, no lane maps), so it plausibly stays at or below those means and well inside the budgets; the plan author has not measured it, so Step 8's table is the evidence. `mapHubIds` adds one pass over the edges in the view, not in `layoutMap`. Keep `routeEdges` free of per-edge string keys. Record the three means for the commit message and the lane hand-off. A mean over budget is a finding to report, not a task failure (spec §11 benchmarks are not CI gates).
 
 - [ ] **Step 9: Typecheck and lint**
 
@@ -2570,42 +2670,49 @@ Replace `<fresh>` and `<sticky>` with the means from Step 8 (the larger sticky m
 - Modify: `packages/trace-viewer/src/ui/icons/icon-names.ts`, `paths.ts`, `kind-icons.ts`; Test: `icons.test.tsx` (append one test)
 - Modify: `packages/trace-viewer/src/ui/state/view-state.ts` (`ViewState`, `ViewAction`, `initialViewState`, the `reduce` switch); Test: `view-state.test.ts` (append one `describe`)
 - Create: `packages/trace-viewer/src/layout/map-details.ts`; Test: `packages/trace-viewer/src/layout/map-details.test.ts`
-- Create: `packages/trace-viewer/src/ui/graphics/ImportBar.tsx`; Test: `packages/trace-viewer/src/ui/graphics/bars.test.tsx` (append one test)
 - Create: `packages/trace-viewer/src/ui/views/map/overlay.ts`, `map-text.ts`, `map-nav.ts`, `map-camera.ts`, `MapCard.tsx`, `MapEdges.tsx`, `MapHeader.tsx`, `MapView.tsx`, `MapView.module.css`
-- Test: `packages/trace-viewer/src/ui/views/map/map-nav.test.ts`, `map-camera.test.ts`, `map-view.test.tsx`
+- Test: `packages/trace-viewer/src/ui/views/map/map-nav.test.ts`, `map-camera.test.ts`, `map-text.test.ts`, `map-card.test.tsx`, `map-view.test.tsx`
 - Create: `packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx`, `ComponentInspector.module.css`; Test: `packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx`
 - Modify: `packages/trace-viewer/src/ui/inspector/Inspector.tsx` (the exported `Inspector` wrapper only, at the end of the file)
 - Modify: `packages/trace-viewer/src/ui/views/registry.ts` (the `map` entry), `packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.tsx` (remove V-2's `MapPlaceholder` once nothing imports it)
 - Create: `apps/trace-viewer-dev/src/overview-sample.ts`; Modify: `apps/trace-viewer-dev/src/host.tsx` (`DevHost` load effect), `apps/trace-viewer-dev/scripts/smoke.mjs` (`parseArgs` and the per-view loop)
 
 **Interfaces:**
-- Consumes: P-1 `TraceSession.overview`, `OverviewModel`, `overviewStatusOf`; P-2 `layoutMap`, `MapLayout`, `MapLayoutState`, `MapLevel`, `MapBand`, `MapCard`, `MAP_MARGIN`, `MAP_BAND_LABEL_H`, `mapLevelForZoom`, `componentForPath`; lane 02 V-2 (W0): `ViewKind` with `"map"`, `ViewDefinition`, the registry's map slot, icon `view-map`, location view `"map"`, number key `3`. Existing viewer API: `createViewportController<UniformCamera>(options)` (`ui/viewport/controller.ts`), `fitBounds`, `isInsideInset`, `setCenter`, `screenToWorld`, `worldToScreen` (`layout/viewport.ts`), `useRegisterViewPort`, `useViewPortRegistry`, `ViewPort`, `ViewProps` (`ui/views/view-port.ts`), `useSessionView` (`ui/shell/session-context.ts`), `useView`, `useViewStore` (`ui/state/store.ts`), `ZOOM_STEP` (`ui/state/keymap.ts`), `diffSidePx`, `graphicA11y`, `GraphicBaseProps` (`ui/graphics/scales.ts`), `DiffBar`, `Icon`, `displayUntrusted`, `truncateMiddle`; test helpers `renderWithViewer`, `stubResizeObserver`, `stubElementBox`, `stubAnimationFrames`, `stubReducedMotion` (`test-support/canvas-view-harness.tsx`), `buildSession`, `overviewSnapshot`, `syntheticOverview`, `componentId`.
+- Consumes: P-1 `TraceSession.overview`, `OverviewModel`, `overviewStatusOf`; P-2 `layoutMap`, `MapLayout`, `MapLayoutState`, `MapLevel`, `MapBand`, `MapCard`, `MapEdgePath`, `MAP_MARGIN`, `MAP_BAND_LABEL_H`, `MAP_LANE_PAD`, `mapLevelForZoom`, `mapHubIds`, `mapImporterCounts`, `componentForPath`; lane 02 V-2 (W0): `ViewKind` with `"map"`, `ViewDefinition`, the registry's map slot, icon `view-map`, location view `"map"`, number key `3`. Existing viewer API: `createViewportController<UniformCamera>(options)` (`ui/viewport/controller.ts`), `fitBounds`, `isInsideInset`, `setCenter`, `screenToWorld`, `worldToScreen` (`layout/viewport.ts`), `useRegisterViewPort`, `useViewPortRegistry`, `ViewPort`, `ViewProps` (`ui/views/view-port.ts`), `useSessionView` (`ui/shell/session-context.ts`), `useView`, `useViewStore` (`ui/state/store.ts`), `ZOOM_STEP` (`ui/state/keymap.ts`), `DiffBar`, `Icon`, `displayUntrusted`, `truncateMiddle`; test helpers `renderWithViewer`, `stubResizeObserver`, `stubElementBox`, `stubAnimationFrames`, `stubReducedMotion` (`test-support/canvas-view-harness.tsx`), `buildSession`, `overviewSnapshot`, `syntheticOverview`, `componentId`.
 - Produces:
   - `ViewState.mapSelection: string | null`; action `{ type: "map/select"; componentId: string | null }`; Esc on the Map clears `mapSelection` first (deviation 4).
-  - `src/layout/map-details.ts`: `DETAIL_FILES_SHOWN = 20`, `interface MapLink { id; name; count; example: string | null }`, `interface ComponentChange { path; added; removed; stepId: StepId }`, `interface ComponentDetails { files: { shown; more }; importsOut; importsIn; externals; changes; citations }`, `componentDetails(overview, componentId, session): ComponentDetails | null`, `importTotals(overview): ReadonlyMap<string, { in: number; out: number }>` (deviation 7).
+  - `src/layout/map-details.ts`: `DETAIL_FILES_SHOWN = 20`, `interface MapLink { id; name; count; example: string | null }`, `interface ComponentChange { path; added; removed; stepId: StepId }`, `interface ComponentDetails { files: { shown; more }; importsOut; importsIn; externals; changes; citations }`, `componentDetails(overview, componentId, session): ComponentDetails | null`, `topPackages(component, n): readonly { name: string; count: number }[]` (a card's top packages), `fileBarPercent(files, maxFiles): number` (`max(8, round(100·√(files ÷ maxFiles)))`), `LIST_BAR_MAX_PX = 48` and `listBarPx(count, max): number` (deviation 7).
   - `src/ui/views/map/overlay.ts`: `MapCardState`, `MapOverlay`, `mapOverlayOf(session)` (deviation 5; lane 07 S-5 fills it).
-  - `src/ui/views/map/map-text.ts`: `overviewHeadline(overview)`, `notAnalyzedNote(overview)`, `partialNote(overview)`, `narratorNote(overview)`, `scanNote(overview): ScanNote | null` (the Map header's text; ruling R3 states through `overviewStatusOf`). `MapHeader({ overview, onSelectComponent, onRetry? })` (P-4 passes `onRetry`).
-  - `src/ui/views/map/map-camera.ts`: `MAP_LIMITS`, `MAP_ICON_ONLY_K`, `MAP_ZOOM_PRESETS`, `planMapFit`, `cardCenter`, `nearestCard`, `revealCamera`, `anchoredCamera`, `zoomedAtCenter`.
+  - `src/ui/views/map/map-text.ts`: `overviewHeadline(overview): { count: string; languages: string | null }`, `linkSentence(sentence, overview): SentencePart[]` (plain text and component links), `notAnalyzedNote(overview)`, `partialNote(overview)`, `narratorNote(overview)`, `scanNote(overview): ScanNote | null` (the Map header's text; ruling R3 states through `overviewStatusOf`). `MapHeader({ overview, onSelectComponent, onRetry?, selectedId?, onHoverComponent? })` (P-4 passes `onRetry`; the last two are optional, so lane 07's `MapHeader` call and `session` prop stay valid).
+  - `src/ui/views/map/map-camera.ts`: `MAP_LIMITS`, `MAP_FIT_PADDING` (`{ x: 20, top: 20, bottom: 68 }`), `MAP_ICON_ONLY_K = 0.48`, `MAP_ZOOM_PRESETS`, `planMapFit`, `cardCenter`, `revealCamera`, `anchoredCamera`, `zoomedAtCenter`. `MAP_FIT_PADDING_PX`, `FIT_MAX_K` and `nearestCard` are gone (one geometry, so a level change never moves a card).
+  - `src/ui/views/map/MapEdges.tsx`: `MapEdges`, `MAP_EDGE_STROKE` (`{ 1: 1, 2: 1.6, 3: 2.4 }` px) and `hubStubPath(x, y)`.
   - `src/ui/views/map/map-nav.ts`: `MapNavKey`, `isMapNavKey`, `mapNeighbor(layout, fromId, key)`.
-  - `MapView` (kind `"map"`), `ComponentInspector({ componentId })`, `ImportBar`, `describeImports`, `ROLE_ICON`, `ROLE_LABEL`, the seven `role-*` icon names (deviation 6).
+  - `MapView` (kind `"map"`), `ComponentInspector({ componentId })`, `ROLE_ICON`, `ROLE_LABEL`, the seven `role-*` icon names and `fan-in` (deviation 6).
   - Dev host: `?overview=sample`; smoke view `map` (`.smoke/map-1440.png`, `.smoke/map-1000.png`).
 
-Behavior (spec §3.4, E13, E14, §10 untrusted text): cards in role bands with role icon, name, one-line purpose (or the root path when no purpose), file count, main language and the import-weight bar (none when imports were not analyzed); band labels with icon and count; one SVG edge layer with 1–3 px non-scaling strokes; up to two package chips under a card; Fit on first show (the most detailed level whose own fit lands in its zoom band); wheel, pinch and hand-tool pan through the shared controller; zoom keys and Fit through the view port; the level follows the zoom at each settle with the card nearest the center held in place; click or Enter selects a card (accent ring, one-hop edges accent, the rest at 30%) and opens `ComponentInspector`; arrow keys move focus within and across bands, Home and End jump; Esc clears the map selection; the header shows the rule-based headline, the partial and imports-not-analyzed notes, the ruling R3 scan note (progress, or a quiet "Codebase map unavailable") and narrator word ("Descriptions off", "Descriptions unavailable", "Descriptions pending"), and the collapsible narrative with component and file citation chips; a map with no cards shows the scan note (or "No components found") in the stage. Focus never moves on a data rebuild.
+Behavior (spec §3.4, E13, E14, §10 untrusted text; the approved H2 Map mockup, `map-1440.png`, `map-selected-1440.png`, `map-zoomed-1440.png`):
+
+- **Canvas.** No dot grid. Each band is a full-height light lane (`rgb(16 24 40 / .024)`, radius 16, 10 at the detail level) from `col.x − 6` to `col.x + col.w + 6` and from `MAP_MARGIN − 4` to `bounds.h − MAP_MARGIN + 6`, with a header inside its top at `(col.x − 1, MAP_MARGIN + 2)`: role icon, label (weight 600, ink) and count (ink-4). The side band is labelled "Support".
+- **Cards.** Every card is the same box at every level; only its content changes. The name shows in full, two lines at most, breaking at spaces and hyphens (`overflow-wrap: anywhere` as the last resort; the tooltip and accessible name carry it too). The footer holds the role icon, a file-count bar (`max(8, round(100·√(files ÷ largest)))` percent) and, by level: nothing at chip, the count at card, "n files" at detail. The detail level adds the purpose (two lines, or the root path), the top two packages in one row, and the hub glyph (fan-in icon and importer count) for a hub. No import-weight bar, no language, no package chips.
+- **Edges.** Smooth curves in 1, 1.6 or 2.4 px non-scaling strokes by import count, light (`--tv-map-edge`, `#C4C9D1`). At rest only band-to-band edges that do not enter a hub are drawn, and each hub's left port carries a three-line stub. For the selected or hovered card all of its edges (same-band and hub edges included) turn accent and draw last; every other edge drops to 22%. An emphasized session edge (lane 07) always draws.
+- **Camera.** Fit centers the map on both axes and fills the stage (`k = min((vw − 40) / W, (vh − 88) / H, 1)`), reruns on a real viewport resize while the camera is still where Fit left it, and picks the card level at k ≥ 0.7, else the chip level, never detail. Zoom bands: chip below 0.7, card below 1.4, detail from 1.4; the level follows the zoom at each settle and no card moves. Wheel, pinch and hand-tool pan go through the shared controller; zoom keys and Fit through the view port. Below `MAP_ICON_ONLY_K = 0.48` names hide.
+- **Selection and keys.** Click or Enter selects a card (accent ring) and opens `ComponentInspector`; arrow keys move focus within and across bands, Home and End jump; Esc clears the map selection.
+- **Header.** The rule-based headline ("21 components", languages beside it in muted ink), a row of quiet notes (partial, imports not analyzed, the ruling R3 scan note with progress or "Codebase map unavailable", narrator word "Descriptions off", "Descriptions unavailable" or "Descriptions pending"), and the collapsible narrative in plain sentences: component names are quiet links (hovering one behaves like hovering its card; the selected component's link is accent), the first two sentences show and a quiet "More" reveals the rest; the Overview toggle collapses all of it. A map with no cards shows the scan note (or "No components found") in the stage. Focus never moves on a data rebuild.
 
 - [ ] **Step 1: Check gate H2 and apply its rulings**
 
 Run: `grep -n "H2 approval" docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/README.md`
 
-Expected: `H2 approval: approved by the person on …`. If it still reads `PENDING`, stop: this task is blocked. If the approval lists rulings that change sizes, gutters or thresholds, apply them now to `MAP_LEVEL_SPECS`/`MAP_CHIP` (`src/layout/map-layout.ts`) and note them for `MAP_ICON_ONLY_K` (Step 6 below), rerun `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout/map-layout.test.ts src/layout/map-layout.property.test.ts`, update any expectation in `map-layout.test.ts` that names the changed constant only through the constant (the tests read `MAP_LEVEL_SPECS`, so most need no edit), and commit as `fix(trace-viewer): apply the H2 Map rulings to the layout constants`.
+Expected: `H2 approval: approved by the person on …`. If it still reads `PENDING`, stop: this task is blocked. If the approval lists rulings that change sizes, gutters or thresholds, apply them now to `MAP_LEVEL_SPECS` and the zoom thresholds (`src/layout/map-layout.ts`) and note them for `MAP_FIT_PADDING` and `MAP_ICON_ONLY_K` (Step 6 below), rerun `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout/map-layout.test.ts src/layout/map-layout.property.test.ts`, update any expectation in `map-layout.test.ts` that names the changed constant only through the constant (the tests read `MAP_LEVEL_SPECS`, so most need no edit), and commit as `fix(trace-viewer): apply the H2 Map rulings to the layout constants`.
 
-Open `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map-1440.png`, `map-selected-1440.png` and `map-pending-1440.png` (Read shows PNGs) and keep them in view for this task.
+Open `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map-1440.png`, `map-selected-1440.png`, `map-zoomed-1440.png` and `map-pending-1440.png` (Read shows PNGs) and keep them in view for this task. `map.html` in the same folder holds the exact CSS and geometry the constants below come from.
 
 - [ ] **Step 2: Add the role icons**
 
 In `packages/trace-viewer/src/ui/icons/icon-names.ts`, append to the `ICON_NAMES` array (after the view names, keeping V-2's `view-console` and `view-map`):
 
 ```ts
-  "role-ui", "role-api", "role-agent", "role-domain", "role-storage", "role-tooling", "role-config",
+  "role-ui", "role-api", "role-agent", "role-domain", "role-storage", "role-tooling", "role-config", "fan-in",
 ```
 
 In `packages/trace-viewer/src/ui/icons/paths.ts`, add these entries to `ICON_PATHS` (the `circle` helper is defined at the top of the file):
@@ -2618,6 +2725,7 @@ In `packages/trace-viewer/src/ui/icons/paths.ts`, add these entries to `ICON_PAT
   "role-storage": ["M2.75 4.25c0-1.1 2.35-2 5.25-2s5.25.9 5.25 2-2.35 2-5.25 2-5.25-.9-5.25-2z", "M2.75 4.25v7.5c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2v-7.5M2.75 8c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2"],
   "role-tooling": ["M10.1 2.35a3.25 3.25 0 0 0-3.85 4.4L2.6 10.4a1.4 1.4 0 0 0 2 2l3.65-3.65a3.25 3.25 0 0 0 4.4-3.85l-1.9 1.9-1.75-.35-.35-1.75z"],
   "role-config": ["M2.75 4.75h10.5M2.75 11.25h10.5", circle(6, 4.75, 1.5), circle(10, 11.25, 1.5)],
+  "fan-in": ["M2.25 3.25H6L9.5 8", "M2.25 8h7.25", "M2.25 12.75H6L9.5 8", "M9.5 8h4M11.75 6l2 2-2 2"],
 ```
 
 In `packages/trace-viewer/src/ui/icons/kind-icons.ts`, add `import type { Role } from "@jevcode/contracts";` and append:
@@ -2733,7 +2841,7 @@ import { describe, expect, it } from "vitest";
 import { buildOverviewModel } from "../model/index.js";
 import { componentId, overviewSnapshot } from "../test-support/overview-builder.js";
 import { buildSession } from "../test-support/session-builder.js";
-import { componentDetails, importTotals } from "./map-details.js";
+import { componentDetails } from "./map-details.js";
 
 const MAIN = "apps/desktop/src/main";
 const snapshot = overviewSnapshot({
@@ -2791,16 +2899,6 @@ describe("componentDetails (spec §3.4 Inspector)", () => {
     expect(componentDetails(overview, "cmp_000000000000", session)).toBeNull();
   });
 });
-
-describe("importTotals", () => {
-  it("sums imports in and out and leaves out components whose imports were not analyzed", () => {
-    const totals = importTotals(overview);
-    expect(totals.get(componentId(MAIN))).toEqual({ in: 2, out: 22 });
-    expect(totals.get(componentId("packages/contracts"))).toEqual({ in: 27, out: 0 });
-    expect(totals.has(componentId("tools/py"))).toBe(false);
-    expect(importTotals(overview)).toBe(totals);
-  });
-});
 ```
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout/map-details.test.ts` — expected: FAIL, `Cannot find module './map-details.js'`.
@@ -2808,8 +2906,8 @@ Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec v
 Create `packages/trace-viewer/src/layout/map-details.ts`:
 
 ```ts
-// Component Inspector data and the cards' import totals (spec §3.4). Pure and React-free.
-import type { NarrativeSentence } from "@jevcode/contracts";
+// Component Inspector data and the bar scales of the Map (spec §3.4). Pure and React-free.
+import type { Component, NarrativeSentence } from "@jevcode/contracts";
 
 import type { OverviewModel, StepId, TraceSession } from "../model/index.js";
 import { componentForPath } from "./map-layout.js";
@@ -2868,99 +2966,67 @@ export function componentDetails(overview: OverviewModel, componentId: string, s
     citations,
   };
 }
-
-const totalsCache = new WeakMap<OverviewModel, ReadonlyMap<string, { in: number; out: number }>>();
-
-/** Imports in and out per component whose imports were analyzed (spec E14); the cards' import-weight bar. */
-export function importTotals(overview: OverviewModel): ReadonlyMap<string, { in: number; out: number }> {
-  const cached = totalsCache.get(overview);
-  if (cached !== undefined) return cached;
-  const totals = new Map<string, { in: number; out: number }>();
-  for (const component of overview.snapshot.components) if (component.importsAnalyzed) totals.set(component.id, { in: 0, out: 0 });
-  for (const edge of overview.snapshot.edges) {
-    if (edge.from === edge.to) continue;
-    const from = totals.get(edge.from);
-    if (from !== undefined) from.out += edge.count;
-    const to = totals.get(edge.to);
-    if (to !== undefined) to.in += edge.count;
-  }
-  totalsCache.set(overview, totals);
-  return totals;
-}
 ```
 
 Run the same command — expected: PASS.
 
-- [ ] **Step 5: Write the import-weight mini graphic (failing test first)**
+- [ ] **Step 5: Write the bar scales (failing test first)**
 
-Append to `packages/trace-viewer/src/ui/graphics/bars.test.tsx` (add `import { ImportBar, describeImports } from "./ImportBar.js";` to its imports; the file already imports `render`, `screen`, `describe`, `expect`, `it`):
+The card's footer bar and the Inspector's list bars are plain boxes sized by two pure scales, so they need no graphic component and no new dependency.
 
-```tsx
-describe("ImportBar (spec §3.4 import-weight bar)", () => {
-  it("draws imports in solid and out hollow on DiffBar's log scale and names itself", () => {
-    const { container } = render(<ImportBar size="xs" inCount={12} outCount={3} label={describeImports(12, 3)} />);
-    expect(screen.getByRole("img", { name: "12 imports in, 3 out" })).toBeTruthy();
-    const inBar = container.querySelector("rect[data-side='in']");
-    const outBar = container.querySelector("rect[data-side='out']");
-    // clamp(2, 56, 8 · log2(1 + n)) px per side (viewer spec §7.12 DiffBar scale).
-    expect(Number(inBar?.getAttribute("width"))).toBeCloseTo(8 * Math.log2(13), 5);
-    expect(Number(outBar?.getAttribute("width")) + 1.5).toBeCloseTo(8 * Math.log2(4), 5);
+Append to `packages/trace-viewer/src/layout/map-details.test.ts` (add `fileBarPercent`, `listBarPx`, `topPackages` and `LIST_BAR_MAX_PX` to its import from `./map-details.js`):
+
+```ts
+describe("bar scales (revised Map mockup)", () => {
+  it("sizes the file-count bar by the square root of files over the largest count, at least 8%", () => {
+    expect([fileBarPercent(61, 61), fileBarPercent(25, 100), fileBarPercent(64, 100), fileBarPercent(1, 61), fileBarPercent(0, 61), fileBarPercent(1, 10_000)]).toEqual([
+      100, 50, 80, 13, 8, 8,
+    ]);
+    expect(fileBarPercent(5, 0)).toBe(8);
   });
 
-  it("draws nothing for a side with no imports", () => {
-    const { container } = render(<ImportBar size="xs" inCount={0} outCount={5} />);
-    expect(container.querySelector("rect[data-side='in']")).toBeNull();
-    expect(container.querySelector("[data-graphic='imports']")?.getAttribute("aria-hidden")).toBe("true");
+  it("sizes a list bar by its share of the list's largest count, up to 48 px, at least 1 px for a nonzero count", () => {
+    expect(LIST_BAR_MAX_PX).toBe(48);
+    expect([listBarPx(22, 22), listBarPx(2, 9), listBarPx(1, 1_000), listBarPx(0, 5), listBarPx(5, 0)]).toEqual([48, 11, 1, 0, 0]);
+  });
+
+  it("picks a card's top packages by count, then name", () => {
+    const component = overview.componentById.get(componentId(MAIN));
+    if (component === undefined) throw new Error("no component");
+    expect(topPackages(component, 1)).toEqual([{ name: "electron", count: 9 }]);
+    expect(topPackages(component, 2).map((ext) => ext.name)).toEqual(["electron", "node-pty"]);
+    expect(topPackages(component, 0)).toEqual([]);
   });
 });
 ```
 
-Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/graphics/bars.test.tsx` — expected: FAIL, `Cannot find module './ImportBar.js'`.
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout/map-details.test.ts` — expected: FAIL (`fileBarPercent is not a function`).
 
-Create `packages/trace-viewer/src/ui/graphics/ImportBar.tsx`:
+Append to `packages/trace-viewer/src/layout/map-details.ts` (add `type Component` to its `@jevcode/contracts` import):
 
-```tsx
-import { memo, type JSX } from "react";
+```ts
+/** The longest list bar in the Inspector, in px (revised Map mockup). */
+export const LIST_BAR_MAX_PX = 48;
 
-import styles from "./graphics.module.css";
-import { diffSidePx, graphicA11y, type GraphicBaseProps, type GraphicSize } from "./scales.js";
-
-export interface ImportBarProps extends GraphicBaseProps {
-  inCount: number;
-  outCount: number;
+/** Width of a card's file-count bar as a percent of its track: √(files ÷ largest), never below 8% so every card shows one. */
+export function fileBarPercent(files: number, maxFiles: number): number {
+  if (maxFiles <= 0) return 8;
+  return Math.min(100, Math.max(8, Math.round(100 * Math.sqrt(Math.max(0, files) / maxFiles))));
 }
 
-const BAR_H: Record<GraphicSize, number> = { xs: 6, sm: 8, md: 10 };
-const GAP = 2;
-const STROKE = 1.5;
-
-export function describeImports(inCount: number, outCount: number): string {
-  return `${inCount.toLocaleString("en-US")} imports in, ${outCount.toLocaleString("en-US")} out`;
+/** Width in px of an Inspector list bar: the count's share of the list's largest, at least 1 px for a nonzero count. */
+export function listBarPx(count: number, max: number): number {
+  if (count <= 0 || max <= 0) return 0;
+  return Math.max(1, Math.round((LIST_BAR_MAX_PX * count) / max));
 }
 
-/** Imports in (solid) and out (hollow), each side on DiffBar's scale; neutral ink only (spec §3.4, viewer spec §7.12). */
-function ImportBarImpl({ size, label, inCount, outCount }: ImportBarProps): JSX.Element {
-  const a = diffSidePx(inCount);
-  const r = diffSidePx(outCount);
-  const h = BAR_H[size];
-  const width = Math.max(1, a + (a > 0 && r > 0 ? GAP : 0) + r);
-  const rx = a > 0 && r > 0 ? a + GAP : 0;
-  return (
-    <span className={`${styles.graphic} ${styles[size]}`} data-graphic="imports" {...graphicA11y(label)}>
-      <svg width={width} height={h} viewBox={`0 0 ${width} ${h}`} aria-hidden="true" focusable="false">
-        {a > 0 ? <rect data-side="in" className={styles.added} x={0} y={0} width={a} height={h} rx={1} /> : null}
-        {r > 0 ? (
-          <rect data-side="out" className={styles.removed} x={rx + STROKE / 2} y={STROKE / 2} width={r - STROKE} height={h - STROKE} rx={1} />
-        ) : null}
-      </svg>
-    </span>
-  );
+/** A component's top `n` external packages by count, then name; the detail-level card shows two. */
+export function topPackages(component: Component, n: number): readonly { name: string; count: number }[] {
+  return [...component.externalDeps].sort((a, b) => b.count - a.count || cmp(a.name, b.name)).slice(0, Math.max(0, n));
 }
-
-export const ImportBar = memo(ImportBarImpl);
 ```
 
-Run the same command — expected: PASS.
+Run the same command — expected: PASS. (`cmp` is the module's existing string comparator; `componentDetails` sorts its `externals` the same way.)
 
 - [ ] **Step 6: Write the pure view helpers (failing tests first)**
 
@@ -3024,45 +3090,113 @@ describe("mapNeighbor", () => {
 Create `packages/trace-viewer/src/ui/views/map/map-camera.test.ts`:
 
 ```ts
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { layoutMap, MAP_LEVEL_SPECS } from "../../../layout/map-layout.js";
+import { layoutMap } from "../../../layout/map-layout.js";
 import { worldToScreen } from "../../../layout/viewport.js";
 import { buildOverviewModel } from "../../../model/index.js";
+import { arbOverviewSeed } from "../../../test-support/overview-arbitraries.js";
 import { overviewSnapshot, syntheticOverview } from "../../../test-support/overview-builder.js";
-import { cardCenter, nearestCard, planMapFit, revealCamera } from "./map-camera.js";
+import { cardCenter, MAP_FIT_PADDING, MAP_ICON_ONLY_K, planMapFit, revealCamera } from "./map-camera.js";
 
 const small = buildOverviewModel(
   overviewSnapshot({ components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "srv/api", role: "api" }, { rootPath: "pkg/db", role: "storage" }] }),
   1,
 );
+// One band of 20 cards: 172 wide, 1,900 tall (16 + 140 + 16; 60 + 20 × 92 − 16 + 16).
+const tall = buildOverviewModel(
+  overviewSnapshot({ components: Array.from({ length: 20 }, (_, i) => ({ rootPath: `pkg/c${String(i).padStart(2, "0")}`, role: "domain" as const })) }),
+  1,
+);
 const large = buildOverviewModel(syntheticOverview({ components: 200, edges: 1_000, seed: 3 }), 1);
 const VIEWPORT = { w: 944, h: 700 };
 
-describe("planMapFit (spec §3.4 Fit shows the whole map)", () => {
-  it("fits a small map at the card level, at most 100%", () => {
+describe("planMapFit (spec §3.4: Fit centers the map and fills the stage)", () => {
+  it("centers a small map at 100% with the padding of the zoom bar", () => {
+    expect(MAP_FIT_PADDING).toEqual({ x: 20, top: 20, bottom: 68 });
+    // The map is 496 × 152 (16 + 3 × 140 + 2 × 22 + 16 by 60 + 76 + 16). k = min(904 / 496, 612 / 152, 1) = 1.
+    // tx = (944 − 496) / 2; ty = 20 + ((700 − 88) − 152) / 2.
     const plan = planMapFit(small, VIEWPORT);
+    expect(plan?.camera).toEqual({ mode: "uniform", k: 1, tx: 224, ty: 250 });
     expect(plan?.level).toBe("card");
-    expect(plan?.camera.k).toBeGreaterThanOrEqual(0.5);
-    expect(plan?.camera.k).toBeLessThanOrEqual(1);
+    expect(plan?.layout.level).toBe("card");
   });
 
-  it("fits a large map at the chip level, below the card band, and shows all of it", () => {
+  it("fills the height of a tall map, from the top padding to the bottom padding, at the chip level", () => {
+    const plan = planMapFit(tall, VIEWPORT);
+    const k = 612 / 1_900; // (700 − 20 − 68) / 1,900
+    expect(plan?.camera.k).toBeCloseTo(k, 10);
+    expect(plan?.camera.ty).toBeCloseTo(20, 8);
+    expect(plan?.camera.tx).toBeCloseTo((944 - 172 * k) / 2, 8);
+    expect(plan?.level).toBe("chip");
+    expect(plan?.layout.level).toBe("chip");
+  });
+
+  it("fits a 200-component map at the chip level and shows all of it", () => {
     const plan = planMapFit(large, VIEWPORT);
     expect(plan?.level).toBe("chip");
-    expect(plan?.camera.k).toBeLessThan(0.5);
-    const bounds = plan?.layout.bounds ?? { w: 0, h: 0 };
+    expect(plan?.camera.k).toBeLessThan(0.7);
+    const { w, h } = plan?.layout.bounds ?? { w: 0, h: 0 };
     const k = plan?.camera.k ?? 0;
-    expect(bounds.w * k).toBeLessThanOrEqual(VIEWPORT.w);
-    expect(bounds.h * k).toBeLessThanOrEqual(VIEWPORT.h);
+    expect(w * k).toBeLessThanOrEqual(VIEWPORT.w - 40 + 1e-6);
+    expect(h * k).toBeLessThanOrEqual(VIEWPORT.h - 88 + 1e-6);
+  });
+
+  it("fits the two approved widths: the card level on a wide stage, the chip level with names on a narrow one", () => {
+    // The mockup's 21 components are 946 wide (32 + 5 × 140 + 104 + 5 × 22) and about 796 tall.
+    const mockup = buildOverviewModel(
+      overviewSnapshot({
+        components: [
+          ...Array.from({ length: 8 }, (_, i) => ({ rootPath: `d/c${i}`, role: "domain" as const })),
+          ...(["ui", "api", "agent", "storage", "tests"] as const).map((role) => ({ rootPath: `r/${role}`, role })),
+        ],
+      }),
+      1,
+    );
+    const wide = planMapFit(mockup, { w: 944, h: 700 });
+    expect(wide?.level).toBe("card");
+    const narrow = planMapFit(mockup, { w: 552, h: 700 });
+    expect(narrow?.level).toBe("chip");
+    expect(narrow?.camera.k).toBeGreaterThanOrEqual(MAP_ICON_ONLY_K);
   });
 
   it("waits for a real size", () => {
     expect(planMapFit(small, { w: 0, h: 0 })).toBeNull();
+    expect(planMapFit(small, { w: 30, h: 700 })).toBeNull();
+  });
+
+  it("property: Fit centers on both axes, stays inside the padded stage, fills one axis unless capped at 100%, and never picks detail", () => {
+    fc.assert(
+      fc.property(
+        arbOverviewSeed({ maxComponents: 12 }),
+        fc.record({ w: fc.integer({ min: 400, max: 2_400 }), h: fc.integer({ min: 500, max: 1_400 }) }),
+        (seed, viewport) => {
+          const plan = planMapFit(buildOverviewModel(overviewSnapshot(seed), 1), viewport);
+          expect(plan).not.toBeNull();
+          if (plan === null) return;
+          const { w, h } = plan.layout.bounds;
+          const { k, tx, ty } = plan.camera;
+          const availW = viewport.w - 2 * MAP_FIT_PADDING.x;
+          const availH = viewport.h - MAP_FIT_PADDING.top - MAP_FIT_PADDING.bottom;
+          expect(k).toBeLessThanOrEqual(1 + 1e-9);
+          expect(tx).toBeCloseTo((viewport.w - w * k) / 2, 6);
+          expect(ty).toBeCloseTo(MAP_FIT_PADDING.top + (availH - h * k) / 2, 6);
+          expect(tx).toBeGreaterThanOrEqual(MAP_FIT_PADDING.x - 1e-6);
+          expect(ty).toBeGreaterThanOrEqual(MAP_FIT_PADDING.top - 1e-6);
+          expect(ty + h * k).toBeLessThanOrEqual(viewport.h - MAP_FIT_PADDING.bottom + 1e-6);
+          const fills = Math.abs(w * k - availW) < 1e-6 || Math.abs(h * k - availH) < 1e-6;
+          expect(k === 1 || fills).toBe(true);
+          expect(plan.level).toBe(k < 0.7 ? "chip" : "card");
+          expect(plan.layout.level).toBe(plan.level);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 });
 
-describe("revealCamera and nearestCard", () => {
+describe("revealCamera", () => {
   const layout = layoutMap(small, { level: "card" });
   const camera = { mode: "uniform" as const, tx: 0, ty: 0, k: 1 };
 
@@ -3082,19 +3216,87 @@ describe("revealCamera and nearestCard", () => {
     expect(center.x).toBeCloseTo(150, 5);
     expect(center.y).toBeCloseTo(150, 5);
   });
+});
+```
 
-  it("finds the card nearest the viewport center", () => {
-    const second = layout.cards[1];
-    if (second === undefined) throw new Error("no card");
-    const c = cardCenter(second);
-    const centered = { mode: "uniform" as const, k: 1, tx: 400 - c.x, ty: 300 - c.y };
-    expect(nearestCard(layout, centered, { w: 800, h: 600 })?.id).toBe(second.id);
-    expect(MAP_LEVEL_SPECS.card.w).toBe(second.w);
+Create `packages/trace-viewer/src/ui/views/map/map-text.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { Citation } from "@jevcode/contracts";
+
+import { buildOverviewModel } from "../../../model/index.js";
+import { componentId, overviewSnapshot } from "../../../test-support/overview-builder.js";
+import { linkSentence, overviewHeadline } from "./map-text.js";
+
+const snapshot = overviewSnapshot({
+  components: [
+    { rootPath: "apps/web", name: "web", role: "ui" },
+    { rootPath: "services/api", name: "api", role: "api" },
+    { rootPath: "pkg/core-db", name: "core-db", role: "storage" },
+    { rootPath: "pkg/evil", name: "evil\u202Ename", role: "domain" },
+  ],
+});
+const overview = buildOverviewModel(snapshot, 1);
+const cite = (rootPath: string): Citation => ({ kind: "component", id: componentId(rootPath) });
+const link = (text: string, rootPath: string) => ({ text, componentId: componentId(rootPath) });
+
+describe("overviewHeadline", () => {
+  it("splits the count from up to three languages by file count", () => {
+    const withLanguages = buildOverviewModel({ ...snapshot, counts: { ...snapshot.counts, languages: ["TypeScript", "JSON", "Python", "Go"] } }, 1);
+    expect(overviewHeadline(withLanguages)).toEqual({ count: "4 components", languages: "TypeScript · JSON · Python" });
+    expect(overviewHeadline(buildOverviewModel({ ...snapshot, counts: { ...snapshot.counts, languages: [] } }, 1)).languages).toBeNull();
+    expect(overviewHeadline(buildOverviewModel(overviewSnapshot({ components: [{ rootPath: "src", role: "domain" }] }), 1)).count).toBe("1 component");
+  });
+});
+
+describe("linkSentence (component names are quiet links)", () => {
+  it("links each cited name where it appears, ignoring case and keeping the text between", () => {
+    const parts = linkSentence(
+      { text: "web calls the API through core-db.", citations: [cite("apps/web"), cite("services/api"), cite("pkg/core-db")] },
+      overview,
+    );
+    expect(parts).toEqual([
+      link("web", "apps/web"),
+      { text: " calls the " },
+      link("API", "services/api"),
+      { text: " through " },
+      link("core-db", "pkg/core-db"),
+      { text: "." },
+    ]);
+  });
+
+  it("appends a link after a sentence that does not spell the name out, and links a name once", () => {
+    expect(linkSentence({ text: "Everything runs in one process.", citations: [cite("apps/web"), cite("apps/web")] }, overview)).toEqual([
+      { text: "Everything runs in one process." },
+      { text: " " },
+      link("web", "apps/web"),
+    ]);
+  });
+
+  it("matches whole words only, so a longer word does not become a link", () => {
+    expect(linkSentence({ text: "The webapp serves pages.", citations: [cite("apps/web")] }, overview)).toEqual([
+      { text: "The webapp serves pages." },
+      { text: " " },
+      link("web", "apps/web"),
+    ]);
+  });
+
+  it("ignores file citations and components missing from the map", () => {
+    const parts = linkSentence({ text: "Plain.", citations: [{ kind: "file", id: "src/a.ts" }, { kind: "component", id: "cmp_000000000000" }] }, overview);
+    expect(parts).toEqual([{ text: "Plain." }]);
+  });
+
+  it("shows hostile text and names through displayUntrusted", () => {
+    const parts = linkSentence({ text: "Run evil\u202Ename now **bold**", citations: [cite("pkg/evil")] }, overview);
+    expect(parts).toEqual([{ text: "Run " }, link("evil⟨U+202E⟩name", "pkg/evil"), { text: " now **bold**" }]);
+    expect(JSON.stringify(parts)).not.toContain("\u202E");
   });
 });
 ```
 
-Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map/map-nav.test.ts src/ui/views/map/map-camera.test.ts` — expected: FAIL to load both (`Cannot find module './map-nav.js'`, `'./map-camera.js'`).
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map/map-nav.test.ts src/ui/views/map/map-camera.test.ts src/ui/views/map/map-text.test.ts` — expected: FAIL to load all three (`Cannot find module './map-nav.js'`, `'./map-camera.js'`, `'./map-text.js'`).
 
 Create `packages/trace-viewer/src/ui/views/map/map-nav.ts`:
 
@@ -3139,56 +3341,45 @@ Create `packages/trace-viewer/src/ui/views/map/map-camera.ts`:
 
 ```ts
 import { layoutMap, mapLevelForZoom, type MapCard, type MapLayout, type MapLayoutState, type MapLevel } from "../../../layout/map-layout.js";
-import { fitBounds, isInsideInset, screenToWorld, setCenter, type Point, type Size, type UniformCamera, type ZoomLimits } from "../../../layout/viewport.js";
+import { isInsideInset, screenToWorld, setCenter, type Point, type Size, type UniformCamera, type ZoomLimits } from "../../../layout/viewport.js";
 import type { OverviewModel } from "../../../model/index.js";
 
 export const MAP_LIMITS: ZoomLimits = { minK: 0.1, maxK: 2 };
-export const MAP_FIT_PADDING_PX = 48;
+/** Fit leaves 20 px at the sides and the top and 68 px at the bottom, which clears the zoom bar (revised Map mockup). */
+export const MAP_FIT_PADDING = { x: 20, top: 20, bottom: 68 } as const;
 export const MAP_REVEAL_INSET_PX = 48;
-/** Below this zoom card names hide and only role tiles show (spec alignment note 7, gate H2). */
-export const MAP_ICON_ONLY_K = 0.375;
+/** Below this zoom card names hide and only the footer icon and bar show (spec alignment note 7). */
+export const MAP_ICON_ONLY_K = 0.48;
 export const MAP_ZOOM_PRESETS = [
   { id: "fit", label: "Fit" },
   { id: "100", label: "100%" },
 ] as const;
-/** A fit stays inside its level's zoom band, so the next settle never flips the level it chose. */
-const FIT_MAX_K: { readonly [K in MapLevel]: number } = { chip: 0.49, card: 1, detail: 1.5 };
 
 export interface MapFitPlan { level: MapLevel; camera: UniformCamera; layout: MapLayout }
 
-/** Fit (spec §3.4): the card level when its own fit lands in the card band, else the chip level. Top-aligned. */
+/**
+ * Fit (spec §3.4): the whole map, centered on both axes, filling the stage up to 100%. The geometry is the same at
+ * every level, so there is one layout; `level` is the zoom band the fit lands in. k stays at or below 1, so the level
+ * is chip or card, never detail.
+ */
 export function planMapFit(overview: OverviewModel, viewport: Size, prev?: MapLayoutState): MapFitPlan | null {
-  if (viewport.w <= 0 || viewport.h <= 0) return null;
-  for (const level of ["card", "chip"] as const) {
-    const layout = layoutMap(overview, { level }, prev);
-    const fitted = fitBounds({ x: 0, y: 0, w: layout.bounds.w, h: layout.bounds.h }, viewport, {
-      padding: MAP_FIT_PADDING_PX,
-      limits: { minK: MAP_LIMITS.minK, maxK: FIT_MAX_K[level] },
-    });
-    if (level === "chip" || mapLevelForZoom(fitted.k) === level) {
-      return { level, layout, camera: { ...fitted, ty: Math.min(fitted.ty, MAP_FIT_PADDING_PX / 2) } };
-    }
-  }
-  return null;
+  const availW = viewport.w - 2 * MAP_FIT_PADDING.x;
+  const availH = viewport.h - MAP_FIT_PADDING.top - MAP_FIT_PADDING.bottom;
+  if (availW <= 0 || availH <= 0) return null;
+  const laid = layoutMap(overview, { level: "card" }, prev);
+  const { w, h } = laid.bounds;
+  if (w <= 0 || h <= 0) return null;
+  const k = Math.max(MAP_LIMITS.minK, Math.min(availW / w, availH / h, 1));
+  const level = mapLevelForZoom(k);
+  return {
+    level,
+    layout: { ...laid, level },
+    camera: { mode: "uniform", k, tx: (viewport.w - w * k) / 2, ty: MAP_FIT_PADDING.top + (availH - h * k) / 2 },
+  };
 }
 
 export function cardCenter(card: MapCard): Point {
   return { x: card.x + card.w / 2, y: card.y + card.h / 2 };
-}
-
-export function nearestCard(layout: MapLayout, camera: UniformCamera, viewport: Size): MapCard | null {
-  const center = screenToWorld(camera, { x: viewport.w / 2, y: viewport.h / 2 });
-  let best: MapCard | null = null;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const card of layout.cards) {
-    const c = cardCenter(card);
-    const distance = (c.x - center.x) ** 2 + (c.y - center.y) ** 2;
-    if (distance < bestDistance) {
-      best = card;
-      bestDistance = distance;
-    }
-  }
-  return best;
 }
 
 /** null when the card is inside the view inset by MAP_REVEAL_INSET_PX; else the camera that centers it. */
@@ -3233,19 +3424,75 @@ export function mapOverlayOf(session: TraceSession): MapOverlay | null {
 Create `packages/trace-viewer/src/ui/views/map/map-text.ts`:
 
 ```ts
+import type { Citation } from "@jevcode/contracts";
+
 import { displayUntrusted, overviewStatusOf, type OverviewModel } from "../../../model/index.js";
 
 /** Ruling R3 narrator states in quiet words (spec §6.6: never an error banner); "ready" says nothing. */
 const NARRATOR_WORD = { off: "Descriptions off", unavailable: "Descriptions unavailable", pending: "Descriptions pending" } as const;
 
-/** The rule-based header (spec §3.4): "12 components · TypeScript, JSON", up to three languages by file count. */
-export function overviewHeadline(overview: OverviewModel): string {
+/** The rule-based header (spec §3.4): "12 components" with up to three languages by file count beside it in muted ink. */
+export function overviewHeadline(overview: OverviewModel): { count: string; languages: string | null } {
   const snapshot = overview.snapshot;
   const n = snapshot.components.length;
-  const parts = [`${n.toLocaleString("en-US")} ${n === 1 ? "component" : "components"}`];
   const languages = snapshot.counts.languages.slice(0, 3).map((language) => displayUntrusted(language));
-  if (languages.length > 0) parts.push(languages.join(", "));
-  return parts.join(" · ");
+  return {
+    count: `${n.toLocaleString("en-US")} ${n === 1 ? "component" : "components"}`,
+    languages: languages.length === 0 ? null : languages.join(" · "),
+  };
+}
+
+export type SentencePart = { text: string } | { text: string; componentId: string };
+
+const isWordChar = (char: string | undefined): boolean => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
+
+/** First whole-word, case-insensitive occurrence of `needle` in `haystack` (both lower-cased) that overlaps no taken span; -1 when none. */
+function findWord(haystack: string, needle: string, taken: readonly { start: number; end: number }[]): number {
+  if (needle === "") return -1;
+  for (let from = 0; ; ) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) return -1;
+    const end = at + needle.length;
+    const clear = !isWordChar(haystack[at - 1]) && !isWordChar(haystack[end]) && !taken.some((span) => at < span.end && end > span.start);
+    if (clear) return at;
+    from = at + 1;
+  }
+}
+
+/**
+ * A narrator sentence as plain text with its cited components as links (the approved Map header: "component names are
+ * quiet links"). A cited name is linked where it first appears as a whole word, ignoring case; a name the sentence
+ * does not spell out is appended as a link after it. File citations and components missing from the map are skipped
+ * (the Map header no longer uses citation chips). The sentence and every name pass through displayUntrusted first.
+ */
+export function linkSentence(sentence: { text: string; citations: readonly Citation[] }, overview: OverviewModel): SentencePart[] {
+  const text = displayUntrusted(sentence.text);
+  const lower = text.toLowerCase();
+  const aligned = lower.length === text.length; // a few characters change length when lower-cased; then nothing links inline
+  const found: { start: number; end: number; id: string }[] = [];
+  const trailing: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const citation of sentence.citations) {
+    if (citation.kind !== "component" || seen.has(citation.id)) continue;
+    seen.add(citation.id);
+    const component = overview.componentById.get(citation.id);
+    if (component === undefined) continue;
+    const name = displayUntrusted(component.name);
+    const at = aligned ? findWord(lower, name.toLowerCase(), found) : -1;
+    if (at < 0) trailing.push({ id: component.id, name });
+    else found.push({ start: at, end: at + name.length, id: component.id });
+  }
+  found.sort((a, b) => a.start - b.start);
+  const parts: SentencePart[] = [];
+  let cursor = 0;
+  for (const hit of found) {
+    if (hit.start > cursor) parts.push({ text: text.slice(cursor, hit.start) });
+    parts.push({ text: text.slice(hit.start, hit.end), componentId: hit.id });
+    cursor = hit.end;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor) });
+  for (const link of trailing) parts.push({ text: " " }, { text: link.name, componentId: link.id });
+  return parts;
 }
 
 /** Spec §3.4 and E14: "Imports not analyzed for Python" when some components have no supported grammar. */
@@ -3298,7 +3545,7 @@ export function scanNote(overview: OverviewModel): ScanNote | null {
 }
 ```
 
-Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map/map-nav.test.ts src/ui/views/map/map-camera.test.ts` — expected: PASS.
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map/map-nav.test.ts src/ui/views/map/map-camera.test.ts src/ui/views/map/map-text.test.ts` — expected: PASS.
 
 - [ ] **Step 7: Write the view tests (failing)**
 
@@ -3312,7 +3559,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OverviewSnapshot } from "@jevcode/contracts";
 
-import type { TraceSession } from "../../../model/index.js";
+import { layoutMap, mapHubIds } from "../../../layout/map-layout.js";
+import { buildOverviewModel, type TraceSession } from "../../../model/index.js";
 import {
   renderWithViewer,
   stubAnimationFrames,
@@ -3324,6 +3572,7 @@ import {
 import { componentId, overviewSnapshot, syntheticOverview } from "../../../test-support/overview-builder.js";
 import { buildSession } from "../../../test-support/session-builder.js";
 import { Inspector } from "../../inspector/Inspector.js";
+import { planMapFit } from "./map-camera.js";
 import { MapView } from "./MapView.js";
 
 let resize: ResizeObserverStub;
@@ -3393,10 +3642,27 @@ describe("MapView (spec §3.4, E13)", () => {
       "storage",
       "side",
     ]);
+    expect(document.querySelectorAll("[data-map-lane]")).toHaveLength(4);
+    expect(document.querySelector("[data-map-band='side']")?.textContent).toContain("Support");
     expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(3);
     expect(screen.getByRole("group", { name: "Codebase map, 4 components" })).toBeTruthy();
-    expect(cardOf("apps/web").textContent).toContain("Browser app.");
-    expect(cardOf("packages/api").textContent).toContain("packages/api");
+    // The card face is name and footer; the purpose (or the root path) is in its accessible name and tooltip, and on the detail level.
+    expect(cardOf("apps/web").getAttribute("aria-label")).toContain("Browser app.");
+    expect(cardOf("packages/api").getAttribute("aria-label")).toContain("packages/api");
+    expect(document.querySelector("[data-map-external]")).toBeNull();
+  });
+
+  it("Fit centers the map and refits when the viewport resizes", () => {
+    renderMap(WEB_API_DB);
+    const transform = (): string | undefined => document.querySelector<HTMLElement>("[data-tv-world]")?.style.transform;
+    const expected = (w: number, h: number): string => {
+      const plan = planMapFit(buildOverviewModel(WEB_API_DB, 1), { w, h });
+      if (plan === null) throw new Error("no fit");
+      return `translate(${plan.camera.tx}px, ${plan.camera.ty}px) scale(${plan.camera.k})`;
+    };
+    expect(transform()).toBe(expected(1200, 800));
+    act(() => resize.resize(800, 600));
+    expect(transform()).toBe(expected(800, 600));
   });
 
   it("shows a quiet empty state without a snapshot", () => {
@@ -3415,6 +3681,51 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(edgeOf("packages/api", "packages/db")?.hasAttribute("data-lit")).toBe(true);
     expect(edgeOf("apps/web", "packages/db")?.hasAttribute("data-dim")).toBe(true);
     expect(document.querySelector(`[data-component-inspector="${componentId("packages/api")}"]`)).not.toBeNull();
+  });
+
+  it("hovering a card lights its edges like a selection, without selecting it", async () => {
+    const user = userEvent.setup();
+    const { store } = renderMap(WEB_API_DB);
+    await user.hover(cardOf("packages/api"));
+    expect(edgeOf("apps/web", "packages/api")?.hasAttribute("data-lit")).toBe(true);
+    expect(edgeOf("apps/web", "packages/db")?.hasAttribute("data-dim")).toBe(true);
+    expect(store.get().mapSelection).toBeNull();
+    await user.unhover(cardOf("packages/api"));
+    expect(document.querySelector("[data-lit], [data-dim]")).toBeNull();
+  });
+
+  it("at rest draws band-to-band edges that do not enter a hub; a hub shows a stub, and its edges and same-band edges join on selection", async () => {
+    const user = userEvent.setup();
+    const importers = ["apps/web", "srv/api", "pkg/agent", "pkg/store", "pkg/a", "pkg/b"];
+    renderMap(
+      overviewSnapshot({
+        components: [
+          { rootPath: "pkg/contracts", name: "contracts", role: "domain" },
+          { rootPath: "apps/web", role: "ui" },
+          { rootPath: "srv/api", role: "api" },
+          { rootPath: "pkg/agent", role: "agent" },
+          { rootPath: "pkg/store", role: "storage" },
+          { rootPath: "pkg/a", role: "domain" },
+          { rootPath: "pkg/b", role: "domain" },
+        ],
+        edges: [
+          ...importers.map((from) => ({ from, to: "pkg/contracts", count: 2 })),
+          { from: "apps/web", to: "srv/api", count: 3 },
+          { from: "pkg/a", to: "pkg/b", count: 1 },
+        ],
+      }),
+    );
+    const stub = `[data-map-hub-stub="${componentId("pkg/contracts")}"]`;
+    expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(1);
+    expect(edgeOf("apps/web", "srv/api")).not.toBeNull();
+    expect(document.querySelector(stub)).not.toBeNull();
+    await user.click(cardOf("pkg/contracts"));
+    expect(document.querySelectorAll("[data-map-edge][data-lit]")).toHaveLength(6);
+    expect(edgeOf("apps/web", "srv/api")?.hasAttribute("data-dim")).toBe(true);
+    expect(document.querySelector(stub)).toBeNull();
+    expect(edgeOf("pkg/a", "pkg/b")).toBeNull();
+    await user.click(cardOf("pkg/a"));
+    expect(edgeOf("pkg/a", "pkg/b")?.hasAttribute("data-lit")).toBe(true);
   });
 
   it("Esc and a background click clear the map selection; the Inspector leaves the component", async () => {
@@ -3498,11 +3809,11 @@ describe("MapView (spec §3.4, E13)", () => {
       }),
     );
     const card = cardOf("packages/evil");
+    // The purpose shows on the detail-level card (map-card.test.tsx); here it is in the tooltip and the accessible name.
     expect(card.textContent).toContain("evil⟨U+202E⟩name");
-    expect(card.textContent).toContain(shown);
-    expect(card.textContent).toContain("Type⟨U+202E⟩Script");
     for (const value of [card.getAttribute("aria-label"), card.getAttribute("title")]) {
       expect(value).toContain("⟨U+202E⟩");
+      expect(value).toContain(shown);
       expect(value).not.toContain("‮");
     }
     expect(screen.getByText(/^Overview ⟨U\+202E⟩\*\*bold\*\* https:\/\/evil\.example$/)).toBeTruthy();
@@ -3511,6 +3822,7 @@ describe("MapView (spec §3.4, E13)", () => {
     const inspector = document.querySelector(`[data-component-inspector="${evil}"]`);
     expect(inspector?.textContent).toContain(shown);
     expect(inspector?.textContent).toContain("evil⟨U+202E⟩name");
+    expect(inspector?.textContent).toContain("Type⟨U+202E⟩Script");
     expect(result.container.querySelectorAll("strong, em, a, img")).toHaveLength(0);
     expect(result.container.textContent).not.toContain("‮");
   });
@@ -3528,7 +3840,6 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(document.querySelectorAll("[data-map-card]")).toHaveLength(3);
     expect(screen.getByText("Imports not analyzed for Python")).toBeTruthy();
     expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(0);
-    expect(document.querySelector("[data-graphic='imports']")).toBeNull();
     expect(document.querySelector("[role='alert']")).toBeNull();
   });
 
@@ -3539,9 +3850,15 @@ describe("MapView (spec §3.4, E13)", () => {
   });
 
   it("Review Focus 1: a 200-component partial snapshot renders every card", () => {
-    renderMap(syntheticOverview({ components: 200, edges: 1_000, seed: 3, partial: true }));
+    const snapshot = syntheticOverview({ components: 200, edges: 1_000, seed: 3, partial: true });
+    renderMap(snapshot);
+    // At rest only band-to-band edges that do not enter a hub are drawn.
+    const layout = layoutMap(buildOverviewModel(snapshot, 1), { level: "card" });
+    const hubs = mapHubIds(layout.edges, layout.cards.length);
+    const atRest = layout.edges.filter((edge) => edge.kind !== "same" && !hubs.has(edge.to)).length;
     expect(document.querySelectorAll("[data-map-card]")).toHaveLength(200);
-    expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(1_000);
+    expect(atRest).toBeGreaterThan(0);
+    expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(atRest);
     expect(screen.getByText(/^Partial map · /)).toBeTruthy();
   });
 
@@ -3557,6 +3874,46 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(screen.getByText("Descriptions off")).toBeTruthy();
     expect(screen.queryByText("Descriptions pending")).toBeNull();
     expect(document.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("shows the narrative as plain sentences with component links: two sentences, then More; a link hovers and selects like its card", async () => {
+    const user = userEvent.setup();
+    const web = { kind: "component" as const, id: componentId("apps/web") };
+    const api = { kind: "component" as const, id: componentId("packages/api") };
+    const db = { kind: "component" as const, id: componentId("packages/db") };
+    const { store } = renderMap(
+      overviewSnapshot({
+        components: [
+          { rootPath: "apps/web", name: "web", role: "ui" },
+          { rootPath: "packages/api", name: "api", role: "api" },
+          { rootPath: "packages/db", name: "db", role: "storage" },
+        ],
+        edges: [{ from: "apps/web", to: "packages/api", count: 3 }, { from: "packages/api", to: "packages/db", count: 12 }],
+        narrative: {
+          provenance: "model",
+          sentences: [
+            { text: "web talks to api.", citations: [web, api] },
+            { text: "api stores data in db.", citations: [api, db] },
+            { text: "A third sentence stays behind More.", citations: [] },
+          ],
+        },
+      }),
+    );
+    expect(document.querySelectorAll("[data-map-narrative] [data-map-cite]")).toHaveLength(4);
+    expect(screen.queryByText(/third sentence/)).toBeNull();
+    const apiLink = document.querySelector<HTMLElement>(`[data-map-narrative] [data-map-cite="${api.id}"]`);
+    if (apiLink === null) throw new Error("no api link");
+    await user.hover(apiLink);
+    expect(edgeOf("apps/web", "packages/api")?.hasAttribute("data-lit")).toBe(true);
+    await user.unhover(apiLink);
+    await user.click(apiLink);
+    expect(store.get().mapSelection).toBe(api.id);
+    expect(document.querySelector(`[data-map-narrative] [data-map-cite="${api.id}"]`)?.hasAttribute("data-selected")).toBe(true);
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByText(/third sentence/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Overview" }));
+    expect(document.querySelector("[data-map-narrative]")).toBeNull();
   });
 
   it("a running scan shows its progress; a failed scan says the map is unavailable, quietly", () => {
@@ -3582,6 +3939,137 @@ describe("MapView (spec §3.4, E13)", () => {
   });
 });
 ```
+
+Create `packages/trace-viewer/src/ui/views/map/map-card.test.tsx`:
+
+```tsx
+// @vitest-environment jsdom
+import { cleanup, render } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { MapCard as MapCardBox, MapLevel } from "../../../layout/map-layout.js";
+import { buildOverviewModel } from "../../../model/index.js";
+import { componentId, overviewSnapshot } from "../../../test-support/overview-builder.js";
+import { MapCard, type MapCardProps } from "./MapCard.js";
+
+afterEach(() => cleanup());
+
+// One component, 61 of 122 files at most: the file bar is round(100 · √(61 ÷ 122)) = 71%.
+const MAIN = "apps/desktop/src/main";
+const overview = buildOverviewModel(
+  overviewSnapshot({
+    components: [
+      {
+        rootPath: MAIN,
+        name: "desktop main",
+        role: "api",
+        purpose: "Electron main process: IPC handlers and the event pipeline.",
+        provenance: "model",
+        fileCount: 61,
+        externalDeps: [{ name: "node-pty", count: 2 }, { name: "electron", count: 9 }, { name: "zod", count: 1 }],
+      },
+      {
+        rootPath: "packages/evil",
+        name: "evil‮name",
+        role: "domain",
+        purpose: "Ships builds‮txt.exe **now** [docs](https://evil.example) <img src=x onerror=alert(1)>",
+        provenance: "model",
+        externalDeps: [{ name: "pkg‮x", count: 3 }],
+      },
+      { rootPath: "pkg/long-component-name-without-spaces", name: "long-component-name-without-spaces", role: "domain" },
+    ],
+  }),
+  1,
+);
+
+function renderCard(level: MapLevel, rootPath = MAIN, overrides: Partial<MapCardProps> = {}) {
+  const component = overview.componentById.get(componentId(rootPath));
+  if (component === undefined) throw new Error("no component");
+  const box: MapCardBox = { id: component.id, band: "api", x: 0, y: 0, w: 140, h: 76 };
+  const props: MapCardProps = {
+    box, component, level, selected: false, tabStop: true, maxFiles: 122, hubImporters: null, state: null, onSelect: () => undefined, onHover: () => undefined, ...overrides,
+  };
+  return render(<MapCard {...props} />);
+}
+
+const q = (selector: string): HTMLElement | null => document.querySelector<HTMLElement>(selector);
+
+describe("MapCard content by level (revised Map mockup)", () => {
+  it("chip: the name and a footer of role icon and file bar, no count, purpose or packages", () => {
+    renderCard("chip");
+    expect(q("button")?.textContent).toContain("desktop main");
+    expect(q("[data-map-bar]")?.style.width).toBe("71%");
+    expect(q("[data-map-count]")).toBeNull();
+    expect(q("[data-map-purpose]")).toBeNull();
+    expect(q("[data-map-packages]")).toBeNull();
+  });
+
+  it("card: adds the right-aligned file count", () => {
+    renderCard("card");
+    expect(q("[data-map-count]")?.textContent).toBe("61");
+    expect(q("[data-map-purpose]")).toBeNull();
+    expect(q("[data-map-bar]")?.style.width).toBe("71%");
+  });
+
+  it("detail: the purpose, the top two packages, 'n files' and, for a hub, the glyph with its importer count", () => {
+    renderCard("detail", MAIN, { hubImporters: 13 });
+    expect(q("[data-map-purpose]")?.textContent).toBe("Electron main process: IPC handlers and the event pipeline.");
+    expect(q("[data-map-packages]")?.textContent).toBe("electron · node-pty");
+    expect(q("[data-map-count]")?.textContent).toBe("61 files");
+    expect(q("[data-map-hub]")?.textContent).toBe("13");
+    expect(q("[data-map-hub]")?.getAttribute("title")).toBe("Imported by 13 components");
+  });
+
+  it("shows the hub glyph on the detail level only, but names the hub in the accessible name at every level", () => {
+    renderCard("card", MAIN, { hubImporters: 13 });
+    expect(q("[data-map-hub]")).toBeNull();
+    expect(q("button")?.getAttribute("aria-label")).toContain("imported by 13 components");
+  });
+
+  it("gives a name its full text and falls back to the root path as the purpose", () => {
+    renderCard("detail", "pkg/long-component-name-without-spaces");
+    expect(q("button")?.textContent).toContain("long-component-name-without-spaces");
+    expect(q("[data-map-purpose][data-fallback]")?.textContent).toBe("pkg/long-component-name-without-spaces");
+  });
+
+  it("a session state mark takes the place of the count", () => {
+    renderCard("card", MAIN, { state: "changed" });
+    expect(q("[data-state='changed']")).not.toBeNull();
+    expect(q("[data-map-count]")).toBeNull();
+    expect(q("button")?.getAttribute("aria-label")).toContain("changed in this session");
+  });
+
+  it("Review Focus 2: a hostile purpose, name and package render as plain text on the detail card", () => {
+    const { container } = renderCard("detail", "packages/evil");
+    expect(q("[data-map-purpose]")?.textContent).toBe(
+      "Ships builds⟨U+202E⟩txt.exe **now** [docs](https://evil.example) <img src=x onerror=alert(1)>",
+    );
+    expect(q("[data-map-packages]")?.textContent).toBe("pkg⟨U+202E⟩x");
+    expect(container.querySelectorAll("strong, em, a, img")).toHaveLength(0);
+    expect(container.textContent).not.toContain("‮");
+  });
+
+  it("reports hover and click by id, and is a tab stop only when told", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onHover = vi.fn();
+    renderCard("card", MAIN, { onSelect, onHover, tabStop: false });
+    const card = q("button");
+    if (card === null) throw new Error("no card");
+    expect(card.tabIndex).toBe(-1);
+    await user.hover(card);
+    await user.unhover(card);
+    await user.click(card);
+    expect(onHover.mock.calls).toEqual([[componentId(MAIN)], [null]]);
+    expect(onSelect).toHaveBeenCalledWith(componentId(MAIN));
+  });
+});
+```
+
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map/map-card.test.tsx`
+
+Expected: FAIL to load (`Cannot find module './MapCard.js'`).
 
 Create `packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx`:
 
@@ -3679,6 +4167,16 @@ describe("ComponentInspector (spec §3.4)", () => {
     expect(inside.queryByText("Contracts holds the schemas.")).toBeNull();
   });
 
+  it("scales a 4 px bar by each row's share of the largest count in its list, up to 48 px", () => {
+    renderInspector({ view: "map", mapSelection: componentId(MAIN) });
+    const root = panel(componentId(MAIN));
+    const widths = (selector: string): string[] => [...root.querySelectorAll<HTMLElement>(`${selector} [data-list-bar]`)].map((bar) => bar.style.width);
+    expect(widths("[data-imports='out']")).toEqual(["48px"]);
+    expect(widths("[data-imports='in']")).toEqual(["48px"]);
+    // electron 9 is the largest, node-pty 2 is round(48 · 2 ÷ 9) = 11.
+    expect(widths("[data-component-package]")).toEqual(["48px", "11px"]);
+  });
+
   it("a session change opens its step and leaves the component", async () => {
     const user = userEvent.setup();
     const { store } = renderInspector({ view: "map", mapSelection: componentId(MAIN) });
@@ -3719,9 +4217,9 @@ import type React from "react";
 
 import type { Component } from "@jevcode/contracts";
 
+import { fileBarPercent, topPackages } from "../../../layout/map-details.js";
 import type { MapCard as MapCardBox, MapLevel } from "../../../layout/map-layout.js";
 import { displayUntrusted, truncateMiddle } from "../../../model/index.js";
-import { describeImports, ImportBar } from "../../graphics/ImportBar.js";
 import { Icon } from "../../icons/Icon.js";
 import { ROLE_ICON, ROLE_LABEL } from "../../icons/kind-icons.js";
 import type { MapCardState } from "./overlay.js";
@@ -3733,9 +4231,13 @@ export interface MapCardProps {
   level: MapLevel;
   selected: boolean;
   tabStop: boolean;
-  imports: { in: number; out: number } | null;
+  /** The file count of the largest component, for the footer bar. */
+  maxFiles: number;
+  /** Distinct importers when this component is a hub (the glyph shows on the detail level), else null. */
+  hubImporters: number | null;
   state: MapCardState | null;
   onSelect(id: string): void;
+  onHover(id: string | null): void;
 }
 
 const STATE_WORD: { readonly [K in MapCardState]: string } = {
@@ -3745,15 +4247,29 @@ const STATE_WORD: { readonly [K in MapCardState]: string } = {
   failing: "failing test",
 };
 
-/** One component (spec §3.4): role icon, name, purpose or root path, file count, language, import-weight bar. */
-function MapCardView({ box, component, level, selected, tabStop, imports, state, onSelect }: MapCardProps): React.JSX.Element {
+/**
+ * One component (spec §3.4, revised Map mockup). Same box at every level; the content follows it. Chip: name and a footer
+ * of role icon and file bar. Card: plus the count. Detail: plus the purpose, the top two packages, "n files" and the hub
+ * glyph. A session state mark (lane 07) replaces the count in the footer.
+ */
+function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubImporters, state, onSelect, onHover }: MapCardProps): React.JSX.Element {
   const name = displayUntrusted(component.name);
   const purpose = component.purpose === null ? null : displayUntrusted(component.purpose);
   const root = displayUntrusted(component.rootPath);
-  const files = `${component.fileCount.toLocaleString("en-US")} ${component.fileCount === 1 ? "file" : "files"}`;
-  const label = [name, ROLE_LABEL[component.role], purpose ?? root, files, state === null ? null : STATE_WORD[state]]
+  const count = component.fileCount.toLocaleString("en-US");
+  const files = `${count} ${component.fileCount === 1 ? "file" : "files"}`;
+  const importers = hubImporters === null ? null : hubImporters.toLocaleString("en-US");
+  const label = [
+    name,
+    ROLE_LABEL[component.role],
+    purpose ?? root,
+    files,
+    importers === null ? null : `imported by ${importers} components`,
+    state === null ? null : STATE_WORD[state],
+  ]
     .filter((part): part is string => part !== null)
     .join(", ");
+  const packages = level === "detail" ? topPackages(component, 2) : [];
   return (
     <button
       type="button"
@@ -3770,34 +4286,49 @@ function MapCardView({ box, component, level, selected, tabStop, imports, state,
         event.stopPropagation();
         onSelect(component.id);
       }}
+      onPointerEnter={() => onHover(component.id)}
+      onPointerLeave={() => onHover(null)}
     >
-      <span className={styles.cardHead}>
-        <span className={styles.roleTile} aria-hidden="true">
-          <Icon name={ROLE_ICON[component.role]} size={14} />
-        </span>
-        <span className={styles.cardName}>{name}</span>
-        {state === null ? null : <span className={styles.stateDot} data-state={state} aria-hidden="true" />}
+      <span className={styles.top}>
+        <span className={styles.name}>{name}</span>
+        {importers === null || level !== "detail" ? null : (
+          <span className={styles.hub} data-map-hub={component.id} title={`Imported by ${importers} components`}>
+            <Icon name="fan-in" size={9} />
+            <span>{importers}</span>
+          </span>
+        )}
       </span>
-      {level === "chip" ? null : (
+      {level === "detail" ? (
         <>
           {purpose === null ? (
-            <span className={styles.purpose} data-fallback="">
+            <span className={styles.purpose} data-map-purpose="" data-fallback="">
               {truncateMiddle(component.rootPath, 40)}
             </span>
           ) : (
-            <span className={styles.purpose}>{purpose}</span>
+            <span className={styles.purpose} data-map-purpose="">
+              {purpose}
+            </span>
           )}
-          <span className={styles.cardMeta}>
-            <span>{files}</span>
-            {component.language === null ? null : <span>{`· ${displayUntrusted(component.language)}`}</span>}
-            {imports === null ? null : (
-              <span className={styles.importBar}>
-                <ImportBar size="xs" inCount={imports.in} outCount={imports.out} label={describeImports(imports.in, imports.out)} />
-              </span>
-            )}
-          </span>
+          {packages.length === 0 ? null : (
+            <span className={styles.packages} data-map-packages="">
+              {packages.map((ext) => displayUntrusted(ext.name)).join(" · ")}
+            </span>
+          )}
         </>
-      )}
+      ) : null}
+      <span className={styles.foot}>
+        <Icon name={ROLE_ICON[component.role]} size={14} />
+        <span className={styles.track} aria-hidden="true">
+          <i data-map-bar="" style={{ width: `${fileBarPercent(component.fileCount, maxFiles)}%` }} />
+        </span>
+        {state !== null ? (
+          <span className={styles.stateDot} data-state={state} aria-hidden="true" />
+        ) : level === "chip" ? null : (
+          <span className={styles.count} data-map-count="">
+            {level === "detail" ? files : count}
+          </span>
+        )}
+      </span>
     </button>
   );
 }
@@ -3808,35 +4339,63 @@ export const MapCard = memo(MapCardView);
 Create `packages/trace-viewer/src/ui/views/map/MapEdges.tsx`:
 
 ```tsx
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type React from "react";
 
-import type { MapLayout } from "../../../layout/map-layout.js";
+import type { MapEdgePath, MapLayout } from "../../../layout/map-layout.js";
 import styles from "./MapView.module.css";
+
+/** Stroke px by `MapEdgePath.width` bucket (revised Map mockup), non-scaling at any zoom. */
+export const MAP_EDGE_STROKE: Readonly<Record<MapEdgePath["width"], number>> = { 1: 1, 2: 1.6, 3: 2.4 };
+
+/** A hub's mark: three strokes, 11 long, converging on its left port at (x, y). */
+export function hubStubPath(x: number, y: number): string {
+  return `M${x - 11} ${y - 7}Q${x - 5} ${y - 7} ${x} ${y}M${x - 11} ${y}H${x}M${x - 11} ${y + 7}Q${x - 5} ${y + 7} ${x} ${y}`;
+}
 
 export interface MapEdgesProps {
   layout: MapLayout;
-  selectedId: string | null;
-  /** Lane 07 overlay: edge keys the session touched. */
+  /** Component ids that are hubs (mapHubIds). */
+  hubs: ReadonlySet<string>;
+  /** The hovered, else the selected, component: all of its edges show, in accent, on top. */
+  activeId: string | null;
+  /** Lane 07 overlay: edge keys "<from>><to>" with both ends touched; they always draw. */
   emphasized: ReadonlySet<string> | null;
 }
 
-/** One SVG under the cards; strokes keep their 1–3 px screen width at any zoom (spec §3.4, §8.3). */
-function MapEdgesView({ layout, selectedId, emphasized }: MapEdgesProps): React.JSX.Element {
+/**
+ * One SVG under the cards. At rest it draws band-to-band edges that do not enter a hub (and emphasized session edges);
+ * the active card adds all of its own edges, same-band and hub edges included, in accent and drawn last, while every
+ * other edge drops to 22% (revised Map mockup, spec §3.4).
+ */
+function MapEdgesView({ layout, hubs, activeId, emphasized }: MapEdgesProps): React.JSX.Element {
+  const rest = useMemo(
+    () => layout.edges.filter((edge) => (edge.kind !== "same" && !hubs.has(edge.to)) || emphasized?.has(`${edge.from}>${edge.to}`) === true),
+    [layout.edges, hubs, emphasized],
+  );
+  const touches = (edge: MapEdgePath): boolean => activeId !== null && (edge.from === activeId || edge.to === activeId);
+  const lit = activeId === null ? [] : layout.edges.filter(touches);
+  const drawn = [...rest.filter((edge) => !touches(edge)), ...lit];
   return (
     <svg className={styles.edges} width={Math.max(1, layout.bounds.w)} height={Math.max(1, layout.bounds.h)} aria-hidden="true" focusable="false">
-      {layout.edges.map((edge) => {
+      {layout.cards
+        .filter((card) => hubs.has(card.id) && card.id !== activeId)
+        .map((card) => (
+          <path key={card.id} d={hubStubPath(card.x, card.y + card.h / 2)} className={styles.stub} data-map-hub-stub={card.id} />
+        ))}
+      {drawn.map((edge) => {
         const key = `${edge.from}>${edge.to}`;
-        const lit = selectedId !== null && (edge.from === selectedId || edge.to === selectedId);
+        const isLit = touches(edge);
         return (
           <path
             key={key}
             d={edge.d}
             className={styles.edge}
-            strokeWidth={edge.width}
+            strokeWidth={MAP_EDGE_STROKE[edge.width]}
             data-map-edge={key}
-            data-lit={lit ? "" : undefined}
-            data-dim={selectedId !== null && !lit ? "" : undefined}
+            data-kind={edge.kind}
+            data-lit={isLit ? "" : undefined}
+            data-dim={activeId !== null && !isLit ? "" : undefined}
             data-emphasized={emphasized?.has(key) === true ? "" : undefined}
           />
         );
@@ -3854,101 +4413,114 @@ Create `packages/trace-viewer/src/ui/views/map/MapHeader.tsx`:
 import { useState } from "react";
 import type React from "react";
 
-import type { Citation } from "@jevcode/contracts";
-
-import { displayUntrusted, truncateMiddle, type OverviewModel } from "../../../model/index.js";
+import type { OverviewModel } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
-import { ROLE_ICON } from "../../icons/kind-icons.js";
-import { narratorNote, notAnalyzedNote, overviewHeadline, partialNote, scanNote } from "./map-text.js";
+import { linkSentence, narratorNote, notAnalyzedNote, overviewHeadline, partialNote, scanNote } from "./map-text.js";
 import styles from "./MapView.module.css";
 
-function CitationChip({ citation, overview, onSelect }: { citation: Citation; overview: OverviewModel; onSelect(id: string): void }) {
-  if (citation.kind === "component") {
-    const component = overview.componentById.get(citation.id);
-    if (component === undefined) return null;
-    const name = displayUntrusted(component.name);
-    return (
-      <button type="button" className={styles.cite} data-map-cite={citation.id} title={name} onClick={() => onSelect(citation.id)}>
-        <Icon name={ROLE_ICON[component.role]} size={12} />
-        <span>{name}</span>
-      </button>
-    );
-  }
-  if (citation.kind === "file") {
-    return (
-      <span className={styles.cite} title={displayUntrusted(citation.id)}>
-        <Icon name="file" size={12} />
-        <span>{truncateMiddle(citation.id, 28)}</span>
-      </span>
-    );
-  }
-  return null;
-}
+/** The narrative shows this many sentences; the rest sit behind a quiet "More". */
+const NARRATIVE_VISIBLE = 2;
 
 export interface MapHeaderProps {
   overview: OverviewModel;
   onSelectComponent(id: string): void;
   /** Rescan after a failed scan (ViewerHost.rescanOverview); the Retry button shows only when it is given. */
   onRetry?: () => void;
+  /** The selected component: its link in the narrative uses accent ink. */
+  selectedId?: string | null;
+  /** Hovering a component link behaves like hovering its card. */
+  onHoverComponent?: (id: string | null) => void;
 }
 
-/** Rule-based headline and quiet notes (partial, imports, scan, narrator), then the collapsible narrative with citation chips (spec §3.4 "Top"). */
-export function MapHeader({ overview, onSelectComponent, onRetry }: MapHeaderProps): React.JSX.Element {
+/**
+ * Headline, a row of quiet notes (partial, imports, scan, narrator), then the collapsible narrative (spec §3.4 "Top";
+ * the approved Map header): plain sentences whose component names are links, two sentences, then "More".
+ */
+export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = null, onHoverComponent }: MapHeaderProps): React.JSX.Element {
   const [open, setOpen] = useState(true);
+  const [more, setMore] = useState(false);
   const sentences = overview.snapshot.narrative?.sentences ?? null;
+  const headline = overviewHeadline(overview);
   const partial = partialNote(overview);
   const imports = notAnalyzedNote(overview);
   const scan = scanNote(overview);
   const narrator = narratorNote(overview);
+  const shown = sentences === null ? [] : more ? sentences : sentences.slice(0, NARRATIVE_VISIBLE);
+  const hasNotes = partial !== null || imports !== null || scan !== null || narrator !== null;
   return (
     <header className={styles.header} data-map-header="">
       <div className={styles.headRow}>
         <Icon name="view-map" size={16} />
-        <span className={styles.headline}>{overviewHeadline(overview)}</span>
-        {partial === null ? null : (
-          <span className={styles.note} data-map-note="partial" title="The scan stopped at the 20,000-file cap">
-            <Icon name="stack" size={12} />
-            <span>{partial}</span>
-          </span>
-        )}
-        {imports === null ? null : (
-          <span className={styles.note} data-map-note="imports">
-            {imports}
-          </span>
-        )}
-        {scan === null ? null : (
-          <span className={styles.note} data-map-note={`scan-${scan.state}`} title={scan.detail ?? undefined}>
-            <Icon name={scan.state === "running" ? "clock" : "eyeoff"} size={12} />
-            <span>{scan.text}</span>
-            {scan.state === "failed" && onRetry !== undefined ? (
-              <button type="button" className={styles.retry} onClick={onRetry}>
-                Retry
-              </button>
-            ) : null}
-          </span>
-        )}
-        {narrator === null ? null : (
-          <span className={styles.note} data-map-note="narrator">
-            {narrator}
-          </span>
-        )}
+        <span className={styles.headline}>{headline.count}</span>
+        {headline.languages === null ? null : <span className={styles.languages}>{headline.languages}</span>}
         {sentences === null ? null : (
           <button type="button" className={styles.toggle} aria-expanded={open} aria-controls="tv-map-overview" onClick={() => setOpen((value) => !value)}>
-            <Icon name={open ? "chev-d" : "chev-r"} size={12} />
             <span>Overview</span>
+            <Icon name={open ? "chev-d" : "chev-r"} size={12} />
           </button>
         )}
       </div>
+      {hasNotes ? (
+        <div className={styles.notes}>
+          {partial === null ? null : (
+            <span className={styles.note} data-map-note="partial" title="The scan stopped at the 20,000-file cap">
+              <Icon name="stack" size={12} />
+              <span>{partial}</span>
+            </span>
+          )}
+          {imports === null ? null : (
+            <span className={styles.note} data-map-note="imports">
+              {imports}
+            </span>
+          )}
+          {scan === null ? null : (
+            <span className={styles.note} data-map-note={`scan-${scan.state}`} title={scan.detail ?? undefined}>
+              <Icon name={scan.state === "running" ? "clock" : "eyeoff"} size={12} />
+              <span>{scan.text}</span>
+              {scan.state === "failed" && onRetry !== undefined ? (
+                <button type="button" className={styles.retry} onClick={onRetry}>
+                  Retry
+                </button>
+              ) : null}
+            </span>
+          )}
+          {narrator === null ? null : (
+            <span className={styles.note} data-map-note="narrator">
+              {narrator}
+            </span>
+          )}
+        </div>
+      ) : null}
       {sentences !== null && open ? (
         <p id="tv-map-overview" className={styles.narrative} data-map-narrative="">
-          {sentences.map((sentence, index) => (
+          {shown.map((sentence, index) => (
             <span key={index} className={styles.sentence}>
-              {displayUntrusted(sentence.text)}
-              {sentence.citations.map((citation, at) => (
-                <CitationChip key={`${citation.kind}:${citation.id}:${at}`} citation={citation} overview={overview} onSelect={onSelectComponent} />
-              ))}{" "}
+              {linkSentence(sentence, overview).map((part, at) =>
+                "componentId" in part ? (
+                  <button
+                    key={at}
+                    type="button"
+                    className={styles.ref}
+                    data-map-cite={part.componentId}
+                    data-selected={part.componentId === selectedId ? "" : undefined}
+                    title={part.text}
+                    onClick={() => onSelectComponent(part.componentId)}
+                    onPointerEnter={() => onHoverComponent?.(part.componentId)}
+                    onPointerLeave={() => onHoverComponent?.(null)}
+                  >
+                    {part.text}
+                  </button>
+                ) : (
+                  part.text
+                ),
+              )}{" "}
             </span>
           ))}
+          {sentences.length > NARRATIVE_VISIBLE && !more ? (
+            <button type="button" className={styles.more} onClick={() => setMore(true)}>
+              More
+            </button>
+          ) : null}
         </p>
       ) : null}
     </header>
@@ -3964,19 +4536,21 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.tsx`:
 import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type React from "react";
 
-import { importTotals } from "../../../layout/map-details.js";
 import {
   MAP_BAND_LABEL_H,
+  MAP_LANE_PAD,
   MAP_MARGIN,
   layoutMap,
+  mapHubIds,
+  mapImporterCounts,
   mapLevelForZoom,
   type MapBand,
-  type MapLayout,
+  type MapCard as MapCardBox,
   type MapLayoutState,
   type MapLevel,
 } from "../../../layout/map-layout.js";
-import { worldToScreen, type Point, type Size, type UniformCamera } from "../../../layout/viewport.js";
-import { displayUntrusted, type OverviewModel } from "../../../model/index.js";
+import type { Size, UniformCamera } from "../../../layout/viewport.js";
+import type { OverviewModel } from "../../../model/index.js";
 import type { IconName } from "../../icons/icon-names.js";
 import { Icon } from "../../icons/Icon.js";
 import { useSessionView } from "../../shell/session-context.js";
@@ -3984,17 +4558,7 @@ import { ZOOM_STEP } from "../../state/keymap.js";
 import { useView, useViewStore } from "../../state/store.js";
 import { createViewportController, type ViewportController } from "../../viewport/controller.js";
 import { useRegisterViewPort, useViewPortRegistry, type ViewPort, type ViewProps } from "../view-port.js";
-import {
-  anchoredCamera,
-  cardCenter,
-  MAP_ICON_ONLY_K,
-  MAP_LIMITS,
-  MAP_ZOOM_PRESETS,
-  nearestCard,
-  planMapFit,
-  revealCamera,
-  zoomedAtCenter,
-} from "./map-camera.js";
+import { anchoredCamera, cardCenter, MAP_ICON_ONLY_K, MAP_LIMITS, MAP_ZOOM_PRESETS, planMapFit, revealCamera, zoomedAtCenter } from "./map-camera.js";
 import { isMapNavKey, mapNeighbor } from "./map-nav.js";
 import { scanNote } from "./map-text.js";
 import { MapCard } from "./MapCard.js";
@@ -4009,7 +4573,7 @@ const BAND_LABEL: { readonly [K in MapBand]: string } = {
   agent: "Agents",
   domain: "Domain",
   storage: "Storage",
-  side: "Tests · tooling · config",
+  side: "Support",
 };
 const BAND_ICON: { readonly [K in MapBand]: IconName } = {
   ui: "role-ui",
@@ -4019,9 +4583,9 @@ const BAND_ICON: { readonly [K in MapBand]: IconName } = {
   storage: "role-storage",
   side: "stack",
 };
-/** The dot grid's cell at k = 1 (as on the Canvas). */
-const GRID_PX = 20;
-const START: UniformCamera = { mode: "uniform", tx: 0, ty: 0, k: 0.49 };
+const START: UniformCamera = { mode: "uniform", tx: 0, ty: 0, k: 0.5 };
+const NO_HUBS: ReadonlySet<string> = new Set();
+const NO_COUNTS: ReadonlyMap<string, number> = new Map();
 
 function prefersReducedMotion(element: Element): boolean {
   const view = element.ownerDocument.defaultView;
@@ -4030,12 +4594,13 @@ function prefersReducedMotion(element: Element): boolean {
 
 interface Latest {
   overview: OverviewModel | null;
-  layout: MapLayout | null;
+  cards: readonly MapCardBox[] | null;
+  bounds: { w: number; h: number } | null;
   level: MapLevel;
   active: boolean;
 }
 
-/** The codebase Map (spec §3.4, E13): DOM cards and one SVG edge layer in a world layer moved by the shared camera controller. */
+/** The codebase Map (spec §3.4, E13): light band lanes, DOM cards and one SVG edge layer in a world layer moved by the shared camera controller. */
 export function MapView({ active }: ViewProps): React.JSX.Element {
   const view = useSessionView();
   const store = useViewStore();
@@ -4044,14 +4609,19 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const tool = useView((state) => state.tool);
   const session = view.session;
   const overview = session?.overview ?? null;
-  const [level, setLevel] = useState<MapLevel>("chip");
+  // The level only changes what a card shows (one geometry, so no card moves); it follows the zoom at each settle.
+  const [level, setLevel] = useState<MapLevel>("card");
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const stickyRef = useRef<MapLayoutState | undefined>(undefined);
   // Sticky (spec §8.3): each layout starts from the last committed layout's band order.
-  const layout = useMemo(() => (overview === null ? null : layoutMap(overview, { level }, stickyRef.current)), [overview, level]);
+  const layout = useMemo(() => (overview === null ? null : layoutMap(overview, { level: "card" }, stickyRef.current)), [overview]);
   const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session]);
-  const imports = useMemo(() => (overview === null ? null : importTotals(overview)), [overview]);
+  const hubs = useMemo(() => (layout === null ? NO_HUBS : mapHubIds(layout.edges, layout.cards.length)), [layout]);
+  const importers = useMemo(() => (layout === null ? NO_COUNTS : mapImporterCounts(layout.edges)), [layout]);
+  const maxFiles = useMemo(() => overview?.snapshot.components.reduce((most, component) => Math.max(most, component.fileCount), 0) ?? 0, [overview]);
+  const activeId = hoverId ?? selection;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
@@ -4059,42 +4629,34 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const cameraRef = useRef<UniformCamera>(START);
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const fittedRepoRef = useRef<string | null>(null);
-  const pendingAnchorRef = useRef<{ id: string; screen: Point } | null>(null);
+  /** The camera the last Fit chose; a resize refits only while the camera is still there. */
+  const lastFitRef = useRef<UniformCamera | null>(null);
   /** A user key or port call asked to focus this card; consumed once by the next commit (never on data rebuilds). */
   const pendingFocusRef = useRef<string | null>(null);
-  const latest = useRef<Latest>({ overview, layout, level, active });
+  const latest = useRef<Latest>({ overview, cards: layout?.cards ?? null, bounds: layout?.bounds ?? null, level, active });
 
   useLayoutEffect(() => {
-    latest.current = { overview, layout, level, active };
+    latest.current = { overview, cards: layout?.cards ?? null, bounds: layout?.bounds ?? null, level, active };
     if (layout !== null) stickyRef.current = layout.state;
   });
 
-  /** One write per camera frame: the world transform, the dot grid, and the zoom band (names hide below MAP_ICON_ONLY_K). */
+  /** One write per camera frame: the world transform and the zoom band (names hide below MAP_ICON_ONLY_K). */
   const writeCamera = useCallback((camera: UniformCamera) => {
     cameraRef.current = camera;
     const world = worldRef.current;
     if (world !== null) world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
     const viewport = viewportRef.current;
     if (viewport !== null) {
-      viewport.style.backgroundPosition = `${camera.tx}px ${camera.ty}px`;
-      // Below 50% the grid doubles its cell so the dots stay a quiet texture.
-      const cell = GRID_PX * camera.k * (camera.k < 0.5 ? 2 : 1);
-      viewport.style.backgroundSize = `${cell}px ${cell}px`;
       const band = camera.k < MAP_ICON_ONLY_K ? "icon" : "full";
       if (viewport.dataset.zoomBand !== band) viewport.dataset.zoomBand = band;
     }
   }, []);
 
-  /** At rest the level follows the zoom (spec §8.3); the card nearest the center keeps its screen point. */
+  /** At rest the level follows the zoom (spec §8.3); cards keep their place, only their content changes. */
   const settle = useCallback(
     (camera: UniformCamera) => {
       const next = mapLevelForZoom(camera.k);
-      const current = latest.current;
-      if (next !== current.level && current.layout !== null) {
-        const anchor = nearestCard(current.layout, camera, sizeRef.current);
-        pendingAnchorRef.current = anchor === null ? null : { id: anchor.id, screen: worldToScreen(camera, cardCenter(anchor)) };
-        setLevel(next);
-      }
+      if (next !== latest.current.level) setLevel(next);
       registry.notify();
     },
     [registry],
@@ -4118,6 +4680,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       if (current.overview === null || controllerRef.current === null) return false;
       const plan = planMapFit(current.overview, sizeRef.current, stickyRef.current);
       if (plan === null) return false;
+      lastFitRef.current = plan.camera;
       if (plan.level !== current.level) setLevel(plan.level);
       moveTo(plan.camera, animate);
       return true;
@@ -4134,6 +4697,16 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     if (fit(false)) fittedRepoRef.current = repo;
   }, [fit]);
 
+  /** A viewport resize refits (centered, filling the stage) while the camera is still where the last Fit left it. */
+  const refitIfStillFitted = useCallback((): boolean => {
+    const controller = controllerRef.current;
+    const last = lastFitRef.current;
+    if (controller === null || last === null) return false;
+    const now = controller.get();
+    if (Math.abs(now.k - last.k) > 1e-6 || Math.abs(now.tx - last.tx) > 0.5 || Math.abs(now.ty - last.ty) > 0.5) return false;
+    return fit(false);
+  }, [fit]);
+
   const hasOverview = overview !== null;
   useLayoutEffect(() => {
     const element = viewportRef.current;
@@ -4145,8 +4718,8 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       limits: () => MAP_LIMITS,
       viewport: () => sizeRef.current,
       content: () => {
-        const bounds = latest.current.layout?.bounds;
-        return bounds === undefined ? { x: 0, y: 0, w: 0, h: 0 } : { x: 0, y: 0, w: bounds.w, h: bounds.h };
+        const bounds = latest.current.bounds;
+        return bounds === null ? { x: 0, y: 0, w: 0, h: 0 } : { x: 0, y: 0, w: bounds.w, h: bounds.h };
       },
       onFrame: (camera) => writeCamera(camera),
       onGestureEnd: (camera) => settle(camera),
@@ -4166,7 +4739,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             const rect = entries[0]?.contentRect;
             if (rect === undefined || rect.width <= 0 || rect.height <= 0) return; // 0 × 0 under <Activity mode="hidden">
             sizeRef.current = { w: rect.width, h: rect.height };
-            fitIfPending();
+            if (!refitIfStillFitted()) fitIfPending();
           })
         : null;
     observer?.observe(element);
@@ -4175,21 +4748,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       controller.destroy();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [hasOverview, fitIfPending, settle, store, writeCamera]);
+  }, [hasOverview, fitIfPending, refitIfStillFitted, settle, store, writeCamera]);
 
   useLayoutEffect(() => {
     fitIfPending();
   }, [overview, active, fitIfPending]);
-
-  // After a level change, put the anchor card back where it was on screen.
-  useLayoutEffect(() => {
-    const pending = pendingAnchorRef.current;
-    const controller = controllerRef.current;
-    if (pending === null || layout === null || controller === null) return;
-    pendingAnchorRef.current = null;
-    const card = layout.cards.find((item) => item.id === pending.id);
-    if (card !== undefined) void controller.set(anchoredCamera(controller.get().k, cardCenter(card), pending.screen), { animate: false });
-  }, [layout]);
 
   // Focus moves only for a pending user request (lessons-w2): never on a new snapshot.
   useLayoutEffect(() => {
@@ -4199,7 +4762,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     const element = worldRef.current?.querySelector<HTMLElement>(`[data-map-card="${id}"]`) ?? null;
     if (element === null) return;
     element.focus({ preventScroll: true });
-    const card = latest.current.layout?.cards.find((item) => item.id === id);
+    const card = latest.current.cards?.find((item) => item.id === id);
     const controller = controllerRef.current;
     if (card === undefined || controller === null) return;
     const target = revealCamera(controller.get(), card, sizeRef.current);
@@ -4225,17 +4788,19 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     [store],
   );
 
-  const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    const current = latest.current.layout;
-    if (current === null || !isMapNavKey(event.key) || event.altKey || event.metaKey || event.ctrlKey) return;
-    const from = event.target instanceof Element ? (event.target.closest<HTMLElement>("[data-map-card]")?.dataset.mapCard ?? null) : null;
-    const next = mapNeighbor(current, from, event.key);
-    if (next === null) return;
-    event.preventDefault();
-    pendingFocusRef.current = next;
-    setFocusId(next);
-    bump();
-  }, []);
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (layout === null || !isMapNavKey(event.key) || event.altKey || event.metaKey || event.ctrlKey) return;
+      const from = event.target instanceof Element ? (event.target.closest<HTMLElement>("[data-map-card]")?.dataset.mapCard ?? null) : null;
+      const next = mapNeighbor(layout, from, event.key);
+      if (next === null) return;
+      event.preventDefault();
+      pendingFocusRef.current = next;
+      setFocusId(next);
+      bump();
+    },
+    [layout],
+  );
 
   const zoomTo = useCallback(
     (k: number) => {
@@ -4247,7 +4812,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
 
   const fitSelection = useCallback(() => {
     const id = store.get().mapSelection;
-    const card = id === null ? undefined : latest.current.layout?.cards.find((item) => item.id === id);
+    const card = id === null ? undefined : latest.current.cards?.find((item) => item.id === id);
     if (card === undefined) return;
     moveTo(anchoredCamera(1, cardCenter(card), { x: sizeRef.current.w / 2, y: sizeRef.current.h / 2 }), true);
   }, [moveTo, store]);
@@ -4258,7 +4823,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       reveal: () => undefined,
       captureCamera: () => null,
       focusSelected: () => {
-        const id = store.get().mapSelection ?? latest.current.layout?.cards[0]?.id ?? null;
+        const id = store.get().mapSelection ?? latest.current.cards?.[0]?.id ?? null;
         if (id === null) return;
         pendingFocusRef.current = id;
         setFocusId(id);
@@ -4300,9 +4865,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       </div>
     );
   }
+  const laneTop = MAP_MARGIN - 4;
+  const laneHeight = layout.bounds.h - 2 * MAP_MARGIN + 10; // down to bounds.h − MAP_MARGIN + 6
   return (
     <div className={styles.root}>
-      <MapHeader overview={overview} onSelectComponent={onSelectCard} />
+      <MapHeader overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId} />
       <div className={styles.stage}>
         {layout.cards.length === 0 ? (
           <p className={styles.stageNote} data-map-empty="">
@@ -4327,7 +4894,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             ref={worldRef}
             className={styles.world}
             data-tv-world=""
-            data-level={layout.level}
+            data-level={level}
             role="group"
             aria-label={`Codebase map, ${layout.cards.length.toLocaleString("en-US")} components`}
             onKeyDown={onKeyDown}
@@ -4335,18 +4902,27 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
           >
             {layout.bands.map((band) => (
               <div
+                key={`lane:${band.band}`}
+                className={styles.lane}
+                data-map-lane={band.band}
+                aria-hidden="true"
+                style={{ left: band.x - MAP_LANE_PAD, top: laneTop, width: band.w + 2 * MAP_LANE_PAD, height: laneHeight }}
+              />
+            ))}
+            {layout.bands.map((band) => (
+              <div
                 key={band.band}
                 className={styles.band}
                 data-map-band={band.band}
                 aria-hidden="true"
-                style={{ left: band.x, top: MAP_MARGIN, width: band.w, height: MAP_BAND_LABEL_H }}
+                style={{ left: band.x - 1, top: MAP_MARGIN + 2, height: MAP_BAND_LABEL_H - 14 }}
               >
                 <Icon name={BAND_ICON[band.band]} size={14} />
                 <span className={styles.bandName}>{BAND_LABEL[band.band]}</span>
                 <span className={styles.bandCount}>{band.count.toLocaleString("en-US")}</span>
               </div>
             ))}
-            <MapEdges layout={layout} selectedId={selection} emphasized={overlay?.emphasizedEdges ?? null} />
+            <MapEdges layout={layout} hubs={hubs} activeId={activeId} emphasized={overlay?.emphasizedEdges ?? null} />
             {layout.cards.map((box) => {
               const component = overview.componentById.get(box.id);
               return component === undefined ? null : (
@@ -4354,27 +4930,17 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
                   key={box.id}
                   box={box}
                   component={component}
-                  level={layout.level}
+                  level={level}
                   selected={box.id === selection}
                   tabStop={box.id === tabStop}
-                  imports={imports?.get(box.id) ?? null}
+                  maxFiles={maxFiles}
+                  hubImporters={hubs.has(box.id) ? (importers.get(box.id) ?? 0) : null}
                   state={overlay?.cardState.get(box.id) ?? null}
                   onSelect={onSelectCard}
+                  onHover={setHoverId}
                 />
               );
             })}
-            {layout.externals.map((chip, index) => (
-              <span
-                key={`${chip.nearComponent}:${chip.name}:${index}`}
-                className={styles.external}
-                data-map-external=""
-                title={displayUntrusted(chip.name)}
-                style={{ left: chip.x, top: chip.y }}
-              >
-                <Icon name="pkg" size={12} />
-                <span className={styles.externalName}>{displayUntrusted(chip.name)}</span>
-              </span>
-            ))}
           </div>
         </div>
       </div>
@@ -4386,9 +4952,13 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
 Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 
 ```css
-/* Map view (spec §3.4, §3.6): light, one elevation (shadow), color for state only, no decorative borders. The camera
-   writes the world transform, the dot grid and data-zoom-band directly (MapView writeCamera). */
+/* Map view (spec §3.4, §3.6; the approved H2 Map mockup, map.html): light, one elevation (shadow), color for state only,
+   no decorative borders, no dot grid. Sizes inside the world are world units chosen to read 11 to 13 px at the zoom of
+   the level, because the camera scales the world. The camera writes the world transform and data-zoom-band directly
+   (MapView writeCamera). --tv-map-edge and --tv-map-lane are proposed tokens; move them to the token sheet with the others. */
 .root {
+  --tv-map-edge: #c4c9d1;
+  --tv-map-lane: rgb(16 24 40 / 0.024);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -4413,7 +4983,7 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 
 .header {
   flex: none;
-  padding: 10px 16px 12px;
+  padding: 12px 16px 14px;
   background: var(--tv-panel);
   box-shadow: inset 0 -1px 0 var(--tv-hair);
   color: var(--tv-ink);
@@ -4421,10 +4991,10 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 
 .headRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  min-height: 24px;
+  gap: 8px;
+  min-height: 22px;
+  white-space: nowrap;
 }
 
 .headline {
@@ -4432,10 +5002,21 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   font-variant-numeric: tabular-nums;
 }
 
+.languages {
+  color: var(--tv-ink-3);
+}
+
+.notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+
 .note {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   color: var(--tv-ink-3);
   font-size: 12px;
   line-height: 16px;
@@ -4451,7 +5032,7 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   border: 0;
   border-radius: 6px;
   background: none;
-  color: var(--tv-ink-2);
+  color: var(--tv-ink-3);
   font: inherit;
   font-size: 12px;
 }
@@ -4461,7 +5042,8 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 }
 
 .toggle:focus-visible,
-.cite:focus-visible,
+.ref:focus-visible,
+.more:focus-visible,
 .card:focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 2px;
@@ -4497,32 +5079,41 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 }
 
 .narrative {
-  max-width: 78ch;
+  max-width: 86ch;
   margin: 6px 0 0;
   color: var(--tv-ink-2);
   font-size: 13px;
   line-height: 20px;
 }
 
-.cite {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  max-width: 180px;
-  height: 18px;
-  margin: 0 2px 0 4px;
-  padding: 0 6px;
+/* A component name in the narrative: ink with a faint underline; the selected component's link turns accent. */
+.ref {
+  padding: 0;
   border: 0;
-  border-radius: 9px;
-  background: var(--tv-fill-2);
-  color: var(--tv-ink-2);
+  background: none;
+  color: var(--tv-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgb(16 24 40 / 0.2);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ref[data-selected] {
+  color: var(--tv-accent);
+  text-decoration-color: var(--tv-accent);
+}
+
+.more {
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tv-ink-3);
   font: inherit;
   font-size: 12px;
-  line-height: 18px;
-  vertical-align: 1px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .stage {
@@ -4537,9 +5128,7 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   overflow: hidden;
   outline: none;
   touch-action: none;
-  background-color: var(--tv-canvas);
-  background-image: radial-gradient(circle, var(--tv-ink-4) 0.6px, transparent 1.1px);
-  background-size: 20px 20px;
+  background: var(--tv-canvas);
 }
 
 .viewport[data-tool="hand"] {
@@ -4553,32 +5142,67 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   transform-origin: 0 0;
 }
 
+/* Each band is a full-height light lane; its header sits inside the top. */
+.lane {
+  position: absolute;
+  border-radius: 16px;
+  background: var(--tv-map-lane);
+  pointer-events: none;
+}
+
+.world[data-level="detail"] .lane {
+  border-radius: 10px;
+}
+
 .band {
   position: absolute;
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--tv-ink-3);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 7px;
+  color: var(--tv-ink);
+  font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
 }
 
+.band svg {
+  color: var(--tv-ink-3);
+}
+
 .bandCount {
-  font-weight: 400;
+  color: var(--tv-ink-4);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
 .world[data-level="chip"] .band {
-  gap: 10px;
-  font-size: 22px;
-  line-height: 28px;
+  gap: 6px;
+  font-size: 19px;
 }
 
 .world[data-level="chip"] .band svg {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
+}
+
+.world[data-level="card"] .band {
+  gap: 8px;
+  font-size: 17px;
+}
+
+.world[data-level="card"] .band svg {
+  width: 17px;
+  height: 17px;
+}
+
+.world[data-level="detail"] .band {
+  gap: 5px;
+  font-size: 10.5px;
+}
+
+.world[data-level="detail"] .band svg {
+  width: 11px;
+  height: 11px;
 }
 
 .edges {
@@ -4591,8 +5215,16 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 
 .edge {
   fill: none;
-  stroke: var(--tv-ink-4);
-  stroke-linejoin: round;
+  stroke: var(--tv-map-edge);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.stub {
+  fill: none;
+  stroke: var(--tv-map-edge);
+  stroke-width: 1.25;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
@@ -4601,27 +5233,24 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 }
 
 .edge[data-dim] {
-  opacity: 0.3;
+  opacity: 0.22;
 }
 
 .edge[data-emphasized] {
-  stroke: var(--tv-ink-2);
+  stroke: var(--tv-ink-3);
 }
 
 .card {
   position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  justify-content: space-between;
   border: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--tv-panel);
   box-shadow: var(--tv-shadow);
   color: var(--tv-ink);
   font: inherit;
-  font-size: 13px;
-  line-height: 18px;
   text-align: left;
   overflow: hidden;
   cursor: default;
@@ -4631,42 +5260,88 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   box-shadow: 0 0 0 2px var(--tv-accent), var(--tv-shadow);
 }
 
-.cardHead {
+.top {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
 }
 
-.roleTile {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--tv-fill-2);
-  color: var(--tv-ink-2);
-}
-
-.card[data-selected] .roleTile {
-  background: var(--tv-accent-soft);
-  color: var(--tv-accent);
-}
-
-.cardName {
+.name {
   flex: 1 1 auto;
   min-width: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.hub {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  color: var(--tv-ink-3);
+  font-weight: 500;
+}
+
+.purpose {
+  color: var(--tv-ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.purpose[data-fallback] {
+  color: var(--tv-ink-3);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.packages {
+  color: var(--tv-ink-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.card[data-selected] .foot svg {
+  color: var(--tv-accent);
+}
+
+.track {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.track i {
+  display: block;
+  border-radius: 3px;
+  background: var(--tv-ink-4);
+  opacity: 0.65;
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Session state mark (lane 07) in the footer's count slot: 11 px. */
 .stateDot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background: var(--tv-ink-2);
 }
@@ -4675,91 +5350,109 @@ Create `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
   background: var(--tv-bad);
 }
 
-.purpose {
-  color: var(--tv-ink-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Level content. */
+.world[data-level="chip"] .card {
+  padding: 7px 8px 9px;
 }
 
-.purpose[data-fallback] {
-  color: var(--tv-ink-3);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 12px;
+.world[data-level="chip"] .name {
+  font-size: 20.5px;
+  line-height: 23px;
 }
 
-.card[data-level="detail"] .purpose {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  white-space: normal;
+.world[data-level="chip"] .foot svg {
+  width: 17px;
+  height: 17px;
 }
 
-.cardMeta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--tv-ink-3);
-  font-size: 12px;
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.world[data-level="chip"] .track i {
+  height: 6px;
 }
 
-.importBar {
-  display: inline-flex;
+.world[data-level="card"] .card {
+  padding: 11px 12px;
+}
+
+.world[data-level="card"] .name {
+  font-size: 17px;
+  line-height: 20px;
+}
+
+.world[data-level="card"] .foot svg {
+  width: 14px;
+  height: 14px;
+}
+
+.world[data-level="card"] .track i {
+  height: 4px;
+}
+
+.world[data-level="card"] .count {
+  font-size: 13.5px;
+}
+
+.world[data-level="detail"] .card {
+  padding: 7px 8px;
+  border-radius: 9px;
+}
+
+.world[data-level="detail"] .top {
+  gap: 4px;
+}
+
+.world[data-level="detail"] .name {
+  font-size: 10.5px;
+  line-height: 13px;
+  -webkit-line-clamp: 1;
+}
+
+.world[data-level="detail"] .hub {
+  gap: 2px;
+  font-size: 8.5px;
+}
+
+.world[data-level="detail"] .hub svg {
+  width: 9px;
+  height: 9px;
+}
+
+.world[data-level="detail"] .purpose {
+  margin-top: 2px;
+  font-size: 8.75px;
+  line-height: 11.5px;
+}
+
+.world[data-level="detail"] .packages {
+  font-size: 8.25px;
+  line-height: 11px;
+}
+
+.world[data-level="detail"] .foot {
+  gap: 4px;
+  font-size: 8.25px;
+}
+
+.world[data-level="detail"] .foot svg {
+  width: 9px;
+  height: 9px;
+}
+
+.world[data-level="detail"] .track {
+  flex: 0 0 36px;
+}
+
+.world[data-level="detail"] .track i {
+  height: 3px;
+}
+
+.world[data-level="detail"] .count {
   margin-left: auto;
 }
 
-.card[data-level="chip"] {
-  flex-direction: row;
-  align-items: center;
-  padding: 0 12px;
-  border-radius: 12px;
-}
-
-.card[data-level="chip"] .roleTile {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-}
-
-.card[data-level="chip"] .roleTile svg {
-  width: 22px;
-  height: 22px;
-}
-
-.card[data-level="chip"] .cardName {
-  font-size: 22px;
-  line-height: 28px;
-  font-weight: 500;
-}
-
-.viewport[data-zoom-band="icon"] .cardName,
+/* Below MAP_ICON_ONLY_K names hide; the footer icon and bar remain, and the tooltip and accessible name carry the name. */
+.viewport[data-zoom-band="icon"] .name,
 .viewport[data-zoom-band="icon"] .bandName {
   visibility: hidden;
-}
-
-.external {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 108px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--tv-fill-2);
-  color: var(--tv-ink-2);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.externalName {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 ```
 
@@ -4771,7 +5464,7 @@ Create `packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx`:
 import { useMemo } from "react";
 import type React from "react";
 
-import { componentDetails, type MapLink } from "../../layout/map-details.js";
+import { componentDetails, listBarPx, type MapLink } from "../../layout/map-details.js";
 import { displayUntrusted, truncateMiddle } from "../../model/index.js";
 import { DiffBar } from "../graphics/DiffBar.js";
 import type { IconName } from "../icons/icon-names.js";
@@ -4808,6 +5501,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
     const other = overview.componentById.get(id);
     return other === undefined ? "role-domain" : ROLE_ICON[other.role];
   };
+  const largest = (counts: readonly number[]): number => counts.reduce((most, count) => Math.max(most, count), 0);
   const links = (kind: "in" | "out", list: readonly MapLink[]): React.JSX.Element => (
     <div data-imports={kind}>
       <h3 className={styles.heading}>{`${kind === "out" ? "Imports out" : "Imports in"} · ${list.length.toLocaleString("en-US")}`}</h3>
@@ -4822,6 +5516,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
                 <span className={styles.rowName} title={displayUntrusted(link.name)}>
                   {displayUntrusted(link.name)}
                 </span>
+                <span className={styles.bar} data-list-bar="" aria-hidden="true" style={{ width: listBarPx(link.count, largest(list.map((item) => item.count))) }} />
                 <span className={styles.count}>{link.count.toLocaleString("en-US")}</span>
               </span>
               {link.example === null ? null : (
@@ -4889,6 +5584,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
                   <span className={styles.rowName} title={displayUntrusted(ext.name)}>
                     {displayUntrusted(ext.name)}
                   </span>
+                  <span className={styles.bar} data-list-bar="" aria-hidden="true" style={{ width: listBarPx(ext.count, largest(details.externals.map((item) => item.count))) }} />
                   <span className={styles.count}>{ext.count.toLocaleString("en-US")}</span>
                 </li>
               ))}
@@ -5027,6 +5723,15 @@ Create `packages/trace-viewer/src/ui/inspector/ComponentInspector.module.css`:
   font-variant-numeric: tabular-nums;
 }
 
+/* A 4 px bar scaled to the largest count in its list, 48 px at most (revised Map mockup). */
+.bar {
+  flex: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tv-ink-4);
+  opacity: 0.65;
+}
+
 .example {
   margin: -2px 0 4px 18px;
 }
@@ -5085,11 +5790,11 @@ In `packages/trace-viewer/src/ui/views/registry.ts`, add `import { MapView } fro
 
 - [ ] **Step 12: Run the view tests, then the whole package**
 
-Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map src/ui/inspector/component-inspector.test.tsx src/ui/icons/icons.test.tsx src/ui/state/view-state.test.ts src/ui/graphics/bars.test.tsx src/layout/map-details.test.ts`
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map src/ui/inspector/component-inspector.test.tsx src/ui/icons/icons.test.tsx src/ui/state/view-state.test.ts src/layout/map-details.test.ts`
 
 Expected: PASS, every test in the listed files.
 
-Prove the Review Focus 2 test guards the render: in `MapCard.tsx`, temporarily replace `<span className={styles.purpose}>{purpose}</span>` with `<span className={styles.purpose}>{component.purpose}</span>` and rerun `src/ui/views/map/map-view.test.tsx`. Expected: FAIL in "Review Focus 2: hostile purpose, name and narrative render as plain text" (`expected '…‮…' not to contain '‮'` or the `⟨U+202E⟩` assertion). Restore and rerun: PASS.
+Prove the Review Focus 2 test guards the render: in `MapCard.tsx`, temporarily replace the detail-level purpose child `{purpose}` (inside the `data-map-purpose` span) with `{component.purpose}` and rerun `src/ui/views/map/map-card.test.tsx`. Expected: FAIL in "Review Focus 2: a hostile purpose, name and package render as plain text on the detail card" (`expected '…‮…' not to contain '‮'` or the `⟨U+202E⟩` assertion). Restore and rerun: PASS.
 
 Run: the package suite in the background (`(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &`, then poll `tail -6 .superpowers/tv-suite.log` every 15 s until `EXIT=0` appears) — expected: exits 0 (`view-switch.test.tsx`, `shell.test.tsx` and `keyboard.test.tsx` still pass with the real Map view registered).
 
@@ -5246,7 +5951,7 @@ Poll `tail -2 /tmp/p3-build.log /tmp/p3-smoke.log` every 15 s until `/tmp/p3-smo
 
 Expected: `/tmp/p3-build.log` ends with `BUILD_EXIT 0`; `/tmp/p3-smoke.log` ends with `SMOKE_OK 2 screenshots` and `EXIT=0`, and `apps/trace-viewer-dev/.smoke/map-1440.png` and `map-1000.png` exist. If the preview port is taken, pass another `--port`.
 
-Open `apps/trace-viewer-dev/.smoke/map-1440.png` beside `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map-1440.png`, and `map-1000.png` beside its mockup. The data differs (the sample repo here; P-5 compares this repository's fixture). Check the same visual rules: band columns with icons, names and counts; chip-level cards at Fit with the role tile and a readable name at 1440 px and role tiles only at 1000 px; thin neutral edges in gutters and gap rows, none through a card; the header with headline, Overview toggle and narrative chips; light panel, one shadow per card, no borders, no red. Fix any difference in this task's CSS or layout, rebuild the viewer and dev host, rerun the smoke, and look again. Record the remaining, intended differences (for example "Inspector shows the pre-Brief empty state until P-4") for the commit message.
+Open `apps/trace-viewer-dev/.smoke/map-1440.png` beside `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map-1440.png`, and `map-1000.png` beside its mockup. The data differs (the sample repo here; P-5 compares this repository's fixture). Check the same visual rules: light band lanes with icon, name and count in the lane's top; the map centered and filling the stage (the full height at 1440 px at about k 0.77 with side margins, the full width at 1000 px at about k 0.52); every name shown in full at both widths, two lines at most; a footer with role icon and file-count bar on every card (and the count at the card level); thin light curves in gutters and gap rows, band-to-band only, none under a card; the header with headline, Overview toggle, quiet notes and two plain sentences with underlined component links and "More"; light panel, one shadow per card, no borders, no dot grid, no red. Then, in a browser at 1440 px, hover and select a card and zoom to 150%: its edges turn accent and the rest drop to 22%, a hub shows its three-line stub at rest, and the detail level shows the purpose, packages and hub glyph (compare with `map-selected-1440.png` and `map-zoomed-1440.png`). Fix any difference in this task's CSS or layout, rebuild the viewer and dev host, rerun the smoke, and look again. Record the remaining, intended differences (for example "Inspector shows the pre-Brief empty state until P-4") for the commit message.
 
 - [ ] **Step 15: Commit**
 
@@ -5255,7 +5960,6 @@ git add packages/trace-viewer/src/ui/icons/icon-names.ts packages/trace-viewer/s
   packages/trace-viewer/src/ui/icons/kind-icons.ts packages/trace-viewer/src/ui/icons/icons.test.tsx \
   packages/trace-viewer/src/ui/state/view-state.ts packages/trace-viewer/src/ui/state/view-state.test.ts \
   packages/trace-viewer/src/layout/map-details.ts packages/trace-viewer/src/layout/map-details.test.ts \
-  packages/trace-viewer/src/ui/graphics/ImportBar.tsx packages/trace-viewer/src/ui/graphics/bars.test.tsx \
   packages/trace-viewer/src/ui/views/map packages/trace-viewer/src/ui/views/registry.ts \
   packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx packages/trace-viewer/src/ui/inspector/ComponentInspector.module.css \
   packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx packages/trace-viewer/src/ui/inspector/Inspector.tsx \
@@ -5456,8 +6160,10 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(text).toContain("Descriptions pending");
     expect(text).not.toMatch(/error|unavailable|retry|failed/i);
     expect(document.querySelector("[role='alert']")).toBeNull();
-    expect(part().querySelectorAll("[data-map-thumbnail] rect")).toHaveLength(3);
+    expect(part().querySelectorAll("[data-map-thumbnail] rect[data-thumb-card]")).toHaveLength(3);
+    expect(part().querySelectorAll("[data-map-thumbnail] rect[data-thumb-lane]").length).toBeGreaterThan(0);
     expect(part().querySelectorAll("[data-map-thumbnail] rect[data-touched]")).toHaveLength(2);
+    expect(part().querySelector("[data-map-thumbnail] path")).toBeNull();
   });
 
   it("Review Focus 5: narrator off or unavailable reads quietly", () => {
@@ -5611,11 +6317,11 @@ Create `packages/trace-viewer/src/ui/inspector/MapThumbnail.tsx`:
 import { memo, useMemo } from "react";
 import type React from "react";
 
-import { layoutMap } from "../../layout/map-layout.js";
+import { MAP_LANE_PAD, MAP_MARGIN, layoutMap } from "../../layout/map-layout.js";
 import type { OverviewModel } from "../../model/index.js";
 import styles from "./MapThumbnail.module.css";
 
-/** The Map at the chip level scaled to the Brief; this session's touched components in accent (spec §3.3 item 3). */
+/** The Map's lanes and cards scaled to the Brief (the approved thumbnail draws no edges); this session's touched components in accent (spec §3.3 item 3). */
 function MapThumbnailView({ overview, touched }: { overview: OverviewModel; touched: readonly string[] }): React.JSX.Element {
   const layout = useMemo(() => layoutMap(overview, { level: "chip" }), [overview]);
   const lit = useMemo(() => new Set(touched), [touched]);
@@ -5629,8 +6335,17 @@ function MapThumbnailView({ overview, touched }: { overview: OverviewModel; touc
         focusable="false"
         data-map-thumbnail=""
       >
-        {layout.edges.map((edge) => (
-          <path key={`${edge.from}>${edge.to}`} d={edge.d} className={styles.edge} />
+        {layout.bands.map((band) => (
+          <rect
+            key={band.band}
+            x={band.x - MAP_LANE_PAD}
+            y={MAP_MARGIN - 4}
+            width={band.w + 2 * MAP_LANE_PAD}
+            height={layout.bounds.h - 2 * MAP_MARGIN + 10}
+            rx={16}
+            className={styles.lane}
+            data-thumb-lane=""
+          />
         ))}
         {layout.cards.map((card) => (
           <rect
@@ -5641,6 +6356,7 @@ function MapThumbnailView({ overview, touched }: { overview: OverviewModel; touc
             height={card.h}
             rx={12}
             className={styles.card}
+            data-thumb-card=""
             data-touched={lit.has(card.id) ? "" : undefined}
           />
         ))}
@@ -5667,21 +6383,20 @@ Create `packages/trace-viewer/src/ui/inspector/MapThumbnail.module.css`:
   height: 112px;
 }
 
+.lane {
+  fill: rgb(16 24 40 / 0.024);
+}
+
 .card {
-  fill: var(--tv-fill-2);
+  fill: var(--tv-panel);
+  stroke: var(--tv-hair);
+  stroke-width: 2;
 }
 
 .card[data-touched] {
   fill: var(--tv-accent-soft);
   stroke: var(--tv-accent);
   stroke-width: 6;
-}
-
-.edge {
-  fill: none;
-  stroke: var(--tv-ink-4);
-  stroke-width: 4;
-  opacity: 0.6;
 }
 ```
 
@@ -5749,7 +6464,7 @@ In `packages/trace-viewer/src/ui/views/map/MapView.tsx`, add `import { useViewer
   const onRetry = useMemo(() => (host.rescanOverview === undefined ? undefined : () => host.rescanOverview?.()), [host]);
 ```
 
-after the `imports` memo, and render `<MapHeader overview={overview} onSelectComponent={onSelectCard} onRetry={onRetry} />`.
+after the `maxFiles` memo, and render `<MapHeader overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId} onRetry={onRetry} />`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -5824,7 +6539,7 @@ Run in the background and poll `tail -2 /tmp/p4-build.log /tmp/p4-smoke.log` eve
 
 Expected: `BUILD_EXIT 0`; the smoke log ends with `SMOKE_OK 4 screenshots`, and `apps/trace-viewer-dev/.smoke/map-brief-1440.png` and `map-brief-1000.png` exist.
 
-Open `apps/trace-viewer-dev/.smoke/map-brief-1440.png` beside the mockup `map-1440.png` (its right panel) and `brief-architecture-1440.png`. Check: the Brief fills the right panel; its Architecture part shows the Map thumbnail (neutral cards; the oauth bundle's edits touch none of the sample components, so no accent card and no "touched" count), "10 components" in 12 px ink-3, the narrator's paragraph clamped to four lines and the "Open the map" link; no border, no red, no banner. Then check `map-brief-1000.png` at the 248 px panel width. Fix any difference in `MapThumbnail.module.css` (the thumbnail) or, for spacing around it, in lane 02's `Brief.module.css` `.architecture` rule; rebuild the viewer and the dev host and rerun the smoke.
+Open `apps/trace-viewer-dev/.smoke/map-brief-1440.png` beside the mockup `map-1440.png` (its right panel) and `brief-architecture-1440.png`. Check: the Brief fills the right panel; its Architecture part shows the Map thumbnail (light lanes with white cards and no edges, as in the mockup; the oauth bundle's edits touch none of the sample components, so no accent card and no "touched" count), "10 components" in 12 px ink-3, the narrator's paragraph clamped to four lines and the "Open the map" link; no border, no red, no banner. Then check `map-brief-1000.png` at the 248 px panel width. Fix any difference in `MapThumbnail.module.css` (the thumbnail) or, for spacing around it, in lane 02's `Brief.module.css` `.architecture` rule; rebuild the viewer and the dev host and rerun the smoke.
 
 - [ ] **Step 7: Commit**
 
@@ -5850,7 +6565,7 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
 - Modify: `apps/trace-viewer-dev/src/overview-sample.ts` (`loadOverview`), `apps/trace-viewer-dev/scripts/smoke.mjs` (`MAP_OVERVIEW` and the `map-rule` screenshots)
 
 **Interfaces:**
-- Consumes: P-1 `buildOverviewModel`; P-2 `layoutMap`, `MapBand`, `expectNoOverlaps`, `expectNoCardCrossings`; P-3 `planMapFit`, `MAP_ICON_ONLY_K`, `importTotals`, `loadOverview`, the `map` smoke view; P-4 `?brief=1` and the `map-brief` screenshots; from `@jevcode/contracts`: `OverviewSnapshotSchema`, `OVERVIEW_SNAPSHOT_MAX_BYTES`.
+- Consumes: P-1 `buildOverviewModel`; P-2 `layoutMap`, `MapBand`, `expectNoOverlaps`, `expectNoCardCrossings`; P-2 `mapHubIds`, `mapImporterCounts`; P-3 `planMapFit`, `MAP_ICON_ONLY_K`, `loadOverview`, the `map` smoke view; P-4 `?brief=1` and the `map-brief` screenshots; from `@jevcode/contracts`: `OverviewSnapshotSchema`, `OVERVIEW_SNAPSHOT_MAX_BYTES`.
 - Produces: the two fixture files (deviation 10); test-only `loadOverviewFixture(name: "jevcode" | "jevcode-rule"): OverviewSnapshot` and `overviewFixturePath(name)`; dev host `?overview=jevcode` and `?overview=jevcode-rule`; smoke screenshots `map-1440.png`, `map-1000.png`, `map-brief-1440.png`, `map-brief-1000.png`, `map-rule-1440.png`, `map-rule-1000.png` in `apps/trace-viewer-dev/.smoke/`.
 
 The fixture is a snapshot of this repository. Components come from a curated table (the one P-0's mockup uses), so the fixture is stable and shows every band; files, blob hashes, import edges (counted from import statements and resolved through relative paths and workspace package names) and external packages come from `git ls-files -s` and the files themselves. It is not lane 04's scanner output: lane 04 (M-5) owns this repository's expected component table under the spec's cut rules. `docs/`, the root `fixtures/` replay data and the generated fixture files themselves are left out (so regenerating on the same commit reproduces the same bytes). The rule variant has the same components with `purpose: null`, `provenance: "rule"`, `narrative: null` and `status.narrator: "off"` (ruling R3); the narrated variant has `status.narrator: "ready"`.
@@ -6155,8 +6870,7 @@ import { describe, expect, it } from "vitest";
 
 import { OVERVIEW_SNAPSHOT_MAX_BYTES } from "@jevcode/contracts";
 
-import { importTotals } from "../../../layout/map-details.js";
-import { layoutMap, type MapBand, type MapLevel } from "../../../layout/map-layout.js";
+import { layoutMap, mapHubIds, mapImporterCounts, type MapBand, type MapLevel } from "../../../layout/map-layout.js";
 import { buildOverviewModel } from "../../../model/index.js";
 import { expectNoCardCrossings, expectNoOverlaps } from "../../../test-support/map-checks.js";
 import { loadOverviewFixture } from "../../../test-support/overview-fixture.js";
@@ -6209,9 +6923,12 @@ describe("Map layout of this repository (fixture overview-jevcode.json)", () => 
     expect(layoutMap(overview, { level: "card" }).bands.map((band) => band.band)).toEqual(["ui", "api", "agent", "domain", "storage", "side"]);
   });
 
-  it("has contracts as the most imported component", () => {
-    const totals = [...importTotals(overview)].sort((a, b) => b[1].in - a[1].in);
-    expect(nameOf(totals[0]?.[0] ?? "")).toBe("contracts");
+  it("has contracts as the most imported component, and as a hub", () => {
+    const layout = layoutMap(overview, { level: "card" });
+    const importers = [...mapImporterCounts(layout.edges)].sort((a, b) => b[1] - a[1]);
+    expect(nameOf(importers[0]?.[0] ?? "")).toBe("contracts");
+    // The mockup shows contracts imported by 13 of 21 components, so it is the one hub (threshold max(6, ceil(n / 4))).
+    expect([...mapHubIds(layout.edges, layout.cards.length)].map(nameOf)).toContain("contracts");
   });
 
   it("lays out without overlaps or card crossings at every level", () => {
@@ -6222,12 +6939,15 @@ describe("Map layout of this repository (fixture overview-jevcode.json)", () => 
     }
   });
 
-  it("fits the 1440 px main column at the chip level with names shown, and 1000 px with role tiles only", () => {
-    const wide = planMapFit(overview, { w: 944, h: 760 });
-    expect(wide?.level).toBe("chip");
-    expect(wide?.camera.k).toBeGreaterThanOrEqual(MAP_ICON_ONLY_K);
-    const narrow = planMapFit(overview, { w: 552, h: 760 });
-    expect(narrow?.camera.k).toBeLessThan(MAP_ICON_ONLY_K);
+  it("fits the 1440 px main column at the card level and the 1000 px column at the chip level, with names shown at both", () => {
+    // The approved mockups: k about 0.77 on 944 px (full height) and about 0.52 on 552 px (full width).
+    const wide = planMapFit(overview, { w: 944, h: 700 });
+    expect(wide?.level).toBe("card");
+    expect(wide?.camera.k).toBeGreaterThanOrEqual(0.7);
+    const narrow = planMapFit(overview, { w: 552, h: 700 });
+    expect(narrow?.level).toBe("chip");
+    expect(narrow?.camera.k).toBeGreaterThanOrEqual(MAP_ICON_ONLY_K);
+    expect(narrow?.camera.k).toBeLessThan(0.7);
   });
 
   it("has a rule-based twin with the same components, no purposes, no narrative and the narrator off", () => {
@@ -6322,8 +7042,8 @@ Compare each pair with the Read tool:
 
 | Screenshot | Mockup | Must match |
 |---|---|---|
-| `map-1440.png` | `map-1440.png` | Six band columns with icons, names and counts; chip-level cards with role tile and readable name; neutral edges in gutters and gap rows, none through a card; the header headline, Overview toggle and narrative with chips |
-| `map-1000.png` | `map-1000.png` | The narrower Shell; role tiles only (names hidden below 37.5%); band icons and counts |
+| `map-1440.png` | `map-1440.png` | Six band lanes with icons, names and counts; the map centered, filling the stage height; card-level cards with the full name, role icon, file-count bar and count; light curves in gutters and gap rows, band-to-band only, none under a card; a hub stub on `contracts`; the header headline, Overview toggle and two plain sentences with links and "More" |
+| `map-1000.png` | `map-1000.png` | The narrower Shell; chip-level cards, every name readable at about 11 px, filling the stage width; band icons and counts |
 | `map-brief-1440.png` | `map-1440.png` (right panel), `brief-architecture-1440.png` | The Brief in the right panel with its Architecture part: the thumbnail first, then "21 components" (22 with lane 04's package; the oauth bundle touches no fixture component, so no "touched" count and no accent card), the overview paragraph clamped to four lines, and the "Open the map" link |
 | `map-rule-1440.png`, `map-rule-1000.png` | `map-pending-1440.png`, `map-pending-1000.png` | "Descriptions off" (the rule variant's `status.narrator`) in quiet ink in the header where the mockup says "Descriptions pending"; no Overview toggle; no red, no banner (the fixture is not partial and has no Python component, so those two notes are absent here; P-3's tests cover them) |
 
