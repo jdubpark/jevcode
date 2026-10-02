@@ -55,6 +55,21 @@ describe("TitleBar", () => {
     expect(h.store.get().selection).toBe(expected);
   });
 
+  it("shows a placeholder and no duration before the first event", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = { ...base, meta: { ...base.meta, prompt: "", state: "starting" }, steps: [] };
+    renderHarness(<TitleBar onRetry={noop} />, session, { terminal: false });
+    expect(screen.getByText("Waiting for the first prompt")).toBeTruthy();
+    expect(screen.queryByText("0 ms")).toBeNull();
+  });
+
+  it("re-enables Live when a terminal session becomes live again", () => {
+    const session = foldFixture("oauth");
+    renderHarness(<TitleBar onRetry={noop} />, session, { terminal: false });
+    const live = screen.getByRole("button", { name: /^Live/ });
+    expect(live.hasAttribute("disabled")).toBe(false);
+  });
+
   it("disables Live and labels it Completed on a terminal session", () => {
     renderHarness(<TitleBar onRetry={noop} />, foldFixture("oauth"));
     const live = screen.getByRole("button", { name: /Completed/ });
