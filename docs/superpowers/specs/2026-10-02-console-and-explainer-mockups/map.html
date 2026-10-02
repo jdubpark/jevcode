@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Map mockup (P-0)</title>
+<style>
+:root{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#676D78;--ink-4:#9AA0AB;--hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--accent-ink:#1F5EF0;--bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--bad-ink:#CE2C31;--good:#2E9E6A;--shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+svg.i{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+svg.i16{width:16px;height:16px}
+.el{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* header */
+.hdr{display:flex;align-items:center;gap:12px;padding:0 16px;box-shadow:inset 0 -1px 0 var(--hair)}
+.crumb{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.crumb .repo{color:var(--ink-3)}
+.crumb .task{font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;background:var(--fill);color:var(--ink-2);font-size:12px;white-space:nowrap}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;color:var(--ink-2);font-size:12px}
+/* body */
+.body{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0}
+.side{display:flex;flex-direction:column;gap:18px;padding:12px 10px;box-shadow:inset -1px 0 0 var(--hair);min-height:0;overflow:hidden}
+.side h3{padding:0 8px 4px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.side .item{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:7px;color:var(--ink-2)}
+.side .item.on{background:var(--accent-soft);color:var(--accent-ink)}
+.side .item .meta{margin-left:auto;font-size:12px;color:var(--ink-3)}
+/* workspace */
+.work{display:grid;grid-template-rows:36px minmax(0,1fr) auto;min-width:0;min-height:0}
+.vbar{display:flex;align-items:center;gap:10px;padding:0 12px;box-shadow:inset 0 -1px 0 var(--hair)}
+.seg{display:inline-flex;gap:2px;padding:2px;border-radius:7px;background:var(--fill)}
+.seg span{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:5px;color:var(--ink-2);font-size:12px;white-space:nowrap}
+.seg .on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.seg kbd{font:inherit;font-size:11px;color:var(--ink-4)}
+.grow{flex:1}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+/* console */
+.meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.db{display:inline-flex;gap:2px;height:6px}
+.db i{display:block;height:6px;border-radius:1.5px}
+.db .a{background:var(--ink-2)}
+.db .r{box-shadow:inset 0 0 0 1.25px var(--ink-3)}
+.dots{display:inline-flex;gap:3px;align-items:center}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--good)}
+.dots i.f{width:7px;height:7px;background:var(--bad)}
+.du{display:inline-flex;align-items:center;gap:0}
+.du i{display:block;height:6px;border-radius:3px;background:var(--ink-3)}
+.du i.run{background:none;box-shadow:inset 0 0 0 1.25px var(--ink-4);border-radius:0 3px 3px 0}
+/* brief */
+.brief{display:flex;flex-direction:column;gap:18px;padding:14px 16px;box-shadow:inset 1px 0 0 var(--hair);min-height:0;overflow:hidden}
+.bh{display:flex;align-items:center;gap:8px;font-weight:600}
+.bh .sub{margin-left:auto;font-size:12px;font-weight:400;color:var(--ink-3)}
+.sec h4{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.now{display:flex;flex-direction:column;gap:8px}
+.nowrow{display:flex;align-items:center;gap:8px;min-width:0}
+.nowrow .t{flex:1}
+.chg{display:flex;flex-direction:column}
+.chg .c{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto 14px;align-items:center;column-gap:8px;height:30px;padding:0 6px;margin:0 -6px;border-radius:6px;color:var(--ink-2)}
+.chg .c .t{color:var(--ink)}
+.empty{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:9px;background:var(--fill);color:var(--ink-3);font-size:12px;line-height:16px}
+.empty b{display:block;font-weight:500;color:var(--ink-2)}
+/* prompt dock */
+.dock{display:flex;flex-direction:column;gap:6px;padding:8px 16px 12px;box-shadow:inset 0 1px 0 var(--hair)}
+.input{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;min-height:44px;padding:10px 12px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow)}
+.input .caret{font-family:var(--mono);color:var(--accent)}
+.input .ph{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.dockbar{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--ink-3)}
+.dockbar .mode{display:inline-flex;align-items:center;gap:4px;color:var(--ink-2)}
+.send{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;background:var(--accent-ink);color:#fff}
+.status{display:flex;align-items:center;gap:12px;padding:0 16px;font-size:12px;color:var(--ink-3);box-shadow:inset 0 1px 0 var(--hair)}
+html,body{height:100%}
+body{background:var(--panel);color:var(--ink);font:400 13px/18px var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0}
+.app{display:grid;grid-template-rows:44px minmax(0,1fr) 24px;height:100vh;min-width:1000px}
+.mapmain{grid-area:auto}
+.map-brief{padding:14px 16px}
+.queued{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)}.queued .x{margin-left:auto}
+.ct{color:var(--ink-3)}
+.lrow{display:flex;align-items:center;gap:8px;height:26px;font-size:12px;color:var(--ink-2)}
+.lrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ex{margin:-2px 0 4px 20px}
+.mono{font-family:var(--mono);font-size:12px;line-height:18px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.arch{display:block;width:100%;padding:8px;border-radius:9px;background:var(--fill)}
+.arch svg{display:block;width:100%;height:112px}
+.am{display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--ink-3)}
+.prose{margin-top:8px;color:var(--ink-2);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.quiet{margin-top:8px;font-size:12px;color:var(--ink-3)}
+.lnk{display:block;margin-top:8px;padding:0;color:var(--accent-ink);font-size:12px}
+.sec .sh{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.sec .sh .d{font-weight:400}
+.band .ic,.tools .ic{stroke-width:1.5}
+.brief .sec+.sec{margin-top:0}
+.ihead{display:flex;gap:10px;align-items:center;font-weight:600}
+.ihead .tile{width:28px;height:28px;border-radius:7px}
+.ihead .ml{display:block;font-weight:400;font-size:12px;color:var(--ink-3)}
+.sess{display:flex;align-items:center;gap:6px;height:26px;font-size:12px;color:var(--ink-2)}
+.bar{display:inline-flex;gap:2px;align-items:center}.bar i{display:block;height:6px;border-radius:1.5px}
+.bar .a{background:var(--ink-2)}.bar .r{box-shadow:inset 0 0 0 1.25px var(--ink-3)}
+.pbar{height:4px;margin-top:6px;border-radius:2px;background:var(--fill-2);overflow:hidden}.pbar i{display:block;height:100%;background:var(--ink-2);border-radius:2px}
+.retry{color:var(--accent-ink);font-size:12px}
+@media (max-width:1179px){.body{grid-template-columns:200px minmax(0,1fr)}.split{grid-template-columns:minmax(0,1fr) 264px}.seg span b{display:none}}
+.logo{font-weight:600;letter-spacing:-.01em}
+:root{--lane:rgb(16 24 40 / .024);--edge:#C4C9D1}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
+/* map header: headline, overview narrative */
+.mapmain{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--canvas);overflow:hidden}
+.mhead{flex:none;padding:12px 16px 14px;background:var(--panel);box-shadow:inset 0 -1px 0 var(--hair)}
+.hrow{display:flex;align-items:center;gap:8px;min-height:22px;white-space:nowrap}
+.hrow .hl{font-weight:600}
+.hrow .lang{color:var(--ink-3)}
+.notes{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px}
+.note{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3)}
+.tog{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:12px;color:var(--ink-3)}
+.narr{margin-top:6px;max-width:86ch;color:var(--ink-2);font-size:13px;line-height:20px}
+.ref{color:var(--ink);text-decoration:underline;text-decoration-color:rgb(16 24 40 / .2);text-decoration-thickness:1px;text-underline-offset:3px}
+.ref.on{color:var(--accent-ink);text-decoration-color:var(--accent)}
+.more{padding:0;margin-left:2px;color:var(--ink-3);font-size:12px}
+/* canvas */
+.stage{position:relative;flex:1 1 auto;min-height:0}
+.viewport{position:absolute;inset:0;overflow:hidden;background:var(--canvas)}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.lane{position:absolute;border-radius:16px;background:var(--lane)}
+.band{position:absolute;display:flex;align-items:center;gap:7px;color:var(--ink);font-weight:600;white-space:nowrap}
+.band .ic{color:var(--ink-3)}
+.band .n{color:var(--ink-4);font-weight:500}
+.edges{position:absolute;left:0;top:0;overflow:visible}
+.edge{fill:none;stroke:var(--edge);stroke-linecap:round;vector-effect:non-scaling-stroke}
+.stub{fill:none;stroke:var(--edge);stroke-width:1.25;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.edge.lit{stroke:var(--accent)}.edge.dim{opacity:.22}
+.card{position:absolute;display:flex;flex-direction:column;justify-content:space-between;border-radius:12px;background:var(--panel);box-shadow:var(--shadow)}
+.card.sel{box-shadow:0 0 0 2px var(--accent),var(--shadow)}
+.ct{display:flex;align-items:flex-start;gap:6px;min-width:0}
+.cn{flex:1;min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hub{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--ink-3);font-weight:500}
+.pp{color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pp.fb{font-family:var(--mono);color:var(--ink-3)}
+.xr{display:flex;align-items:center;gap:4px;color:var(--ink-3);white-space:nowrap;overflow:hidden}
+.cf{display:flex;align-items:center;gap:6px;color:var(--ink-3);white-space:nowrap}
+.card.sel .cf .ic{color:var(--accent)}
+.sz{flex:1;min-width:0;display:flex;align-items:center}
+.sz i{display:block;border-radius:3px;background:var(--ink-4);opacity:.65}
+/* level content: the camera scales the world, so sizes are world units chosen to read 11 to 13 px at the level's zoom */
+.world[data-level="chip"] .card{padding:7px 8px 9px}
+.world[data-level="chip"] .cn{font-size:20.5px;line-height:23px}
+.world[data-level="chip"] .cf .ic{width:17px;height:17px}
+.world[data-level="chip"] .sz i{height:6px}
+.world[data-level="chip"] .fc{display:none}
+.world:not([data-level="detail"]) .hub{display:none}
+.world[data-level="chip"] .band{font-size:19px;gap:6px}.world[data-level="chip"] .band .ic{width:18px;height:18px}
+.world[data-level="card"] .card{padding:11px 12px 11px}
+.world[data-level="card"] .cn{font-size:17px;line-height:20px}
+.world[data-level="card"] .cf .ic{width:14px;height:14px}.world[data-level="card"] .hub .ic{width:16px;height:16px}
+.world[data-level="card"] .sz i{height:4px}
+.world[data-level="card"] .fc,.world[data-level="card"] .hub{font-size:13.5px}
+.world[data-level="card"] .band{font-size:17px;gap:8px}.world[data-level="card"] .band .ic{width:17px;height:17px}
+.world[data-level="detail"] .card{padding:7px 8px 7px;border-radius:9px}
+.world[data-level="detail"] .ct{gap:4px}
+.world[data-level="detail"] .cn{font-size:10.5px;line-height:13px;-webkit-line-clamp:1}
+.world[data-level="detail"] .hub{font-size:8.5px;gap:2px}.world[data-level="detail"] .hub .ic{width:9px;height:9px}
+.world[data-level="detail"] .pp{margin-top:2px;font-size:8.75px;line-height:11.5px}
+.world[data-level="detail"] .xr{font-size:8.25px;line-height:11px}.world[data-level="detail"] .xr .ic{width:8.5px;height:8.5px}
+.world[data-level="detail"] .cf{gap:4px;font-size:8.25px}.world[data-level="detail"] .cf .ic{width:9px;height:9px}
+.world[data-level="detail"] .sz{flex:0 0 36px}.world[data-level="detail"] .fc{margin-left:auto}.world[data-level="detail"] .sz i{height:3px}
+.world[data-level="detail"] .band{font-size:10.5px;gap:5px}.world[data-level="detail"] .band .ic{width:11px;height:11px}
+.world[data-level="detail"] .lane{border-radius:10px}
+.viewport[data-zoom-band="icon"] .cn{visibility:hidden}
+.tools{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:4px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow);font-size:12px;color:var(--ink-2)}
+.tools span{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px}.tools .on{background:var(--fill-2);color:var(--ink)}
+/* Brief architecture thumbnail and Inspector */
+.arch svg{height:132px}
+.th .ln{fill:rgb(16 24 40 / .045)}
+.th .cd{fill:var(--panel)}
+.th .cd.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:5}
+.ex{margin:-2px 0 4px 20px}
+.lrow .mb{display:block;height:4px;border-radius:2px;background:var(--ink-4);opacity:.65}
+.lrow .ct{width:22px;text-align:right}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-console" viewBox="0 0 16 16"><path d="M3.25 4.25 6.75 8l-3.5 3.75"/><path d="M8.5 11.75h4.25"/></symbol>
+<symbol id="i-canvas" viewBox="0 0 16 16"><path d="M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z"/><path d="M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"/></symbol>
+<symbol id="i-hybrid" viewBox="0 0 16 16"><path d="M2.25 3.25h11.5M2.25 6h11.5"/><path d="M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"/></symbol>
+<symbol id="i-map" viewBox="0 0 16 16"><path d="M2.25 3.25h4v3h-4zM9.75 3.25h4v3h-4zM6 9.75h4v3H6z"/><path d="M4.25 6.25v1.5h7.5v-1.5M8 7.75v2"/></symbol>
+<symbol id="i-surfaces" viewBox="0 0 16 16"><path d="M3.75 2.75h8.5a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z"/><path d="M2.75 6h10.5M6.5 6v7.25"/></symbol>
+<symbol id="i-brief" viewBox="0 0 16 16"><path d="M4 2.25h8a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1z"/><path d="M5.5 5.25h5M5.5 8h5M5.5 10.75h3"/></symbol>
+<symbol id="i-live" viewBox="0 0 16 16"><path d="M6.75 8a1.25 1.25 0 1 0 2.5 0a1.25 1.25 0 1 0-2.5 0"/><path d="M4.75 4.75a4.6 4.6 0 0 0 0 6.5M11.25 4.75a4.6 4.6 0 0 1 0 6.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 16 16"><path d="M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0"/><path d="M8 4.75V8l2.25 1.5"/></symbol>
+<symbol id="i-search" viewBox="0 0 16 16"><path d="M2.75 7a4.25 4.25 0 1 0 8.5 0a4.25 4.25 0 1 0-8.5 0"/><path d="M10.25 10.25l3.5 3.5"/></symbol>
+<symbol id="i-term" viewBox="0 0 16 16"><path d="M4 2.75h8a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2z"/><path d="M5 6.25 7 8l-2 1.75M8.75 10h2.5"/></symbol>
+<symbol id="i-edit" viewBox="0 0 16 16"><path d="M7.75 13.25H4.5A1.5 1.5 0 0 1 3 11.75v-8a1.5 1.5 0 0 1 1.5-1.5h4l3 3v1.5"/><path d="M12.4 8.1l1.5 1.5-4.4 4.4H8v-1.5z"/></symbol>
+<symbol id="i-test" viewBox="0 0 16 16"><path d="M5.75 2.25h4.5M6.75 2.25v4.1L3.3 12.1a1.1 1.1 0 0 0 .95 1.65h7.5a1.1 1.1 0 0 0 .95-1.65L9.25 6.35v-4.1M4.9 9.75h6.2"/></symbol>
+<symbol id="i-fork" viewBox="0 0 16 16"><path d="M3 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M10 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M6.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M4.5 5v.75A2.25 2.25 0 0 0 6.75 8h2.5a2.25 2.25 0 0 0 2.25-2.25V5M8 8v3"/></symbol>
+<symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.5 14V2.5M3.5 3h8.5l-2 3 2 3H3.5"/></symbol>
+<symbol id="i-route" viewBox="0 0 16 16"><path d="M2 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M11 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M3.5 11V7a2 2 0 0 1 2-2h4a1.5 1.5 0 0 0 1.5-1.5"/></symbol>
+<symbol id="i-list" viewBox="0 0 16 16"><path d="M6.5 4.25h7M6.5 8h7M6.5 11.75h7"/></symbol>
+<symbol id="i-pkg" viewBox="0 0 16 16"><path d="M8 1.75l5.5 3v6.5L8 14.25l-5.5-3v-6.5z"/><path d="M2.5 4.75 8 7.75l5.5-3M8 7.75v6.5"/></symbol>
+<symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.25l3 3 6-6.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 16 16"><path d="M4.75 6.5 8 9.75l3.25-3.25"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M6.5 4.75 9.75 8 6.5 11.25"/></symbol>
+<symbol id="i-role-ui" viewBox="0 0 16 16"><path d="M3 2.75h10a1.25 1.25 0 0 1 1.25 1.25v8a1.25 1.25 0 0 1-1.25 1.25H3A1.25 1.25 0 0 1 1.75 12V4A1.25 1.25 0 0 1 3 2.75z"/><path d="M1.75 5.75h12.5M4.5 8.75h4M4.5 11h2.5"/></symbol>
+<symbol id="i-role-api" viewBox="0 0 16 16"><path d="M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13"/></symbol>
+<symbol id="i-role-agent" viewBox="0 0 16 16"><path d="M5 4.75h6a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-.75.75H5a.75.75 0 0 1-.75-.75v-5A.75.75 0 0 1 5 4.75z"/><path d="M6.5 2.25v2.5M9.5 2.25v2.5M6.5 11.25v2.5M9.5 11.25v2.5M1.75 6.5h2.5M1.75 9.5h2.5M11.75 6.5h2.5M11.75 9.5h2.5"/></symbol>
+<symbol id="i-role-domain" viewBox="0 0 16 16"><path d="M8 1.75l5.25 3v6.5L8 14.25l-5.25-3v-6.5z"/><path d="M6 8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/></symbol>
+<symbol id="i-role-storage" viewBox="0 0 16 16"><path d="M2.75 4.25c0-1.1 2.35-2 5.25-2s5.25.9 5.25 2-2.35 2-5.25 2-5.25-.9-5.25-2z"/><path d="M2.75 4.25v7.5c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2v-7.5M2.75 8c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2"/></symbol>
+<symbol id="i-role-tooling" viewBox="0 0 16 16"><path d="M10.1 2.35a3.25 3.25 0 0 0-3.85 4.4L2.6 10.4a1.4 1.4 0 0 0 2 2l3.65-3.65a3.25 3.25 0 0 0 4.4-3.85l-1.9 1.9-1.75-.35-.35-1.75z"/></symbol>
+<symbol id="i-role-config" viewBox="0 0 16 16"><path d="M2.75 4.75h10.5M2.75 11.25h10.5"/><path d="M4.5 4.75a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M8.5 11.25a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0"/></symbol>
+<symbol id="i-stack" viewBox="0 0 16 16"><path d="M8 2.25 13.75 5 8 7.75 2.25 5z"/><path d="M2.25 8 8 10.75 13.75 8M2.25 11 8 13.75 13.75 11"/></symbol>
+<symbol id="i-view-map" viewBox="0 0 16 16"><path d="M2 4l4-1.75 4 1.75 4-1.75v9.75l-4 1.75-4-1.75-4 1.75z"/><path d="M6 2.25v9.75M10 4v9.75"/></symbol>
+<symbol id="i-view-console" viewBox="0 0 16 16"><path d="M3 2.75h10a1.25 1.25 0 0 1 1.25 1.25v8a1.25 1.25 0 0 1-1.25 1.25H3A1.25 1.25 0 0 1 1.75 12V4A1.25 1.25 0 0 1 3 2.75z"/><path d="M4.75 6.25 6.5 8l-1.75 1.75M8.25 10h3"/></symbol>
+<symbol id="i-view-canvas" viewBox="0 0 16 16"><path d="M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z"/><path d="M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"/></symbol>
+<symbol id="i-view-hybrid" viewBox="0 0 16 16"><path d="M2.25 3.25h11.5M2.25 6h11.5M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"/></symbol>
+<symbol id="i-file" viewBox="0 0 16 16"><path d="M4.5 1.75h4.75l3.25 3.25v8.5a.75.75 0 0 1-.75.75H4.5a.75.75 0 0 1-.75-.75v-11a.75.75 0 0 1 .75-.75z"/><path d="M9.25 1.75V5h3.25"/></symbol>
+<symbol id="i-chev-d" viewBox="0 0 16 16"><path d="M4.75 6.5 8 9.75l3.25-3.25"/></symbol>
+<symbol id="i-fit" viewBox="0 0 16 16"><path d="M2.75 6V3.5a.75.75 0 0 1 .75-.75H6M10 2.75h2.5a.75.75 0 0 1 .75.75V6M13.25 10v2.5a.75.75 0 0 1-.75.75H10M6 13.25H3.5a.75.75 0 0 1-.75-.75V10"/></symbol>
+<symbol id="i-hand" viewBox="0 0 16 16"><path d="M5.25 8.5V4a1 1 0 0 1 2 0v3.5M7.25 7V2.75a1 1 0 0 1 2 0V7.5M9.25 7.25V4a1 1 0 0 1 2 0v5a4.75 4.75 0 0 1-4.75 4.75h-.4a3.8 3.8 0 0 1-3.05-1.55L1.9 10.4a1 1 0 0 1 1.45-1.35l1.9 1.45"/></symbol>
+<symbol id="i-cursor" viewBox="0 0 16 16"><path d="M3.25 2.75 12.75 7l-4.1 1.35-1.4 4.4z"/></symbol>
+<symbol id="i-fanin" viewBox="0 0 16 16"><path d="M2 3.5 7.5 8M2 8h5.5M2 12.5 7.5 8"/><path d="M10 8a2 2 0 1 0 4 0a2 2 0 1 0-4 0"/></symbol>
+</svg>
+<div class="app">
+  <header class="hdr">
+    <span class="logo">jevcode</span>
+    <div class="crumb el"><span class="repo">jevcode</span><span class="repo">/</span><span class="task el">Add the codebase Map to the trace viewer</span></div>
+    <span class="chip"><span class="dot"></span>Working · 12 m 04 s</span>
+    <span class="btn"><svg class="i"><use href="#i-hybrid"/></svg>Trace</span>
+  </header>
+  <div class="body">
+    <aside class="side">
+      <div><h3>Recent repos</h3>
+        <div class="item on"><svg class="i"><use href="#i-list"/></svg><span class="el">jevcode</span></div>
+        <div class="item"><svg class="i"><use href="#i-list"/></svg><span class="el">acme-web</span></div>
+      </div>
+      <div><h3>Sessions</h3>
+        <div class="item on"><svg class="i"><use href="#i-live"/></svg><span class="el">Add the codebase Map</span><span class="meta">now</span></div>
+        <div class="item"><svg class="i"><use href="#i-check"/></svg><span class="el">Explainer stage</span><span class="meta">2 h</span></div>
+        <div class="item"><svg class="i"><use href="#i-check"/></svg><span class="el">Fold the overview</span><span class="meta">1 d</span></div>
+      </div>
+      <div class="grow"></div>
+      <div class="item"><svg class="i"><use href="#i-list"/></svg>Agent settings</div>
+    </aside>
+    <main class="work">
+      <div class="vbar">
+        <div class="seg" role="radiogroup" aria-label="View">
+          <span><svg class="i"><use href="#i-console"/></svg><b>Console</b><kbd>0</kbd></span>
+          <span><svg class="i"><use href="#i-canvas"/></svg><b>Canvas</b><kbd>1</kbd></span>
+          <span><svg class="i"><use href="#i-hybrid"/></svg><b>Hybrid</b><kbd>2</kbd></span>
+          <span class="on"><svg class="i"><use href="#i-map"/></svg><b>Map</b><kbd>3</kbd></span>
+          <span><svg class="i"><use href="#i-surfaces"/></svg><b>Surfaces</b><kbd>4</kbd></span>
+        </div>
+        <div class="grow"></div>
+        <div class="seg"><span><svg class="i"><use href="#i-clock"/></svg>Review</span><span class="on"><svg class="i"><use href="#i-live"/></svg>Live</span></div>
+        <span class="btn" title="Brief (B)"><svg class="i"><use href="#i-brief"/></svg>Brief</span>
+      </div>
+      <div class="split">
+        <div class="mapmain main">
+          <div class="mhead" id="mhead"></div>
+          <div class="stage">
+            <div class="viewport" id="viewport"><div class="world" id="world"></div></div>
+            <div class="tools"><span class="on"><svg class="ic s14"><use href="#i-cursor"/></svg></span><span><svg class="ic s14"><use href="#i-hand"/></svg></span><span><svg class="ic s14"><use href="#i-fit"/></svg>Fit</span><span id="zoom">49%</span></div>
+          </div>
+        </div>
+        <aside class="brief" id="insp" aria-label="Brief"></aside>
+      </div>
+      <div class="dock">
+        <div class="queued"><svg class="i"><use href="#i-clock"/></svg><span class="el">Queued · Add a sign-out button to the header</span><span class="x">Cancel</span></div>
+        <div class="input"><span class="caret">›</span><span class="ph">Message the agent · Enter for a new line</span></div>
+        <div class="dockbar"><span class="mode">Steer<svg class="i"><use href="#i-chev"/></svg></span><span class="grow"></span><span>⌘↵ send</span><span class="send">Send</span></div>
+      </div>
+    </main>
+  </div>
+  <footer class="status"><span>Codex · gpt-5-codex</span><span>Jev on</span><span class="grow"></span><span>212 events</span></footer>
+</div>
+<script>
+const STATE = new URLSearchParams(location.search).get("state") ?? "default";
+const PENDING = STATE === "pending";
+const STATUS = PENDING ? "pending" : "ready";
+/* Layout constants: one geometry for every level (levels change card content, never positions). */
+const GEO = { margin: 16, label: 44, w: 140, sideW: 104, h: 76, rowGap: 16, gutter: 22, lanePad: 6 };
+/* Camera: Fit centers the map and stays in the chip or card level; card from k 0.7, detail from 1.4, names hide below 0.48. */
+const FIT = { x: 20, top: 20, bottom: 68, maxK: 1 }, CARD_K = 0.7, DETAIL_K = 1.4, ICON_ONLY = 0.48;
+const BANDS = [["ui", "UI", "role-ui"], ["api", "API · IPC", "role-api"], ["agent", "Agents", "role-agent"], ["domain", "Domain", "role-domain"], ["storage", "Storage", "role-storage"], ["side", "Support", "stack"]];
+const ROLE_ICON = { ui: "role-ui", api: "role-api", agent: "role-agent", domain: "role-domain", storage: "role-storage", tests: "test", tooling: "role-tooling", config: "role-config" };
+const C = (key, name, role, purpose, files, lang, ext = []) => ({ key, name, role, purpose, files, lang, ext });
+const COMPONENTS = [
+  C("renderer", "desktop renderer", "ui", "Main window: workspace, composer, surfaces and the embedded viewer.", 25, "TypeScript", ["react", "@xterm/xterm"]),
+  C("tvdev", "trace-viewer-dev", "ui", "Dev host that loads trace bundles for smoke tests.", 24, "TypeScript", ["react"]),
+  C("tvui", "trace-viewer ui", "ui", "Viewer views, Inspector, shell and keyboard layer.", 133, "TypeScript", ["react", "d3-zoom"]),
+  C("catalog", "ui-catalog", "ui", "Generative UI components rendered from json-render specs.", 36, "TypeScript", ["@xyflow/react", "diff2html"]),
+  C("compiler", "ui-compiler", "ui", "Compiles surface decisions into json-render specs.", 10, "TypeScript"),
+  C("main", "desktop main", "api", "Electron main process: IPC handlers, sessions and the event pipeline.", 61, "TypeScript", ["electron", "node-pty"]),
+  C("shell", "desktop shell", "api", "Preload bridge, shared IPC types and the app build config.", 25, "TypeScript"),
+  C("codex", "agent-codex", "agent", "Runs Codex as a child process and normalizes its JSON events.", 22, "TypeScript", ["node-pty"]),
+  C("core", "agent-core", "agent", "Adapter interface and session lifecycle shared by agents.", 15, "TypeScript"),
+  C("router", "jev-router", "agent", "Routes Jev questions to the model with typed guardrails.", 30, "TypeScript", ["@typesafe-ai/sdk"]),
+  C("semantic", "semantic-core", "domain", "Groups evidence into change units, decisions and validations.", 23, "TypeScript"),
+  C("evidence", "evidence-engine", "domain", "Watches the repo and parses files into evidence facts.", 37, "TypeScript", ["web-tree-sitter", "chokidar"]),
+  C("contracts", "contracts", "domain", "Zod schemas for events, IPC and trace bundles.", 34, "TypeScript", ["zod"]),
+  C("model", "trace-viewer model", "domain", "Folds trace rows into turns, steps, chapters and findings.", 38, "TypeScript"),
+  C("layout", "trace-viewer layout", "domain", "Pure layouts for the Canvas, Hybrid spine and overview.", 37, "TypeScript"),
+  C("tv", "trace-viewer", "domain", "Package entry, sources and test support for the viewer.", 28, "TypeScript"),
+  C("telemetry", "telemetry", "domain", "Local timing and count metrics for the pipeline.", 11, "TypeScript", ["zod"]),
+  C("storage", "storage", "storage", "SQLite event store, migrations and the trace reader.", 17, "TypeScript", ["better-sqlite3"]),
+  C("evals", "evals", "tests", "Scenario playback and metrics for Jev decision quality.", 19, "TypeScript"),
+  C("scripts", "scripts", "tooling", "Repository verification scripts.", 5, "JavaScript"),
+  C("config", "config", "config", "Workspace, TypeScript, ESLint and editor configuration.", 8, "JSON"),
+];
+const ORDER = { ui: ["renderer", "tvdev", "tvui", "catalog", "compiler"], api: ["main", "shell"], agent: ["codex", "core", "router"],
+  domain: ["semantic", "evidence", "contracts", "model", "layout", "tv", "telemetry"], storage: ["storage"], side: ["evals", "scripts", "config"] };
+if (PENDING) { COMPONENTS.push(C("py", "py-tools", "tooling", null, 14, "Python")); ORDER.side.push("py"); for (const c of COMPONENTS) c.purpose = null; }
+const EDGES = [["renderer", "tvui", 12], ["renderer", "catalog", 9], ["renderer", "shell", 6], ["renderer", "contracts", 14], ["tvdev", "tvui", 4],
+  ["tvui", "layout", 40], ["tvui", "model", 38], ["tvui", "contracts", 6], ["catalog", "contracts", 5], ["compiler", "catalog", 3],
+  ["shell", "main", 3], ["main", "codex", 5], ["main", "core", 3], ["main", "router", 5], ["main", "semantic", 6], ["main", "evidence", 4], ["main", "contracts", 22],
+  ["main", "storage", 9], ["main", "telemetry", 3], ["shell", "contracts", 8], ["codex", "core", 4], ["codex", "contracts", 6], ["core", "contracts", 3],
+  ["router", "contracts", 7], ["router", "evidence", 2], ["semantic", "contracts", 9], ["evidence", "contracts", 5], ["model", "contracts", 11],
+  ["layout", "model", 30], ["tv", "model", 6], ["storage", "contracts", 8], ["evals", "router", 3], ["evals", "contracts", 4]];
+const TOUCHED = new Set(["tvui", "layout", "model", "main"]);
+const byKey = new Map(COMPONENTS.map((c) => [c.key, c]));
+const edgeWidth = (n) => (n <= 3 ? 1 : n <= 15 ? 2 : 3);
+const STROKE = { 1: 1, 2: 1.6, 3: 2.4 };
+/* Hubs: a component imported by at least max(6, a quarter of all components) others. Their incoming edges show only for a selected or hovered card; a short stub marks the hub's port. */
+const importers = new Map();
+for (const [a, b] of EDGES) importers.set(b, (importers.get(b) ?? 0) + 1);
+const HUB_MIN = Math.max(6, Math.ceil(COMPONENTS.length / 4));
+const isHub = (id) => (importers.get(id) ?? 0) >= HUB_MIN;
+const maxFiles = Math.max(...COMPONENTS.map((c) => c.files));
+const sizePct = (files) => Math.max(8, Math.round(100 * Math.sqrt(files / maxFiles)));
+
+function layout() {
+  const g = GEO, pitch = g.h + g.rowGap, top = g.margin + g.label;
+  const cols = [], cards = new Map();
+  let x = g.margin;
+  for (const [band] of BANDS) {
+    const ids = ORDER[band];
+    if (ids.length === 0) continue;
+    if (cols.length > 0) x += g.gutter;
+    const w = band === "side" ? g.sideW : g.w;
+    cols.push({ band, x, w, count: ids.length });
+    ids.forEach((id, row) => cards.set(id, { id, band, col: cols.length - 1, row, x, y: top + row * pitch, w, h: g.h }));
+    x += w;
+  }
+  const rows = Math.max(...cols.map((c) => c.count));
+  const W = x + g.margin, H = top + rows * pitch - g.rowGap + g.margin;
+  const channelY = (b) => top + b * pitch - g.rowGap / 2; // gap boundary b sits between rows b-1 and b; every band shares the pitch, so it is free in every column
+  const pairs = EDGES.filter(([a, b]) => cards.has(a) && cards.has(b)).map(([a, b, count]) => {
+    let L = cards.get(a), R = cards.get(b);
+    if (R.col < L.col || (R.col === L.col && R.row < L.row)) [L, R] = [R, L];
+    return { a, b, count, L, R };
+  });
+  /* Same-band brackets go to the band side that carries fewer cross-band edges (ties: right); the first band's left side and the last band's right side are the margins. */
+  const sideLoad = cols.map(() => ({ left: 0, right: 0 }));
+  for (const { L, R } of pairs) if (L.col !== R.col) { sideLoad[L.col].right += 1; sideLoad[R.col].left += 1; }
+  const edges = pairs.map(({ a, b, count, L, R }) => {
+    const y1 = L.y + g.h / 2, y2 = R.y + g.h / 2;
+    let d;
+    if (L.col === R.col) { // same band: a bracket in the band's right gutter (left gutter for the last band)
+      const right = sideLoad[L.col].right <= sideLoad[L.col].left, x0 = right ? L.x + L.w : L.x, bulge = Math.min(g.gutter / 2 - 2, 4 + 3 * (R.row - L.row)), bx = x0 + (right ? 1 : -1) * bulge;
+      d = `M${x0} ${y1}C${bx} ${y1} ${bx} ${y2} ${x0} ${y2}`;
+    } else {
+      const x1 = L.x + L.w, x2 = R.x;
+      if (R.col - L.col === 1) { const mx = (x1 + x2) / 2; d = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`; }
+      else { // two or more bands apart: S-curve in the first gutter into the gap channel next to the left card, straight through, S-curve in the last gutter
+        const b = Math.min(rows, Math.max(1, y2 >= y1 ? L.row + 1 : L.row)), yc = channelY(b), h = g.gutter / 2, gx1 = x1 + g.gutter, gx2 = x2 - g.gutter;
+        d = `M${x1} ${y1}C${x1 + h} ${y1} ${x1 + h} ${yc} ${gx1} ${yc}H${gx2}C${gx2 + h} ${yc} ${gx2 + h} ${y2} ${x2} ${y2}`;
+      }
+    }
+    return { from: a, to: b, count, width: edgeWidth(count), d, hub: isHub(b), same: L.col === R.col };
+  });
+  return { cols, cards, edges, rows, W, H, top };
+}
+
+const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
+function renderWorld(L, level, selected) {
+  const g = GEO, world = document.getElementById("world");
+  world.dataset.level = level;
+  world.style.width = `${L.W}px`; world.style.height = `${L.H}px`;
+  const touches = (e) => selected !== null && (e.from === selected || e.to === selected);
+  let html = L.cols.map((c) => {
+    const [, label, ic] = BANDS.find(([b]) => b === c.band);
+    return `<div class="lane" style="left:${c.x - g.lanePad}px;top:${g.margin - 4}px;width:${c.w + 2 * g.lanePad}px;height:${L.H - 2 * g.margin + 4 + g.lanePad}px"></div>
+      <div class="band" style="left:${c.x - 1}px;top:${g.margin + 2}px;height:${g.label - 14}px">${icon(ic)}<span class="t">${label}</span><span class="n">${c.count}</span></div>`;
+  }).join("");
+  /* At rest the map draws band-to-band edges only; same-band and hub edges join when their card is selected or hovered. */
+  const shown = L.edges.filter((e) => touches(e) || (!e.hub && !e.same));
+  const ordered = [...shown.filter((e) => !touches(e)), ...shown.filter(touches)];
+  const stubs = [...L.cards.values()].filter((c) => isHub(c.id) && selected !== c.id).map((c) => { const y = c.y + g.h / 2, x0 = c.x - 11;
+    return `<path class="stub" d="M${x0} ${y - 7}Q${c.x - 5} ${y - 7} ${c.x} ${y}M${x0} ${y}H${c.x}M${x0} ${y + 7}Q${c.x - 5} ${y + 7} ${c.x} ${y}"/>`; }).join("");
+  html += `<svg class="edges" width="${L.W}" height="${L.H}">${stubs}${ordered.map((e) => `<path class="edge${touches(e) ? " lit" : selected !== null ? " dim" : ""}" stroke-width="${STROKE[e.width]}" d="${e.d}"/>`).join("")}</svg>`;
+  for (const card of L.cards.values()) {
+    const c = byKey.get(card.id), sel = card.id === selected;
+    const hub = isHub(card.id) ? `<span class="hub" title="Imported by ${importers.get(card.id)} components">${icon("fanin")}${importers.get(card.id)}</span>` : "";
+    const detail = level === "detail"
+      ? `<div class="pp${c.purpose === null ? " fb" : ""}">${c.purpose ?? (c.key === "py" ? "tools/py" : `packages/${c.name}`)}</div>${c.ext.length > 0 ? `<div class="xr">${icon("pkg")}${c.ext.slice(0, 2).join(" · ")}</div>` : ""}`
+      : "";
+    const count = level === "detail" ? `${c.files} files` : c.files;
+    html += `<div class="card${sel ? " sel" : ""}" style="left:${card.x}px;top:${card.y}px;width:${card.w}px;height:${card.h}px">
+      <div><div class="ct"><span class="cn">${c.name}</span>${hub}</div>${detail}</div>
+      <div class="cf">${icon(ROLE_ICON[c.role])}<span class="sz"><i style="width:${sizePct(c.files)}%"></i></span><span class="fc">${count}</span></div></div>`;
+  }
+  world.innerHTML = html;
+}
+
+const levelFor = (k) => (k < CARD_K ? "chip" : k < DETAIL_K ? "card" : "detail");
+function camera(L, mode) {
+  const vp = document.getElementById("viewport"), vw = vp.clientWidth, vh = vp.clientHeight;
+  let k, tx, ty;
+  if (mode === "fit") {
+    const aw = vw - 2 * FIT.x, ah = vh - FIT.top - FIT.bottom;
+    k = Math.min(aw / L.W, ah / L.H, FIT.maxK);
+    tx = (vw - L.W * k) / 2; ty = FIT.top + (ah - L.H * k) / 2;
+  } else {
+    k = 1.5; tx = 16 - (GEO.margin - GEO.lanePad) * k; ty = 16 - (GEO.margin - 4) * k;
+  }
+  document.getElementById("world").style.transform = `translate(${tx}px,${ty}px) scale(${k})`;
+  vp.dataset.zoomBand = k < ICON_ONLY ? "icon" : "full";
+  document.getElementById("zoom").textContent = `${Math.round(k * 100)}%`;
+  return k;
+}
+
+/* Overview narrative: plain sentences; component names are quiet links. The first two sentences show, the rest sit behind More. */
+const ref = (key, on = false) => `<a class="ref${on ? " on" : ""}" data-component="${key}">${byKey.get(key).name}</a>`;
+const SENTENCES = (sel) => [
+  `jevcode is an Electron app that supervises a coding agent and explains its work.`,
+  `${ref("main", sel === "main")} runs Codex through ${ref("codex")} and feeds its events to ${ref("evidence")} and ${ref("semantic")}.`,
+  `Every event lands in ${ref("storage")}, and ${ref("model")} folds it back into rows.`,
+  `Jev's questions go through ${ref("router")}; ${ref("contracts")} holds the schemas every package imports.`,
+];
+const plain = SENTENCES(null).map((s) => s.replace(/<[^>]+>/g, ""));
+const selected = STATE === "selected" ? "main" : null;
+document.getElementById("mhead").innerHTML = PENDING
+  ? `<div class="hrow">${icon("map")}<span class="hl">22 components</span><span class="lang">TypeScript · JSON · Python</span><button class="tog">Overview${icon("chev", "ic s12")}</button></div>
+     <div class="notes"><span class="note">${icon("stack", "ic s12")}Partial · 20,000 of 25,200 files</span><span class="note">${icon("route", "ic s12")}Imports not analyzed for Python</span><span class="note">${icon("brief", "ic s12")}Descriptions pending</span></div>`
+  : `<div class="hrow">${icon("map")}<span class="hl">21 components</span><span class="lang">TypeScript · JSON</span><button class="tog">Overview${icon("chev", "ic s12")}</button></div>
+     <p class="narr">${SENTENCES(selected).slice(0, 2).join(" ")} <button class="more">More</button></p>`;
+
+const thumb = (L) => `<svg class="th" viewBox="0 0 ${L.W} ${L.H}" preserveAspectRatio="xMidYMid meet">${L.cols.map((c) => `<rect class="ln" x="${c.x - GEO.lanePad}" y="${GEO.margin - 4}" width="${c.w + 2 * GEO.lanePad}" height="${L.H - 2 * GEO.margin + 4 + GEO.lanePad}" rx="16"/>`).join("")}${[...L.cards.values()].map((c) => `<rect class="cd${TOUCHED.has(c.id) ? " t" : ""}" x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="12"/>`).join("")}</svg>`;
+const arch = (L) => `<div class="sec"><h4>${icon("route", "i")}Architecture</h4>
+      <div class="arch">${thumb(L)}</div>
+      <p class="am"><span>${PENDING ? 22 : 21} components</span><span>4 touched</span></p>
+      ${PENDING ? `<p class="quiet">Descriptions pending</p>` : `<p class="prose">${plain.slice(0, 3).join(" ")}</p>`}
+      <button class="lnk">Open the map</button></div>`;
+const brief = (L) => `<div class="bh">${icon("brief", "i i16")}Brief<span class="sub">Live</span></div>
+    <div class="sec"><h4>${icon("live", "i")}Now</h4>
+      <div class="now"><div class="nowrow"><span class="pulse"></span><span class="t el">Editing <span class="mono">src/layout/map-layout.ts</span></span></div></div></div>
+    <div class="sec"><h4>${icon("list", "i")}Changes so far · 3</h4>
+      <div class="chg">
+        <div class="c">${icon("edit", "i")}<span class="t el">Map layout</span><span class="db"><i class="a" style="width:40px"></i><i class="r" style="width:10px"></i></span><span></span><span></span></div>
+        <div class="c">${icon("edit", "i")}<span class="t el">Overview fold</span><span class="db"><i class="a" style="width:30px"></i><i class="r" style="width:6px"></i></span><span></span><span></span></div>
+        <div class="c">${icon("test", "i")}<span class="t el">Layout properties</span><span></span><span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i class="f"></i></span><span></span></div>
+      </div></div>
+    ${arch(L)}`;
+const io = (rows) => { const max = Math.max(...rows.map(([, , n]) => n)); return rows.map(([n, r, c, ex]) => `<div class="lrow">${r === null ? "" : icon(ROLE_ICON[r], "ic s12")}<span class="nm">${n}</span><span class="mb" style="width:${Math.max(4, Math.round(48 * c / max))}px"></span><span class="ct">${c}</span></div>${ex ? `<div class="mono ex">${ex}</div>` : ""}`).join(""); };
+const inspector = () => `<div class="ihead"><span class="tile" style="background:var(--accent-soft);color:var(--accent)">${icon("role-api", "ic s14")}</span><div>desktop main<span class="ml">API · described by model</span></div></div>
+    <div class="sec"><p>Electron main process: IPC handlers, sessions and the event pipeline.</p><p class="mono" style="margin-top:4px">apps/desktop/src/main</p></div>
+    <div class="sec"><div class="sh">${icon("file", "ic s12")}Files · 61 <span class="d">TypeScript</span></div>
+      ${["main/index.ts", "main/ipc.ts", "main/pipeline/coordinator.ts", "main/pipeline/explainer-stage.ts", "main/sessions.ts"].map((f) => `<div class="mono">${f}</div>`).join("")}<p class="quiet" style="margin-top:2px">56 more</p></div>
+    <div class="sec"><div class="sh">Imports out · 8</div>
+      ${io([["contracts", "domain", 22, "main/ipc.ts → contracts/src/index.ts"], ["storage", "storage", 9], ["semantic-core", "domain", 6], ["agent-codex", "agent", 5], ["jev-router", "agent", 5]])}
+      <p class="quiet" style="margin:0 0 4px">3 more</p>
+      <div class="sh" style="margin-top:6px">Imports in · 1</div>${io([["desktop shell", "api", 3]])}</div>
+    <div class="sec"><div class="sh">${icon("pkg", "ic s12")}External packages</div>${io([["electron", null, 14], ["node-pty", null, 3]])}</div>
+    <div class="sec"><div class="sh">This session</div><div class="sess">${icon("edit", "ic s12")}<span class="nm mono" style="flex:1">…/pipeline/explainer-stage.ts</span><span class="bar"><i class="a" style="width:40px"></i><i class="r" style="width:8px"></i></span></div></div>`;
+
+const L = layout();
+document.getElementById("insp").innerHTML = STATE === "selected" ? inspector() : brief(L);
+/* Fit runs after layout settles and again on resize (headless Chrome sizes the window after the first script pass). */
+function draw() {
+  const k = camera(L, STATE === "zoomed" ? "main" : "fit");
+  renderWorld(L, STATE === "zoomed" ? "detail" : levelFor(Math.min(k, DETAIL_K - 0.01)), selected);
+}
+draw();
+addEventListener("load", draw);
+addEventListener("resize", draw);
+</script>
+</body>
+</html>
