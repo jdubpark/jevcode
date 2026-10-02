@@ -142,7 +142,7 @@ export class PipelineRuntime {
     let adapterKind: ActiveSession["adapterKind"] = "none";
 
     if (mode === "mock") {
-      const script = input.mockScript ?? defaultMockScript(input);
+      const script = input.mockScript ?? this.opts.mockScriptFor?.(input) ?? defaultMockScript(input);
       adapter = new MockAgentAdapter(script, {
         entryDelayMs: 1,
         threadId: input.mockThreadId,
@@ -165,7 +165,7 @@ export class PipelineRuntime {
         adapter = codex;
         adapterKind = "codex";
       } else if (mode === "auto") {
-        const script = input.mockScript ?? defaultMockScript(input);
+        const script = input.mockScript ?? this.opts.mockScriptFor?.(input) ?? defaultMockScript(input);
         adapter = new MockAgentAdapter(script, {
           entryDelayMs: 1,
           threadId: input.mockThreadId,

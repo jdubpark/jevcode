@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,7 @@ import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry }
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
+import { SMOKE_SCRIPT_DEFAULTS, smokeMockScript } from "./pipeline/smoke-script.js";
 import type { TerminalSink } from "./pipeline/types.js";
 import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
 import type { RowsAvailableEmitter } from "./rows-available.js";
@@ -36,6 +37,7 @@ import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
 import { createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
 import type { TraceWindowRegistry } from "./trace-window.js";
+import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = path.join(dirname, "../preload/index.cjs");
@@ -63,6 +65,36 @@ loadEnvFileFromRepo();
 const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
 /** Prints trace windows' TRACE_PERF lines (docs/perf.md live-tick samples). */
 const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
+
+/** JEVCODE_SMOKE_WORKSPACE=1: the smoke drives the main window through a scripted mock session (smoke-workspace.ts). */
+const SMOKE_WORKSPACE = SMOKE && process.env["JEVCODE_SMOKE_WORKSPACE"] === "1";
+const SMOKE_STEPS = Number.parseInt(process.env["JEVCODE_SMOKE_STEPS"] ?? "", 10) || SMOKE_SCRIPT_DEFAULTS.steps;
+
+function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
+  return {
+    exec: (script) => window.webContents.executeJavaScript(script, true) as Promise<unknown>,
+    onConsole: (listener) => {
+      const handler = (_event: unknown, _level: number, message: string): void => listener(message);
+      window.webContents.on("console-message", handler);
+      return () => {
+        window.webContents.off("console-message", handler);
+      };
+    },
+    capture: async (width, height) => {
+      window.setContentSize(width, height);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const image = await window.webContents.capturePage();
+      return image.toPNG();
+    },
+    writeFile: (filePath, data) => {
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, data);
+    },
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    log: (line) => console.log(line),
+  };
+}
 
 let mainWindow: BrowserWindow | null = null;
 let terminals: TerminalManager | null = null;
@@ -208,6 +240,9 @@ app.whenReady().then(() => {
     terminal: terminalSink,
     log: (message) => console.log(`[pipeline] ${message}`),
     onRepoFilesChanged: (repoPath, paths) => explainerRegistry.filesChanged(repoPath, paths),
+    mockScriptFor: SMOKE_WORKSPACE
+      ? (input) => smokeMockScript(input, { steps: SMOKE_STEPS, spacingMs: SMOKE_SCRIPT_DEFAULTS.spacingMs })
+      : undefined,
   });
 
   const instructionRouter = new InstructionRouter({
@@ -287,6 +322,7 @@ app.whenReady().then(() => {
       error: (line) => console.error(line),
       succeed: () => app.quit(),
       fail: () => app.exit(1),
+      workspace: SMOKE_WORKSPACE ? workspaceSmokeDeps(mainWindow) : undefined,
     });
   }
 

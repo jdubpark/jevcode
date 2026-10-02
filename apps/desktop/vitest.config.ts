@@ -1,9 +1,10 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  // Renderer components use the automatic JSX runtime (tsconfig.web.json "react-jsx").
+  // The root tsconfig has no jsx setting; renderer .tsx tests need the automatic runtime.
   esbuild: { jsx: "automatic" },
   test: {
-    include: ["src/**/*.test.ts"],
+    // Renderer component tests are .tsx and opt in with // @vitest-environment jsdom.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });
