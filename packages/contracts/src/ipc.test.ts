@@ -26,6 +26,8 @@ describe("IPC channel map", () => {
       "surface:pin",
       "surface:dismiss",
       "telemetry:flush",
+      // console-explainer spec §6.6 (Retry after a failed scan); not in docs/SPEC.md §4.5.
+      "overview:rescan",
     ];
     expect(Object.values(RendererToMainChannels)).toEqual(expected);
     for (const channel of expected) {
@@ -51,6 +53,8 @@ describe("IPC channel map", () => {
       "terminal:scrollback",
       "jev:debug",
       "telemetry:ack",
+      // console-explainer spec §7 push hint; not in docs/SPEC.md §4.5.
+      "trace:rowsAvailable",
     ];
     expect(Object.values(MainToRendererChannels)).toEqual(expected);
     for (const channel of expected) {
@@ -193,9 +197,38 @@ describe("validatePayload", () => {
 });
 
 describe("allChannelNames", () => {
-  it("returns 30 unique channel names", () => {
+  it("returns 32 unique channel names", () => {
     const names = allChannelNames();
-    expect(new Set(names).size).toBe(30);
-    expect(names.length).toBe(30);
+    expect(new Set(names).size).toBe(32);
+    expect(names.length).toBe(32);
+  });
+});
+
+describe("console-explainer channels", () => {
+  it("validates the trace:rowsAvailable hint and refuses any content beyond sessionId and lastSeq", () => {
+    expect(validatePayload("fromMain", "trace:rowsAvailable", { sessionId: "sess_1", lastSeq: 0 })).toEqual({
+      ok: true,
+      value: { sessionId: "sess_1", lastSeq: 0 },
+    });
+    const bad: unknown[] = [
+      { sessionId: "", lastSeq: 1 },
+      { sessionId: "sess_1", lastSeq: -1 },
+      { sessionId: "sess_1", lastSeq: 1.5 },
+      { sessionId: "sess_1" },
+      { sessionId: "sess_1", lastSeq: 3, rows: [{ seq: 3 }] },
+      { sessionId: "sess_1", lastSeq: 3, text: "agent output" },
+    ];
+    for (const payload of bad) {
+      expect(validatePayload("fromMain", "trace:rowsAvailable", payload).ok, JSON.stringify(payload)).toBe(false);
+    }
+  });
+
+  it("validates overview:rescan", () => {
+    expect(validatePayload("toMain", "overview:rescan", { repoRoot: "/work/acme" })).toEqual({
+      ok: true,
+      value: { repoRoot: "/work/acme" },
+    });
+    expect(validatePayload("toMain", "overview:rescan", { repoRoot: "" }).ok).toBe(false);
+    expect(validatePayload("toMain", "overview:rescan", {}).ok).toBe(false);
   });
 });
