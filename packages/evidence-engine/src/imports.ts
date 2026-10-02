@@ -22,6 +22,17 @@ export type ResolvedSpecifier =
   | { kind: "external"; packageName: string }
   | { kind: "unresolved" };
 
+/**
+ * What one resolution read from `ctx.files`, so a caller that caches results knows which file
+ * additions and removals can change them (`probeCandidatesFor`, and `under` for a directory).
+ */
+export interface ResolveTrace {
+  /** The resolution looked for `candidate` with every probe suffix (see `probeCandidatesFor`). */
+  probe(candidate: string): void;
+  /** The resolution took the first file under `dir`: any file added or removed under it can change it. */
+  under(dir: string): void;
+}
+
 export interface ImportExtractor {
   extract: typeof extractImports;
   dispose(): Promise<void>;
@@ -148,8 +159,9 @@ function joinBase(base: string | null, rest: string): string | null {
   return normalize(base === null || base === "" || base === "." ? rest : `${base}/${rest}`);
 }
 
-function probeFile(candidate: string | null, files: ReadonlySet<string>): string | null {
+function probeFile(candidate: string | null, files: ReadonlySet<string>, trace: ResolveTrace | undefined): string | null {
   if (candidate === null || candidate === "") return null;
+  trace?.probe(candidate);
   for (const suffix of PROBE_SUFFIXES) {
     if (files.has(`${candidate}${suffix}`)) return `${candidate}${suffix}`;
   }
@@ -163,7 +175,26 @@ function probeFile(candidate: string | null, files: ReadonlySet<string>): string
   return null;
 }
 
-function resolveTsPath(specifier: string, ctx: ResolveContext): string | null {
+/**
+ * Every probe candidate whose lookup reads `path`: the candidates for which adding or removing
+ * `path` can change `probeFile`. A cache keyed by traced candidates re-resolves only these.
+ */
+export function probeCandidatesFor(path: string): string[] {
+  const out = new Set<string>();
+  for (const suffix of PROBE_SUFFIXES) {
+    if (path.length > suffix.length && path.endsWith(suffix)) out.add(path.slice(0, path.length - suffix.length));
+  }
+  for (const [extension, alternatives] of JS_TO_TS) {
+    for (const alternative of alternatives) {
+      if (path.length > alternative.length && path.endsWith(alternative)) {
+        out.add(`${path.slice(0, path.length - alternative.length)}${extension}`);
+      }
+    }
+  }
+  return [...out];
+}
+
+function resolveTsPath(specifier: string, ctx: ResolveContext, trace: ResolveTrace | undefined): string | null {
   let best: { score: number; targets: readonly string[]; wildcard: string } | null = null;
   for (const [pattern, targets] of Object.entries(ctx.tsPaths)) {
     const star = pattern.indexOf("*");
@@ -184,15 +215,28 @@ function resolveTsPath(specifier: string, ctx: ResolveContext): string | null {
   }
   if (best === null) return null;
   for (const target of best.targets) {
-    const hit = probeFile(joinBase(ctx.baseUrl, target.replace("*", () => best.wildcard)), ctx.files);
+    const hit = probeFile(joinBase(ctx.baseUrl, target.replace("*", () => best.wildcard)), ctx.files, trace);
     if (hit !== null) return hit;
   }
   return null;
 }
 
 const firstFileCache = new WeakMap<ResolveContext, Map<string, string | null>>();
+/** Workspace names, longest first, per `workspacePackages` record (treated as immutable). */
+const workspaceNamesCache = new WeakMap<Record<string, string>, readonly string[]>();
 
-function firstFileUnder(dir: string, ctx: ResolveContext): string | null {
+function workspaceNames(ctx: ResolveContext): readonly string[] {
+  let names = workspaceNamesCache.get(ctx.workspacePackages);
+  if (names === undefined) {
+    names = Object.keys(ctx.workspacePackages).sort((a, b) => b.length - a.length);
+    workspaceNamesCache.set(ctx.workspacePackages, names);
+  }
+  return names;
+}
+
+/** The smallest path under `dir`, cached per context: a context's `files` must not change. */
+function firstFileUnder(dir: string, ctx: ResolveContext, trace: ResolveTrace | undefined): string | null {
+  trace?.under(dir);
   let cache = firstFileCache.get(ctx);
   if (cache === undefined) {
     cache = new Map();
@@ -208,20 +252,19 @@ function firstFileUnder(dir: string, ctx: ResolveContext): string | null {
   return cache.get(dir) ?? null;
 }
 
-function resolveWorkspace(specifier: string, ctx: ResolveContext): string | null {
-  const names = Object.keys(ctx.workspacePackages).sort((a, b) => b.length - a.length);
-  for (const name of names) {
+function resolveWorkspace(specifier: string, ctx: ResolveContext, trace: ResolveTrace | undefined): string | null {
+  for (const name of workspaceNames(ctx)) {
     if (specifier !== name && !specifier.startsWith(`${name}/`)) continue;
     const dir = ctx.workspacePackages[name] as string;
     const sub = specifier === name ? "" : specifier.slice(name.length + 1);
     const candidates = sub === "" ? [`${dir}/src/index`, `${dir}/index`, `${dir}/src/main`, `${dir}/main`] : [`${dir}/${sub}`, `${dir}/src/${sub}`];
     for (const candidate of candidates) {
-      const hit = probeFile(normalize(candidate), ctx.files);
+      const hit = probeFile(normalize(candidate), ctx.files, trace);
       if (hit !== null) return hit;
     }
     // The package lives in the repo even when its entry is built output: any member file
     // places the edge on the right component.
-    return firstFileUnder(dir, ctx);
+    return firstFileUnder(dir, ctx, trace);
   }
   return null;
 }
@@ -229,23 +272,29 @@ function resolveWorkspace(specifier: string, ctx: ResolveContext): string | null
 /**
  * Spec §5.1: relative paths, then tsconfig `paths`, then workspace package names, then
  * `baseUrl`. Node built-ins and non-package specifiers ("virtual:x", "$app/x") are
- * unresolved; other bare specifiers are external under their package name.
+ * unresolved; other bare specifiers are external under their package name. `trace` hears every
+ * lookup in `ctx.files`, so the result stays valid until a traced lookup's answer changes.
  */
-export function resolveSpecifier(fromPath: string, specifier: string, ctx: ResolveContext): ResolvedSpecifier {
+export function resolveSpecifier(
+  fromPath: string,
+  specifier: string,
+  ctx: ResolveContext,
+  trace?: ResolveTrace,
+): ResolvedSpecifier {
   const spec = specifier.replace(/[?#].*$/, "");
   if (spec === "" || spec.startsWith("/")) return { kind: "unresolved" };
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
     const slash = fromPath.lastIndexOf("/");
     const dir = slash === -1 ? "" : fromPath.slice(0, slash);
-    const hit = probeFile(normalize(dir === "" ? spec : `${dir}/${spec}`), ctx.files);
+    const hit = probeFile(normalize(dir === "" ? spec : `${dir}/${spec}`), ctx.files, trace);
     return hit === null ? { kind: "unresolved" } : { kind: "file", path: hit };
   }
-  const viaPaths = resolveTsPath(spec, ctx);
+  const viaPaths = resolveTsPath(spec, ctx, trace);
   if (viaPaths !== null) return { kind: "file", path: viaPaths };
-  const viaWorkspace = resolveWorkspace(spec, ctx);
+  const viaWorkspace = resolveWorkspace(spec, ctx, trace);
   if (viaWorkspace !== null) return { kind: "file", path: viaWorkspace };
   if (ctx.baseUrl !== null) {
-    const hit = probeFile(joinBase(ctx.baseUrl, spec), ctx.files);
+    const hit = probeFile(joinBase(ctx.baseUrl, spec), ctx.files, trace);
     if (hit !== null) return { kind: "file", path: hit };
   }
   if (spec.startsWith("node:") || BUILTINS.has(spec.split("/")[0] ?? "")) return { kind: "unresolved" };
