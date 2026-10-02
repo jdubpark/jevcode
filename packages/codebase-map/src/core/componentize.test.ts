@@ -196,16 +196,22 @@ describe("ids, content hashes and languages", () => {
     expect(draft?.contentHash).toBe(sha1("src/a.ts:1\nsrc/b.ts:2"));
   });
 
-  it("records the main language and whether the parser reads any member", () => {
+  it("records the main language and whether the parser reads any member's imports", () => {
     const drafts = componentize(
-      files("docs/a.md", "docs/b.md", "docs/c.ts", "svc/app.py", "svc/b.py", "cfg/a.json"),
+      files("docs/a.md", "docs/b.md", "docs/c.ts", "svc/app.py", "svc/b.py", "cfg/a.json", "web/x.jsx", "web/y.json"),
       manifest(),
     );
     expect(drafts.map((draft) => [draft.rootPath, draft.language, draft.importsAnalyzed])).toEqual([
-      ["cfg", "JSON", true],
+      ["cfg", "JSON", false],
       ["docs", "TypeScript", true],
       ["svc", "Python", false],
+      ["web", "JavaScript", true],
     ]);
+  });
+
+  it("does not count a JSON-only member as analyzed: a Python package with a package.json", () => {
+    const [draft] = componentize(files("tool/package.json", "tool/cli.py", "tool/lib/run.py"), manifest());
+    expect([draft?.rootPath, draft?.language, draft?.importsAnalyzed]).toEqual(["tool", "Python", false]);
   });
 
   it("componentOf maps every member to its component id and nothing else", () => {
