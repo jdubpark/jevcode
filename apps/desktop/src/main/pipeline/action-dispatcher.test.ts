@@ -173,6 +173,16 @@ describe("answer_decision must name one of the decision's options (spec §4.3)",
     memory.close();
   });
 
+  it("rejects an empty answer before the runtime runs", async () => {
+    const memory = seeded();
+    const { runtime, calls } = stubRuntime();
+    await expect(
+      dispatchAction(makeDeps(memory, runtime), "answer_decision", { decisionId: "dec_cache", decision: {} }),
+    ).rejects.toMatchObject({ code: "INVALID_ACTION_PARAMS" } satisfies Partial<IpcError>);
+    expect(calls).toEqual([]);
+    memory.close();
+  });
+
   it("passes a real option through", async () => {
     const memory = seeded();
     const { runtime, calls } = stubRuntime();

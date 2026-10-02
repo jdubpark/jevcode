@@ -223,6 +223,7 @@ export function SurfacesView({ active }: ViewProps) {
     root.addEventListener("wheel", onInteract);
     root.addEventListener("keydown", onInteract);
     return () => {
+      manager.setPointerInside(false);
       root.removeEventListener("pointerenter", onPointerEnter);
       root.removeEventListener("pointerleave", onPointerLeave);
       root.removeEventListener("pointerdown", onInteract);

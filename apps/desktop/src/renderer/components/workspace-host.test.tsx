@@ -136,7 +136,7 @@ describe("WorkspaceHost embeds the trace viewer (spec §9, E2)", () => {
       await sleep(1_200);
     });
     expect(bridge.rowsCalls("s1")).toBe(s1Calls);
-    expect(bridge.rowsListenerCount()).toBeLessThanOrEqual(1);
+    expect(bridge.rowsListenerCount()).toBe(1);
   });
 
   it("a review note for another session is held, then becomes the draft on switching to it", async () => {

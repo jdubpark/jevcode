@@ -124,6 +124,9 @@ function assertOfferedOptions(db: JevcodeDb, sessionId: string, answer: AnswerDe
   const decision = db.getDecision(answer.decisionId);
   if (decision === undefined || decision.sessionId !== sessionId || decision.options.length === 0) return;
   const offered = new Set(decision.options.map((option) => option.id));
+  if (Object.keys(answer.decision).length === 0) {
+    throw new IpcError("INVALID_ACTION_PARAMS", `answer_decision: no option named for ${answer.decisionId}`);
+  }
   for (const value of Object.values(answer.decision)) {
     if (!offered.has(value)) {
       throw new IpcError(
