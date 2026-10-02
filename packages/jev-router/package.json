@@ -17,8 +17,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@jevcode/contracts": "workspace:*",
-    "@typesafe-ai/sdk": "^0.6.0"
+    "@typesafe-ai/sdk": "^0.6.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@jevcode/evidence-engine": "workspace:*",
