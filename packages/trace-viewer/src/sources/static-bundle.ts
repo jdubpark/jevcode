@@ -1,5 +1,5 @@
 import {
-  TRACE_BUNDLE_FORMAT, TRACE_BUNDLE_VERSION, TRACE_PAYLOADS_MAX, TRACE_ROWS_PAGE_DEFAULT, TraceBundleSchema,
+  TRACE_BUNDLE_FORMAT, TRACE_BUNDLE_VERSIONS_SUPPORTED, TRACE_PAYLOADS_MAX, TRACE_ROWS_PAGE_DEFAULT, TraceBundleSchema,
   type TraceBundle, type TraceRow, type TraceRowsPage, type TraceSessionSummary,
 } from "@jevcode/contracts";
 
@@ -12,11 +12,14 @@ export type ParsedBundle =
 
 const NOT_A_TRACE: ParsedBundle = { ok: false, code: "NOT_A_TRACE", message: "Not a jevcode trace" };
 
+const SUPPORTED_VERSIONS: readonly unknown[] = TRACE_BUNDLE_VERSIONS_SUPPORTED;
+
+/** v1 and v2 parse (a v1 bundle has no overview_snapshot or explainer rows); any other version is named in the message. */
 export function parseTraceBundle(json: unknown): ParsedBundle {
   if (json === null || typeof json !== "object") return NOT_A_TRACE;
   const record = json as { format?: unknown; version?: unknown };
   if (record.format !== TRACE_BUNDLE_FORMAT) return NOT_A_TRACE;
-  if (record.version !== TRACE_BUNDLE_VERSION) {
+  if (!SUPPORTED_VERSIONS.includes(record.version)) {
     return { ok: false, code: "UNSUPPORTED_VERSION", message: `Trace format v${String(record.version)} is not supported` };
   }
   const parsed = TraceBundleSchema.safeParse(json);
