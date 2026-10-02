@@ -64,22 +64,82 @@ function waitForServer(url, timeoutMs) {
   });
 }
 
+/** Chrome children (by pid, with their profile dir) that this run started and has not yet killed. */
+const liveChrome = new Map();
+
+/** Kills a Chrome we started: its process group, then any stray helper that still carries the profile dir. */
+function killChrome(child, profile) {
+  liveChrome.delete(child);
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+  // `--` keeps the pattern from being parsed as an option; the full profile path is unique to this run.
+  spawnSync("pkill", ["-9", "-f", "--", `--user-data-dir=${profile}`]);
+}
+
+function killAllChrome() {
+  for (const [child, profile] of [...liveChrome]) killChrome(child, profile);
+}
+process.on("exit", killAllChrome);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    killAllChrome();
+    process.exit(1);
+  });
+}
+
+/**
+ * One headless Chrome call. Chrome 154 does all of its work (writes the screenshot, prints the DOM) and then never
+ * exits, so `spawnSync` always ran into its timeout. Run it asynchronously, treat the call as complete once its own
+ * completion marker shows (`... bytes written to file` on stderr for `--screenshot`, the closing `</html>` on stdout
+ * for `--dump-dom`), then kill the process tree. A fresh profile per call keeps a killed Chrome's lock files out.
+ */
 function chrome(profile, args) {
-  const result = spawnSync(
-    CHROME,
-    [
-      "--headless=new",
-      "--disable-gpu",
-      "--hide-scrollbars",
-      "--no-first-run",
-      "--no-default-browser-check",
-      `--user-data-dir=${profile}`,
-      ...args,
-    ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 90_000 },
-  );
-  if (result.status !== 0) throw new Error(`chrome exited ${result.status}: ${result.stderr}`);
-  return result.stdout;
+  rmSync(profile, { recursive: true, force: true });
+  const wantsDom = args.includes("--dump-dom");
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      CHROME,
+      [
+        "--headless=new",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--no-first-run",
+        "--no-default-browser-check",
+        `--user-data-dir=${profile}`,
+        ...args,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], detached: true },
+    );
+    liveChrome.set(child, profile);
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      killChrome(child, profile);
+      if (error) reject(error);
+      else resolve(stdout);
+    };
+    const check = () => {
+      if (wantsDom ? /<\/html>\s*$/i.test(stdout) : /bytes written to file/.test(stderr)) finish();
+    };
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+      check();
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+      check();
+    });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code) => finish(code === 0 ? undefined : new Error(`chrome exited ${code}: ${stderr}`)));
+    const timer = setTimeout(() => finish(new Error(`chrome gave no result within 90 s: ${stderr.slice(-2048)}`)), 90_000);
+  });
 }
 
 /**
@@ -102,8 +162,9 @@ async function chromeSelftest(profile, url, timeoutMs) {
       "--remote-debugging-port=0",
       url,
     ],
-    { stdio: "ignore" },
+    { stdio: "ignore", detached: true },
   );
+  liveChrome.set(browser, profile);
   const deadline = Date.now() + timeoutMs;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let socket;
@@ -143,7 +204,7 @@ async function chromeSelftest(profile, url, timeoutMs) {
     }
   } finally {
     socket?.close();
-    browser.kill("SIGKILL");
+    killChrome(browser, profile);
   }
 }
 
@@ -193,7 +254,7 @@ async function main() {
       for (const width of WIDTHS) {
         const file = path.join(SMOKE_DIR, `${view}-${width}.png`);
         rmSync(file, { force: true });
-        chrome(profile, [
+        await chrome(profile, [
           `--window-size=${width},900`,
           "--virtual-time-budget=3000",
           `--screenshot=${file}`,
@@ -205,7 +266,7 @@ async function main() {
       if (view === "hybrid") {
         // Spec §1 "found at once": oauth opened in Hybrid at 1440 px with no input (?selftest=open).
         const opened = readSelftest(
-          chrome(profile, [
+          await chrome(profile, [
             "--window-size=1440,900",
             "--dump-dom",
             "--virtual-time-budget=5000",
@@ -227,7 +288,7 @@ async function main() {
           `hybrid: opened with ${opened.selected} selected and in view, painted at ${Math.round(opened.paintedAtMs)} ms`,
         );
       }
-      const html = chrome(profile, [
+      const html = await chrome(profile, [
         "--window-size=1440,900",
         "--dump-dom",
         "--virtual-time-budget=5000",
