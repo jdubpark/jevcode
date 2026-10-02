@@ -93,16 +93,26 @@ export function expectNoCardCrossings(layout: MapLayout): void {
   }
 }
 
-/** Every edge starts and ends at the vertical center of a side of its two cards (one port per side, no spreading). */
+function onPort(point: { x: number; y: number } | undefined, card: Box | undefined): boolean {
+  return card !== undefined && point !== undefined && (point.x === card.x || point.x === card.x + card.w) && point.y === card.y + card.h / 2;
+}
+
+/**
+ * Every edge starts at the vertical center of a side of one of its cards and ends at one on the other card (one port per
+ * side, no spreading). Either end may be `from`: the path runs from the lower column (or row) to the higher.
+ */
 export function expectEdgesOnPorts(layout: MapLayout): void {
   for (const edge of layout.edges) {
-    const ends = [edge.from, edge.to].map((id) => layout.cards.find((card) => card.id === id));
+    const box = (id: string): Box | undefined => {
+      const card = layout.cards.find((item) => item.id === id);
+      return card === undefined ? undefined : { label: card.id, x: card.x, y: card.y, w: card.w, h: card.h };
+    };
+    const from = box(edge.from);
+    const to = box(edge.to);
     const points = pathPoints(edge.d);
-    for (const point of [points[0], points.at(-1)]) {
-      const onPort = ends.some(
-        (card) => card !== undefined && point !== undefined && (point.x === card.x || point.x === card.x + card.w) && point.y === card.y + card.h / 2,
-      );
-      expect(onPort, `${edge.from}>${edge.to} has an end off a port: ${edge.d}`).toBe(true);
-    }
+    const start = points[0];
+    const end = points.at(-1);
+    const joined = (onPort(start, from) && onPort(end, to)) || (onPort(start, to) && onPort(end, from));
+    expect(joined, `${edge.from}>${edge.to} does not join a port on each of its two cards: ${edge.d}`).toBe(true);
   }
 }
