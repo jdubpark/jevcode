@@ -1,6 +1,7 @@
 import type { ComponentEdge, ExternalDep, Role } from "@jevcode/contracts";
 import {
   ComponentIndex,
+  type ComponentIndexChange,
   MAX_EDGE_EXAMPLES,
   MAX_EXAMPLE_LENGTH,
   MAX_PACKAGE_NAME_LENGTH,
@@ -27,6 +28,7 @@ import type { ScanOptions, scanPaths, scanRepo } from "@jevcode/codebase-map/nod
 import {
   languageForPath,
   probeCandidatesFor,
+  probeFile,
   resolveSpecifier,
   type ExtractedImports,
   type ResolveContext,
@@ -36,10 +38,14 @@ import {
 /** Spec §6.2: the narrator sees at most this many exported names per component. */
 export const MAX_EXPORTS_PER_COMPONENT = 15;
 /**
- * A watcher batch larger than this (a branch switch, a formatter run) rebuilds in slices instead
- * of one incremental update, which grows with the batch and would block the main thread.
+ * Work units of an incremental update, about a microsecond each: re-splitting a component group
+ * costs WORK_PER_REGROUPED_FILE per member, re-resolving a file WORK_PER_SPECIFIER per import.
+ * Above MAX_INCREMENTAL_WORK (a branch switch, a formatter run, an entry file every package
+ * importer resolves to) the update is declined and the stage rebuilds in slices instead.
  */
-export const MAX_INCREMENTAL_CHANGES = 1_000;
+export const WORK_PER_REGROUPED_FILE = 1;
+export const WORK_PER_SPECIFIER = 3;
+export const MAX_INCREMENTAL_WORK = 20_000;
 
 /** Everything one scan learned, kept so a file change re-parses only that file (spec §5.1). */
 export interface RepoModel {
@@ -216,10 +222,25 @@ interface ComponentLinks {
   exports: string[];
 }
 
-function linksOf(from: string, scan: ExtractedImports, ctx: ResolveContext): FileLinks {
+/** The answers of every traced lookup: the same for every file that made it, while the files do not change. */
+interface LookupAnswers {
+  probe: Map<string, string | null>;
+  under: Map<string, string | null>;
+}
+
+function linksOf(from: string, scan: ExtractedImports, ctx: ResolveContext, answers: LookupAnswers): FileLinks {
   const probes = new Set<string>();
   const under = new Set<string>();
-  const trace = { probe: (candidate: string) => void probes.add(candidate), under: (dir: string) => void under.add(dir) };
+  const trace = {
+    probe: (candidate: string, hit: string | null) => {
+      probes.add(candidate);
+      answers.probe.set(candidate, hit);
+    },
+    under: (dir: string, first: string | null) => {
+      under.add(dir);
+      answers.under.set(dir, first);
+    },
+  };
   const targets = new Set<string>();
   const packages = new Set<string>();
   for (const specifier of scan.specifiers) {
@@ -255,19 +276,22 @@ function addTo(index: Map<string, Set<string>>, keys: readonly string[], value: 
   }
 }
 
-function removeFrom(index: Map<string, Set<string>>, keys: readonly string[], value: string): void {
+function removeFrom(index: Map<string, Set<string>>, keys: readonly string[], value: string, answers: Map<string, unknown>): void {
   for (const key of keys) {
     const values = index.get(key);
     if (values === undefined) continue;
     values.delete(value);
-    if (values.size === 0) index.delete(key);
+    if (values.size > 0) continue;
+    index.delete(key);
+    answers.delete(key);
   }
 }
 
 /**
  * `buildOverview` kept up to date file by file (spec §5.1, §6.1). Every file's resolved imports
- * are cached with the lookups that decided them; a change re-resolves the changed files and the
- * files whose traced lookups read an added or removed path, and recomputes the links of the
+ * are cached with the lookups that decided them and those lookups' answers; a change re-resolves
+ * the changed files and the files whose lookups now answer differently (a probe that finds
+ * another file, a package whose first member file changed), and recomputes the links of the
  * components those files belong to. `overview()` always equals `buildOverview(model)`.
  */
 export class OverviewIndex {
@@ -278,6 +302,7 @@ export class OverviewIndex {
   private readonly probeIndex = new Map<string, Set<string>>();
   /** Directory → files whose resolution took the first file under it. */
   private readonly underIndex = new Map<string, Set<string>>();
+  private readonly answers: LookupAnswers = { probe: new Map(), under: new Map() };
   private readonly componentLinks = new Map<string, ComponentLinks>();
   /** The last `overview()` parts; update() marks what a change made stale. */
   private edges: CappedEdges | null = null;
@@ -305,7 +330,7 @@ export class OverviewIndex {
     let count = 0;
     for (const [from, scan] of model.imports) {
       if (!model.files.has(from)) continue;
-      index.link(from, linksOf(from, scan, ctx));
+      index.link(from, linksOf(from, scan, ctx, index.answers));
       if ((count += 1) % every === 0) yield;
     }
     for (const draft of components.drafts()) {
@@ -317,38 +342,58 @@ export class OverviewIndex {
 
   /**
    * Applies changes `applyFileChanges` already made to the model. Returns false, changing
-   * nothing, when they alter the component structure (chosen roots, a flat repo's name) or
-   * exceed MAX_INCREMENTAL_CHANGES: the caller then builds a new index.
+   * nothing, when they alter the component structure (chosen roots, a flat repo's name) or their
+   * work exceeds MAX_INCREMENTAL_WORK: the caller then builds a new index in slices.
    */
   update(changes: FileChanges): boolean {
-    if (changes.added.length + changes.removed.length + changes.edited.length > MAX_INCREMENTAL_CHANGES) return false;
     const upserts = [...changes.added, ...changes.edited]
       .map((path) => this.model.files.get(path))
       .filter((file): file is ScannedFile => file !== undefined);
-    const change = this.components.apply(upserts, changes.removed);
-    if (change === null) return false;
+    const plan = this.components.plan(upserts, changes.removed);
+    if (plan === null) return false;
     for (const path of changes.removed) this.paths.delete(path);
     for (const path of changes.added) this.paths.add(path);
 
+    const added = new Set(changes.added);
     const redo = new Set([...changes.added, ...changes.edited]);
+    const asked = new Set<string>();
     for (const path of [...changes.added, ...changes.removed]) {
       for (const candidate of probeCandidatesFor(path)) {
-        for (const from of this.probeIndex.get(candidate) ?? []) redo.add(from);
+        const dependents = this.probeIndex.get(candidate);
+        if (dependents === undefined || asked.has(candidate)) continue;
+        asked.add(candidate);
+        if (probeFile(candidate, this.paths) !== this.answers.probe.get(candidate)) {
+          for (const from of dependents) redo.add(from);
+        }
       }
       for (let slash = path.lastIndexOf("/"); slash > 0; slash = path.lastIndexOf("/", slash - 1)) {
-        for (const from of this.underIndex.get(path.slice(0, slash)) ?? []) redo.add(from);
+        const dir = path.slice(0, slash);
+        const dependents = this.underIndex.get(dir);
+        if (dependents === undefined) continue;
+        // The smallest path under `dir` changes only when an added path sorts before it or it is removed.
+        const first = this.answers.under.get(dir) ?? null;
+        if (added.has(path) ? first === null || path < first : path === first) {
+          for (const from of dependents) redo.add(from);
+        }
       }
     }
-    for (const path of changes.removed) {
-      this.unlink(path);
-      redo.delete(path);
+    for (const path of changes.removed) redo.delete(path);
+    let work = plan.files * WORK_PER_REGROUPED_FILE;
+    for (const from of redo) work += (this.model.imports.get(from)?.specifiers.length ?? 0) * WORK_PER_SPECIFIER;
+    if (work > MAX_INCREMENTAL_WORK) {
+      for (const path of changes.added) this.paths.delete(path);
+      for (const path of changes.removed) this.paths.add(path);
+      return false;
     }
+
+    const change = this.components.apply(upserts, changes.removed) as ComponentIndexChange;
+    for (const path of changes.removed) this.unlink(path);
     const dirty = new Set(change.changed);
     const ctx = this.context();
     for (const from of redo) {
       this.unlink(from);
       const scan = this.model.imports.get(from);
-      if (this.model.files.has(from) && scan !== undefined) this.link(from, linksOf(from, scan, ctx));
+      if (this.model.files.has(from) && scan !== undefined) this.link(from, linksOf(from, scan, ctx, this.answers));
       const id = this.components.componentOf(from);
       if (id !== undefined) dirty.add(id);
     }
@@ -440,8 +485,8 @@ export class OverviewIndex {
     const links = this.fileLinks.get(from);
     if (links === undefined) return;
     this.fileLinks.delete(from);
-    removeFrom(this.probeIndex, links.probes, from);
-    removeFrom(this.underIndex, links.under, from);
+    removeFrom(this.probeIndex, links.probes, from, this.answers.probe);
+    removeFrom(this.underIndex, links.under, from, this.answers.under);
   }
 
   /** `aggregateEdges`, `aggregateExternals` and the export list restricted to one component. */
