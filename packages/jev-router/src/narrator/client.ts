@@ -69,14 +69,14 @@ export async function askNarrator<T>(
   let detach: () => void = () => undefined;
   const guard = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
       reject(new NarratorUnavailableError("timeout", `narrator call took longer than ${options.timeoutMs} ms`));
+      controller.abort();
     }, options.timeoutMs);
     const signal = options.signal;
     if (signal !== undefined) {
       const onAbort = (): void => {
-        controller.abort();
         reject(new NarratorUnavailableError("aborted", "narrator call aborted"));
+        controller.abort();
       };
       signal.addEventListener("abort", onAbort, { once: true });
       detach = () => signal.removeEventListener("abort", onAbort);
