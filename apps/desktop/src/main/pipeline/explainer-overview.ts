@@ -35,6 +35,11 @@ import {
 
 /** Spec §6.2: the narrator sees at most this many exported names per component. */
 export const MAX_EXPORTS_PER_COMPONENT = 15;
+/**
+ * A watcher batch larger than this (a branch switch, a formatter run) rebuilds in slices instead
+ * of one incremental update, which grows with the batch and would block the main thread.
+ */
+export const MAX_INCREMENTAL_CHANGES = 1_000;
 
 /** Everything one scan learned, kept so a file change re-parses only that file (spec §5.1). */
 export interface RepoModel {
@@ -312,10 +317,11 @@ export class OverviewIndex {
 
   /**
    * Applies changes `applyFileChanges` already made to the model. Returns false, changing
-   * nothing, when they alter the component structure (chosen roots, a flat repo's name): the
-   * caller then builds a new index.
+   * nothing, when they alter the component structure (chosen roots, a flat repo's name) or
+   * exceed MAX_INCREMENTAL_CHANGES: the caller then builds a new index.
    */
   update(changes: FileChanges): boolean {
+    if (changes.added.length + changes.removed.length + changes.edited.length > MAX_INCREMENTAL_CHANGES) return false;
     const upserts = [...changes.added, ...changes.edited]
       .map((path) => this.model.files.get(path))
       .filter((file): file is ScannedFile => file !== undefined);

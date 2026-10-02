@@ -11,6 +11,7 @@ import { extractImports } from "@jevcode/evidence-engine";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  MAX_INCREMENTAL_CHANGES,
   OverviewIndex,
   buildOverview,
   runSliced,
@@ -279,6 +280,29 @@ describe("OverviewIndex roles", () => {
     expect(index.update({ added: [], removed: ["src/b/notes.ts"], edited: [] })).toBe(true);
     expect(roleOfB(index.overview())).toBe("tests");
     expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
+  });
+});
+
+describe("OverviewIndex batch size", () => {
+  it("declines a watcher batch over MAX_INCREMENTAL_CHANGES, so the stage rebuilds in slices", () => {
+    const withBatch = (count: number): boolean => {
+      const model: RepoModel = {
+        files: new Map([["src/a/seed.ts", { path: "src/a/seed.ts", hash: "h", size: 1, language: "TypeScript" }]]),
+        imports: new Map(),
+        manifest: { packageDirs: [], appDirs: [], packageNames: {}, descriptions: {}, entryPoints: {} },
+        tsconfig: { paths: {}, baseUrl: null },
+        partial: false,
+        totalFiles: 1,
+      };
+      const index = OverviewIndex.build(model);
+      const added = Array.from({ length: count }, (_, n) => `src/a/f${n}.ts`);
+      for (const filePath of added) model.files.set(filePath, { path: filePath, hash: "h", size: 1, language: "TypeScript" });
+      const applied = index.update({ added, removed: [], edited: [] });
+      if (applied) expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
+      return applied;
+    };
+    expect(withBatch(MAX_INCREMENTAL_CHANGES)).toBe(true);
+    expect(withBatch(MAX_INCREMENTAL_CHANGES + 1)).toBe(false);
   });
 });
 
