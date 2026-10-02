@@ -78,25 +78,34 @@ function partName(name: string, rootPath: string, partRoot: string): string {
 function splitUnder(base: string, files: readonly ScannedFile[]): { rootPath: string; files: ScannedFile[] }[] {
   let level = base;
   for (;;) {
+    // One pass reads every file's directory at this level (null: a file of the level itself).
+    const prefix = `${level}/`;
+    const segments: (string | null)[] = new Array<string | null>(files.length);
     const dirs = new Set<string>();
-    for (const file of files) {
-      if (!isUnder(file.path, level)) continue;
-      const dir = firstSegment(file.path.slice(level.length + 1));
+    for (let i = 0; i < files.length; i += 1) {
+      const path = (files[i] as ScannedFile).path;
+      let dir: string | null = null;
+      if (path.startsWith(prefix)) {
+        const slash = path.indexOf("/", prefix.length);
+        if (slash !== -1) dir = path.slice(prefix.length, slash);
+      }
+      segments[i] = dir;
       if (dir !== null && !TEST_DIRS.has(dir)) dirs.add(dir);
     }
     if (dirs.size === 0) return [{ rootPath: base, files: [...files] }];
     if (dirs.size === 1) {
-      level = `${level}/${[...dirs][0] as string}`;
+      level = `${prefix}${[...dirs][0] as string}`;
       continue;
     }
     const groups = new Map<string, ScannedFile[]>();
     const rest: ScannedFile[] = [];
-    for (const file of files) {
-      const dir = isUnder(file.path, level) ? firstSegment(file.path.slice(level.length + 1)) : null;
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i] as ScannedFile;
+      const dir = segments[i] ?? null;
       if (dir !== null && dirs.has(dir)) {
-        const group = groups.get(dir) ?? [];
-        group.push(file);
-        groups.set(dir, group);
+        const group = groups.get(dir);
+        if (group === undefined) groups.set(dir, [file]);
+        else group.push(file);
       } else {
         rest.push(file);
       }
@@ -120,6 +129,7 @@ function splitComponent(rootPath: string, name: string, files: readonly ScannedF
 }
 
 function entryPointsFor(part: Part, parts: readonly Part[], entries: readonly string[]): string[] {
+  if (entries.length === 0) return [];
   const nested = parts
     .map((other) => other.rootPath)
     .filter((other) => other !== part.rootPath && isUnder(other, part.rootPath));
@@ -434,6 +444,8 @@ export class ComponentIndex {
       return unchanged ? old : toDraft(part, entryPoints);
     });
     for (const draft of drafts) {
+      // A kept draft's members already map to its id.
+      if (this.draftById.get(draft.id) === draft) continue;
       for (const path of draft.files) {
         const before = this.idOf.get(path);
         if (before !== undefined && before !== draft.id) movedFrom.add(before);
