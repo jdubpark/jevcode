@@ -106,3 +106,28 @@ export interface GuardResult<T> {
   discarded: boolean;
   reasons: string[];
 }
+
+/** Provider seam (deviation 1): one structured-output completion per call. */
+export interface NarratorTransportRequest {
+  model: string;
+  system: string;
+  /** JSON metadata (spec §6.2); never file contents. */
+  user: string;
+  /** JSON schema the provider must follow. */
+  schema: Readonly<Record<string, unknown>>;
+  maxTokens: number;
+  timeoutMs: number;
+  signal: AbortSignal;
+}
+
+export interface NarratorTransportResponse {
+  /** Parsed JSON answer, or undefined when there was no complete JSON text. */
+  json: unknown;
+  model: string;
+  stopReason: string | null;
+  usage: NarratorUsage | null;
+}
+
+export interface NarratorTransport {
+  complete(request: NarratorTransportRequest): Promise<NarratorTransportResponse>;
+}
