@@ -680,9 +680,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         return;
       }
       if (disposed || targetGeneration !== generation || model !== target) {
-        // The model changed but this rebuild is skipped: a rescan replaces the model, or, when it
-        // fails, rebuilds this one from scratch.
+        // A rescan started while this batch was read, and the batch is now in the model without
+        // its rebuild. A running rescan replaces the model or, when it fails, rebuilds this one.
         dropIndexOf(target);
+        // A rescan that already failed kept this model: rebuild it now, so the map shows the batch.
+        if (!disposed && model === target && scanning === null) await fullBuild(target, generation);
         return;
       }
       if (hasFileChanges(changes)) await rebuildChanged(target, changes, targetGeneration);
