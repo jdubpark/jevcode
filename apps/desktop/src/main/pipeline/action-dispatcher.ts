@@ -53,7 +53,9 @@ type Handler = (
 
 const handlers: Record<AllowedAction, Handler> = {
   async answer_decision(deps, sessionId, params) {
-    await deps.runtime.answerDecision(sessionId, params as unknown as AnswerDecisionParams);
+    const answer = params as unknown as AnswerDecisionParams;
+    assertOfferedOptions(deps.db, sessionId, answer);
+    await deps.runtime.answerDecision(sessionId, answer);
   },
   async delegate_decision(deps, sessionId, params) {
     await deps.runtime.delegateDecision(
@@ -111,3 +113,23 @@ const handlers: Record<AllowedAction, Handler> = {
     deps.runtime.dismissSurface(sessionId, surfaceId);
   },
 };
+
+/**
+ * Spec §4.3: the main window's embedded viewer answers decisions through this
+ * dispatch, so an answer must name one of the decision's own options. A
+ * decision that is not in the active session falls through to the runtime,
+ * whose UNKNOWN_DECISION check owns that case.
+ */
+function assertOfferedOptions(db: JevcodeDb, sessionId: string, answer: AnswerDecisionParams): void {
+  const decision = db.getDecision(answer.decisionId);
+  if (decision === undefined || decision.sessionId !== sessionId || decision.options.length === 0) return;
+  const offered = new Set(decision.options.map((option) => option.id));
+  for (const value of Object.values(answer.decision)) {
+    if (!offered.has(value)) {
+      throw new IpcError(
+        "INVALID_ACTION_PARAMS",
+        `answer_decision: "${value}" is not an option of ${answer.decisionId}`,
+      );
+    }
+  }
+}

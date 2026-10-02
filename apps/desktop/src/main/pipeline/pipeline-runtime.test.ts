@@ -1392,6 +1392,42 @@ describe("PipelineRuntime evidence provenance (R2)", () => {
       db.close();
     }
   }, 30_000);
+
+  it("starts a mock session from mockScriptFor when the input has no script", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/mock-script-for");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-mock-script-for";
+    db.upsertRepository({ id: "repo-msf", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-msf", prompt: "demo" });
+    const { emit } = collectEmit();
+    const mockScriptFor = vi.fn((input: { sessionId: string; repoPath: string; prompt: string }) => ({
+      sessionId: input.sessionId,
+      repoPath: input.repoPath,
+      cwd: input.repoPath,
+      prompt: input.prompt,
+      entries: [
+        {
+          kind: "agent" as const,
+          event: { type: "agent_message" as const, sessionId: input.sessionId, role: "assistant" as const, text: "from mockScriptFor", ts: new Date().toISOString() },
+        },
+      ],
+    }));
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {}, mockScriptFor });
+    try {
+      await runtime.startSession({ sessionId, repoId: "repo-msf", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_message" && event.text === "from mockScriptFor"),
+        8000,
+        "scripted message stored",
+      );
+      expect(mockScriptFor).toHaveBeenCalledTimes(1);
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
 });
 
 describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {

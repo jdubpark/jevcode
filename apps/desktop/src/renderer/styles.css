@@ -1845,3 +1845,32 @@ button[aria-pressed="true"] {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Embedded viewer (spec §3.1): the switcher bar above, the viewer filling the rest. */
+.embedded-workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.workspace-viewer {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.surfaces-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}

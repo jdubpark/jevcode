@@ -135,3 +135,63 @@ describe("ActionDispatcher allowlist and validation", () => {
     expect(calls.some((call) => call.method === "dismissSurface")).toBe(true);
   });
 });
+
+describe("answer_decision must name one of the decision's options (spec §4.3)", () => {
+  const DECISION = {
+    id: "dec_cache",
+    sessionId: "sess-active",
+    title: "Cache policy",
+    context: "Redis is optional",
+    severity: "required" as const,
+    options: [
+      { id: "fail_open", label: "Fail open", description: "Serve without the limiter" },
+      { id: "fail_closed", label: "Fail closed", description: "Reject requests" },
+    ],
+    affectedChangeUnits: [],
+    evidence: [],
+    status: "open" as const,
+  };
+
+  function seeded(): JevcodeDb {
+    const memory = openDb({ dbPath: ":memory:" });
+    memory.upsertRepository({ id: "repo_o", path: "/o", gitRoot: "/o" });
+    memory.createSession({ id: "sess-active", repoId: "repo_o", prompt: "demo" });
+    memory.upsertDecision(DECISION);
+    return memory;
+  }
+
+  it("rejects an option the decision does not offer before the runtime runs", async () => {
+    const memory = seeded();
+    const { runtime, calls } = stubRuntime();
+    await expect(
+      dispatchAction(makeDeps(memory, runtime), "answer_decision", {
+        decisionId: "dec_cache",
+        decision: { decision: "drop_the_database" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ACTION_PARAMS" } satisfies Partial<IpcError>);
+    expect(calls).toEqual([]);
+    memory.close();
+  });
+
+  it("passes a real option through", async () => {
+    const memory = seeded();
+    const { runtime, calls } = stubRuntime();
+    await dispatchAction(makeDeps(memory, runtime), "answer_decision", {
+      decisionId: "dec_cache",
+      decision: { decision: "fail_open" },
+    });
+    expect(calls.map((call) => call.method)).toEqual(["answerDecision"]);
+    memory.close();
+  });
+
+  it("leaves an unknown decision to the runtime's UNKNOWN_DECISION check", async () => {
+    const memory = seeded();
+    const { runtime, calls } = stubRuntime();
+    await dispatchAction(makeDeps(memory, runtime), "answer_decision", {
+      decisionId: "dec_missing",
+      decision: { decision: "anything" },
+    });
+    expect(calls.map((call) => call.method)).toEqual(["answerDecision"]);
+    memory.close();
+  });
+});

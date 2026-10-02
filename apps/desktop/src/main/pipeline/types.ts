@@ -44,6 +44,8 @@ export interface PipelineRuntimeOptions {
    * incremental rebuild (console-explainer spec §5.1). Errors are logged, never thrown.
    */
   onRepoFilesChanged?: (repoPath: string, paths: readonly string[]) => void;
+  /** Script for a mock session started without input.mockScript (the Electron workspace smoke). */
+  mockScriptFor?: (input: SessionStartOptions) => MockAgentScript;
 }
 
 export interface SessionStartOptions {
