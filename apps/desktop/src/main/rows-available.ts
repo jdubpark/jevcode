@@ -40,14 +40,14 @@ export interface RowsAvailableEmitter {
   /** A row with this seq is committed for sessionId. */
   notify(sessionId: string, lastSeq: number): void;
   dispose(): void;
+  /** Live slot count (test observability for the bounded-memory guarantee). */
+  slotCount(): number;
 }
 
 interface SessionSlot {
   pendingSeq: number;
   lastSentAt: number;
   timer: unknown | null;
-  /** A trailing timer fired for this slot; it may be pruned after a quiet interval. */
-  trailed: boolean;
 }
 
 /**
@@ -61,6 +61,7 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
   const interval = deps.intervalMs ?? ROWS_AVAILABLE_MIN_INTERVAL_MS;
   const slots = new Map<string, SessionSlot>();
   let disposed = false;
+  let lastPruneAt = Number.NEGATIVE_INFINITY;
 
   function send(sessionId: string, slot: SessionSlot): void {
     slot.timer = null;
@@ -93,11 +94,13 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
     }
   }
 
-  /** Bounded memory: drop slots whose trailing timer fired and that were quiet for a full interval. */
+  /** Bounded memory: drop slots with no pending timer that were quiet for a full interval (at most once per interval, so notify stays O(1) amortized). */
   function pruneIdle(): void {
     const now = deps.now();
+    if (now - lastPruneAt < interval) return;
+    lastPruneAt = now;
     for (const [id, slot] of slots) {
-      if (slot.trailed && slot.timer === null && now - slot.lastSentAt >= interval) slots.delete(id);
+      if (slot.timer === null && now - slot.lastSentAt >= interval) slots.delete(id);
     }
   }
 
@@ -107,7 +110,7 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
       pruneIdle();
       let slot = slots.get(sessionId);
       if (slot === undefined) {
-        slot = { pendingSeq: 0, lastSentAt: Number.NEGATIVE_INFINITY, timer: null, trailed: false };
+        slot = { pendingSeq: 0, lastSentAt: Number.NEGATIVE_INFINITY, timer: null };
         slots.set(sessionId, slot);
       }
       if (lastSeq <= slot.pendingSeq) return;
@@ -121,10 +124,10 @@ export function createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailab
       const due = slot;
       due.timer = deps.setTimeout(() => {
         if (disposed) return;
-        due.trailed = true;
         send(sessionId, due);
       }, wait);
     },
+    slotCount: () => slots.size,
     dispose() {
       disposed = true;
       for (const slot of slots.values()) {

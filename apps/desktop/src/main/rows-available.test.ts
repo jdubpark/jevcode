@@ -120,9 +120,10 @@ describe("createRowsAvailableEmitter", () => {
   it("ignores a seq it has already announced and malformed input", () => {
     const { clock, main, emitter } = setup();
     emitter.notify("sess_a", 4);
-    clock.advanceTo(100);
+    clock.advanceTo(20);
     emitter.notify("sess_a", 4);
     emitter.notify("sess_a", 3);
+    clock.advanceTo(100);
     emitter.notify("", 9);
     emitter.notify("sess_a", 0);
     emitter.notify("sess_a", 1.5);
@@ -218,6 +219,23 @@ describe("createRowsAvailableEmitter", () => {
     expect(main.sent.filter((entry) => entry.payload.sessionId === "sess_a").map((entry) => entry.payload.lastSeq)).toEqual([
       5, 6, 2,
     ]);
+  });
+
+  it("re-announces a stale seq after a quiet interval (dedup memory only lives with the slot)", () => {
+    const { clock, main, emitter } = setup();
+    emitter.notify("sess_a", 4);
+    clock.advanceTo(100);
+    emitter.notify("sess_a", 4);
+    expect(main.sent.map((entry) => entry.payload.lastSeq)).toEqual([4, 4]);
+  });
+
+  it("drops idle slots: many sessions with one leading send each shrink to one slot", () => {
+    const { clock, emitter } = setup();
+    for (let i = 0; i < 200; i += 1) emitter.notify(`sess_${i}`, 1);
+    expect(emitter.slotCount()).toBe(200);
+    clock.advanceTo(100);
+    emitter.notify("sess_live", 1);
+    expect(emitter.slotCount()).toBe(1);
   });
 
   it("dispose cancels a pending trailing hint", () => {
