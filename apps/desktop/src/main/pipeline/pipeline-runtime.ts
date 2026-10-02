@@ -349,6 +349,7 @@ export class PipelineRuntime {
       this.recordTelemetry(session, "fact_count", {});
       session.facts.push(fact);
       session.coordinator.ingest(fact);
+      if (fact.type === "file_changed") this.notifyRepoFilesChanged(session, fact.path);
       this.scheduleSync(session);
       return;
     }
@@ -1340,6 +1341,17 @@ export class PipelineRuntime {
 
   private log(message: string): void {
     this.opts.log?.(message);
+  }
+
+  /** Forwards a repo file change to the explainer stage; its failures never reach ingestion. */
+  private notifyRepoFilesChanged(session: ActiveSession, filePath: string): void {
+    const hook = this.opts.onRepoFilesChanged;
+    if (hook === undefined) return;
+    try {
+      hook(session.repoPath, [filePath]);
+    } catch (error) {
+      this.log(`session ${session.sessionId}: explainer file hook failed: ${String(error)}`);
+    }
   }
 }
 

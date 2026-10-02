@@ -16,6 +16,7 @@
   "dependencies": {
     "@jevcode/agent-codex": "workspace:^",
     "@jevcode/agent-core": "workspace:^",
+    "@jevcode/codebase-map": "workspace:^",
     "@jevcode/contracts": "workspace:*",
     "@jevcode/evidence-engine": "workspace:^",
     "@jevcode/jev-router": "workspace:^",

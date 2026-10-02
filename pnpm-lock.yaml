@@ -35,6 +35,9 @@ importers:
       '@jevcode/agent-core':
         specifier: workspace:^
         version: link:../../packages/agent-core
+      '@jevcode/codebase-map':
+        specifier: workspace:^
+        version: link:../../packages/codebase-map
       '@jevcode/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
