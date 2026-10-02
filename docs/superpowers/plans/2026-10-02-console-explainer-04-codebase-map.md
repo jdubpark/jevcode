@@ -67,13 +67,13 @@ Expected: `3`, at least `2`, at least `2`, and lines naming the K-3 constants fo
 - **Worktree** (once):
 
 ```bash
-git -C /Users/jwpark/Projects/jevcode worktree add -b ce/04-map /Users/jwpark/Projects/jevcode-ce-04 main
+git -C /Users/jwpark/Projects/jevcode worktree add -b ce/04-map /Users/jwpark/Projects/jevcode-ce-04 <w0>
 bash /Users/jwpark/Projects/jevcode/.superpowers/orchestration/setup-worktree.sh /Users/jwpark/Projects/jevcode-ce-04
 ```
 
 Every later command runs from `/Users/jwpark/Projects/jevcode-ce-04` (prefix `cd /Users/jwpark/Projects/jevcode-ce-04 && ` if the shell does not keep the directory).
 
-- **Baseline:** `pnpm -r typecheck` exits 0 and `pnpm lint` prints nothing after `> pnpm exec eslint .`.
+- **Baseline:** `perl -e 'alarm 170; exec @ARGV' pnpm -r typecheck` exits 0 and `perl -e 'alarm 170; exec @ARGV' pnpm lint` prints nothing after `> pnpm exec eslint .`.
 - **Plan documents:** if `git ls-files docs/superpowers` prints nothing in the worktree, read the spec, index and interfaces by absolute path from `/Users/jwpark/Projects/jevcode` and never commit them from this lane.
 
 ## Global Constraints
@@ -87,7 +87,7 @@ The index's Global Constraints apply. Lane additions:
 - Scan and rebuild failures are logged and shown as status; they never throw into the pipeline, IPC handlers or ingestion (spec §6.6). The stage catches every error at its boundary.
 - Only files listed in a task's **Files** block change. `fixtures/**` and `docs/SPEC.md` are out of bounds.
 - Hang safety: wrap every vitest run as `perl -e 'alarm 150; exec @ARGV' pnpm --filter <pkg> exec vitest run <file>`. Benches and soaks run in the background with hard timeouts; kill what you start.
-- Desktop tests import workspace packages from `dist`: run `pnpm --filter @jevcode/codebase-map build && pnpm --filter @jevcode/evidence-engine build` before desktop tests whenever those packages changed.
+- Desktop tests import workspace packages from `dist`: run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/evidence-engine build` before desktop tests whenever those packages changed.
 - Commits: one conventional commit per task, listing its files in `git add`. Use `git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit`. No `Claude-Session:` and no `Co-Authored-By` trailers. Never `git stash`, `git reset --hard` or `git clean`.
 
 ## Review Focus (lane slice)
@@ -134,9 +134,9 @@ Order: M-1 → M-2 → M-3 → M-4 → M-5 → M-6 → M-8. M-7 is independent a
 **Commands used by every task** (from `/Users/jwpark/Projects/jevcode-ce-04`):
 
 - Targeted test: `perl -e 'alarm 150; exec @ARGV' pnpm --filter <pkg> exec vitest run <path relative to the package>`.
-- Package typecheck: `pnpm --filter <pkg> typecheck`. Lint: `pnpm lint` (prints nothing after `> pnpm exec eslint .`).
+- Package typecheck: `perl -e 'alarm 170; exec @ARGV' pnpm --filter <pkg> typecheck`. Lint: `perl -e 'alarm 170; exec @ARGV' pnpm lint` (prints nothing after `> pnpm exec eslint .`).
 - Package names: `@jevcode/codebase-map`, `@jevcode/evidence-engine`, `@jevcode/ui-catalog`, `jevcode-desktop`.
-- If a storage or desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop rebuild:node` (last line `native modules restored to node ABI`), restore node-pty per the index, and rerun.
+- If a storage or desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop run rebuild:node` (last line `native modules restored to node ABI`), restore node-pty per the index, and rerun.
 
 ---
 
@@ -1325,13 +1325,13 @@ export * from "./componentize.js";
 Run, in order:
 
 ```bash
-pnpm --filter @jevcode/codebase-map typecheck
-pnpm --filter @jevcode/codebase-map build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
-Expected: typecheck and build exit 0 (`dist/core/index.js` exists); `Test Files  5 passed (5)`; `pnpm lint` prints nothing after `> pnpm exec eslint .`.
+Expected: typecheck and build exit 0 (`dist/core/index.js` exists); `Test Files  5 passed (5)`; `perl -e 'alarm 170; exec @ARGV' pnpm lint` prints nothing after `> pnpm exec eslint .`.
 
 - [ ] **Step 11: Commit**
 
@@ -1707,7 +1707,7 @@ export * from "./edges.js";
 export * from "./roles.js";
 ```
 
-Run `pnpm --filter @jevcode/codebase-map typecheck`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test` and `pnpm lint`.
+Run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map typecheck`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test` and `perl -e 'alarm 170; exec @ARGV' pnpm lint`.
 
 Expected: exit 0; `Test Files  7 passed (7)`; lint prints nothing.
 
@@ -1987,6 +1987,25 @@ describe("assembleSnapshot caps (spec §5.5, §12)", () => {
       { numRuns: 15 },
     );
   });
+
+  it("leaves room for the status and the real sessionId the stage stamps after assembly", () => {
+    const stamp = (snapshot: ReturnType<typeof assembleSnapshot>) => ({
+      ...snapshot,
+      sessionId: "s".repeat(256),
+      status: {
+        scan: { state: "failed" as const, scanned: 20_000, total: 20_000, error: "e".repeat(200) },
+        narrator: "unavailable" as const,
+      },
+    });
+    const heaviest = { components: 450, files: 40, pad: 160, edges: 2_500, externals: 200 };
+    const check = (shape: typeof heaviest): void => {
+      const stamped = stamp(assembleSnapshot(synthetic(shape)));
+      expect(OverviewSnapshotSchema.safeParse(stamped).success).toBe(true);
+      expect(utf8ByteLength(JSON.stringify(stamped))).toBeLessThanOrEqual(OVERVIEW_SNAPSHOT_MAX_BYTES);
+    };
+    check(heaviest);
+    fc.assert(fc.property(shapeArb, check), { numRuns: 25 });
+  });
 });
 ```
 
@@ -2021,6 +2040,12 @@ const MAX_PURPOSE = 140;
 const MAX_LANGUAGE = 40;
 const FILE_LIST_STEPS = [200, 100, 50, 20, 0] as const;
 const USED_BY_STEP = 10;
+/**
+ * The stage stamps `status` (about 1 KB at most: scan counters plus a 200-character error) and the
+ * real `sessionId` (assembly runs with "") after assembly, so the trimmer budgets for both.
+ */
+const STAMP_HEADROOM_BYTES = 2_048;
+const SNAPSHOT_BUDGET_BYTES = OVERVIEW_SNAPSHOT_MAX_BYTES - STAMP_HEADROOM_BYTES;
 
 /** Purpose and confirmed role for one component; missing ids use the rule-based guess. */
 export interface ComponentText {
@@ -2141,9 +2166,9 @@ function sizeOf(snapshot: OverviewSnapshot): number {
   return utf8ByteLength(JSON.stringify(snapshot));
 }
 
-/** Trims in a fixed order until the row fits in 512 KB (spec §5.5, §11). */
+/** Trims in a fixed order until the row fits in 512 KB minus the stage's stamp headroom (spec §5.5, §11). */
 function fitSize(snapshot: OverviewSnapshot): OverviewSnapshot {
-  const fits = (candidate: OverviewSnapshot): boolean => sizeOf(candidate) <= OVERVIEW_SNAPSHOT_MAX_BYTES;
+  const fits = (candidate: OverviewSnapshot): boolean => sizeOf(candidate) <= SNAPSHOT_BUDGET_BYTES;
   let next = snapshot;
   if (fits(next)) return next;
   for (const limit of FILE_LIST_STEPS) {
@@ -2162,13 +2187,14 @@ function fitSize(snapshot: OverviewSnapshot): OverviewSnapshot {
   if (fits(next)) return next;
   next = { ...next, components: next.components.map((component) => ({ ...component, entryPoints: [], externalDeps: [] })) };
   if (fits(next)) return next;
-  throw new RangeError(`overview snapshot exceeds ${OVERVIEW_SNAPSHOT_MAX_BYTES} bytes after trimming`);
+  throw new RangeError(`overview snapshot exceeds ${SNAPSHOT_BUDGET_BYTES} bytes after trimming`);
 }
 
 /**
  * Spec §5.5. Pure: equal input gives an equal snapshot. Applies the 200-component cap (the
  * smallest components group into "other" and their edges follow), the 1,000-edge and
- * 120-external caps, 400 listed files per component, and the 512 KB bound. `counts` hold the
+ * 120-external caps, 400 listed files per component, and the 512 KB bound (less 2 KB of headroom
+ * for the `status` and `sessionId` the stage stamps afterwards). `counts` hold the
  * totals before the caps; `counts.totalFiles` is the repo's file count before the scan cap.
  * The stage adds `status` (ruling R3) after assembly.
  */
@@ -2235,7 +2261,7 @@ export function assembleSnapshot(input: AssembleSnapshotInput): OverviewSnapshot
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map exec vitest run src/core/snapshot.test.ts src/core/snapshot.property.test.ts`
 
-Expected: PASS, `Tests  9 passed (9)`. The 512 KB trimming test takes about 2 s (200 × 300 long paths).
+Expected: PASS, `Tests  10 passed (10)`. The 512 KB trimming test takes about 2 s (200 × 300 long paths).
 
 - [ ] **Step 3: Barrel, checks**
 
@@ -2245,7 +2271,7 @@ Append to `packages/codebase-map/src/core/index.ts`:
 export * from "./snapshot.js";
 ```
 
-Run `pnpm --filter @jevcode/codebase-map typecheck`, `pnpm --filter @jevcode/codebase-map build`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test` and `pnpm lint`.
+Run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map typecheck`, `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test` and `perl -e 'alarm 170; exec @ARGV' pnpm lint`.
 
 Expected: exit 0; `Test Files  9 passed (9)`; lint prints nothing.
 
@@ -3385,11 +3411,11 @@ Expected: PASS, `Tests  55 passed (55)` (34 import, 7 pool, 14 parser).
 Run, in order:
 
 ```bash
-pnpm --filter @jevcode/evidence-engine typecheck
-pnpm --filter @jevcode/evidence-engine build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/evidence-engine typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/evidence-engine build
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/evidence-engine test
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/jev-router exec vitest run src/state.parser.test.ts
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: typecheck and build exit 0 (`dist/worker/parse-worker.js` and `dist/imports.js` exist); `Test Files  15 passed (15)`, `Tests  219 passed (219)` (184 before plus 35); the jev-router parser test (a `TreeSitterBackend` consumer) passes; lint prints nothing. `file-watcher.test.ts` is a known flake (index §7); rerun the package alone if it fails.
@@ -4411,10 +4437,10 @@ Expected: PASS, `Tests  7 passed (7)`. The 25,200-file case takes 5–10 s (it w
 Run, in order:
 
 ```bash
-pnpm --filter @jevcode/codebase-map typecheck
-pnpm --filter @jevcode/codebase-map build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/codebase-map test
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: exit 0; `dist/node/index.js` exists and `dist/node/test-support` does not; `Test Files  12 passed (12)`; lint prints nothing (the core purity block does not cover `src/node`).
@@ -4447,7 +4473,7 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
   - `createExplainerStage(deps: ExplainerStageDeps): ExplainerStage`; `ExplainerStage { onRepoOpened(); onSessionStarted(sessionId); onFilesChanged(paths); onPipelineSync(sync); rescan(); status(): ExplainerStatus; whenIdle(): Promise<void>; dispose() }`
   - `ExplainerStageDeps { db: JevcodeDb; repoRoot; sessionId(): string | null; scan: typeof scanRepo; scanPaths: typeof scanPaths; extract: typeof extractImports; emitRowsAvailable(sessionId, lastSeq); now(); schedule; log(event: ExplainerLogEvent); narration?: (ctx: NarrationContext) => NarrationSeam; explainWithModel?(): boolean; onStatus?(status: ExplainerStatus) }`
   - `ExplainerLogEvent` (interfaces §5 plus `{ kind: "error"; where; message }`), `ExplainerStatus { phase: "idle" | "scanning" | "ready" | "failed"; done; total; error }`
-  - `SCAN_PROGRESS_AFTER_MS = 2_000`, `SCAN_ERROR_MAX = 200`, `type NarratorState = OverviewStatus["narrator"]`
+  - `SCAN_PROGRESS_AFTER_MS = 2_000`, `SCAN_ERROR_MAX = 200`; `NarratorState` is imported from `@jevcode/contracts` (K-2), not declared here
   - The narration seam (ruling R4, canonical): `NarrationSeam { textFor(view): ReadonlyMap<string, ComponentText>; narrative(snapshot, view): OverviewSnapshot["narrative"]; onSnapshot(snapshot, view): void; setNarrator?(narrator: unknown): void; narratorStatus?(): NarratorState; dispose(): void }`. `setNarrator?` takes lane 05's `NarratorClient | null` (method parameters are bivariant, so lane 05's narrower signature is assignable); lane 04 never calls it, and `ExplainerStage.setNarrator` is lane 05's (N-5), `NarrationContext { repoRoot; db; now(); schedule; log(event); refresh() }`, `OverviewView { repoRoot; drafts; roleGuess; edges; externals; manifest; exportsOf(componentId) }`, `NO_NARRATION`, `snapshotKey(snapshot)`
   - `createExplainerRegistry(factory): ExplainerRegistry` (`repoOpened`, `repoClosed`, `sessionStarted`, `filesChanged`, `rescan`, `get`, `dispose`)
   - `explainer-overview.ts`: `RepoModel`, `BuiltOverview`, `scanRepoModel`, `applyFileChanges`, `buildOverview`, `workspacePackagesOf`, `MAX_EXPORTS_PER_COMPONENT = 15`
@@ -4482,7 +4508,7 @@ Run:
 
 ```bash
 pnpm install
-pnpm --filter @jevcode/codebase-map build && pnpm --filter @jevcode/evidence-engine build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/evidence-engine build
 ```
 
 Expected: exit 0; the lockfile adds the link under the `apps/desktop` importer only.
@@ -5442,6 +5468,7 @@ import type {
   ComponentEdge,
   Decision,
   ExternalDep,
+  NarratorState,
   OverviewSnapshot,
   OverviewStatus,
   Role,
@@ -5506,8 +5533,6 @@ export interface NarrationContext {
   /** Re-assembles the snapshot from the current overview (no rescan); call it when new text lands. */
   refresh(): void;
 }
-
-export type NarratorState = OverviewStatus["narrator"];
 
 /**
  * The seam lane 05 (N-5) fills (interfaces §5, ruling R4). Lane 04 ships NO_NARRATION: every
@@ -6393,8 +6418,8 @@ Replace it with:
       scan: scanRepo,
       scanPaths,
       extract: extractor.extract,
-      // Lane 03 D-1 replaces this direct send with its coalesced emitter, which also reaches
-      // trace windows showing the session.
+      // Lane 03 D-6 Step 1 replaces this direct send with a no-op: D-1's observeTraceAppends already
+      // hints every committed trace row through the coalesced emitter, which also reaches trace windows.
       emitRowsAvailable: (sessionId, lastSeq) =>
         sendToRenderer(MainToRendererChannels.traceRowsAvailable, { sessionId, lastSeq }),
       now: () => Date.now(),
@@ -6453,14 +6478,14 @@ app.on("window-all-closed", () => {
 Run, in order:
 
 ```bash
-pnpm --filter jevcode-desktop typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck
 perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-overview.test.ts src/main/pipeline/explainer-stage.test.ts src/main/ipc.test.ts
-perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop test
-pnpm --filter jevcode-desktop build
-pnpm lint
+(perl -e 'alarm 590; exec @ARGV' pnpm --filter jevcode-desktop test > .superpowers/desktop-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/desktop-suite.log) &   # poll `tail -6 .superpowers/desktop-suite.log` every 15 s until the EXIT= line appears
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop build
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
-Expected: typecheck exits 0 for all three desktop tsconfigs; the targeted files pass; the full desktop suite passes (if it reaches the 170 s alarm, rerun it in the background with `alarm 600` and wait for it; the known flakes in index §7 count only if the package passes alone); the build exits 0; lint prints nothing.
+Expected: typecheck exits 0 for all three desktop tsconfigs; the targeted files pass; the full desktop suite (in the background) ends with `EXIT=0` (the known flakes in index §7 count only if the package passes alone); the build exits 0; lint prints nothing.
 
 - [ ] **Step 12: Commit**
 
@@ -6735,7 +6760,7 @@ Expected: PASS for every case in the file.
 
 - [ ] **Step 5: Checks**
 
-Run `pnpm --filter @jevcode/ui-catalog typecheck`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/ui-catalog test`, `pnpm --filter jevcode-desktop typecheck` and `pnpm lint`.
+Run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/ui-catalog typecheck`, `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/ui-catalog test`, `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck` and `perl -e 'alarm 170; exec @ARGV' pnpm lint`.
 
 Expected: exit 0 and lint prints nothing.
 
@@ -6874,7 +6899,7 @@ describe("codebase map (spec §11)", () => {
 - [ ] **Step 2: Run the bench in the background**
 
 ```bash
-pnpm --filter @jevcode/codebase-map build && pnpm --filter @jevcode/evidence-engine build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/codebase-map build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/evidence-engine build
 mkdir -p .superpowers/ce-04 && uptime > .superpowers/ce-04/bench-load.txt
 perl -e 'alarm 900; exec @ARGV' pnpm --filter jevcode-desktop exec vitest bench --run src/main/pipeline/explainer-overview.bench.ts > .superpowers/ce-04/bench.log 2>&1
 ```
@@ -7076,7 +7101,7 @@ Replace it with:
 - [ ] **Step 4: Smoke the switch**
 
 ```bash
-pnpm -r build
+perl -e 'alarm 170; exec @ARGV' pnpm -r build
 JEVCODE_SOAK_EVENTS=1000 JEVCODE_SOAK_EXPLAINER=1 perl -e 'alarm 170; exec @ARGV' node scripts/soak.mjs | tail -40
 ```
 
@@ -7157,7 +7182,7 @@ The rule-based map row measures scan, import extraction, componentize and snapsh
 
 - [ ] **Step 8: Checks and commit**
 
-Run `pnpm --filter jevcode-desktop typecheck` and `pnpm lint` (`scripts/**` is outside ESLint; `node --check scripts/soak.mjs` must exit 0).
+Run `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck` and `perl -e 'alarm 170; exec @ARGV' pnpm lint` (`scripts/**` is outside ESLint; `node --check scripts/soak.mjs` must exit 0).
 
 ```bash
 node --check scripts/soak.mjs
@@ -7169,10 +7194,10 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
 
 1. **Whole-lane check** on `ce/04-map` after M-8: `/Users/jwpark/Projects/jevcode/.superpowers/orchestration/root-checks.sh /Users/jwpark/Projects/jevcode-ce-04` prints `ROOT_CHECKS_DONE fail=0` (the index §7 flakes count only if their package passes alone), and `git log main..HEAD --format=%B | grep -c -E "Claude-Session|Co-Authored-By"` prints `0`.
 2. **Done (index §9, lane 04):** `codebase-map` property tests green (M-1, M-3); fixture repos match their expected snapshots (M-5, M-6 workspace fixture); this repo's snapshot matches its component rows (M-6 `explainer-overview.test.ts`); the stage writes snapshot rows and push hints (M-6); the scan and ingest budgets hold and are recorded in `docs/perf.md` (M-8).
-3. **Merge order:** lane 04 merges first in W1 (index §2). Rebase on `main` if lane 01 or 02a changed after the worktree was cut, rerun `pnpm install --frozen-lockfile && pnpm -r build` and the root checks.
+3. **Merge order:** lane 04 merges first in W1 (index §2). Rebase on `main` if lane 01 or 02a changed after the worktree was cut, rerun `pnpm install --frozen-lockfile && perl -e 'alarm 170; exec @ARGV' pnpm -r build` and the root checks.
 4. **Hand-off notes for the merge PR** (copy into the lane `progress.md` and `lane-context.md`):
-   - **Lane 05 (N-5):** plug narration in through `ExplainerStageDeps.narration` in `apps/desktop/src/main/index.ts`'s stage factory (ruling R4). The seam's optional `narratorStatus?()` sets `status.narrator` (the stage writes "off" first when `explainWithModel()` is false); `setNarrator?` is the target of lane 05's own `ExplainerStage.setNarrator`. The seam gives `OverviewView` (drafts with `roleGuess`, edges, externals, manifest descriptions, `exportsOf(componentId)` with up to 15 names) and `NarrationContext.refresh()`; `textFor` returns `ComponentText` from `@jevcode/codebase-map`. `ExplainerStageDeps.narrator` does not exist; keep the narrator client inside the narration factory. `overview_state.narrativeInputsHash` and the stored narrative are preserved by the stage on every snapshot change (lane 05 requirement (c)). Snapshots are assembled only in `publish` (requirement (a)), rows are appended only in `writeNow` (b), and `assembleSnapshot` applies the 512 KB bound after purposes and the narrative are in (d).
-   - **Lane 03 (D-1):** replace the direct `sendToRenderer(MainToRendererChannels.traceRowsAvailable, …)` in the explainer factory in `index.ts` with `rowsAvailableEmitter.notify` (`createRowsAvailableEmitter`). `mainHost.rescanOverview` should invoke `overview:rescan` with the open repo's `gitRoot`; the handler ignores other roots. Lane 04 runs the import worker pool only under Node (tests, bench, soak); D-6's Electron smoke should open a repo and expect a `[explainer] {"kind":"scan"` and a `{"kind":"snapshot"` log line, which proves the pool and the row path inside Electron main.
+   - **Lane 05 (N-5):** plug narration in through `ExplainerStageDeps.narration` in `apps/desktop/src/main/index.ts`'s stage factory (ruling R4). The seam's optional `narratorStatus?()` sets `status.narrator` (the stage writes "off" first when `explainWithModel()` is false); `setNarrator?` is the target of lane 05's own `ExplainerStage.setNarrator`. The seam gives `OverviewView` (drafts with `roleGuess`, edges, externals, manifest descriptions, `exportsOf(componentId)` with up to 15 names) and `NarrationContext.refresh()`; `textFor` returns `ComponentText` from `@jevcode/codebase-map`. `ExplainerStageDeps.narrator` does not exist; keep the narrator client inside the narration factory. `overview_state.narrativeInputsHash` and the stored narrative are preserved by the stage on every snapshot change (lane 05 requirement (c)). Snapshots are assembled only in `publish` (requirement (a)), rows are appended only in `writeNow` (b), and `assembleSnapshot` applies the 512 KB bound, less 2 KB of headroom for the `status` and `sessionId` the stage stamps afterwards, after purposes and the narrative are in (d).
+   - **Lane 03 (D-6 Step 1):** replace the direct `sendToRenderer(MainToRendererChannels.traceRowsAvailable, …)` in the explainer factory in `index.ts` with `emitRowsAvailable: () => {}`; `observeTraceAppends` (D-1) already hints every committed stage row through the coalesced emitter. `mainHost.rescanOverview` should invoke `overview:rescan` with the open repo's `gitRoot`; the handler ignores other roots. Lane 04 runs the import worker pool only under Node (tests, bench, soak); D-6's Electron smoke should open a repo and expect a `[explainer] {"kind":"scan"` and a `{"kind":"snapshot"` log line, which proves the pool and the row path inside Electron main.
    - **Lane 06 (P-1, P-3, P-4):** snapshot semantics are in M-3's Interfaces block. Every lane-04 row carries `status` (ruling R3): progress rows (`running`, previous components or none) arrive at most every 2 s during scans over 2 s; a `failed` row carries the previous components and a clipped error (render through `displayUntrusted`); `counts.totalFiles` gives "n of m files" for partial maps; "imports not analyzed" comes from `component.importsAnalyzed`.
    - **Lane 07 (S-2):** owns the body of `ExplainerStage.onPipelineSync`.
    - **Orchestrator:** rule on Spec gaps 1 and 2; the interface deviations at the top of this file update interfaces §3 and §5.

@@ -82,7 +82,7 @@ The index Global Constraints apply in full (visual system, untrusted text, viewe
 - **Review notes are never sent.** In the main window, `mainHost.requestChanges` only prefills the local composer. It never calls `trace:requestChanges`, which stays denied for the main window, and never `agent:sendInstruction`.
 - **The user shell is the user's.** After D-5, nothing but the PTY writes to `terminal:data` or to a session's scrollback.
 - **Composer behavior is preserved.** The per-session draft, the held note for another session with Switch and Dismiss, Cmd+Enter, Steer/Queue, Continue on a finished session, and `composer:prefill` keep the `composerReducer` rules (`renderer/components/composer-prefill.ts`, unchanged in this lane).
-- **Electron runs.** Build first (`pnpm -r build`). Switch to the Electron ABI with `pnpm --filter jevcode-desktop run rebuild`, and afterwards switch back with `pnpm --filter jevcode-desktop run rebuild:node` and restore node-pty (command in D-6 Step 9). Run Electron in the background with a hard timeout and kill it if it outlives the timeout.
+- **Electron runs.** Build first (`perl -e 'alarm 170; exec @ARGV' pnpm -r build`). Switch to the Electron ABI with `pnpm --filter jevcode-desktop run rebuild`, and afterwards switch back with `pnpm --filter jevcode-desktop run rebuild:node` and restore node-pty (command in D-6 Step 9). Run Electron in the background with a hard timeout and kill it if it outlives the timeout.
 - **No Electron or Node import in renderer files.** Renderer files import neither `electron` nor `node:*`, except tests and `test-support`, which run under vitest.
 - **Commands** (from the worktree):
   - targeted tests: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run <path under apps/desktop>`
@@ -155,7 +155,7 @@ Tests: `src/main/rows-available.test.ts` (new), `src/main/trace-allowlist.test.t
 - Consumes (V-1): `TraceSource.onRowsAvailable?(listener: (lastSeq: number) => void): () => void`.
 - Produces:
   - `ROWS_AVAILABLE_CHANNEL = "trace:rowsAvailable"` and `ROWS_AVAILABLE_MIN_INTERVAL_MS = 50`.
-  - `createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailableEmitter`, where `RowsAvailableEmitter` is `{ notify(sessionId: string, lastSeq: number): void; dispose(): void }`. Lane 04 (M-6) passes `emitter.notify` as `ExplainerStageDeps.emitRowsAvailable`. Calling it is harmless but redundant, because the observer already reports the stage's appends.
+  - `createRowsAvailableEmitter(deps: RowsAvailableDeps): RowsAvailableEmitter`, where `RowsAvailableEmitter` is `{ notify(sessionId: string, lastSeq: number): void; dispose(): void }`. Lane 04's explainer factory does not call the emitter: D-6 Step 1 sets its `emitRowsAvailable` to a no-op, because the observer already reports the stage's appends.
   - `rowsAvailableTargets(sessionId, windows): RowsAvailableTarget[]`.
   - `observeTraceAppends(db, onAppend: (event: { sessionId: string; seq: number; type: string }) => void): () => void`. D-6 also uses it for the smoke's append clock.
   - `TRACE_WINDOW_PUSH_CHANNELS` and `isPushAllowed(channel: string, receiver: SenderKind): boolean`.
@@ -891,7 +891,7 @@ Expected: PASS, including the 300-run property.
 
 Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop test`, then `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck`, then `perl -e 'alarm 170; exec @ARGV' pnpm lint`.
 
-Expected: all exit 0. `pnpm lint` prints nothing after `> pnpm exec eslint .`. If `webContents.fromId` is typed `WebContents | undefined`, the `?? null` already narrows it. `main.webContents` satisfies `PushContents` structurally (`id`, `send`, `isDestroyed`).
+Expected: all exit 0. `perl -e 'alarm 170; exec @ARGV' pnpm lint` prints nothing after `> pnpm exec eslint .`. If `webContents.fromId` is typed `WebContents | undefined`, the `?? null` already narrows it. `main.webContents` satisfies `PushContents` structurally (`id`, `send`, `isDestroyed`).
 
 - [ ] **Step 10: Commit**
 
@@ -2764,10 +2764,12 @@ git("commit", "-q", "-m", "init");
 mkdirSync(shots, { recursive: true });
 
 const electron = path.join(APP, "node_modules", ".bin", "electron");
+const childEnv = { ...process.env };
+delete childEnv.ANTHROPIC_API_KEY;
 const child = spawn(electron, ["."], {
   cwd: APP,
   env: {
-    ...process.env,
+    ...childEnv,
     JEVCODE_SMOKE: "1",
     JEVCODE_SMOKE_WORKSPACE: "1",
     JEVCODE_SMOKE_REPO: repo,
@@ -2775,6 +2777,8 @@ const child = spawn(electron, ["."], {
     JEVCODE_DB: path.join(tmp, "smoke.db"),
     JEVC_AGENT: "mock",
     JEVC_JEV_CLIENT: "degrade",
+    // The narrator stays off: no billed model calls, no nondeterministic snapshot rows during the latency sample.
+    JEVCODE_NARRATOR: "off",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -4118,16 +4122,33 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
   - `createAppendLog`, `appendLatencies`, `percentile`, `parseConsolePaint`, `parseWorkspaceLocation`, `pressKeyScript`, `VIEW_KEYS` and `CONSOLE_APPEND_P95_BUDGET_MS = 150`.
   - `MainHostDeps.logLocations?: boolean`.
 
-- [ ] **Step 1: Rebase on 02b**
+- [ ] **Step 1: Rebase on main (02b, and lanes 04 and 05 if merged), wire the explainer factory**
 
 ```bash
 git -C /Users/jwpark/Projects/jevcode-ce-03 rebase main
-pnpm install --frozen-lockfile
+```
+
+Resolve conflicts like this. Never drop a side because "it is not this lane's file":
+- Keep both sides in the shared desktop files `apps/desktop/src/main/index.ts`, `main/ipc.ts`, `main/ipc.test.ts`, `shared/api.ts`, `main/pipeline/types.ts`, `main/pipeline/pipeline-runtime.ts`, `renderer/styles.css`, `apps/desktop/package.json` and `docs/perf.md`, plus `packages/trace-viewer/src/index.ts`. Lane 04's explainer wiring and lane 05's narrator wiring stay next to this lane's emitter and workspace wiring.
+- `pnpm-lock.yaml`: take main's version (`git checkout --ours pnpm-lock.yaml`; during a rebase `--ours` is main), `git add` it, and continue. After the rebase run `pnpm install` (not `--frozen-lockfile`) and commit the regenerated lockfile if it changed: `git add pnpm-lock.yaml && git commit -m "chore: regenerate lockfile after rebase"` (the commit message has no trailers).
+
+```bash
+pnpm install
 perl -e 'alarm 170; exec @ARGV' pnpm -r build
 perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop test
 ```
 
-Expected: the rebase succeeds. Resolve conflicts only in this lane's files, and keep both sides of `packages/trace-viewer/src/index.ts`. All desktop tests pass. `grep -c '"console"' packages/trace-viewer/src/ui/views/registry.ts` prints at least `1`, so the Console view is present.
+If lane 04 is on main, `apps/desktop/src/main/index.ts` has an explainer factory (`createExplainerStage({ …, emitRowsAvailable: … })` inside `createExplainerRegistry`). Replace its `emitRowsAvailable` (lane 04's direct `sendToRenderer(MainToRendererChannels.traceRowsAvailable, …)`) with a no-op, because D-1's `observeTraceAppends` already hints every committed trace row, including the stage's snapshot rows, through the coalesced emitter:
+
+```ts
+      // D-1's observeTraceAppends hints every committed trace row through the coalesced emitter,
+      // so the stage needs no direct send (a direct send would bypass the 50 ms coalescing).
+      emitRowsAvailable: () => {},
+```
+
+`grep -n "traceRowsAvailable" apps/desktop/src/main/index.ts` must then show no send inside the explainer factory. If lane 04 is not on main yet, skip this edit; lane 04's hand-off note and this step then apply when it merges.
+
+Expected: the rebase succeeds. All desktop tests pass. `grep -c '"console"' packages/trace-viewer/src/ui/views/registry.ts` prints at least `1`, so the Console view is present.
 
 - [ ] **Step 2: Write the failing probe and smoke tests**
 

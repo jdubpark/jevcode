@@ -21,7 +21,7 @@ Every name in interfaces §1.2 and §6.4–§6.6 is kept with its type. These ad
 5. **Session-overlay seam for lane 07** (P-3): `src/ui/views/map/overlay.ts` exports `type MapCardState = "new" | "changed" | "decision" | "failing"`, `interface MapOverlay { cardState: ReadonlyMap<string, MapCardState>; emphasizedEdges: ReadonlySet<string> }` (edge keys `"<from>><to>"`) and `mapOverlayOf(session: TraceSession): MapOverlay | null`, which returns `null` in phase B. `MapView` already renders a card's state dot and emphasized edges from it. Lane 07 (S-5) replaces only the body of `mapOverlayOf` (and adds an on/off toggle if its mockup has one); it does not edit `MapView`'s render.
 6. **Role icons** (P-3): `ICON_NAMES` gains `role-ui`, `role-api`, `role-agent`, `role-domain`, `role-storage`, `role-tooling`, `role-config`; `kind-icons.ts` gains `ROLE_ICON: { readonly [K in Role]: IconName }` (tests → `test`) and `ROLE_LABEL`. External packages use the existing `pkg` icon. `view-map` is consumed from lane 02 (V-2).
 7. **`src/layout/map-details.ts`** (P-3): `componentDetails(overview, componentId, session)`, `importTotals(overview)` and `DETAIL_FILES_SHOWN`, pure helpers for the component Inspector and the cards' import-weight bar.
-8. **`src/layout/brief-architecture.ts`** (P-4): `briefArchitecture(session): BriefArchitecture | null`, returning lane 02's `BriefArchitecture` (`NonNullable<BriefModel["architecture"]>`). `buildBrief(session, index)` keeps the interfaces signature and calls it; `scanning` is always `null` (spec alignment note 1). The Brief's look comes from lane 02's private `Architecture` part in `Brief.tsx`, which P-4 extends with an `overview` prop, a `MapThumbnail` (`src/ui/inspector/MapThumbnail.tsx`) and a `data-brief-architecture` hook; its strings ("<n> components · <k> touched", "Descriptions pending", "Open the map") stay lane 02's.
+8. **`src/layout/brief-architecture.ts`** (P-4): `briefArchitecture(session): BriefArchitecture | null`, returning lane 02's `BriefArchitecture` (`NonNullable<BriefModel["architecture"]>`). `buildBrief(session, index)` keeps the interfaces signature and calls it; `scanning` is filled from a running scan (ruling R3, deviation 11). The Brief's look comes from lane 02's private `Architecture` part in `Brief.tsx`, which P-4 extends with an `overview` prop, a `MapThumbnail` (`src/ui/inspector/MapThumbnail.tsx`) and a `data-brief-architecture` hook; its strings ("<n> components · <k> touched", "Descriptions pending", "Open the map") stay lane 02's.
 9. **`ViewerHost.rescanOverview` is reached through lane 02's `useViewerHost()`** (V-4, merged with 02b), so the Retry button lands in P-4, after the rebase; P-3's `MapHeader` takes an optional `onRetry` and shows no Retry until P-4 passes it.
 10. **Fixtures outside `fixtures/`** (P-5): `packages/trace-viewer/fixtures/overview-jevcode.json` and `overview-jevcode-rule.json`, written by `packages/trace-viewer/scripts/overview-fixture.mjs`. `evals/src/runner.ts` `listScenarioNames` treats every directory under the root `fixtures/` as a scenario, so a new directory there would break the evals runner.
 11. **Orchestrator ruling R3 (overview status), rendered by this lane.** Lane 01 adds `OverviewSnapshot.status?: { scan: { state: "running" | "done" | "failed"; scanned; total; error? }; narrator: "off" | "unavailable" | "pending" | "ready" }` and `counts.totalFiles?`. P-1 adds `overviewStatusOf(snapshot): OverviewStatus` (`src/model/overview-status.ts`, exported from the model barrel), which applies R3's default for rows without `status` (scan done; narrator pending while any purpose is null, else ready). P-3 renders the scan progress, a quiet "Codebase map unavailable", the narrator words ("Descriptions off", "Descriptions unavailable", "Descriptions pending") and "Partial map · 20,000 of 25,310 files"; P-4 fills `BriefModel.architecture.scanning` from a running scan and adds Retry (through lane 02's `useViewerHost().rescanOverview`) to the Brief and the Map header.
@@ -50,24 +50,24 @@ git -C /Users/jwpark/Projects/jevcode show main:packages/contracts/src/overview.
 git -C /Users/jwpark/Projects/jevcode show main:packages/contracts/src/trace.ts | grep -c '"overview_snapshot"'
 git -C /Users/jwpark/Projects/jevcode show main:packages/trace-viewer/src/model/registry.ts | grep -c 'overview_snapshot: "consume"'
 git -C /Users/jwpark/Projects/jevcode show main:packages/trace-viewer/src/ui/views/registry.ts | grep -c 'kind: "map"'
-git -C /Users/jwpark/Projects/jevcode show main:packages/trace-viewer/src/ui/state/location.ts | grep -c '"map"'
+git -C /Users/jwpark/Projects/jevcode show main:packages/trace-viewer/src/ui/state/location.ts | grep -c "ViewKindSchema"
 git -C /Users/jwpark/Projects/jevcode show main:packages/trace-viewer/src/ui/icons/icon-names.ts | grep -c '"view-map"'
 ```
 
-Expected: `1`, `2` (`EVENT_TYPES` and `TRACE_ROW_TYPES`), `1`, `1`, at least `1`, `1`. If the third prints `0`, K-1 left `overview_snapshot` as `"hidden"`; P-1 Step 3 sets it to `"consume"` (the registry test requires every `TRACE_ROW_TYPES` entry to be consumed).
+Expected: `1`, `2` (`EVENT_TYPES` and `TRACE_ROW_TYPES`), `1`, `1`, at least `1` (`location.ts` derives the view kinds from `ViewKindSchema`, which V-2 extends with `"map"`), `1`. If the third prints `0`, K-1 left `overview_snapshot` as `"hidden"`; P-1 Step 3 sets it to `"consume"` (the registry test requires every `TRACE_ROW_TYPES` entry to be consumed).
 
 - **Lane 02's Map slot:** V-2 registers `{ kind: "map", label: "Map", icon: "view-map", Component: … }` with a placeholder. Find it with `grep -n 'kind: "map"' -A1 packages/trace-viewer/src/ui/views/registry.ts`; P-3 Step 12 points that entry at this lane's `MapView`.
 - **Plan documents:** if `git -C /Users/jwpark/Projects/jevcode ls-files docs/superpowers` does not list this file, read it by absolute path and never commit plan files from this lane.
 - **Setup** (once, index §5):
 
 ```bash
-git -C /Users/jwpark/Projects/jevcode worktree add -b ce/06-viewer-map /Users/jwpark/Projects/jevcode-ce-06 main
+git -C /Users/jwpark/Projects/jevcode worktree add -b ce/06-viewer-map /Users/jwpark/Projects/jevcode-ce-06 <w0>
 bash /Users/jwpark/Projects/jevcode/.superpowers/orchestration/setup-worktree.sh /Users/jwpark/Projects/jevcode-ce-06
 ```
 
 Every later command runs from `/Users/jwpark/Projects/jevcode-ce-06`. If the shell does not keep the directory between calls, prefix each command with `cd /Users/jwpark/Projects/jevcode-ce-06 && `.
 
-- **Baseline** (before P-1): `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer test` exits 0; `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck` exits 0.
+- **Baseline** (before P-1): the package suite in the background (`(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &`, then poll `tail -6 .superpowers/tv-suite.log` every 15 s until `EXIT=0` appears) exits 0; `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck` exits 0.
 
 ## Global Constraints
 
@@ -132,7 +132,7 @@ Order: P-0 runs first and its gate H2 blocks P-3 and P-4 only. P-1 → P-2 run a
 - Package typecheck: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck` (covers tests, benches and `src/test-support`).
 - Lint: `perl -e 'alarm 170; exec @ARGV' pnpm exec eslint packages/trace-viewer apps/trace-viewer-dev` (prints nothing when clean).
 - Root checks (background, then poll the log): `bash /Users/jwpark/Projects/jevcode/.superpowers/orchestration/root-checks.sh /Users/jwpark/Projects/jevcode-ce-06`; the last line of `/Users/jwpark/Projects/jevcode-ce-06/.superpowers/root-checks.log` must read `ROOT_CHECKS_DONE fail=0`.
-- If a storage or desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop rebuild:node` and restore node-pty's `build/Release/pty.node` and `spawn-helper` from `prebuilds/<platform>-<arch>/` (index Global Constraints).
+- If a storage or desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop run rebuild:node` and restore node-pty's `build/Release/pty.node` and `spawn-helper` from `prebuilds/<platform>-<arch>/` (index Global Constraints).
 
 ---
 
@@ -5091,7 +5091,7 @@ Expected: PASS, every test in the listed files.
 
 Prove the Review Focus 2 test guards the render: in `MapCard.tsx`, temporarily replace `<span className={styles.purpose}>{purpose}</span>` with `<span className={styles.purpose}>{component.purpose}</span>` and rerun `src/ui/views/map/map-view.test.tsx`. Expected: FAIL in "Review Focus 2: hostile purpose, name and narrative render as plain text" (`expected '…‮…' not to contain '‮'` or the `⟨U+202E⟩` assertion). Restore and rerun: PASS.
 
-Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer test` — expected: exits 0 (`view-switch.test.tsx`, `shell.test.tsx` and `keyboard.test.tsx` still pass with the real Map view registered).
+Run: the package suite in the background (`(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &`, then poll `tail -6 .superpowers/tv-suite.log` every 15 s until `EXIT=0` appears) — expected: exits 0 (`view-switch.test.tsx`, `shell.test.tsx` and `keyboard.test.tsx` still pass with the real Map view registered).
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck` and `perl -e 'alarm 170; exec @ARGV' pnpm exec eslint packages/trace-viewer` — expected: exit 0 and no output. The `src/ui` lint block allows React and bans networking, `window.jevcode` and Node built-ins; the map files use none.
 
@@ -5236,11 +5236,15 @@ In `apps/trace-viewer-dev/scripts/smoke.mjs`:
 Build and run the smoke for the Map in the background (each command can take minutes; poll its output and never wait in the foreground longer than about 3 minutes):
 
 ```bash
-perl -e 'alarm 600; exec @ARGV' pnpm -r build > /tmp/p3-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p3-build.log
-perl -e 'alarm 600; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p3-smoke.log 2>&1
+(
+  perl -e 'alarm 590; exec @ARGV' pnpm -r build > /tmp/p3-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p3-build.log
+  perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p3-smoke.log 2>&1; echo "EXIT=$?" >> /tmp/p3-smoke.log
+) &
 ```
 
-Expected: `/tmp/p3-build.log` ends with `BUILD_EXIT 0`; `/tmp/p3-smoke.log` ends with `SMOKE_OK 2 screenshots`, and `apps/trace-viewer-dev/.smoke/map-1440.png` and `map-1000.png` exist. If the preview port is taken, pass another `--port`.
+Poll `tail -2 /tmp/p3-build.log /tmp/p3-smoke.log` every 15 s until `/tmp/p3-smoke.log` has an `EXIT=` line.
+
+Expected: `/tmp/p3-build.log` ends with `BUILD_EXIT 0`; `/tmp/p3-smoke.log` ends with `SMOKE_OK 2 screenshots` and `EXIT=0`, and `apps/trace-viewer-dev/.smoke/map-1440.png` and `map-1000.png` exist. If the preview port is taken, pass another `--port`.
 
 Open `apps/trace-viewer-dev/.smoke/map-1440.png` beside `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/map-1440.png`, and `map-1000.png` beside its mockup. The data differs (the sample repo here; P-5 compares this repository's fixture). Check the same visual rules: band columns with icons, names and counts; chip-level cards at Fit with the role tile and a readable name at 1440 px and role tiles only at 1000 px; thin neutral edges in gutters and gap rows, none through a card; the header with headline, Overview toggle and narrative chips; light panel, one shadow per card, no borders, no red. Fix any difference in this task's CSS or layout, rebuild the viewer and dev host, rerun the smoke, and look again. Record the remaining, intended differences (for example "Inspector shows the pre-Brief empty state until P-4") for the commit message.
 
@@ -5272,6 +5276,7 @@ Add `packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.tsx` too if 
 - Modify: `packages/trace-viewer/src/ui/views/map/MapView.tsx` (pass `onRetry` to `MapHeader` from the host context)
 - Test: `packages/trace-viewer/src/ui/inspector/architecture-card.test.tsx`
 - Modify: `apps/trace-viewer-dev/src/host.tsx` (`?brief=1`), `apps/trace-viewer-dev/scripts/smoke.mjs` (the `map-brief-*` screenshots)
+- Rebase-resolved (Step 1, only if they conflict): `apps/trace-viewer-dev/src/host.tsx`, `apps/trace-viewer-dev/scripts/smoke.mjs`, the mockups `README.md`, `ui/views/placeholder/ViewPlaceholder.tsx` and its CSS module (deleted when both placeholders are unused)
 
 **Interfaces:**
 - Consumes: lane 02 (V-2 and V-5, merged with 02b), as its plan writes them: `BriefModel`, `type BriefArchitecture = NonNullable<BriefModel["architecture"]>` and `buildBrief(session, index)` (returns `architecture: null`) in `src/layout/brief.ts`; `Brief.tsx` with the connected `Brief()`, the presentational `BriefView(props: BriefViewProps)` (`props.session: TraceSession`) and its private `Architecture({ architecture, onOpenMap, mapAvailable })`, which already renders four states: null ("Appears here once this repository is scanned."), scanning, `overviewSentences: null` ("Descriptions pending") and sentences, with the counts line `"<n> components · <k> touched"` and an "Open the map" button; `RightPanel({ host })` (`src/ui/inspector/RightPanel.tsx`), which shows the Brief when `selection === null || state.brief`, else the Inspector; `ViewState.brief`; V-4's `useViewerHost(): ViewerHost` (`src/ui/shell/host-context.ts`) and V-2's `ViewerHost.rescanOverview?()`; the harness option `HarnessOptions.host` (`test-support/ui-harness.tsx`, V-4). P-1 `TraceSession.overview`, `overviewStatusOf`; P-2 `layoutMap`, `componentForPath`; P-3 `ViewState.mapSelection`, the Inspector's map branch, `ComponentInspector`, `narratorNote`, `MapHeader`'s `onRetry`. Test helpers `renderHarness` (`test-support/ui-harness.tsx`, with `views`), `buildSession`, `overviewSnapshot`, `componentId`.
@@ -5290,10 +5295,18 @@ git -C /Users/jwpark/Projects/jevcode log --oneline --merges -20 main | grep -c 
 git status --short
 git rebase main
 pnpm install --frozen-lockfile
-perl -e 'alarm 600; exec @ARGV' pnpm -r build > /tmp/p4-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p4-build.log
+(perl -e 'alarm 590; exec @ARGV' pnpm -r build > /tmp/p4-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p4-build.log) &
 ```
 
-Expected: the first command prints at least `1`; `git status --short` prints nothing before the rebase; `/tmp/p4-build.log` ends with `BUILD_EXIT 0` (run the build in the background and poll). Resolve conflicts only in this lane's files and keep both sides: `ui/state/view-state.ts` (keep V-2's `brief` field and `brief/toggle` case beside this lane's `mapSelection` and `map/select`; inside `case "esc":` keep this lane's map line first), `ui/views/registry.ts` (the `map` entry points at `MapView`), `apps/trace-viewer-dev/scripts/smoke.mjs` (keep every accepted view name). Never `git stash`; if you must set work aside, make a WIP commit.
+Expected: the first command prints at least `1`; `git status --short` prints nothing before the rebase; poll `tail -2 /tmp/p4-build.log` every 15 s until it ends with `BUILD_EXIT 0`. Resolve conflicts by keeping both sides in every file lane 02b also changed:
+- `ui/state/view-state.ts`: keep V-2's `brief` field and `brief/toggle` case beside this lane's `mapSelection` and `map/select`; inside `case "esc":` keep this lane's map line first.
+- `ui/views/registry.ts`: the `map` entry points at `MapView` and the Console entry at V-4's `ConsoleView`.
+- `apps/trace-viewer-dev/src/host.tsx`: keep V-6's `ViewerBody`, chrome and view handling and this lane's (P-3) overview effect.
+- `apps/trace-viewer-dev/scripts/smoke.mjs`: keep V-6's `parseArgs` and its view loop beside this lane's map branch, and every accepted view name.
+- `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/README.md`: an add/add conflict; keep both sections (02b's Console/Brief record and this lane's Map record).
+- `ui/views/placeholder/ViewPlaceholder.tsx` and `ViewPlaceholder.module.css`: if both `ConsolePlaceholder` and `MapPlaceholder` are now unused (`grep -rn "ConsolePlaceholder\|MapPlaceholder" packages/trace-viewer/src` lists only these files), delete both files, otherwise keep what is still imported; `noUnusedLocals` and lint must stay clean.
+- `packages/trace-viewer/src/index.ts` and `src/model/index.ts` barrels: keep every export from both sides.
+Never `git stash`; if you must set work aside, make a WIP commit.
 
 Confirm lane 02's Brief API is the one this task extends:
 
@@ -5749,7 +5762,7 @@ Prove the Review Focus 5 test catches an error-style fallback: in `Brief.tsx`'s 
 Run the whole package, typecheck and lint:
 
 ```bash
-perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer test
+(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &   # poll `tail -6 .superpowers/tv-suite.log` every 15 s until the EXIT= line appears; expect EXIT=0
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck
 perl -e 'alarm 170; exec @ARGV' pnpm exec eslint packages/trace-viewer apps/trace-viewer-dev
 ```
@@ -5800,7 +5813,14 @@ In `apps/trace-viewer-dev/scripts/smoke.mjs`, inside the per-view loop and direc
       }
 ```
 
-Run (background, then poll): `perl -e 'alarm 600; exec @ARGV' pnpm -r build > /tmp/p4-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p4-build.log` and then `perl -e 'alarm 600; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p4-smoke.log 2>&1`
+Run in the background and poll `tail -2 /tmp/p4-build.log /tmp/p4-smoke.log` every 15 s until `/tmp/p4-smoke.log` has an `EXIT=` line:
+
+```bash
+(
+  perl -e 'alarm 590; exec @ARGV' pnpm -r build > /tmp/p4-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p4-build.log
+  perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p4-smoke.log 2>&1; echo "EXIT=$?" >> /tmp/p4-smoke.log
+) &
+```
 
 Expected: `BUILD_EXIT 0`; the smoke log ends with `SMOKE_OK 4 screenshots`, and `apps/trace-viewer-dev/.smoke/map-brief-1440.png` and `map-brief-1000.png` exist.
 
@@ -5816,6 +5836,7 @@ git add packages/trace-viewer/src/layout/brief-architecture.ts packages/trace-vi
   packages/trace-viewer/src/ui/views/map/MapView.tsx \
   apps/trace-viewer-dev/src/host.tsx apps/trace-viewer-dev/scripts/smoke.mjs
 git add packages/trace-viewer/src/ui/inspector/Brief.module.css   # only if Step 6 changed it
+git add -A packages/trace-viewer/src/ui/views/placeholder docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/README.md   # only if Step 1's rebase touched them (deleted placeholders, merged README)
 git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m "feat(trace-viewer): fill the Brief's architecture part with the Map thumbnail"
 ```
 
@@ -6287,9 +6308,13 @@ Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-trace-viewer-dev typ
 Run in the background and poll (never wait in the foreground longer than about 3 minutes):
 
 ```bash
-perl -e 'alarm 600; exec @ARGV' pnpm -r build > /tmp/p5-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p5-build.log
-perl -e 'alarm 600; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p5-smoke.log 2>&1
+(
+  perl -e 'alarm 590; exec @ARGV' pnpm -r build > /tmp/p5-build.log 2>&1; echo "BUILD_EXIT $?" >> /tmp/p5-build.log
+  perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --skip-build --port 4186 > /tmp/p5-smoke.log 2>&1; echo "EXIT=$?" >> /tmp/p5-smoke.log
+) &
 ```
+
+Poll `tail -2 /tmp/p5-build.log /tmp/p5-smoke.log` every 15 s until `/tmp/p5-smoke.log` has an `EXIT=` line.
 
 Expected: `BUILD_EXIT 0`; the smoke log ends with `SMOKE_OK 6 screenshots`; `apps/trace-viewer-dev/.smoke/` holds `map-1440.png`, `map-1000.png`, `map-brief-1440.png`, `map-brief-1000.png`, `map-rule-1440.png` and `map-rule-1000.png`.
 

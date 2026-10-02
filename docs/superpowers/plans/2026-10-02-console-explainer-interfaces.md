@@ -287,7 +287,7 @@ export type ConsoleRow =
   | { kind: "decision"; key: string; stepId: string; decisionId: string; question: string; options: { id: string; label: string }[]; status: "pending" | "answered"; answer: string | null }
   | { kind: "lifecycle"; key: string; stepId: string; state: "waiting" | "completed" | "failed" | "interrupted"; text: string }
   | { kind: "finding"; key: string; stepId: string; findingId: string }
-  | { kind: "summary"; key: string; sentences: NarrativeSentence[] };     // phase C (lane 07)
+  | { kind: "summary"; key: string; sentences: NarrativeSentence[]; provenance?: "rule" | "model" };     // phase C (lane 07)
 export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?: ConsoleRowsState): ConsoleRowsState;
 export interface ConsoleRowsState { rows: readonly ConsoleRow[]; byStep: ReadonlyMap<string, number>; }
 // src/ui/views/console/ConsoleView.tsx — registered as kind "console"
@@ -299,7 +299,7 @@ export interface ConsoleRowsState { rows: readonly ConsoleRow[]; byStep: Readonl
 // src/layout/brief.ts — pure
 export interface BriefModel {
   now: { kind: "rule"; runningStepId: string | null; latestUnitId: string | null; pendingDecisionId: string | null }
-     | { kind: "story"; sentences: NarrativeSentence[]; basisSeq: number };           // story added by lane 07
+     | { kind: "story"; sentences: NarrativeSentence[]; basisSeq: number; provenance?: "rule" | "model" };  // story added by lane 07
   changes: { unitId: string; title: string; added: number; removed: number; tests: { passed: number; failed: number } | null; attention: boolean }[];
   architecture: { overviewSentences: NarrativeSentence[] | null; componentCount: number; touched: string[]; scanning: { done: number; total: number } | null } | null; // lane 06
 }

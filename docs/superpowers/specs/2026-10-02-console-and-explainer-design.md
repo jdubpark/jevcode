@@ -22,7 +22,7 @@ Three phases ship independently:
 | E1 | The main window's default view is a terminal-style **Console** rendered from structured events as DOM, not a raw PTY. | Codex runs as `exec --json`, so no agent TUI exists to mirror. A structured stream can still look and feel like a CLI (monospace, prompt line, scrolling log, keyboard-first) while staying safe (`displayUntrusted`), linkable (selection, Inspector, diffs) and replayable. |
 | E2 | Console, Hybrid, Canvas and Map are all views of the existing `@jevcode/trace-viewer` package. The main window **embeds** `<TraceViewer>` for the active session. The trace window keeps working as a second, read-only window. | One data path, store, selection model and visual system. Selection, playhead and brush survive view switches (viewer spec §7.8). The trace window remains for side-by-side review. |
 | E3 | The existing generative surfaces (Overview, Conversation and Decisions tabs) become one host-registered view, **Surfaces**, inside the embedded viewer. | They stay reachable without a second navigation system. Jev's decision cards keep working. |
-| E4 | A **Brief** replaces the Inspector's empty state and is reachable from every view (`B` toggles it, Esc returns from a selection to the Brief). | One right-hand panel across views. When nothing is selected, the panel's best use is the summary. |
+| E4 | A **Brief** replaces the Inspector's empty state and is reachable from every view (Shift+B toggles it, Esc returns from a selection to the Brief). | One right-hand panel across views. When nothing is selected, the panel's best use is the summary. |
 | E5 | Live updates are **push-triggered pulls**. Main sends a one-way `trace:rowsAvailable {sessionId, lastSeq}` to windows showing that session, and the data controller fetches at once. The 1 s poll stays as a fallback. | Keeps the viewer IPC-free and the read path single (`trace:rows`). Brings Console latency from up to 1 s down to tens of milliseconds. |
 | E6 | The main window adopts the viewer's light token system (`--tv-*`). Light is the only theme in this spec. Tokens are named so a dark theme can be added later without renames. | The person's stated taste is light first, restrained color and few borders. It removes the dark/light clash created by embedding. |
 | E7 | The person's interactive shell (`TerminalPanel`, `sh -i`) stays a separate pane. The pipeline stops writing agent one-liners into that PTY stream. | The Console is now the agent log. Mixing agent lines into the user's shell was confusing. |
@@ -86,7 +86,7 @@ The visual style is a light terminal: `--tv-ink-*` on the panel color, mono type
 
 ### 3.3 Brief
 
-The Brief is the right-hand panel whenever nothing is selected, in every view. `B` toggles it, and Esc from a selection returns to it. It has three stacked parts, each icon-led with mini graphics:
+The Brief is the right-hand panel whenever nothing is selected, in every view. Shift+B toggles it, and Esc from a selection returns to it. It has three stacked parts, each icon-led with mini graphics:
 
 1. **Now.** What the agent is doing. In phases A and B this is rule-based: the current running step, the latest change unit and any pending decision. In phase C it becomes the narrator's story (3 to 6 sentences with citation chips).
 2. **Changes so far.** Change units of this session, newest first: icon, short title, DiffBar, test state, and a "needs attention" flag by the anchor rule. Each opens in the active view.
@@ -150,12 +150,12 @@ Phase A, B and C UI tasks begin with HTML mockups (E16).
 | `2` | Hybrid |
 | `3` | Map |
 | `4` | Surfaces |
-| `B` | Toggle the Brief |
+| Shift+B | Toggle the Brief (lowercase `b` is the viewer's brush-chapter key in Hybrid, so the Brief takes Shift+B) |
 | Esc | Go back from a selection to the Brief |
 | Cmd+Enter | Send the prompt |
 | Cmd+L | Focus the prompt line |
 
-Existing viewer keys keep their meaning, except the viewer's old `0` (zoom to preset), which moves to Shift+0. Keys never fire while typing in an input, textarea or contenteditable element (viewer spec §7.9).
+Existing viewer keys keep their meaning, except the viewer's old `0` (zoom to preset), which moves to Shift+0. Lowercase `b` keeps brushing the chapter in Hybrid. Keys never fire while typing in an input, textarea or contenteditable element (viewer spec §7.9).
 
 ## 4. Architecture
 
