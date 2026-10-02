@@ -311,3 +311,31 @@ describe("ExplainerRecordSchema", () => {
     expect(ExplainerRecordSchema.safeParse(record).success).toBe(false);
   });
 });
+
+describe("per-string caps and component-id pattern", () => {
+  const rootPathOf = (n: number) => ComponentSchema.safeParse(component(1, { rootPath: "r".repeat(n) })).success;
+  const scanIdOf = (n: number) => OverviewSnapshotSchema.safeParse({ ...snapshot(), scanId: "s".repeat(n) }).success;
+  const langsOf = (n: number) =>
+    OverviewSnapshotSchema.safeParse({ ...snapshot(), counts: { files: 1, components: 1, edges: 0, languages: ["l".repeat(n)] } }).success;
+
+  it("bounds a path field at 1,024 characters", () => {
+    expect(rootPathOf(1_024)).toBe(true);
+    expect(rootPathOf(1_025)).toBe(false);
+  });
+
+  it("bounds an id field at 128 characters", () => {
+    expect(scanIdOf(128)).toBe(true);
+    expect(scanIdOf(129)).toBe(false);
+  });
+
+  it("bounds a language name at 40 characters", () => {
+    expect(langsOf(40)).toBe(true);
+    expect(langsOf(41)).toBe(false);
+  });
+
+  it("requires component-id format on edge endpoints", () => {
+    expect(ComponentEdgeSchema.safeParse(edge(1)).success).toBe(true);
+    expect(ComponentEdgeSchema.safeParse({ ...edge(1), from: "cmp_ABCDEF012345" }).success).toBe(false);
+    expect(ComponentEdgeSchema.safeParse({ ...edge(1), to: "not-a-component" }).success).toBe(false);
+  });
+});
