@@ -4608,18 +4608,18 @@ git commit -m "feat(trace-viewer): Brief story and decision cards, Inspector why
 
 ### Task S-5: Map session overlay
 
-Blocked by H3 (S-0 Step 7). P-3 left the seam: `MapView`, `MapCard` and `MapEdges` already draw a card's state dot and emphasized edges from `mapOverlayOf(session)`, which returns `null` in phase B.
+Blocked by H3 (S-0 Step 7). P-3 left the seam: `MapView`, `MapCard` and `MapEdges` already draw a card's state mark (in the card footer, in place of the file count) and emphasized edges from `mapOverlayOf(session)`, which returns `null` in phase B.
 
 **Files:**
 - Modify: `packages/trace-viewer/src/ui/views/map/overlay.ts` (P-3: the body of `mapOverlayOf`, plus `overlayCounts`)
 - Create: `packages/trace-viewer/src/ui/views/map/MapSessionToggle.tsx`
 - Modify: `packages/trace-viewer/src/ui/views/map/MapView.tsx` (P-3: the toggle state, the `data-session` flag on the world element, the toggle props for the header)
 - Modify: `packages/trace-viewer/src/ui/views/map/MapHeader.tsx` (P-3: render the toggle and legend)
-- Modify: `packages/trace-viewer/src/ui/views/map/MapView.module.css` (P-3: state-dot shapes, emphasized edges, veiled untouched cards, toggle and legend)
+- Modify: `packages/trace-viewer/src/ui/views/map/MapView.module.css` (P-3: state-mark shapes, veiled untouched cards, toggle and legend; the emphasized-edge color is P-3's)
 - Test: `packages/trace-viewer/src/ui/views/map/overlay.test.ts`, `packages/trace-viewer/src/ui/views/map/map-session-overlay.test.tsx`
 
 **Interfaces:**
-- Consumes (P-3, lane 06's plan): `type MapCardState = "new" | "changed" | "decision" | "failing"`, `interface MapOverlay { cardState: ReadonlyMap<string, MapCardState>; emphasizedEdges: ReadonlySet<string> }` (edge keys `"<from>><to>"`), `mapOverlayOf(session): MapOverlay | null`; `MapView` computes `const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session])`, holds the world element in `worldRef`, and renders `<MapHeader overview={overview} onSelectComponent={onSelectCard} onRetry={onRetry} />` (P-4 adds `onRetry`); `MapHeader({ overview, onSelectComponent, onRetry }: MapHeaderProps)`; `MapCard` renders `<span className={styles.stateDot} data-state={state}>` and `MapEdges` sets `data-emphasized` on emphasized edges; P-1's `overviewSnapshot(seed)`, `componentId(rootPath)`, `TraceBuilder.overview`.
+- Consumes (P-3, lane 06's plan): `type MapCardState = "new" | "changed" | "decision" | "failing"`, `interface MapOverlay { cardState: ReadonlyMap<string, MapCardState>; emphasizedEdges: ReadonlySet<string> }` (edge keys `"<from>><to>"`), `mapOverlayOf(session): MapOverlay | null`; `MapView` computes `const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session])`, holds the world element in `worldRef`, and renders `<MapHeader overview={overview} onSelectComponent={onSelectCard} onRetry={onRetry} />` (P-4 adds `onRetry`); `MapHeader({ overview, onSelectComponent, onRetry }: MapHeaderProps)`; `MapCard` renders `<span className={styles.stateDot} data-state={state}>` in its footer in place of the count and `MapEdges` sets `data-emphasized` on emphasized edges, which it always draws, even when they are same-band or enter a hub; P-1's `overviewSnapshot(seed)`, `componentId(rootPath)`, `TraceBuilder.overview`.
 - Consumes (S-3): `TraceSession.explainer.highlights` (`HighlightsModel`), `HIGHLIGHT_STATES`, `TraceBuilder.explainer`.
 - Produces:
   - `mapOverlayOf(session)` returns the latest highlights limited to components on the map, and the edges whose two ends are highlighted; `null` without an overview, without highlights, or when no highlighted component is on the map. Cached per `(session.explainer, session.overview)`.
@@ -4627,7 +4627,7 @@ Blocked by H3 (S-0 Step 7). P-3 left the seam: `MapView`, `MapCard` and `MapEdge
   - `MapSessionToggle({ counts, on, onToggle })`: a "Session" toggle (`aria-pressed`) and, while on, a legend list named "Session overlay legend".
   - `MapHeader` gains the optional prop `session?: { counts: Readonly<Record<MapCardState, number>>; on: boolean; onToggle(): void } | null`.
 
-**Rendering** (spec §3.4, §3.6; "Spec alignment notes"): state dots are `changed` a filled ink dot, `new` an ink ring, `decision` an ink diamond outline, `failing` a red dot (the only red); emphasized edges are `--tv-ink-2` and one pixel wider; while the overlay is on, cards without a state dot fade to 55%. The toggle (on by default) hides all three.
+**Rendering** (spec §3.4, §3.6; "Spec alignment notes"): state marks sit in the card footer in place of the count, 11 px with a 1.75 px stroke: `changed` a filled ink dot, `new` an ink ring, `decision` an ink diamond outline, `failing` a red dot (the only red); edges with both ends touched use `--tv-ink-3` (P-3's `.edge[data-emphasized]`); while the overlay is on, cards without a mark get a 0.55-white background with no shadow and their content at 0.45 opacity. The toggle (on by default) hides all three.
 
 - [ ] **Step 1: Pre-check and open the approved mockup**
 
@@ -4904,23 +4904,23 @@ Append to `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 ```css
 .stateDot[data-state="new"] {
   background: var(--tv-panel);
-  box-shadow: inset 0 0 0 1.5px var(--tv-ink-2);
+  box-shadow: inset 0 0 0 1.75px var(--tv-ink-2);
 }
 
 .stateDot[data-state="decision"] {
   border-radius: 1.5px;
   background: var(--tv-panel);
-  box-shadow: inset 0 0 0 1.5px var(--tv-ink-2);
+  box-shadow: inset 0 0 0 1.75px var(--tv-ink-2);
   transform: rotate(45deg) scale(0.85);
 }
 
-.edge[data-emphasized] {
-  stroke-width: 2px;
-  opacity: 1;
+[data-session] .card:not(:has([data-state])) {
+  background: rgb(255 255 255 / 0.55);
+  box-shadow: none;
 }
 
-[data-session] .card:not(:has([data-state])) {
-  opacity: 0.55;
+[data-session] .card:not(:has([data-state])) > * {
+  opacity: 0.45;
 }
 
 .sessionBar {
