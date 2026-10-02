@@ -27,6 +27,7 @@ import type {
   ComposerPrefillPayload,
   DebugEventsPayload,
   DebugJevDecisionsPayload,
+  DebugNarratorCallsPayload,
   DebugTelemetryPayload,
   RecentReposPayload,
   RepositorySummary,
@@ -136,6 +137,7 @@ export interface JevcodeApi {
       sessionId?: string,
       limit?: number,
     ): Promise<DebugJevDecisionsPayload["decisions"]>;
+    listNarratorCalls(limit?: number): Promise<DebugNarratorCallsPayload>;
   };
   /**
    * Read-only trace access (R5). The trace window adapts it to the viewer's
@@ -313,6 +315,9 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
           limit,
         })) as DebugJevDecisionsPayload;
         return result.decisions;
+      },
+      listNarratorCalls: async (limit) => {
+        return (await invoke("debug:listNarratorCalls", { limit })) as DebugNarratorCallsPayload;
       },
     },
     trace: {

@@ -32,6 +32,8 @@ import {
 } from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
+import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { openRepoByPath } from "./repo-service.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
@@ -75,6 +77,10 @@ export interface IpcDeps {
   traceWindows: TraceWindowIpcDeps;
   /** The codebase-map explainer stage for the open repo (console-explainer spec §6). */
   explainer?: ExplainerRegistry;
+  /** Spec E15: preferences:set flips it; optional so existing harnesses stay valid. */
+  narrator?: NarratorSwitch;
+  /** Inspect → Narrator (deviation 9). */
+  narratorCalls?: NarratorCallLog;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -273,6 +279,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // null marks the "unknown" state; storage has no deletePreference.
     deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
     deps.db.setPreference(EXPLAIN_WITH_MODEL_PREF_KEY, next.explainWithModel);
+    deps.narrator?.setEnabled(next.explainWithModel);
     sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, next);
     return next;
   });
@@ -470,6 +477,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         ts: log.ts,
       }));
     return { decisions };
+  });
+
+  handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) => {
+    return {
+      availability: deps.narrator?.availability() ?? "off_setting",
+      calls: deps.narratorCalls?.list(limit ?? 50) ?? [],
+    };
   });
 
   registerTraceHandlers(handle, deps.trace);

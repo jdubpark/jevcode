@@ -25,6 +25,11 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
+import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
+import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
+import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
+import { readAgentPreferences } from "../shared/prefs.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
@@ -66,6 +71,8 @@ let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
 let explainer: ExplainerRegistry | null = null;
 let importExtractor: ImportExtractor | null = null;
+let narratorSwitch: NarratorSwitch | null = null;
+let narratorCalls: NarratorCallLog | null = null;
 const state = createAppState();
 
 function createWindow(): BrowserWindow {
@@ -93,6 +100,12 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   db = openDb();
+  const openedDb = db;
+  narratorSwitch = createNarratorSwitch({
+    enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
+    env: process.env,
+  });
+  narratorCalls = createNarratorCallLog();
   // A second, query_only connection for the trace viewer (R5): trace:*
   // handlers read through it and can never write.
   const reader = openTraceReader(db.dbPath);
@@ -222,6 +235,8 @@ app.whenReady().then(() => {
       },
       sendToRenderer,
     },
+    narrator: narratorSwitch,
+    narratorCalls,
     requestRepoPath: () => openDirectoryDialog(mainWindow),
     explainer: explainerRegistry,
     log: (message) => console.log(`[ipc] ${message}`),
