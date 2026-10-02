@@ -95,14 +95,21 @@ export function aggregateExternals(
  * → number of the component's files that import the package.
  */
 export function rankExternals(byName: ReadonlyMap<string, ReadonlyMap<string, number>>): ExternalDep[] {
-  const ranked = [...byName.entries()].map(([name, users]) => {
-    const usedBy = [...users.entries()]
-      .map(([componentId, count]) => ({ componentId, count }))
-      .sort((a, b) => b.count - a.count || compareText(a.componentId, b.componentId));
-    return { name, total: usedBy.reduce((sum, use) => sum + use.count, 0), usedBy: usedBy.slice(0, MAX_USED_BY) };
-  });
+  const ranked: { name: string; total: number }[] = [];
+  for (const [name, users] of byName) {
+    let total = 0;
+    for (const count of users.values()) total += count;
+    ranked.push({ name, total });
+  }
+  // Only the 120 kept packages need their users sorted.
   return ranked
     .sort((a, b) => b.total - a.total || compareText(a.name, b.name))
     .slice(0, MAX_EXTERNALS)
-    .map(({ name, usedBy }) => ({ name, usedBy }));
+    .map(({ name }) => ({
+      name,
+      usedBy: [...(byName.get(name) ?? new Map<string, number>()).entries()]
+        .map(([componentId, count]) => ({ componentId, count }))
+        .sort((a, b) => b.count - a.count || compareText(a.componentId, b.componentId))
+        .slice(0, MAX_USED_BY),
+    }));
 }
