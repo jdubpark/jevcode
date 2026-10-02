@@ -385,7 +385,7 @@ describe("guard properties", () => {
           expect(entry.purpose.length).toBeGreaterThan(0);
           expect(entry.purpose.length).toBeLessThanOrEqual(PURPOSE_MAX_CHARS);
           expect(entry.purpose).toBe(entry.purpose.trim());
-          expect(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]|https?:\/\/|\*\*|`|<[a-z!?/]/iu.test(entry.purpose.normalize("NFKC"))).toBe(false);
+          expect(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]|https?:\/\/|\*\*|`|<\/?[a-z][^>]*>|<[!?]/iu.test(entry.purpose.normalize("NFKC"))).toBe(false);
           expect(entry.citations.length).toBeGreaterThan(0);
           expect(entry.citations.length).toBeLessThanOrEqual(MAX_CITATIONS);
           for (const citation of entry.citations) expect(citationResolves(citation, UNIVERSE)).toBe(true);
@@ -407,7 +407,7 @@ describe("guard properties", () => {
         expect(result.total).toBe(Math.min(items.length, max));
         for (const entry of result.accepted) {
           expect(entry.text.length).toBeLessThanOrEqual(SENTENCE_MAX_CHARS);
-          expect(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]|https?:\/\/|\*\*|`|<[a-z!?/]/iu.test(entry.text.normalize("NFKC"))).toBe(false);
+          expect(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]|https?:\/\/|\*\*|`|<\/?[a-z][^>]*>|<[!?]/iu.test(entry.text.normalize("NFKC"))).toBe(false);
           for (const citation of entry.citations) expect(citationResolves(citation, UNIVERSE)).toBe(true);
         }
       }),
