@@ -2,8 +2,10 @@ import type {
   ChangeUnit,
   Decision,
   EvidenceFact,
+  ExplainerRecord,
   JevDecisionLog,
   NormalizedAgentEvent,
+  OverviewSnapshot,
 } from "@jevcode/contracts";
 
 export const SESSION = "sess_fixture";
@@ -91,5 +93,49 @@ export function makeJevLog(overrides: Partial<JevDecisionLog> = {}): JevDecision
     clamps: ["guardrail.security"],
     ts: TS,
     ...overrides,
+  };
+}
+
+export const COMPONENT_ID = "cmp_0123456789ab";
+
+export function makeOverviewSnapshot(overrides: Partial<OverviewSnapshot> = {}): OverviewSnapshot {
+  return {
+    sessionId: SESSION,
+    repoRoot: "/work/fixture",
+    scanId: "scan_1",
+    partial: false,
+    counts: { files: 2, components: 1, edges: 0, languages: ["TypeScript"] },
+    components: [
+      {
+        id: COMPONENT_ID,
+        rootPath: "packages/core",
+        name: "@fixture/core",
+        fileCount: 2,
+        files: ["packages/core/src/a.ts", "packages/core/src/b.ts"],
+        language: "TypeScript",
+        roleGuess: "domain",
+        role: "domain",
+        purpose: null,
+        provenance: "rule",
+        contentHash: "0".repeat(40),
+        externalDeps: [],
+        entryPoints: ["packages/core/src/a.ts"],
+        importsAnalyzed: true,
+      },
+    ],
+    edges: [],
+    externals: [],
+    narrative: null,
+    generatedAt: TS,
+    ...overrides,
+  };
+}
+
+export function makeExplainerStory(overrides: { sessionId?: string; basisSeq?: number } = {}): ExplainerRecord {
+  return {
+    sessionId: overrides.sessionId ?? SESSION,
+    kind: "story",
+    sentences: [{ text: "The agent added a session cache.", citations: [{ kind: "component", id: COMPONENT_ID }] }],
+    basisSeq: overrides.basisSeq ?? 1,
   };
 }
