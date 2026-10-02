@@ -64,14 +64,30 @@ function waitForServer(url, timeoutMs) {
   });
 }
 
+/** Chrome children (by pid, with their profile dir) that this run started and has not yet killed. */
+const liveChrome = new Map();
+
 /** Kills a Chrome we started: its process group, then any stray helper that still carries the profile dir. */
 function killChrome(child, profile) {
+  liveChrome.delete(child);
   try {
     process.kill(-child.pid, "SIGKILL");
   } catch {
     child.kill("SIGKILL");
   }
-  spawnSync("pkill", ["-9", "-f", `--user-data-dir=${profile}`]);
+  // `--` keeps the pattern from being parsed as an option; the full profile path is unique to this run.
+  spawnSync("pkill", ["-9", "-f", "--", `--user-data-dir=${profile}`]);
+}
+
+function killAllChrome() {
+  for (const [child, profile] of [...liveChrome]) killChrome(child, profile);
+}
+process.on("exit", killAllChrome);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    killAllChrome();
+    process.exit(1);
+  });
 }
 
 /**
@@ -97,6 +113,7 @@ function chrome(profile, args) {
       ],
       { stdio: ["ignore", "pipe", "pipe"], detached: true },
     );
+    liveChrome.set(child, profile);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -121,7 +138,7 @@ function chrome(profile, args) {
     });
     child.on("error", (error) => finish(error));
     child.on("exit", (code) => finish(code === 0 ? undefined : new Error(`chrome exited ${code}: ${stderr}`)));
-    const timer = setTimeout(() => finish(new Error(`chrome gave no result within 90 s: ${stderr}`)), 90_000);
+    const timer = setTimeout(() => finish(new Error(`chrome gave no result within 90 s: ${stderr.slice(-2048)}`)), 90_000);
   });
 }
 
@@ -147,6 +164,7 @@ async function chromeSelftest(profile, url, timeoutMs) {
     ],
     { stdio: "ignore", detached: true },
   );
+  liveChrome.set(browser, profile);
   const deadline = Date.now() + timeoutMs;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let socket;
