@@ -238,4 +238,22 @@ export default tseslint.config(
       "no-restricted-syntax": ["error", ...NODE_BUILTIN_DYNAMIC_IMPORT_BANS],
     },
   },
+  {
+    // Spec §4.2: the codebase-map core is pure TypeScript with no Node built-ins. Node-only
+    // scanning lives in src/node, which only desktop main imports.
+    files: ["packages/codebase-map/src/core/**/*.ts"],
+    ignores: ["packages/codebase-map/src/core/**/*.test.ts", "packages/codebase-map/src/core/**/*.bench.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [
+          { regex: "^node:", message: "codebase-map core is pure: no Node built-ins (spec §4.2)." },
+          { regex: NODE_BUILTIN_REGEX, message: "codebase-map core is pure: no Node built-ins (spec §4.2)." },
+          { regex: "^electron(/.*)?$", message: "codebase-map core is pure (spec §4.2)." },
+          { regex: "(^|/)node(/|$)", message: "src/core never imports src/node or Node-only entry points." },
+        ],
+      }],
+      "no-restricted-globals": ["error", ...NO_NODE_GLOBALS],
+      "no-restricted-syntax": ["error", ...NODE_BUILTIN_DYNAMIC_IMPORT_BANS],
+    },
+  },
 );
