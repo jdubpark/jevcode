@@ -5,6 +5,7 @@ import { ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
+import { deserializeIpcError } from "../shared/api.js";
 import { registerIpcHandlers } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
@@ -238,6 +239,12 @@ describe("explainer wiring (console-explainer M-6)", () => {
     return { registry, calls };
   }
 
+  /** A handler-body IpcError crosses IPC as a message; the renderer's api turns it back into a code. */
+  const asRenderer = (call: unknown): Promise<unknown> =>
+    Promise.resolve(call).catch((error: unknown) => {
+      throw deserializeIpcError(error);
+    });
+
   it("repo:close closes the open repo's explainer stage", async () => {
     const { db, state } = seedRepoAndSession();
     const { runtime } = stubRuntime();
@@ -282,12 +289,36 @@ describe("explainer wiring (console-explainer M-6)", () => {
     const { registry, calls } = explainerSpy();
     const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
     const rescan = handlers.get(RendererToMainChannels.overviewRescan)!;
-    await expect(rescan(TRUSTED_EVENT, { repoRoot: "/elsewhere" })).rejects.toThrow(/NO_ACTIVE_SESSION/);
+    await expect(asRenderer(rescan(TRUSTED_EVENT, { repoRoot: "/elsewhere" }))).rejects.toMatchObject({ code: "NO_ACTIVE_SESSION" });
     await expect(rescan(TRUSTED_EVENT, { repoRoot: "" })).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
     await expect(rescan(TRUSTED_EVENT, { repoRoot: "/a", extra: true })).resolves.toBeNull();
     state.repo = null;
-    await expect(rescan(TRUSTED_EVENT, { repoRoot: "/a" })).rejects.toThrow(/NO_ACTIVE_SESSION/);
+    await expect(asRenderer(rescan(TRUSTED_EVENT, { repoRoot: "/a" }))).rejects.toMatchObject({ code: "NO_ACTIVE_SESSION" });
     expect(calls).toEqual(["rescan /a"]);
+    db.close();
+  });
+
+  it("logs a throwing explainer and still starts the session and closes the repo (spec §6.6)", async () => {
+    const { db, state } = seedRepoAndSession();
+    state.info = { gitRoot: "/a", branch: "main", baseCommit: "abc" };
+    const { runtime, calls } = stubRuntime();
+    const log = vi.fn();
+    const boom = (): never => {
+      throw new Error("stage exploded");
+    };
+    const registry: ExplainerRegistry = { ...explainerSpy().registry, sessionStarted: boom, repoClosed: boom };
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), log, explainer: registry });
+
+    await expect(
+      handlers.get(RendererToMainChannels.sessionStart)!(TRUSTED_EVENT, { repoId: "repo_a", prompt: "go" }),
+    ).resolves.toBeNull();
+    expect(calls.map((call) => call.method)).toContain("startSession");
+    expect(state.session?.id).toBe("sess_a");
+    expect(log).toHaveBeenCalledWith("explainer sessionStarted failed: stage exploded");
+
+    await expect(handlers.get(RendererToMainChannels.repoClose)!(TRUSTED_EVENT, { repoId: "repo_a" })).resolves.toBeNull();
+    expect(state.repo).toBeNull();
+    expect(log).toHaveBeenCalledWith("explainer repoClosed failed: stage exploded");
     db.close();
   });
 });

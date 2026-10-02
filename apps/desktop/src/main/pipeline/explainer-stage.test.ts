@@ -9,7 +9,7 @@ import type { ScanOptions, scanPaths, scanRepo } from "@jevcode/codebase-map/nod
 import type { extractImports } from "@jevcode/evidence-engine";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EXTRACT_CONCURRENCY,
@@ -115,7 +115,14 @@ interface Harness {
   hints: [string, number][];
   logs: ExplainerLogEvent[];
   statuses: ExplainerStatus[];
-  control: { gate: Promise<void> | null; fail: Error | null; afterProgress: ((index: number) => void) | null };
+  control: {
+    gate: Promise<void> | null;
+    fail: Error | null;
+    afterProgress: ((index: number) => void) | null;
+    /** Holds scanPaths (the incremental rebuild) until it resolves. */
+    pathsGate: Promise<void> | null;
+    manifest: WorkspaceManifest;
+  };
   deps: ExplainerStageDeps;
 }
 
@@ -127,7 +134,7 @@ function harness(overrides: Partial<ExplainerStageDeps> = {}, db: JevcodeDb = cr
   const hints: [string, number][] = [];
   const logs: ExplainerLogEvent[] = [];
   const statuses: ExplainerStatus[] = [];
-  const control: Harness["control"] = { gate: null, fail: null, afterProgress: null };
+  const control: Harness["control"] = { gate: null, fail: null, afterProgress: null, pathsGate: null, manifest: MANIFEST };
   const scan: typeof scanRepo = async (_root, options: ScanOptions = {}) => {
     calls.scan += 1;
     if (control.gate !== null) await control.gate;
@@ -140,10 +147,11 @@ function harness(overrides: Partial<ExplainerStageDeps> = {}, db: JevcodeDb = cr
       options.onProgress?.(index + 1, files.length);
       control.afterProgress?.(index);
     }
-    return { files, manifest: MANIFEST, partial: false, tsconfig: { paths: {}, baseUrl: null }, totalFiles: files.length };
+    return { files, manifest: control.manifest, partial: false, tsconfig: { paths: {}, baseUrl: null }, totalFiles: files.length };
   };
   const scanPathsFake: typeof scanPaths = async (_root, paths, options = {}) => {
     calls.scanPaths.push([...paths]);
+    if (control.pathsGate !== null) await control.pathsGate;
     const files: ScannedFile[] = [];
     const gone: string[] = [];
     for (const filePath of paths) {
@@ -188,6 +196,11 @@ function start(h: Harness): ExplainerStage {
 afterEach(() => {
   while (stages.length > 0) stages.pop()?.dispose();
 });
+
+/** Lets pending promise callbacks run without waiting for a gated scan. */
+async function flush(): Promise<void> {
+  for (let round = 0; round < 5; round += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve = (): void => {};
@@ -732,32 +745,260 @@ describe("ExplainerStage row and state bounds (M-6 review requirements)", () => 
     }
   });
 
-  it("turns a snapshot that cannot fit (RangeError) into a failed status row and recovers on refresh", async () => {
-    let huge = true;
-    let context: NarrationContext | null = null;
+  it("drops a narrative that cannot fit (RangeError) and writes the rule-based snapshot (spec E10, §6.6)", async () => {
     const oversized = {
       sentences: Array.from({ length: 8 }, () => ({ text: "x".repeat(100_000), citations: [] })),
       provenance: "model",
     } as unknown as OverviewSnapshot["narrative"];
-    const narration = (ctx: NarrationContext): NarrationSeam => {
-      context = ctx;
-      return { textFor: () => new Map(), narrative: () => (huge ? oversized : null), onSnapshot: () => {}, dispose: () => {} };
-    };
+    const narration = (): NarrationSeam => ({
+      textFor: () => new Map(),
+      narrative: () => oversized,
+      onSnapshot: () => {},
+      dispose: () => {},
+    });
     const h = harness({ narration });
     const stage = start(h);
     expect(() => stage.onRepoOpened()).not.toThrow();
     await stage.whenIdle();
-    expect(h.logs).toContainEqual(expect.objectContaining({ kind: "error", where: "rebuild" }));
-    expect(stage.status().phase).toBe("failed");
-    const failed = snapshotRows(h.db, SESSION);
-    expect(failed.map((row) => [row.snapshot.status?.scan.state, row.snapshot.components.length])).toEqual([["failed", 0]]);
-    expect(failed[0]?.snapshot.status?.scan.error).toMatch(/^overview snapshot exceeds/);
+    expect(h.logs).toContainEqual(
+      expect.objectContaining({ kind: "error", where: "rebuild", message: expect.stringMatching(/^overview snapshot exceeds/) }),
+    );
+    expect(stage.status().phase).toBe("ready");
+    const rows = snapshotRows(h.db, SESSION);
+    expect(rows.map((row) => [row.snapshot.status?.scan.state, row.snapshot.components.length])).toEqual([["done", 3]]);
+    expect(rows[0]?.snapshot.narrative).toBeNull();
+    expect(h.db.getOverviewState(REPO_ROOT)?.snapshot.components).toHaveLength(3);
+  });
+
+  it.each(["textFor", "narrative"] as const)(
+    "writes the rule-based snapshot and logs when the seam's %s throws (spec E10, §6.6)",
+    async (failing) => {
+      const seamError = new Error("component_text_cache: database is locked");
+      const narration = (): NarrationSeam => ({
+        textFor: () => {
+          if (failing === "textFor") throw seamError;
+          return new Map([[CORE, { purpose: "Holds the domain types.", role: "domain" as const, provenance: "model" as const }]]);
+        },
+        narrative: () => {
+          if (failing === "narrative") throw seamError;
+          return null;
+        },
+        onSnapshot: () => {},
+        dispose: () => {},
+      });
+      const h = harness({ narration });
+      const stage = start(h);
+      expect(() => stage.onRepoOpened()).not.toThrow();
+      await stage.whenIdle();
+      expect(h.logs).toContainEqual({ kind: "error", where: "rebuild", message: seamError.message });
+      expect(stage.status().phase).toBe("ready");
+      const rows = snapshotRows(h.db, SESSION);
+      expect(rows.map((row) => [row.snapshot.status?.scan.state, row.snapshot.components.length])).toEqual([["done", 3]]);
+      expect(rows[0]?.snapshot.narrative).toBeNull();
+      const core = rows[0]?.snapshot.components.find((c) => c.id === CORE);
+      expect(core?.purpose).toBe(failing === "textFor" ? null : "Holds the domain types.");
+    },
+  );
+});
+
+describe("ExplainerStage failure state (M-6 fix round 1)", () => {
+  it("writes a failed row when the overview cannot be built after a scan past 2 s", async () => {
+    const h = harness();
+    h.control.afterProgress = () => h.clock.advance(700);
+    h.control.manifest = Object.defineProperty({ ...MANIFEST }, "packageDirs", {
+      get: () => {
+        throw new Error("manifest unreadable");
+      },
+    });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    expect(h.logs).toContainEqual({ kind: "error", where: "rebuild", message: "manifest unreadable" });
+    expect(stage.status()).toEqual({ phase: "failed", done: 6, total: 6, error: "manifest unreadable" });
+    const rows = snapshotRows(h.db, SESSION);
+    expect(rows.map((row) => row.snapshot.status?.scan.state)).toEqual(["running", "running", "failed"]);
+    expect(rows[2]?.snapshot.status?.scan).toEqual({ state: "failed", scanned: 6, total: 6, error: "manifest unreadable" });
+    expect(rows[2]?.snapshot.components).toEqual([]);
     expect(h.db.getOverviewState(REPO_ROOT)).toBeUndefined();
 
-    huge = false;
-    expect(() => (context as unknown as NarrationContext).refresh()).not.toThrow();
+    h.control.afterProgress = null;
+    h.control.manifest = MANIFEST;
+    stage.rescan();
+    await stage.whenIdle();
     h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
-    expect(snapshotRows(h.db, SESSION).map((row) => row.snapshot.status?.scan.state)).toEqual(["failed", "done"]);
+    expect(snapshotRows(h.db, SESSION).at(-1)?.snapshot.status?.scan.state).toBe("done");
     expect(stage.status().phase).toBe("ready");
+  });
+
+  it("keeps a failed scan on every row, through refreshes and incremental rebuilds, until a scan succeeds", async () => {
+    let purpose = "Holds the domain types.";
+    let context: NarrationContext | null = null;
+    const narration = (ctx: NarrationContext): NarrationSeam => {
+      context = ctx;
+      return {
+        textFor: () => new Map([[CORE, { purpose, role: "domain" as const, provenance: "model" as const }]]),
+        narrative: () => null,
+        onSnapshot: () => {},
+        dispose: () => {},
+      };
+    };
+    const h = harness({ narration });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    h.control.fail = new Error("git ls-files failed");
+    stage.rescan();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    h.control.fail = null;
+
+    purpose = "Defines users.";
+    (context as unknown as NarrationContext).refresh();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    const rows = snapshotRows(h.db, SESSION).map((row) => row.snapshot);
+    const core = (snapshot: OverviewSnapshot | undefined) => snapshot?.components.find((c) => c.id === CORE);
+    expect(rows.map((snapshot) => snapshot.status?.scan.state)).toEqual(["done", "failed", "failed", "failed"]);
+    expect(core(rows[2])?.purpose).toBe("Defines users.");
+    expect(core(rows[3])?.contentHash).not.toBe(core(rows[2])?.contentHash);
+    expect(rows[3]?.status?.scan).toEqual({ state: "failed", scanned: 0, total: 0, error: "git ls-files failed" });
+    expect(stage.status().phase).toBe("failed");
+    // Failed rows never reach overview_state.
+    expect(h.db.getOverviewState(REPO_ROOT)?.snapshot).toEqual({ ...rows[0], sessionId: "" });
+
+    stage.rescan();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    const done = snapshotRows(h.db, SESSION).map((row) => row.snapshot);
+    expect(done.map((snapshot) => snapshot.status?.scan.state)).toEqual(["done", "failed", "failed", "failed", "done"]);
+    expect(core(done[4])?.contentHash).toBe(core(rows[3])?.contentHash);
+    expect(stage.status().phase).toBe("ready");
+    expect(h.db.getOverviewState(REPO_ROOT)?.snapshot).toEqual({ ...done[4], sessionId: "" });
+  });
+
+  it("applies changes queued during a failed rescan to the previous model", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    const before = snapshotRows(h.db, SESSION)[0]?.snapshot.components.find((c) => c.id === CORE)?.contentHash;
+    const gate = deferred();
+    h.control.gate = gate.promise;
+    h.control.fail = new Error("git ls-files failed");
+    stage.rescan();
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    gate.resolve();
+    await stage.whenIdle();
+    expect(stage.status().phase).toBe("failed");
+
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    expect(h.calls.scanPaths).toEqual([["packages/core/src/index.ts"]]);
+    const last = snapshotRows(h.db, SESSION).at(-1)?.snapshot;
+    expect(last?.status?.scan.state).toBe("failed");
+    expect(last?.components.find((c) => c.id === CORE)?.contentHash).not.toBe(before);
+  });
+});
+
+describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("leaves no timer and writes nothing after dispose with a row write and a settle pending", async () => {
+    vi.useFakeTimers();
+    const h = harness({
+      now: () => Date.now(),
+      schedule: {
+        setTimeout: (fn, ms) => setTimeout(fn, ms),
+        clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      },
+    });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+
+    // A changed snapshot waits for the 2 s writer...
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    vi.advanceTimersByTime(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    // ...and the next change waits to settle.
+    h.sources["packages/db/src/index.ts"] = "export const db = 2;\n";
+    stage.onFilesChanged(["packages/db/src/index.ts"]);
+    expect(vi.getTimerCount()).toBe(2);
+
+    stage.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10 * SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    expect(h.calls.scanPaths).toEqual([["packages/core/src/index.ts"]]);
+    expect(h.hints).toHaveLength(1);
+  });
+
+  it("discards an incremental rebuild that finishes while a rescan is in flight", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    const paths = deferred();
+    h.control.pathsGate = paths.promise;
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await flush();
+    expect(h.calls.scanPaths).toEqual([["packages/core/src/index.ts"]]);
+
+    const scan = deferred();
+    h.control.gate = scan.promise;
+    stage.rescan();
+    paths.resolve();
+    await flush();
+    // The rebuild of the replaced model wrote nothing while the rescan runs.
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    expect(stage.status().phase).toBe("scanning");
+
+    scan.resolve();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    const rows = snapshotRows(h.db, SESSION);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.snapshot.status?.scan.state).toBe("done");
+    expect(h.calls.scan).toBe(2);
+  });
+
+  it("starts no second scan for a session that starts during a scan, and writes that session a row", async () => {
+    let current: string | null = null;
+    const h = harness({ sessionId: () => current });
+    const gate = deferred();
+    h.control.gate = gate.promise;
+    const stage = start(h);
+    stage.onRepoOpened();
+    current = SESSION_2;
+    stage.onSessionStarted(SESSION_2);
+    expect(h.calls.scan).toBe(1);
+
+    gate.resolve();
+    await stage.whenIdle();
+    expect(h.calls.scan).toBe(1);
+    const rows = snapshotRows(h.db, SESSION_2);
+    expect(rows.map((row) => [row.snapshot.sessionId, row.snapshot.status?.scan.state, row.snapshot.components.length])).toEqual([
+      [SESSION_2, "done", 3],
+    ]);
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(0);
   });
 });
