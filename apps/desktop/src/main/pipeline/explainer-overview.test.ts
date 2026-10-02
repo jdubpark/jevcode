@@ -11,8 +11,10 @@ import { extractImports } from "@jevcode/evidence-engine";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  MAX_INCREMENTAL_CHANGES,
+  MAX_INCREMENTAL_WORK,
   OverviewIndex,
+  WORK_PER_REGROUPED_FILE,
+  WORK_PER_SPECIFIER,
   buildOverview,
   runSliced,
   scanRepoModel,
@@ -283,26 +285,81 @@ describe("OverviewIndex roles", () => {
   });
 });
 
-describe("OverviewIndex batch size", () => {
-  it("declines a watcher batch over MAX_INCREMENTAL_CHANGES, so the stage rebuilds in slices", () => {
+describe("OverviewIndex work bound (spec §6.1)", () => {
+  const emptyModel = (): RepoModel => ({
+    files: new Map(),
+    imports: new Map(),
+    manifest: { packageDirs: [], appDirs: [], packageNames: {}, descriptions: {}, entryPoints: {} },
+    tsconfig: { paths: {}, baseUrl: null },
+    partial: false,
+    totalFiles: 0,
+  });
+  const put = (model: RepoModel, filePath: string, specifiers: string[]): void => {
+    model.files.set(filePath, { path: filePath, hash: `h${model.files.size}`, size: 1, language: languageOf(filePath) });
+    model.imports.set(filePath, { specifiers, exports: [] });
+  };
+
+  it("declines an update whose work exceeds MAX_INCREMENTAL_WORK, so the stage rebuilds in slices", () => {
+    const perFile = WORK_PER_REGROUPED_FILE + 10 * WORK_PER_SPECIFIER;
+    const largest = Math.floor((MAX_INCREMENTAL_WORK - 1) / perFile);
     const withBatch = (count: number): boolean => {
-      const model: RepoModel = {
-        files: new Map([["src/a/seed.ts", { path: "src/a/seed.ts", hash: "h", size: 1, language: "TypeScript" }]]),
-        imports: new Map(),
-        manifest: { packageDirs: [], appDirs: [], packageNames: {}, descriptions: {}, entryPoints: {} },
-        tsconfig: { paths: {}, baseUrl: null },
-        partial: false,
-        totalFiles: 1,
-      };
+      const model = emptyModel();
+      put(model, "src/a/seed.ts", []);
       const index = OverviewIndex.build(model);
       const added = Array.from({ length: count }, (_, n) => `src/a/f${n}.ts`);
-      for (const filePath of added) model.files.set(filePath, { path: filePath, hash: "h", size: 1, language: "TypeScript" });
+      for (const filePath of added) put(model, filePath, Array.from({ length: 10 }, (_, k) => `./f${(Number(filePath.slice(7, -3)) + k + 1) % count}`));
       const applied = index.update({ added, removed: [], edited: [] });
       if (applied) expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
       return applied;
     };
-    expect(withBatch(MAX_INCREMENTAL_CHANGES)).toBe(true);
-    expect(withBatch(MAX_INCREMENTAL_CHANGES + 1)).toBe(false);
+    expect(withBatch(largest)).toBe(true);
+    expect(withBatch(largest + 1)).toBe(false);
+  });
+
+  it("re-resolves a package's importers only when the package's first member file changes", () => {
+    // @fx/core has no entry file, so 2,000 importers take its first member file (packages/core/src/b.ts).
+    const model: RepoModel = {
+      ...emptyModel(),
+      manifest: {
+        packageDirs: ["packages/core", "packages/web"],
+        appDirs: [],
+        packageNames: { "packages/core": "@fx/core", "packages/web": "@fx/web" },
+        descriptions: {},
+        entryPoints: {},
+      },
+    };
+    put(model, "packages/core/src/b.ts", []);
+    for (let n = 0; n < 2_000; n += 1) put(model, `packages/web/src/d${n % 20}/f${n}.ts`, ["@fx/core", "react", "zod", "./x", "../y"]);
+    let index = OverviewIndex.build(model);
+    // After the first member: no importer can change, so the update stays small and incremental.
+    put(model, "packages/core/src/c.ts", []);
+    expect(index.update({ added: ["packages/core/src/c.ts"], removed: [], edited: [] })).toBe(true);
+    expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
+    // Before it: every importer now resolves to the new file, more work than one update may do.
+    put(model, "packages/core/src/a.ts", []);
+    expect(index.update({ added: ["packages/core/src/a.ts"], removed: [], edited: [] })).toBe(false);
+    index = OverviewIndex.build(model);
+    // Removing a member that is not the first changes nothing for the importers either.
+    model.files.delete("packages/core/src/c.ts");
+    model.imports.delete("packages/core/src/c.ts");
+    expect(index.update({ added: [], removed: ["packages/core/src/c.ts"], edited: [] })).toBe(true);
+    expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
+  });
+
+  it("re-resolves the importers of a probed name only when the probe finds another file", () => {
+    const model = emptyModel();
+    put(model, "src/lib/util.ts", []);
+    for (let n = 0; n < 2_000; n += 1) put(model, `src/lib/f${n}.ts`, ["./util", "./util.js", "react", "zod", "./other"]);
+    const index = OverviewIndex.build(model);
+    // "./util" still finds util.ts first (.ts probes before .json): no importer changes.
+    put(model, "src/lib/util.json", []);
+    model.imports.delete("src/lib/util.json");
+    expect(index.update({ added: ["src/lib/util.json"], removed: [], edited: [] })).toBe(true);
+    expect(comparable(index.overview())).toEqual(comparable(buildOverview(model)));
+    // Removing util.ts makes "./util" find util.json: every importer changes.
+    model.files.delete("src/lib/util.ts");
+    model.imports.delete("src/lib/util.ts");
+    expect(index.update({ added: [], removed: ["src/lib/util.ts"], edited: [] })).toBe(false);
   });
 });
 

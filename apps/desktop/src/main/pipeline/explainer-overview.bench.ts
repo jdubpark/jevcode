@@ -127,47 +127,110 @@ function recordBlock(row: string, ms: number): void {
   maxBlocks.set(row, [...(maxBlocks.get(row) ?? []), ms]);
 }
 
+interface Layout {
+  current: Map<string, ScannedFile>;
+  specs: Map<string, ExtractedImports>;
+  texts: Map<string, string>;
+  tsconfig: { paths: Record<string, string[]>; baseUrl: string | null };
+}
+
+const fileOf = (rel: string): ScannedFile => ({
+  path: rel,
+  hash: createHash("sha1").update(rel).digest("hex"),
+  size: 1_000,
+  language: languageOf(rel),
+});
+
 /**
- * The reviewer's rebuild probe as a stage: `files / 1000` workspace packages of 10 modules x 100
- * files; each file imports zod, a sibling, the next package, five deep externals, node:fs, react
- * and its package entry. scan and scanPaths are in-memory fakes that yield every 500 files.
+ * The reviewer's rebuild probe: `files / 1000` workspace packages of 10 modules x 100 files; each
+ * file imports zod, a sibling, the next package, five deep externals, node:fs, react and its
+ * package entry.
  */
-function stageBench(fileCount: number): {
+function workspaceLayout(fileCount: number): Layout {
+  const layout: Layout = {
+    current: new Map(),
+    specs: new Map(),
+    texts: new Map([
+      ["pnpm-workspace.yaml", "packages:\n  - packages/*\n"],
+      ["package.json", '{"name":"bench-root"}'],
+    ]),
+    tsconfig: { paths: {}, baseUrl: null },
+  };
+  for (const rel of layout.texts.keys()) layout.current.set(rel, fileOf(rel));
+  const packages = Math.max(1, Math.round(fileCount / 1_000));
+  for (let pkg = 0; pkg < packages; pkg += 1) {
+    const dir = `packages/pkg-${pad(pkg, 2)}`;
+    layout.texts.set(`${dir}/package.json`, `{"name":"@bench/pkg-${pad(pkg, 2)}","main":"src/index.ts"}`);
+    layout.current.set(`${dir}/package.json`, fileOf(`${dir}/package.json`));
+    layout.current.set(`${dir}/src/index.ts`, fileOf(`${dir}/src/index.ts`));
+    for (let mod = 0; mod < 10; mod += 1) {
+      for (let index = 0; index < 100; index += 1) {
+        const rel = `${dir}/src/mod-${pad(mod, 2)}/file-${pad(index, 3)}.ts`;
+        layout.current.set(rel, fileOf(rel));
+        const specifiers = ["zod", `./file-${pad((index + 1) % 100, 3)}.js`, `@bench/pkg-${pad((pkg + 1) % packages, 2)}`];
+        for (let k = 0; k < 5; k += 1) specifiers.push(`ext-${(index * 7 + k) % 300}/deep/x`);
+        specifiers.push("node:fs", "react", "../../index.js");
+        layout.specs.set(rel, { specifiers, exports: Array.from({ length: 9 }, (_, k) => `run${index}_${k}`) });
+      }
+    }
+  }
+  return layout;
+}
+
+/**
+ * The re-review's second layout: one 18,000-file app (60 features x components, hooks and utils
+ * of 100 files) and two 1,000-file packages without an entry file, so every app file's
+ * `@b/core` and `@b/ui` imports take the package's first member file (an `under` lookup).
+ */
+function bigAppLayout(): Layout {
+  const layout: Layout = {
+    current: new Map(),
+    specs: new Map(),
+    texts: new Map([
+      ["pnpm-workspace.yaml", "packages:\n  - packages/*\n  - apps/*\n"],
+      ["package.json", '{"name":"root"}'],
+      ["apps/web/package.json", '{"name":"@b/web"}'],
+      ["packages/core/package.json", '{"name":"@b/core"}'],
+      ["packages/ui/package.json", '{"name":"@b/ui"}'],
+    ]),
+    tsconfig: { paths: { "@/*": ["apps/web/src/*"] }, baseUrl: "." },
+  };
+  for (const rel of layout.texts.keys()) layout.current.set(rel, fileOf(rel));
+  for (let feature = 0; feature < 60; feature += 1) {
+    for (const sub of ["components", "hooks", "utils"]) {
+      for (let index = 0; index < 100; index += 1) {
+        const rel = `apps/web/src/features/f${feature}/${sub}/file-${index}.tsx`;
+        layout.current.set(rel, fileOf(rel));
+        layout.specs.set(rel, {
+          specifiers: [
+            "react", "zod", `./file-${(index + 1) % 100}`, `../hooks/file-${index}`, `@/features/f${(feature + 1) % 60}/utils/file-${index}`,
+            "@b/core", "@b/ui", `ext-${index % 50}`, "node:path", "clsx", "../../index",
+          ],
+          exports: ["x"],
+        });
+      }
+    }
+  }
+  for (const pkg of ["core", "ui"]) {
+    for (let index = 0; index < 1_000; index += 1) {
+      const rel = `packages/${pkg}/src/m${index % 10}/file-${index}.ts`;
+      layout.current.set(rel, fileOf(rel));
+      layout.specs.set(rel, { specifiers: ["zod", `./file-${index + 1}`], exports: ["x"] });
+    }
+  }
+  return layout;
+}
+
+interface StageBench {
   stage: ExplainerStage;
   current: Map<string, ScannedFile>;
   specs: Map<string, ExtractedImports>;
   settle(): Promise<void>;
   close(): void;
-} {
-  const pad = (value: number, width: number): string => String(value).padStart(width, "0");
-  const texts = new Map<string, string>([
-    ["pnpm-workspace.yaml", "packages:\n  - packages/*\n"],
-    ["package.json", '{"name":"bench-root"}'],
-  ]);
-  const current = new Map<string, ScannedFile>();
-  const specs = new Map<string, ExtractedImports>();
-  const add = (rel: string): void => {
-    current.set(rel, { path: rel, hash: createHash("sha1").update(rel).digest("hex"), size: 1_000, language: languageOf(rel) });
-  };
-  add("pnpm-workspace.yaml");
-  add("package.json");
-  const packages = Math.max(1, Math.round(fileCount / 1_000));
-  for (let pkg = 0; pkg < packages; pkg += 1) {
-    const dir = `packages/pkg-${pad(pkg, 2)}`;
-    texts.set(`${dir}/package.json`, `{"name":"@bench/pkg-${pad(pkg, 2)}","main":"src/index.ts"}`);
-    add(`${dir}/package.json`);
-    add(`${dir}/src/index.ts`);
-    for (let mod = 0; mod < 10; mod += 1) {
-      for (let index = 0; index < 100; index += 1) {
-        const rel = `${dir}/src/mod-${pad(mod, 2)}/file-${pad(index, 3)}.ts`;
-        add(rel);
-        const specifiers = ["zod", `./file-${pad((index + 1) % 100, 3)}.js`, `@bench/pkg-${pad((pkg + 1) % packages, 2)}`];
-        for (let k = 0; k < 5; k += 1) specifiers.push(`ext-${(index * 7 + k) % 300}/deep/x`);
-        specifiers.push("node:fs", "react", "../../index.js");
-        specs.set(rel, { specifiers, exports: Array.from({ length: 9 }, (_, k) => `run${index}_${k}`) });
-      }
-    }
-  }
+}
+
+/** A real stage over `layout`; scan and scanPaths are in-memory fakes that yield like I/O. */
+function stageBench({ current, specs, texts, tsconfig }: Layout): StageBench {
   const manifest = buildManifest([...current.keys()], texts);
   const dbDir = mkdtempSync(path.join(os.tmpdir(), "jevcode-stage-bench-"));
   const db = openDb({ dbPath: path.join(dbDir, "bench.db") });
@@ -181,7 +244,7 @@ function stageBench(fileCount: number): {
       if ((count += 1) % 500 === 0) await turn();
     }
     const files = [...current.values()];
-    return { files, manifest, partial: false, tsconfig: { paths: {}, baseUrl: null }, totalFiles: files.length };
+    return { files, manifest, partial: false, tsconfig, totalFiles: files.length };
   };
   const scanPathsFake: typeof scanPaths = async (_root, paths, options = {}) => {
     await turn();
@@ -240,12 +303,19 @@ function stageBench(fileCount: number): {
   };
 }
 
-const STAGE = stageBench(20_000);
-STAGE.stage.onRepoOpened();
-await STAGE.stage.whenIdle();
-await STAGE.settle();
+async function opened(layout: Layout): Promise<StageBench> {
+  const bench = stageBench(layout);
+  bench.stage.onRepoOpened();
+  await bench.stage.whenIdle();
+  await bench.settle();
+  return bench;
+}
+
+const STAGE = await opened(workspaceLayout(20_000));
+const APP = await opened(bigAppLayout());
 afterAll(() => {
   STAGE.close();
+  APP.close();
   console.log("\nmax synchronous block per iteration (ms), target <= 50:");
   for (const [row, samples] of maxBlocks) {
     const sorted = [...samples].sort((a, b) => a - b);
@@ -255,13 +325,19 @@ afterAll(() => {
 
 let edits = 0;
 let added = 0;
-/** One watcher change through the stage: settle, rebuild, snapshot row; returns the max block. */
-async function stageChange(row: string, change: () => string): Promise<void> {
-  const rel = change();
+/** One watcher batch through the stage: settle, rebuild, snapshot row; records the max block. */
+async function stageChange(target: StageBench, row: string, change: () => string[]): Promise<void> {
+  const paths = change();
   const stop = startBlockMeter();
-  STAGE.stage.onFilesChanged([rel]);
-  await STAGE.settle();
+  target.stage.onFilesChanged(paths);
+  await target.settle();
   recordBlock(row, stop());
+}
+
+function addFile(target: StageBench, rel: string, specifiers: string[]): string {
+  target.current.set(rel, fileOf(rel));
+  target.specs.set(rel, { specifiers, exports: ["added"] });
+  return rel;
 }
 
 describe("explainer stage on 20,000 files (spec §6.1, max synchronous block)", () => {
@@ -269,32 +345,29 @@ describe("explainer stage on 20,000 files (spec §6.1, max synchronous block)", 
   bench(
     "stage: single-file edit, 20,000 files",
     () =>
-      stageChange("single-file edit", () => {
+      stageChange(STAGE, "single-file edit", () => {
         const rel = `packages/pkg-03/src/mod-04/file-${String(edits % 100).padStart(3, "0")}.ts`;
         const file = STAGE.current.get(rel) as ScannedFile;
         STAGE.current.set(rel, { ...file, hash: createHash("sha1").update(`${rel}:${(edits += 1)}`).digest("hex") });
-        return rel;
+        return [rel];
       }),
     options,
   );
   bench(
     "stage: add a file, 20,000 files",
     () =>
-      stageChange("add a file", () => {
-        const rel = `packages/pkg-05/src/mod-02/new-${(added += 1)}.ts`;
-        STAGE.current.set(rel, { path: rel, hash: createHash("sha1").update(rel).digest("hex"), size: 1_000, language: "TypeScript" });
-        STAGE.specs.set(rel, { specifiers: ["zod", "./file-000.js", "@bench/pkg-06", "react"], exports: ["added"] });
-        return rel;
-      }),
+      stageChange(STAGE, "add a file", () => [
+        addFile(STAGE, `packages/pkg-05/src/mod-02/new-${(added += 1)}.ts`, ["zod", "./file-000.js", "@bench/pkg-06", "react"]),
+      ]),
     options,
   );
   bench(
     "stage: remove a file, 20,000 files",
     () =>
-      stageChange("remove a file", () => {
+      stageChange(STAGE, "remove a file", () => {
         const rel = [...STAGE.current.keys()].find((key) => key.startsWith("packages/pkg-07/src/mod-06/file-")) as string;
         STAGE.current.delete(rel);
-        return rel;
+        return [rel];
       }),
     options,
   );
@@ -308,6 +381,37 @@ describe("explainer stage on 20,000 files (spec §6.1, max synchronous block)", 
       recordBlock("full rebuild (rescan)", stop());
     },
     { iterations: 5, warmupIterations: 1, time: 0, warmupTime: 0 },
+  );
+});
+
+describe("explainer stage on one 18,000-file app and entry-less packages (spec §6.1, max synchronous block)", () => {
+  const options = { iterations: 10, warmupIterations: 1, time: 0, warmupTime: 0 };
+  bench(
+    "big app: add a file in the 18,000-file app",
+    () =>
+      stageChange(APP, "big app: add in the app", () => [
+        addFile(APP, `apps/web/src/features/f3/components/new-${(added += 1)}.tsx`, ["react", "zod", "./file-1", "@b/core"]),
+      ]),
+    options,
+  );
+  bench(
+    "big app: add a file to a package every app file imports by its first member",
+    () =>
+      stageChange(APP, "big app: add in packages/core", () => [
+        addFile(APP, `packages/core/src/m3/new-${(added += 1)}.ts`, ["zod"]),
+      ]),
+    options,
+  );
+  bench(
+    "big app: 500-file add batch across the app",
+    () =>
+      stageChange(APP, "big app: 500-file batch", () => {
+        const batch = (added += 1);
+        return Array.from({ length: 500 }, (_, n) =>
+          addFile(APP, `apps/web/src/features/f${n % 60}/hooks/batch-${batch}-${n}.ts`, ["react", "./file-1", "@b/ui"]),
+        );
+      }),
+    { iterations: 3, warmupIterations: 0, time: 0, warmupTime: 0 },
   );
 });
 
