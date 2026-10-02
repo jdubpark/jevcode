@@ -20,14 +20,16 @@ export const NarrativeSentenceSchema = z.object({
 });
 export type NarrativeSentence = z.infer<typeof NarrativeSentenceSchema>;
 
+const ComponentIdSchema = z.string().regex(/^cmp_[0-9a-f]{12}$/);
+
 export const ComponentSchema = z.object({
-  id: z.string().regex(/^cmp_[0-9a-f]{12}$/),
+  id: ComponentIdSchema,
   /** Repo-relative, "/" separators, no trailing slash; "." for a flat repo. */
-  rootPath: z.string().min(1),
+  rootPath: z.string().min(1).max(1024),
   name: z.string().min(1).max(120),
   fileCount: z.number().int().nonnegative(),
   /** Repo-relative, sorted; capped (fileCount carries the true count). */
-  files: z.array(z.string()).max(400),
+  files: z.array(z.string().min(1).max(1024)).max(400),
   /** Main language by file count, e.g. "TypeScript". */
   language: z.string().max(40).nullable(),
   roleGuess: RoleSchema,
@@ -35,8 +37,8 @@ export const ComponentSchema = z.object({
   purpose: z.string().max(140).nullable(),
   provenance: z.enum(["rule", "model"]),
   contentHash: z.string().regex(/^[0-9a-f]{40}$/),
-  externalDeps: z.array(z.object({ name: z.string(), count: z.number().int().positive() })).max(8),
-  entryPoints: z.array(z.string()).max(8),
+  externalDeps: z.array(z.object({ name: z.string().min(1).max(214), count: z.number().int().positive() })).max(8),
+  entryPoints: z.array(z.string().min(1).max(1024)).max(8),
   /** False when no member file has a supported grammar (spec E14). */
   importsAnalyzed: z.boolean(),
 });
@@ -44,8 +46,8 @@ export type Component = z.infer<typeof ComponentSchema>;
 
 export const ComponentEdgeSchema = z.object({
   /** Component ids. */
-  from: z.string(),
-  to: z.string(),
+  from: ComponentIdSchema,
+  to: ComponentIdSchema,
   count: z.number().int().positive(),
   /** "a/b.ts → c/d.ts" */
   examples: z.array(z.string().max(300)).max(3),
@@ -54,7 +56,7 @@ export type ComponentEdge = z.infer<typeof ComponentEdgeSchema>;
 
 export const ExternalDepSchema = z.object({
   name: z.string().min(1).max(214),
-  usedBy: z.array(z.object({ componentId: z.string(), count: z.number().int().positive() })).max(40),
+  usedBy: z.array(z.object({ componentId: ComponentIdSchema, count: z.number().int().positive() })).max(40),
 });
 export type ExternalDep = z.infer<typeof ExternalDepSchema>;
 
@@ -88,9 +90,9 @@ export type OverviewStatus = z.infer<typeof OverviewStatusSchema>;
 
 export const OverviewSnapshotSchema = z.object({
   /** The session the row belongs to; storage requires it to match the event's session. */
-  sessionId: z.string(),
-  repoRoot: z.string().min(1),
-  scanId: z.string().min(1),
+  sessionId: z.string().min(1).max(128),
+  repoRoot: z.string().min(1).max(1024),
+  scanId: z.string().min(1).max(128),
   /** True when the 20,000-file scan cap was hit. */
   partial: z.boolean(),
   counts: z.object({
@@ -99,7 +101,7 @@ export const OverviewSnapshotSchema = z.object({
     totalFiles: z.number().int().nonnegative().optional(),
     components: z.number().int().nonnegative(),
     edges: z.number().int().nonnegative(),
-    languages: z.array(z.string()).max(20),
+    languages: z.array(z.string().max(40)).max(20),
   }),
   /**
    * Ruling R3. Absent on rows written before the field: read as scan "done", and narrator
@@ -113,13 +115,13 @@ export const OverviewSnapshotSchema = z.object({
     .object({ sentences: z.array(NarrativeSentenceSchema).max(8), provenance: z.literal("model") })
     .nullable(),
   /** ISO time. */
-  generatedAt: z.string(),
+  generatedAt: z.string().max(64),
 });
 export type OverviewSnapshot = z.infer<typeof OverviewSnapshotSchema>;
 
 export const ExplainerRecordSchema = z.discriminatedUnion("kind", [
   z.object({
-    sessionId: z.string(),
+    sessionId: z.string().min(1).max(128),
     kind: z.literal("story"),
     sentences: z.array(NarrativeSentenceSchema).min(1).max(6),
     basisSeq: z.number().int().nonnegative(),
@@ -127,21 +129,21 @@ export const ExplainerRecordSchema = z.discriminatedUnion("kind", [
     provenance: z.enum(["rule", "model"]).optional(),
   }),
   z.object({
-    sessionId: z.string(),
+    sessionId: z.string().min(1).max(128),
     kind: z.literal("decision_why"),
-    decisionId: z.string().min(1),
+    decisionId: z.string().min(1).max(128),
     sentence: NarrativeSentenceSchema,
   }),
   z.object({
-    sessionId: z.string(),
+    sessionId: z.string().min(1).max(128),
     kind: z.literal("highlights"),
     basisSeq: z.number().int().nonnegative(),
     components: z
       .array(
         z.object({
-          id: z.string(),
+          id: ComponentIdSchema,
           state: z.enum(["new", "changed", "decision", "failing"]),
-          unitIds: z.array(z.string()).max(50),
+          unitIds: z.array(z.string().min(1).max(128)).max(50),
         }),
       )
       .max(200),
