@@ -18,6 +18,8 @@ export const EVENT_TYPES = [
   "command",
   "semantic_event",
   "telemetry",
+  "overview_snapshot",
+  "explainer",
 ] as const;
 
 export type EventStoreType = (typeof EVENT_TYPES)[number];
@@ -32,6 +34,8 @@ export const TRACE_ROW_TYPES = [
   "decision",
   "validation",
   "jev_decision",
+  "overview_snapshot",
+  "explainer",
 ] as const satisfies readonly EventStoreType[];
 
 export type TraceRowType = (typeof TRACE_ROW_TYPES)[number];
@@ -91,11 +95,14 @@ export const TraceRowsPageSchema = z.object({
 export type TraceRowsPage = z.infer<typeof TraceRowsPageSchema>;
 
 export const TRACE_BUNDLE_FORMAT = "jevcode.trace";
-export const TRACE_BUNDLE_VERSION = 1;
+/** Written by export. v2 adds overview_snapshot and explainer rows; v1 bundles have none. */
+export const TRACE_BUNDLE_VERSION = 2;
+/** Versions the parser reads (console-explainer spec §7). */
+export const TRACE_BUNDLE_VERSIONS_SUPPORTED = [1, 2] as const;
 
 export const TraceBundleSchema = z.object({
   format: z.literal(TRACE_BUNDLE_FORMAT),
-  version: z.literal(TRACE_BUNDLE_VERSION),
+  version: z.union([z.literal(1), z.literal(2)]),
   exportedAt: z.string(),
   redactionCount: z.number().int().nonnegative(),
   session: TraceSessionSummarySchema,

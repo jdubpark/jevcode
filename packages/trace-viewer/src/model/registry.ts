@@ -34,7 +34,11 @@ export const KIND_META: { readonly [K in StepKind]: KindMeta } = {
 
 export type RowDisposition = "consume" | "hidden";
 
-/** consume = TRACE_ROW_TYPES; everything else is only counted in TraceSession.hidden. */
+/**
+ * consume = TRACE_ROW_TYPES; everything else is only counted in TraceSession.hidden.
+ * overview_snapshot (lane 06 P-1) and explainer (lane 07 S-3) are consumed, but until those
+ * tasks add their `case` to accumulate (fold.ts) the default branch counts them in hidden.
+ */
 export const ENVELOPE_RULES: { readonly [K in EventStoreType]: RowDisposition } = {
   agent_event: "consume",
   evidence_fact: "consume",
@@ -50,6 +54,8 @@ export const ENVELOPE_RULES: { readonly [K in EventStoreType]: RowDisposition } 
   command: "hidden",
   semantic_event: "hidden",
   telemetry: "hidden",
+  overview_snapshot: "consume",
+  explainer: "consume",
 };
 
 export interface AgentEventRule {

@@ -5,7 +5,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 import type BetterSqlite3 from "better-sqlite3";
-import type { z } from "zod";
+import { z } from "zod";
 
 import {
   ChangeUnitSchema,
@@ -56,6 +56,10 @@ import { LATEST_SCHEMA_VERSION, MIGRATIONS } from "./migrations.js";
 export { EVENT_TYPES };
 export type { EventStoreType };
 
+// K-1 placeholder (console-explainer lane 01): the overview_snapshot and explainer
+// schemas land in K-2 and replace this in K-4. Until then storage refuses both types.
+const NOT_WRITABLE_YET = z.never();
+
 const eventStoreSchemas = {
   agent_event: NormalizedAgentEventSchema,
   evidence_fact: EvidenceFactSchema,
@@ -71,6 +75,8 @@ const eventStoreSchemas = {
   command: CommandRecordSchema,
   semantic_event: SemanticEventRecordSchema,
   telemetry: TelemetryEventSchema,
+  overview_snapshot: NOT_WRITABLE_YET,
+  explainer: NOT_WRITABLE_YET,
 } as const satisfies Record<EventStoreType, z.ZodTypeAny>;
 
 export function isEventStoreType(value: string): value is EventStoreType {

@@ -105,7 +105,7 @@ describe("trace bundle", () => {
     expect(bundle.rows[3]?.factId).toMatch(/^fact_[0-9a-f]{16}$/);
     expect(bundle).toMatchObject({
       format: "jevcode.trace",
-      version: 1,
+      version: 2,
       exportedAt: "2026-09-28T12:00:00.000Z",
       session: { sessionId: SESSION, lastEventSeq: 5, state: "starting" },
     });
