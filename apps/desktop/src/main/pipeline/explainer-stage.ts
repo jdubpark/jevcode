@@ -575,6 +575,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     if (!stale()) await publishIndex(repo, result.value, stale);
   }
 
+  /** The index no longer matches `repo` (it changed without a rebuild): the next rebuild starts over. */
+  function dropIndexOf(repo: RepoModel): void {
+    if (index?.model === repo) index = null;
+  }
+
   /** An incremental rebuild (spec §6.1: only dirty components are recomputed), else a full one. */
   async function rebuildChanged(repo: RepoModel, changes: FileChanges, buildGeneration: number): Promise<void> {
     const current = index;
@@ -641,6 +646,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
           { state: "failed", scanned: progress.done, total: progress.total, error: clipText(message, SCAN_ERROR_MAX) },
           `failed:${scanGeneration}`,
         );
+        // The previous model stays. If it has no index (its build was cancelled by this scan, or
+        // a change landed in it while this scan ran), rebuild and publish it, so the map is the
+        // last successful scan's, with every change applied to it.
+        const previous = model;
+        if (previous !== null && index === null) rebuildChain = rebuildChain.then(() => fullBuild(previous, scanGeneration));
         // Changes queued during the scan still apply: incrementally to the previous model, or
         // as a new scan when a manifest changed.
         if (dirty.size > 0) scheduleSettle();
@@ -664,11 +674,18 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       try {
         changes = await applyFileChanges(deps.repoRoot, target, paths, { scanPaths: deps.scanPaths, extract });
       } catch (error) {
+        // The read may have stopped after some files were parsed into the model.
+        dropIndexOf(target);
         deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
         return;
       }
-      if (disposed || targetGeneration !== generation || model !== target || !hasFileChanges(changes)) return;
-      await rebuildChanged(target, changes, targetGeneration);
+      if (disposed || targetGeneration !== generation || model !== target) {
+        // The model changed but this rebuild is skipped: a rescan replaces the model, or, when it
+        // fails, rebuilds this one from scratch.
+        dropIndexOf(target);
+        return;
+      }
+      if (hasFileChanges(changes)) await rebuildChanged(target, changes, targetGeneration);
     });
   }
 
