@@ -91,3 +91,44 @@ export function clipText(text: string, max: number): string {
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
   return `${text.slice(0, end)}…`;
 }
+
+
+const SKIP_DIRS: ReadonlySet<string> = new Set(["node_modules", "dist", "build", "out", ".next", "coverage", "vendor", ".git"]);
+const GENERATED_FILES: ReadonlySet<string> = new Set([
+  "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lockb",
+  "Cargo.lock", "poetry.lock", "Gemfile.lock", "composer.lock", "go.sum",
+]);
+const GENERATED_SUFFIX = /\.(min\.js|min\.css|map|snap)$/i;
+const BINARY_EXTENSION =
+  /\.(png|jpe?g|gif|webp|bmp|ico|icns|tiff?|psd|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|wasm|node|so|dylib|dll|exe|bin|o|a|class|pyc|woff2?|ttf|otf|eot|mp3|mp4|m4a|mov|avi|wav|ogg|webm|flac|sqlite3?|db)$/i;
+const SECRET_NAME =
+  /^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?|.+\.(pem|key|p12|pfx|jks|keystore|asc|gpg))$/i;
+const SECRET_TEMPLATE = /^\.env\.(example|sample|template)$/i;
+
+/**
+ * Spec §5.1 and §10: dependency and build output directories, lockfiles and minified or
+ * generated files, binaries by extension, and secret-like files are never read or mapped.
+ */
+export function isSkippedPath(path: string): boolean {
+  const segments = path.split("/");
+  if (segments.slice(0, -1).some((segment) => SKIP_DIRS.has(segment))) return true;
+  const base = segments[segments.length - 1] ?? "";
+  if (GENERATED_FILES.has(base) || GENERATED_SUFFIX.test(base) || BINARY_EXTENSION.test(base)) return true;
+  return SECRET_NAME.test(base) && !SECRET_TEMPLATE.test(base);
+}
+
+/** Resolves "." and ".." segments. Returns null for absolute paths and paths that leave the root; "" is the root. */
+export function normalizePath(path: string): string | null {
+  if (path.startsWith("/")) return null;
+  const out: string[] = [];
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (out.length === 0) return null;
+      out.pop();
+      continue;
+    }
+    out.push(segment);
+  }
+  return out.join("/");
+}
