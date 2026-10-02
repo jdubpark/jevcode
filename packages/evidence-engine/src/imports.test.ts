@@ -177,7 +177,7 @@ describe("resolveSpecifier trace (incremental resolution)", () => {
       const target = somePath();
       const from = somePath();
       const specifier = pick(SPECIFIERS);
-      const config = {
+      const config: Omit<ResolveContext, "files"> = {
         tsPaths: random() < 0.5 ? { "@app/*": ["src/*"], "~cfg": ["src/util.ts", "lib/x.js"] } : {},
         baseUrl: pick([".", null, "src"]),
         workspacePackages: { "@fx/core": "packages/core", "@fx/ui": "packages/ui" },
