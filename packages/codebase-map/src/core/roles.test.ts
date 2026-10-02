@@ -2,7 +2,7 @@ import type { ExternalDep, Role } from "@jevcode/contracts";
 import { describe, expect, it } from "vitest";
 
 import { componentIdFor, type ComponentDraft } from "./componentize.js";
-import { guessRole } from "./roles.js";
+import { guessRole, guessRoles } from "./roles.js";
 
 function draft(rootPath: string, name: string, files: string[] = [`${rootPath}/index.ts`]): ComponentDraft {
   return {
@@ -56,5 +56,11 @@ describe("guessRole (spec §5.4)", () => {
     const target = draft("packages/model", "@x/model");
     const other = draft("packages/web", "@x/web");
     expect(guessRole(target, uses(other, ["react", "better-sqlite3"]))).toBe("domain");
+  });
+
+  it("guessRoles gives every draft its guessRole over the same externals", () => {
+    const drafts = CASES.map(([, target]) => target);
+    const externals = CASES.flatMap(([, target, imports]) => uses(target, imports));
+    expect(guessRoles(drafts, externals)).toEqual(new Map(drafts.map((target) => [target.id, guessRole(target, externals)])));
   });
 });

@@ -27,6 +27,24 @@ export function guessRole(draft: ComponentDraft, externals: readonly ExternalDep
   const imported = new Set(
     externals.filter((dep) => dep.usedBy.some((use) => use.componentId === draft.id)).map((dep) => dep.name),
   );
+  return roleOf(draft, imported);
+}
+
+/** `guessRole` for every draft, reading `externals` once instead of once per draft. */
+export function guessRoles(drafts: readonly ComponentDraft[], externals: readonly ExternalDep[]): Map<string, Role> {
+  const importedBy = new Map<string, Set<string>>();
+  for (const dep of externals) {
+    for (const use of dep.usedBy) {
+      const names = importedBy.get(use.componentId);
+      if (names === undefined) importedBy.set(use.componentId, new Set([dep.name]));
+      else names.add(dep.name);
+    }
+  }
+  const none: ReadonlySet<string> = new Set();
+  return new Map(drafts.map((draft) => [draft.id, roleOf(draft, importedBy.get(draft.id) ?? none)]));
+}
+
+function roleOf(draft: ComponentDraft, imported: ReadonlySet<string>): Role {
   const name = tokens(draft.name);
   const pathOrName = new Set([...tokens(draft.rootPath), ...name]);
   const imports = (names: readonly string[]): boolean => names.some((pkg) => imported.has(pkg));

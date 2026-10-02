@@ -4,7 +4,7 @@ import type { Component, ComponentEdge, ExternalDep, OverviewSnapshot, Role } fr
 import { componentIdFor, type ComponentDraft } from "./componentize.js";
 import { MAX_COMPONENT_EDGES, MAX_EDGE_EXAMPLES, MAX_EXAMPLE_LENGTH, MAX_EXTERNALS, MAX_USED_BY, compareEdges } from "./edges.js";
 import { clipText, compareText, mainLanguage } from "./paths.js";
-import { guessRole } from "./roles.js";
+import { guessRoles } from "./roles.js";
 import { sha1Hex, utf8ByteLength } from "./sha1.js";
 
 export const MAX_COMPONENTS = 200;
@@ -190,8 +190,9 @@ export function assembleSnapshot(input: AssembleSnapshotInput): OverviewSnapshot
   const externals = mergeExternals(input.externals, remap, valid);
   const depsById = externalDepsByComponent(externals);
 
+  const roles = guessRoles(capped.kept, input.externals);
   const components: Component[] = capped.kept.map((draft) => {
-    const roleGuess: Role = draft.id === capped.otherId ? "domain" : guessRole(draft, input.externals);
+    const roleGuess: Role = draft.id === capped.otherId ? "domain" : (roles.get(draft.id) as Role);
     const text = input.text.get(draft.id);
     return {
       id: draft.id,
