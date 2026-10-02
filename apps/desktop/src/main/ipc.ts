@@ -24,6 +24,7 @@ import {
 } from "../shared/local-channels.js";
 import {
   AGENT_MODEL_PREF_KEY,
+  EXPLAIN_WITH_MODEL_PREF_KEY,
   REASONING_EFFORT_PREF_KEY,
   USAGE_BUDGET_PREF_KEY,
   applyPreferencesPatch,
@@ -240,6 +241,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.db.setPreference(REASONING_EFFORT_PREF_KEY, next.reasoningEffort);
     // null marks the "unknown" state; storage has no deletePreference.
     deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
+    deps.db.setPreference(EXPLAIN_WITH_MODEL_PREF_KEY, next.explainWithModel);
     sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, next);
     return next;
   });

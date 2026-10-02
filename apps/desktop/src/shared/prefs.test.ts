@@ -8,6 +8,7 @@ import {
   applyPreferencesPatch,
   budgetFractionNumber,
   normalizeBudgetFraction,
+  normalizeExplainWithModel,
   normalizeModel,
   normalizeReasoningEffort,
   parseBudgetNumber,
@@ -31,7 +32,7 @@ describe("agent preference helpers", () => {
     ]);
   });
 
-  it("reads defaults when storage has nothing", () => {
+  it("reads defaults when storage has nothing; explaining with a model is on by default (E15)", () => {
     expect(readAgentPreferences(() => undefined)).toEqual(
       DEFAULT_AGENT_PREFERENCES,
     );
@@ -39,6 +40,7 @@ describe("agent preference helpers", () => {
       model: "auto",
       reasoningEffort: "auto",
       usageBudgetFraction: null,
+      explainWithModel: true,
     });
   });
 
@@ -47,21 +49,32 @@ describe("agent preference helpers", () => {
       ["agent.model", "gpt-5.6-luna"],
       ["agent.reasoningEffort", "xhigh"],
       ["agent.usageBudgetFraction", "0.25"],
+      ["explainer.withModel", false],
     ]);
     expect(readAgentPreferences((key) => store.get(key))).toEqual({
       model: "gpt-5.6-luna",
       reasoningEffort: "xhigh",
       usageBudgetFraction: "0.25",
+      explainWithModel: false,
     });
 
     const invalid = new Map<string, unknown>([
       ["agent.model", "gpt-9"],
       ["agent.reasoningEffort", "extreme"],
       ["agent.usageBudgetFraction", "2.0"],
+      ["explainer.withModel", "no"],
     ]);
     expect(readAgentPreferences((key) => invalid.get(key))).toEqual(
       DEFAULT_AGENT_PREFERENCES,
     );
+  });
+
+  it("reads only a stored boolean as the explain setting", () => {
+    expect(normalizeExplainWithModel(false)).toBe(false);
+    expect(normalizeExplainWithModel(true)).toBe(true);
+    for (const value of [undefined, null, 0, "false", "off", {}]) {
+      expect(normalizeExplainWithModel(value), String(value)).toBe(true);
+    }
   });
 
   it("normalizes model and effort values", () => {
@@ -100,11 +113,13 @@ describe("agent preference helpers", () => {
       model: "auto" as const,
       reasoningEffort: "medium" as const,
       usageBudgetFraction: "0.50",
+      explainWithModel: true,
     };
     expect(applyPreferencesPatch(current, { model: "gpt-5.6-sol" })).toEqual({
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       usageBudgetFraction: "0.50",
+      explainWithModel: true,
     });
     expect(
       applyPreferencesPatch(current, { usageBudgetFraction: null }),
@@ -112,6 +127,11 @@ describe("agent preference helpers", () => {
       model: "auto",
       reasoningEffort: "medium",
       usageBudgetFraction: null,
+      explainWithModel: true,
+    });
+    expect(applyPreferencesPatch(current, { explainWithModel: false })).toEqual({
+      ...current,
+      explainWithModel: false,
     });
     expect(applyPreferencesPatch(current, {})).toEqual(current);
   });
