@@ -122,6 +122,8 @@ interface Harness {
     afterProgress: ((index: number) => void) | null;
     /** Holds scanPaths (the incremental rebuild) until it resolves. */
     pathsGate: Promise<void> | null;
+    /** scanPaths throws this after it parsed the files it read, as a read failure halfway would. */
+    pathsFail: Error | null;
     manifest: WorkspaceManifest;
   };
   deps: ExplainerStageDeps;
@@ -135,7 +137,7 @@ function harness(overrides: Partial<ExplainerStageDeps> = {}, db: JevcodeDb = cr
   const hints: [string, number][] = [];
   const logs: ExplainerLogEvent[] = [];
   const statuses: ExplainerStatus[] = [];
-  const control: Harness["control"] = { gate: null, fail: null, afterProgress: null, pathsGate: null, manifest: MANIFEST };
+  const control: Harness["control"] = { gate: null, fail: null, afterProgress: null, pathsGate: null, pathsFail: null, manifest: MANIFEST };
   const scan: typeof scanRepo = async (_root, options: ScanOptions = {}) => {
     calls.scan += 1;
     if (control.gate !== null) await control.gate;
@@ -165,6 +167,7 @@ function harness(overrides: Partial<ExplainerStageDeps> = {}, db: JevcodeDb = cr
       files.push(file);
       await options.visit?.(file, text);
     }
+    if (control.pathsFail !== null) throw control.pathsFail;
     return { files, gone };
   };
   const extract: typeof extractImports = async (filePath, source) => {
@@ -1113,6 +1116,105 @@ describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
     expect(rows[1]?.snapshot.status?.scan.state).toBe("done");
     expect(h.calls.scan).toBe(2);
   });
+
+  it("rebuilds from scratch a model a change reached while a failing rescan ran (no stale index)", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    // An add is being read when a rescan starts; the add lands in the model, the rescan fails.
+    const paths = deferred();
+    h.control.pathsGate = paths.promise;
+    h.sources["packages/db/src/new.ts"] = 'import { user } from "@fx/core";\nexport const n = user;\n';
+    stage.onFilesChanged(["packages/db/src/new.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await flush();
+    h.control.fail = new Error("git ls-files failed");
+    stage.rescan();
+    paths.resolve();
+    h.control.pathsGate = null;
+    await stage.whenIdle();
+    h.control.fail = null;
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    // A later edit applies incrementally; the map must equal a fresh scan of the same files.
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    const last = snapshotRows(h.db, SESSION).at(-1)?.snapshot as OverviewSnapshot;
+    expect(last.status?.scan.state).toBe("failed");
+
+    const fresh = harness({ sessionId: () => SESSION_2 });
+    Object.assign(fresh.sources, h.sources);
+    const freshStage = start(fresh);
+    freshStage.onRepoOpened();
+    await freshStage.whenIdle();
+    const reference = snapshotRows(fresh.db, SESSION_2)[0]?.snapshot as OverviewSnapshot;
+    expect(last.components).toEqual(reference.components);
+    expect(last.edges).toEqual(reference.edges);
+    expect(last.counts).toEqual(reference.counts);
+    expect(last.components.find((c) => c.id === DB)?.files).toContain("packages/db/src/new.ts");
+  });
+
+  it("rebuilds from scratch after a read that failed halfway parsed files into the model", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    h.sources["packages/db/src/index.ts"] = 'import Database from "better-sqlite3";\nexport const db = 1;\n';
+    h.control.pathsFail = new Error("EIO: read failed");
+    stage.onFilesChanged(["packages/db/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    expect(h.logs).toContainEqual({ kind: "error", where: "rebuild", message: "EIO: read failed" });
+    h.control.pathsFail = null;
+
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    // packages/db no longer imports @fx/core: the edge is gone, as in the parsed model.
+    expect(snapshotRows(h.db, SESSION).at(-1)?.snapshot.edges).toEqual([]);
+  });
+
+  it("publishes the last successful scan's map when a rescan that cancelled its build fails", async () => {
+    let stage: ExplainerStage | null = null;
+    let rescanned = false;
+    const h = harness({
+      log: (event) => {
+        if (event.kind !== "scan" || rescanned) return;
+        rescanned = true;
+        // Runs after the first slice of the 20,000-file build, which then stops.
+        setImmediate(() => {
+          h.control.fail = new Error("git ls-files failed");
+          stage?.rescan();
+        });
+      },
+    });
+    for (let index = 0; index < 20_000; index += 1) {
+      h.sources[`packages/core/src/mod-${Math.floor(index / 100)}/file-${index % 100}.ts`] = `export const v${index} = ${index};\n`;
+    }
+    stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    expect(rescanned).toBe(true);
+    expect(stage.status().phase).toBe("failed");
+    const last = snapshotRows(h.db, SESSION).at(-1)?.snapshot as OverviewSnapshot;
+    expect(last.status?.scan.state).toBe("failed");
+    expect(last.counts.files).toBe(20_006);
+    expect(last.components.length).toBeGreaterThan(0);
+  }, 60_000);
 
   it("starts no second scan for a session that starts during a scan, and writes that session a row", async () => {
     let current: string | null = null;
