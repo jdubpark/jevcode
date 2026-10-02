@@ -120,4 +120,15 @@ describe("createStaticBundleSource", () => {
     await expect(source.payloads(Array.from({ length: 51 }, (_, i) => i + 1))).rejects.toBeInstanceOf(TraceSourceError);
     await expect(source.payloads(Array.from({ length: 51 }, (_, i) => i + 1))).rejects.toMatchObject({ channel: "bundle", code: "SOURCE_FAILED" });
   });
+
+  it("pushes a hint with the last released seq on every drip tick, until unsubscribed", () => {
+    const source = createStaticBundleSource(bundle(), { drip: { rowsPerTick: 2, intervalMs: 100, manual: true } });
+    const seen: number[] = [];
+    const off = source.onRowsAvailable((lastSeq) => seen.push(lastSeq));
+    source.tick();
+    source.tick();
+    off();
+    source.tick();
+    expect(seen).toEqual([4, 7]);
+  });
 });
