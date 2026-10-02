@@ -150,9 +150,6 @@ export class PipelineRuntime {
           onRecord: (record) => {
             this.ingestRecord(sessionId, record);
           },
-          onTerminal: (data) => {
-            this.opts.terminal?.data(sessionId, data);
-          },
         },
       });
       adapterKind = "mock";
@@ -172,9 +169,6 @@ export class PipelineRuntime {
           hooks: {
             onRecord: (record) => {
               this.ingestRecord(sessionId, record);
-            },
-            onTerminal: (data) => {
-              this.opts.terminal?.data(sessionId, data);
             },
           },
         });
@@ -358,10 +352,6 @@ export class PipelineRuntime {
       this.opts.db.appendAgentEvent(sessionId, event);
       this.recordTelemetry(session, "agent_event_count", {});
       this.opts.emit(MainToRendererChannels.agentEvent, event);
-      const terminalLine = formatAgentEventForTerminal(event);
-      if (terminalLine !== null) {
-        this.opts.terminal?.data(sessionId, terminalLine);
-      }
       session.coordinator.ingest(event);
       this.observeAgentEventForEvidence(session, event);
       this.applyTerminalAgentState(session, event);
@@ -513,10 +503,6 @@ export class PipelineRuntime {
       // ingestRecord, which would rerun the terminal transition.
       this.opts.db.appendAgentEvent(sessionId, failed);
       this.opts.emit(MainToRendererChannels.agentEvent, failed);
-      this.opts.terminal?.data(
-        sessionId,
-        "[agent] failed: resume budget exhausted",
-      );
       this.emitAgentState(session);
       this.emitSessionState(sessionId);
       return;
@@ -1377,37 +1363,6 @@ function buildDecisionInstruction(
   return `${decision.title} — the developer chose ${
     entries.length > 0 ? entries.join(", ") : "to delegate"
   }. Continue the task accordingly.`;
-}
-
-function formatAgentEventForTerminal(event: NormalizedAgentEvent): string | null {
-  switch (event.type) {
-    case "agent_message":
-      return `[agent] ${event.text.trim()}`;
-    case "command_started":
-      return `$ ${event.command}`;
-    case "command_completed":
-      return `(exit ${event.exitCode})`;
-    case "file_read":
-      return `read ${event.path}`;
-    case "file_changed":
-      return `changed ${event.path}`;
-    case "tool_started":
-      return `[tool] ${event.tool}`;
-    case "agent_completed":
-      return "[agent] completed";
-    case "agent_failed":
-      return `[agent] failed: ${event.error}`;
-    case "agent_interrupted":
-      return event.reason === "stop"
-        ? "[agent] stopped"
-        : event.reason === "steer"
-          ? "[agent] redirected"
-          : "[agent] paused";
-    case "approval_requested":
-      return `[approval] ${event.command}`;
-    default:
-      return null;
-  }
 }
 
 function recordType(record: IngestibleRecord): string {

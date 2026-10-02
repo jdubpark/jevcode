@@ -1103,11 +1103,12 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
   async function startScripted(
     name: string,
     entries: MockScriptEntry[],
+    sink: { ensure(sessionId: string, cwd: string): void } = { ensure: () => {} },
   ): Promise<{
     db: JevcodeDb;
     runtime: PipelineRuntime;
     sessionId: string;
-    terminal: string[];
+    channels: Map<string, unknown[]>;
   }> {
     const dir = path.join(repoRoot, `apps/desktop/.test-tmp/${name}`);
     rmSync(dir, { recursive: true, force: true });
@@ -1121,20 +1122,14 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       baseCommit: "test",
     });
     db.createSession({ id: sessionId, repoId: "repo-lifecycle", prompt: "demo" });
-    const terminal: string[] = [];
-    const { emit } = collectEmit();
+    const { emit, collected } = collectEmit();
     const runtime = new PipelineRuntime({
       db,
       emit,
       evidence: false,
       jevClient: new DegradeClient(),
       log: () => {},
-      terminal: {
-        data: (_sessionId, data) => {
-          terminal.push(data);
-        },
-        ensure: () => {},
-      },
+      terminal: sink,
     });
     await runtime.startSession({
       sessionId,
@@ -1144,11 +1139,52 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       agentMode: "mock",
       mockScript: { sessionId, repoPath: dir, cwd: dir, prompt: "demo", entries },
     });
-    return { db, runtime, sessionId, terminal };
+    return { db, runtime, sessionId, channels: collected.channels };
   }
 
+  it("agent events never reach the user's shell (spec E7)", async () => {
+    const now = () => new Date().toISOString();
+    const writes: string[] = [];
+    // A sink that still has data(): before D-5 the runtime wrote agent one-liners through it.
+    const sink = {
+      ensure: () => {},
+      data: (_sessionId: string, data: string) => {
+        writes.push(data);
+      },
+    };
+    const sessionId = "sess-shell-separation";
+    const { db, runtime, channels } = await startScripted(
+      "shell-separation",
+      [
+        { kind: "agent", event: { type: "agent_message", sessionId, role: "assistant", text: "Reading the router", ts: now() } },
+        { kind: "agent", event: { type: "command_started", sessionId, command: "pnpm test", ts: now() } },
+        { kind: "agent", event: { type: "command_completed", sessionId, command: "pnpm test", exitCode: 1, stdout: "", stderr: "1 failed", ts: now() } },
+        { kind: "terminal", data: "$ pnpm test\r\n" },
+        { kind: "agent", event: { type: "file_changed", sessionId, path: "src/router.ts", ts: now() } },
+      ],
+      sink,
+    );
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "file_changed"),
+        8000,
+        "scripted events stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      expect(writes).toEqual([]);
+      expect(channels.get("terminal:data") ?? []).toEqual([]);
+      // The Console still has every event: they are trace rows.
+      expect(db.listAgentEvents(sessionId).map((event) => event.type)).toEqual(
+        expect.arrayContaining(["agent_message", "command_started", "command_completed", "file_changed", "agent_interrupted"]),
+      );
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+
   it("stopping a running session records one agent_interrupted, leaves it paused and releases it by default", async () => {
-    const { db, runtime, sessionId, terminal } = await startScripted("stop-pauses", []);
+    const { db, runtime, sessionId } = await startScripted("stop-pauses", []);
     try {
       await waitFor(
         () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
@@ -1168,7 +1204,6 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       expect(stored?.state).toBe("paused");
       expect(stored?.endedAt).toBeNull();
       expect(stored?.executionClaimTs).not.toBeNull();
-      expect(terminal).toContain("[agent] stopped");
       // teardown defaults to true (repo close, replay CLI, soak).
       expect(runtime.hasSession(sessionId)).toBe(false);
     } finally {

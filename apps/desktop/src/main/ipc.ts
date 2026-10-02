@@ -381,7 +381,6 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           ensure: (sessionId, cwd) => {
             deps.terminals.ensure(sessionId, { cwd });
           },
-          data: (_sessionId, _data) => {},
         },
         activeSessionId: () => deps.state.session?.id ?? null,
         repoPath: () => deps.state.info?.gitRoot ?? null,

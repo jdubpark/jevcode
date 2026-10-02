@@ -184,11 +184,8 @@ app.whenReady().then(() => {
     sendToRenderer(MainToRendererChannels.terminalData, { sessionId, data });
   });
 
+  // The person's shell only: the pipeline may start it, never write agent text into it (spec E7).
   const terminalSink: TerminalSink = {
-    data: (sessionId, data) => {
-      sendToRenderer(MainToRendererChannels.terminalData, { sessionId, data });
-      terminals?.scrollback(sessionId).push(data);
-    },
     ensure: (sessionId, cwd) => {
       terminals?.ensure(sessionId, { cwd });
     },
