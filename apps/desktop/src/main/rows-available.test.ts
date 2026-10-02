@@ -167,6 +167,59 @@ describe("createRowsAvailableEmitter", () => {
     expect(windows.ok?.sent.map((entry) => entry.payload.lastSeq)).toEqual([2]);
   });
 
+  it("a throwing targets() in the trailing timer does not throw out of the timer and logs", () => {
+    const clock = new VirtualClock();
+    const main = fakeContents(clock, 1);
+    const logs: string[] = [];
+    let explode = false;
+    const emitter = createRowsAvailableEmitter({
+      targets: () => {
+        if (explode) throw new Error("webContents.fromId failed");
+        return [{ kind: "main", contents: main }];
+      },
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      log: (message) => logs.push(message),
+    });
+    emitter.notify("sess_a", 1);
+    clock.advanceTo(10);
+    emitter.notify("sess_a", 2);
+    explode = true;
+    expect(() => clock.advanceTo(100)).not.toThrow();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("webContents.fromId failed");
+    explode = false;
+    clock.advanceTo(300);
+    emitter.notify("sess_a", 3);
+    expect(main.sent.map((entry) => entry.payload.lastSeq)).toEqual([1, 3]);
+  });
+
+  it("sends nothing and throws nothing when a window is destroyed between scheduling and the trailing send", () => {
+    const { clock, main, emitter } = setup();
+    emitter.notify("sess_a", 1);
+    clock.advanceTo(10);
+    emitter.notify("sess_a", 2);
+    main.destroyed = true;
+    expect(() => clock.advanceTo(100)).not.toThrow();
+    expect(main.sent.map((entry) => entry.payload.lastSeq)).toEqual([1]);
+  });
+
+  it("prunes a session's slot once its timer fired and a quiet interval passed", () => {
+    const { clock, main, emitter } = setup();
+    emitter.notify("sess_a", 5);
+    clock.advanceTo(10);
+    emitter.notify("sess_a", 6);
+    clock.advanceTo(200);
+    // Another session's activity after the quiet interval sweeps the idle slot.
+    emitter.notify("sess_b", 1);
+    // A pruned slot has no memory of seq 6, so a restarted counter is announced again.
+    emitter.notify("sess_a", 2);
+    expect(main.sent.filter((entry) => entry.payload.sessionId === "sess_a").map((entry) => entry.payload.lastSeq)).toEqual([
+      5, 6, 2,
+    ]);
+  });
+
   it("dispose cancels a pending trailing hint", () => {
     const { clock, main, emitter } = setup();
     emitter.notify("sess_a", 1);
