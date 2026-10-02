@@ -15,6 +15,17 @@ export function compareEdges(a: ComponentEdge, b: ComponentEdge): number {
   return b.count - a.count || compareText(a.from, b.from) || compareText(a.to, b.to);
 }
 
+/** Component edges after the 1,000 cap, and how many there were before it (`counts.edges`). */
+export interface CappedEdges {
+  edges: ComponentEdge[];
+  total: number;
+}
+
+/** Heaviest first, capped at 1,000; `total` is the number of component pairs before the cap. */
+export function capComponentEdges(edges: readonly ComponentEdge[]): CappedEdges {
+  return { edges: [...edges].sort(compareEdges).slice(0, MAX_COMPONENT_EDGES), total: edges.length };
+}
+
 /**
  * Spec §5.3: file-level imports collapse into component pairs. `count` is the number of distinct
  * importing/imported file pairs; examples are the first three pairs in path order; self-edges
@@ -24,6 +35,14 @@ export function aggregateEdges(
   edges: readonly ImportEdge[],
   componentOfFile: (path: string) => string | undefined,
 ): ComponentEdge[] {
+  return aggregateComponentEdges(edges, componentOfFile).edges;
+}
+
+/** `aggregateEdges` plus the component pair count before the 1,000 cap. */
+export function aggregateComponentEdges(
+  edges: readonly ImportEdge[],
+  componentOfFile: (path: string) => string | undefined,
+): CappedEdges {
   const pairs = new Map<string, ImportEdge>();
   for (const edge of edges) pairs.set(`${edge.from}\u0000${edge.to}`, edge);
   const ordered = [...pairs.values()].sort((a, b) => compareText(a.from, b.from) || compareText(a.to, b.to));
@@ -43,7 +62,7 @@ export function aggregateEdges(
       entry.examples.push(clipText(`${edge.from} → ${edge.to}`, MAX_EXAMPLE_LENGTH));
     }
   }
-  return [...byKey.values()].sort(compareEdges).slice(0, MAX_COMPONENT_EDGES);
+  return capComponentEdges([...byKey.values()]);
 }
 
 /**

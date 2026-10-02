@@ -56,6 +56,7 @@ function snapshotOf(repoRoot: string, built: ReturnType<typeof buildOverview>, p
     partial,
     drafts: built.drafts,
     edges: built.edges,
+    totalEdges: built.totalEdges,
     externals: built.externals,
     text: new Map(),
     narrative: null,
@@ -71,6 +72,7 @@ describe("buildOverview on a pnpm workspace fixture (spec §5, §12)", () => {
     const built = buildOverview(model);
     const snapshot = snapshotOf(root, built, model.partial);
     expect(OverviewSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect([built.totalEdges, snapshot.counts.edges]).toEqual([3, 3]);
     expect(snapshot.components.map((c) => [c.rootPath, c.name, c.roleGuess, c.importsAnalyzed])).toEqual([
       [".", "config", "config", true],
       ["apps/web", "@fx/web", "ui", true],

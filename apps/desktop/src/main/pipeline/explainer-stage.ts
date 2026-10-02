@@ -435,6 +435,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         drafts: overview.drafts,
         totalFiles,
         edges: overview.edges,
+        totalEdges: overview.totalEdges,
         externals: overview.externals,
         text,
         narrative: null,
