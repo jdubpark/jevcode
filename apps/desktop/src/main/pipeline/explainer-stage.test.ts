@@ -407,6 +407,41 @@ describe("ExplainerStage incremental rebuilds (spec §5.1, §6.1)", () => {
     expect(after.externals).toEqual(freshSnapshot.externals);
   });
 
+  it("applies added and removed files incrementally and equals a fresh scan", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    const extractsBefore = h.calls.extract.length;
+
+    h.sources["packages/db/src/extra.ts"] = 'import { user } from "@fx/core";\nimport { z } from "zod";\nexport const extra = user;\n';
+    h.sources["packages/core/src/user.ts"] = "export const user = 1;\n";
+    delete h.sources["packages/core/src/index.ts"];
+    stage.onFilesChanged(["packages/db/src/extra.ts", "packages/core/src/user.ts", "packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    expect(h.calls.scan).toBe(1);
+    expect(h.calls.extract.slice(extractsBefore).sort()).toEqual(["packages/core/src/user.ts", "packages/db/src/extra.ts"]);
+    const after = snapshotRows(h.db, SESSION).at(-1)?.snapshot as OverviewSnapshot;
+    const fresh = harness({ sessionId: () => SESSION_2 });
+    for (const key of Object.keys(fresh.sources)) delete fresh.sources[key];
+    Object.assign(fresh.sources, h.sources);
+    const freshStage = start(fresh);
+    freshStage.onRepoOpened();
+    await freshStage.whenIdle();
+    const freshSnapshot = snapshotRows(fresh.db, SESSION_2)[0]?.snapshot as OverviewSnapshot;
+    expect(after.components).toEqual(freshSnapshot.components);
+    expect(after.edges).toEqual(freshSnapshot.edges);
+    expect(after.externals).toEqual(freshSnapshot.externals);
+    expect(after.counts).toEqual(freshSnapshot.counts);
+    // With its index.ts gone, "@fx/core" resolves to the package's first member file.
+    expect(after.edges.map((edge) => [edge.from, edge.to, edge.examples])).toEqual([
+      [DB, CORE, ["packages/db/src/extra.ts → packages/core/package.json", "packages/db/src/index.ts → packages/core/package.json"]],
+    ]);
+  });
+
   it("waits for changes to settle and writes a changed snapshot at most once per 2 s", async () => {
     const h = harness();
     const stage = start(h);
@@ -457,6 +492,33 @@ describe("ExplainerStage incremental rebuilds (spec §5.1, §6.1)", () => {
     expect(h.calls.scan).toBe(2);
     expect(h.calls.scanPaths).toEqual([]);
   });
+
+  it("yields to the event loop while it builds the overview of a 20,000-file scan", async () => {
+    let ticks = 0;
+    const at: Record<string, number> = {};
+    const h = harness({
+      log: (event) => {
+        at[event.kind] ??= ticks;
+      },
+    });
+    for (let index = 0; index < 20_000; index += 1) {
+      const dir = `packages/core/src/mod-${Math.floor(index / 100)}`;
+      h.sources[`${dir}/file-${index % 100}.ts`] = `import { v } from "./file-${(index + 1) % 100}.js";\nimport "@fx/db";\nexport const v${index} = v;\n`;
+    }
+    const stage = start(h);
+    stage.onRepoOpened();
+    let beating = true;
+    const beat = (): void => {
+      ticks += 1;
+      if (beating) setImmediate(beat);
+    };
+    setImmediate(beat);
+    await stage.whenIdle();
+    beating = false;
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    // The scan's result and its snapshot are separate turns: other callbacks ran in between.
+    expect((at["snapshot"] ?? 0) - (at["scan"] ?? 0)).toBeGreaterThan(1);
+  }, 60_000);
 
   it("applies changes that arrive during a scan once the scan finishes", async () => {
     const h = harness();
@@ -755,6 +817,8 @@ describe("ExplainerStage row and state bounds (M-6 review requirements)", () => 
     expect(idle.db.getOverviewState(REPO_ROOT)).toBeUndefined();
     stage.onSessionStarted(SESSION);
     expect(snapshotRows(idle.db, SESSION)).toHaveLength(1);
+    // overview_state follows its row a turn later (spec §6.1: one write per turn).
+    await stage.whenIdle();
     expect(idle.db.getOverviewState(REPO_ROOT)?.snapshot.status?.scan.state).toBe("done");
   });
 
@@ -944,6 +1008,7 @@ describe("ExplainerStage failure state (M-6 fix round 1)", () => {
     stage.rescan();
     await stage.whenIdle();
     h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
     const done = snapshotRows(h.db, SESSION).map((row) => row.snapshot);
     expect(done.map((snapshot) => snapshot.status?.scan.state)).toEqual(["done", "failed", "failed", "failed", "done"]);
     expect(core(done[4])?.contentHash).toBe(core(rows[3])?.contentHash);
@@ -983,7 +1048,8 @@ describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
   });
 
   it("leaves no timer and writes nothing after dispose with a row write and a settle pending", async () => {
-    vi.useFakeTimers();
+    // setImmediate stays real: the stage yields a turn between rebuild steps (spec §6.1).
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const h = harness({
       now: () => Date.now(),
       schedule: {
