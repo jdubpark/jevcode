@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_COMPONENT_EDGES, MAX_EXTERNALS, MAX_USED_BY, aggregateEdges, aggregateExternals } from "./edges.js";
+import {
+  MAX_COMPONENT_EDGES,
+  MAX_EXTERNALS,
+  MAX_USED_BY,
+  aggregateComponentEdges,
+  aggregateEdges,
+  aggregateExternals,
+} from "./edges.js";
 
 const OWNER: Readonly<Record<string, string>> = {
   "a/x.ts": "cmp_a",
@@ -65,6 +72,16 @@ describe("aggregateEdges (spec §5.3)", () => {
     for (let i = 1; i < edges.length; i += 1) {
       expect((edges[i - 1]?.count ?? 0) >= (edges[i]?.count ?? 0)).toBe(true);
     }
+  });
+
+  it("reports the component pair count before the 1,000 cap (counts.edges)", () => {
+    const imports = Array.from({ length: 1_250 }, (_, i) => ({ from: `m${i}/f.ts`, to: `t${i}/g.ts` }));
+    imports.push({ from: "m0/f.ts", to: "m0/g.ts" }, { from: "gone/q.ts", to: "t0/g.ts" });
+    const ownerOf = (path: string): string | undefined => (path.startsWith("gone/") ? undefined : `cmp_${path.split("/")[0] ?? ""}`);
+    const capped = aggregateComponentEdges(imports, ownerOf);
+    expect(capped.total).toBe(1_250);
+    expect(capped.edges).toHaveLength(MAX_COMPONENT_EDGES);
+    expect(capped.edges).toEqual(aggregateEdges(imports, ownerOf));
   });
 });
 

@@ -43,6 +43,8 @@ export interface AssembleSnapshotInput {
   /** Repo files before the 20,000-file cap (ruling R3); defaults to the mapped file count. */
   totalFiles?: number;
   edges: ComponentEdge[];
+  /** Component edges before the 1,000-edge cap (`CappedEdges.total`); defaults to `edges.length`. */
+  totalEdges?: number;
   externals: ExternalDep[];
   text: Map<string, ComponentText>;
   narrative: OverviewSnapshot["narrative"];
@@ -175,7 +177,8 @@ function fitSize(snapshot: OverviewSnapshot): OverviewSnapshot {
  * smallest components group into "other" and their edges follow), the 1,000-edge and
  * 120-external caps, 400 listed files per component, and the 512 KB bound (less 2 KB of headroom
  * for the `status` and `sessionId` the stage stamps afterwards). `counts` hold the
- * totals before the caps; `counts.totalFiles` is the repo's file count before the scan cap.
+ * totals before the caps; `counts.totalFiles` is the repo's file count before the scan cap and
+ * `counts.edges` the component edge count before the 1,000-edge cap (`totalEdges`).
  * The stage adds `status` (ruling R3) after assembly.
  */
 export function assembleSnapshot(input: AssembleSnapshotInput): OverviewSnapshot {
@@ -226,7 +229,7 @@ export function assembleSnapshot(input: AssembleSnapshotInput): OverviewSnapshot
     counts: {
       files,
       components: drafts.length,
-      edges: input.edges.length,
+      edges: Math.max(input.edges.length, input.totalEdges ?? input.edges.length),
       languages,
       totalFiles: Math.max(files, input.totalFiles ?? files),
     },

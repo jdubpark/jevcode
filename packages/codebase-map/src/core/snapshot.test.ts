@@ -135,6 +135,12 @@ describe("assembleSnapshot (spec §5.5)", () => {
     });
   });
 
+  it("counts component edges before the 1,000-edge cap", () => {
+    const repo = smallRepo();
+    expect(assembleSnapshot(input({ ...repo, totalEdges: 1_480 })).counts.edges).toBe(1_480);
+    expect(assembleSnapshot(input(repo)).counts.edges).toBe(repo.edges.length);
+  });
+
   it("passes the narrative through", () => {
     const narrative = {
       sentences: [{ text: "The UI reads the database.", citations: [{ kind: "component" as const, id: componentIdFor("src/ui") }] }],

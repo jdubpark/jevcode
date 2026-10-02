@@ -1,6 +1,6 @@
 import type { ComponentEdge, ExternalDep, Role } from "@jevcode/contracts";
 import {
-  aggregateEdges,
+  aggregateComponentEdges,
   aggregateExternals,
   compareText,
   componentOf,
@@ -42,6 +42,8 @@ export interface BuiltOverview {
   drafts: ComponentDraft[];
   roleGuess: ReadonlyMap<string, Role>;
   edges: ComponentEdge[];
+  /** Component edges before the 1,000-edge cap (`counts.edges`). */
+  totalEdges: number;
   externals: ExternalDep[];
   exportsByComponent: ReadonlyMap<string, readonly string[]>;
 }
@@ -156,10 +158,12 @@ export function buildOverview(model: RepoModel): BuiltOverview {
     exportNames.set(componentId, names);
   }
   const externals = aggregateExternals(externalImports, ofFile);
+  const edges = aggregateComponentEdges(importEdges, ofFile);
   return {
     drafts,
     roleGuess: new Map(drafts.map((draft) => [draft.id, guessRole(draft, externals)])),
-    edges: aggregateEdges(importEdges, ofFile),
+    edges: edges.edges,
+    totalEdges: edges.total,
     externals,
     exportsByComponent: new Map(
       [...exportNames.entries()].map(([id, names]) => [id, [...names].sort(compareText).slice(0, MAX_EXPORTS_PER_COMPONENT)]),
