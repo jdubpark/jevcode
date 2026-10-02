@@ -5,6 +5,7 @@ import {
   EvidenceFactSchema,
   JevDecisionLogSchema,
   NormalizedAgentEventSchema,
+  OverviewSnapshotSchema,
   ValidationResultSchema,
   type EventStoreType,
   type TraceRow,
@@ -17,6 +18,7 @@ import { foldAgentEvent } from "./fold-agent.js";
 import { foldChangeUnit, foldDecision, foldJevDecision } from "./fold-chapters.js";
 import { foldEvidenceFact, foldValidation } from "./fold-evidence.js";
 import { finalizeState, type FinalizeOptions } from "./fold-finalize.js";
+import { foldOverviewSnapshot } from "./fold-overview.js";
 import { addGap, advanceClock, clockTs, FoldState, type RowContext } from "./fold-state.js";
 import { ENVELOPE_RULES } from "./registry.js";
 import type { TraceSession } from "./types.js";
@@ -138,6 +140,12 @@ export function accumulate(state: TraceState, row: TraceRow): TraceState {
     case "jev_decision": {
       const log = parseOrGap(s, row, JevDecisionLogSchema);
       if (log !== null) foldJevDecision(s, log, inheritedContext(s, row));
+      break;
+    }
+    case "overview_snapshot": {
+      // Replace semantics (spec §8.1): no step, no clock move, no turn; an invalid payload is an invalid_row gap.
+      const snapshot = parseOrGap(s, row, OverviewSnapshotSchema);
+      if (snapshot !== null) foldOverviewSnapshot(s, snapshot, row.seq);
       break;
     }
     default:

@@ -7,6 +7,7 @@ import fc from "fast-check";
 
 import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
+import { overviewSnapshot } from "./overview-builder.js";
 import { TraceBuilder, testMeta } from "./trace-builder.js";
 
 const FILES = ["src/a.ts", "src/b.ts", "tests/a.test.ts", "pnpm-lock.yaml"] as const;
@@ -312,12 +313,44 @@ const flowOp: fc.Arbitrary<Op> = fc.oneof(
     }),
 );
 
+/** Three snapshots of one repo: a first scan, a description pass that changes one purpose, a rescan that changes one
+ *  component's content and adds another. Shared with fold.incremental.test.ts. */
+export const OVERVIEW_ROWS = [
+  overviewSnapshot({
+    components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "packages/api", role: "api" }, { rootPath: "packages/db", role: "storage" }],
+    edges: [{ from: "apps/web", to: "packages/api", count: 3 }, { from: "packages/api", to: "packages/db", count: 7 }],
+  }),
+  overviewSnapshot({
+    components: [
+      { rootPath: "apps/web", role: "ui" },
+      { rootPath: "packages/api", role: "api", purpose: "Serves the web app.", provenance: "model" },
+      { rootPath: "packages/db", role: "storage" },
+    ],
+    edges: [{ from: "apps/web", to: "packages/api", count: 3 }, { from: "packages/api", to: "packages/db", count: 7 }],
+  }),
+  overviewSnapshot({
+    components: [
+      { rootPath: "apps/web", role: "ui" },
+      { rootPath: "packages/api", role: "api" },
+      { rootPath: "packages/db", role: "storage", version: 1 },
+      { rootPath: "packages/jobs", role: "agent" },
+    ],
+    edges: [{ from: "apps/web", to: "packages/api", count: 3 }, { from: "packages/jobs", to: "packages/db", count: 2 }],
+  }),
+] as const;
+
+const overviewOp: fc.Arbitrary<Op> = fc.oneof(
+  { weight: 4, arbitrary: pick(OVERVIEW_ROWS).map((snapshot): Op => (b) => b.overview(snapshot)) },
+  { weight: 1, arbitrary: fc.constant<Op>((b) => b.raw("overview_snapshot", { sessionId: "sess-test", repoRoot: "" })) },
+);
+
 const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 5, arbitrary: agentOp },
   { weight: 4, arbitrary: factOp },
   { weight: 3, arbitrary: unitOp },
   { weight: 2, arbitrary: otherOp },
   { weight: 3, arbitrary: flowOp },
+  { weight: 1, arbitrary: overviewOp },
 );
 
 export interface RowSession {

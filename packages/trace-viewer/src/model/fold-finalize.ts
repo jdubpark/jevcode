@@ -3,6 +3,7 @@ import type { AgentState } from "@jevcode/contracts";
 import { isTurnClosed, missingEvidence, noiseOf, ownsRunOutcome, problemsOf } from "./classify.js";
 import { buildChapter } from "./fold-chapters.js";
 import { buildEntity } from "./fold-evidence.js";
+import { overviewModelOf } from "./fold-overview.js";
 import { clockTs, type DisplayClock, type FoldState, type StepDraft, type TurnDraft } from "./fold-state.js";
 import { normalizeCommand, stepHeadline } from "./format.js";
 import {
@@ -450,6 +451,7 @@ class Finalizer {
         byType: { ...s.hidden },
         unreceived: Math.max(0, loadedThroughSeq - s.received),
       }),
+      overview: overviewModelOf(s.overview, previous?.overview ?? null),
     };
     const findings = this.findings(partial, coverage);
     const session: TraceSession = {
