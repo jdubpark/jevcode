@@ -112,6 +112,51 @@ describe("chrome (spec §8.5)", () => {
     expect(slot.childElementCount).toBe(0);
   });
 
+  it("number keys switch views while focus is on the host-placed switcher, for that viewer only", async () => {
+    const locationA = vi.fn();
+    const locationB = vi.fn();
+    const source = createStaticBundleSource(fixtureBundle("oauth"));
+    function Host() {
+      const [switchA, setSwitchA] = useState<ReactNode>(null);
+      const [switchB, setSwitchB] = useState<ReactNode>(null);
+      return (
+        <>
+          <div data-testid="slotA">{switchA}</div>
+          <div data-testid="slotB">{switchB}</div>
+          <TraceViewer source={source} chrome="embedded" renderSwitch={setSwitchA} host={{ onLocation: locationA }} />
+          <TraceViewer source={source} chrome="embedded" renderSwitch={setSwitchB} host={{ onLocation: locationB }} />
+        </>
+      );
+    }
+    render(<Host />);
+    const groupB = await within(screen.getByTestId("slotB")).findByRole("radiogroup", { name: "View" });
+    await within(screen.getByTestId("slotA")).findByRole("radiogroup", { name: "View" });
+    await waitFor(() => expect(lastView(locationB)).toBe("console"));
+    const hybridB = within(groupB).getByRole("radio", { name: /Hybrid/ });
+    fireEvent.click(hybridB);
+    hybridB.focus();
+    await waitFor(() => expect(lastView(locationB)).toBe("hybrid"));
+    expect(document.activeElement).toBe(hybridB);
+    fireEvent.keyDown(hybridB, { code: "Digit1", key: "1" });
+    await waitFor(() => expect(lastView(locationB)).toBe("canvas"));
+    expect(lastView(locationA)).toBe("console");
+  });
+
+  it("the shortcut sheet lists only the registered views", async () => {
+    const { unmount } = render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} chrome="embedded" />);
+    await screen.findByRole("radiogroup", { name: "View" });
+    fireEvent.keyDown(document.body, { code: "Slash", key: "?", shiftKey: true });
+    const sheet = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(within(sheet).getByText("Console / Canvas / Hybrid / Map")).toBeTruthy();
+    expect(within(sheet).queryByText(/Surfaces/)).toBeNull();
+    unmount();
+    render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} chrome="embedded" hostViews={[surfaces]} />);
+    await screen.findByRole("radiogroup", { name: "View" });
+    fireEvent.keyDown(document.body, { code: "Slash", key: "?", shiftKey: true });
+    const next = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(within(next).getByText("Surfaces")).toBeTruthy();
+  });
+
   it("an inline renderSwitch that sets parent state and an inline hostViews array render a bounded number of times", async () => {
     let renders = 0;
     function Host() {
