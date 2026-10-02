@@ -262,4 +262,15 @@ describe("trace window registry", () => {
     expect(created).toHaveLength(2);
     errorSpy.mockRestore();
   });
+
+  it("lists the trace windows showing a session and forgets closed ones", () => {
+    const { registry, created } = setup();
+    registry.openTraceWindow("sess_1");
+    registry.openTraceWindow("sess_2");
+    expect(registry.sendersForSession("sess_1")).toEqual([100]);
+    expect(registry.sendersForSession("sess_2")).toEqual([101]);
+    expect(registry.sendersForSession("sess_3")).toEqual([]);
+    at(created, 0).close();
+    expect(registry.sendersForSession("sess_1")).toEqual([]);
+  });
 });

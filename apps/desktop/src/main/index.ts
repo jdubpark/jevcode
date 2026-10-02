@@ -4,7 +4,7 @@ import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, webContents } from "electron";
 import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
 import { openDb, openTraceReader } from "@jevcode/storage";
@@ -22,6 +22,8 @@ import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import type { TerminalSink } from "./pipeline/types.js";
+import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
+import type { RowsAvailableEmitter } from "./rows-available.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
@@ -70,6 +72,7 @@ let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
 let explainer: ExplainerRegistry | null = null;
 let importExtractor: ImportExtractor | null = null;
+let rowsAvailable: RowsAvailableEmitter | null = null;
 const state = createAppState();
 
 function createWindow(): BrowserWindow {
@@ -113,6 +116,26 @@ app.whenReady().then(() => {
   console.log(
     `rebuildOnBoot: ${rebuild.length} session(s), ${rebuild.reduce((sum, entry) => sum + entry.replayed, 0)} events`,
   );
+
+  // Spec E5 and §7: push-triggered pulls. Every trace row the writer commits
+  // raises a coalesced hint to the windows that show its session.
+  const emitter = createRowsAvailableEmitter({
+    targets: (sessionId) => {
+      const main = mainWindow;
+      return rowsAvailableTargets(sessionId, {
+        main: main !== null && !main.isDestroyed() ? main.webContents : null,
+        mainSessionId: state.session?.id ?? null,
+        traceSenderIds: traceWindows?.sendersForSession(sessionId) ?? [],
+        fromId: (id) => webContents.fromId(id) ?? null,
+      });
+    },
+    now: () => performance.now(),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    log: (message) => console.log(`[rows] ${message}`),
+  });
+  rowsAvailable = emitter;
+  observeTraceAppends(db, (event) => emitter.notify(event.sessionId, event.seq));
 
   // Crash recovery: any session left running/paused by a dead process is
   // either failed now or kept only while its execution claim is fresh.
@@ -282,7 +305,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  const stopping = { explainer, importExtractor, terminals, traceReader, db };
+  const stopping = { rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
+  rowsAvailable = null;
   explainer = null;
   importExtractor = null;
   terminals = null;
@@ -293,6 +317,7 @@ app.on("will-quit", () => {
   // that throws is logged and the rest still run.
   runShutdown(
     [
+      { name: "rows available", run: () => stopping.rowsAvailable?.dispose() },
       { name: "explainer", run: () => stopping.explainer?.dispose() },
       { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
       { name: "terminals", run: () => stopping.terminals?.disposeAll() },

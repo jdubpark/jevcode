@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { toMainChannelNames } from "../shared/ipc-registry.js";
-import { TRACE_WINDOW_CHANNELS, isChannelAllowed } from "./trace-allowlist.js";
+import { TRACE_WINDOW_CHANNELS, TRACE_WINDOW_PUSH_CHANNELS, isChannelAllowed, isPushAllowed } from "./trace-allowlist.js";
 
 // Spec §8.6, written out independently of the implementation.
 const TRACE_READS = ["trace:listSessions", "trace:payloads", "trace:rows"];
@@ -42,5 +42,21 @@ describe("trace window channel allowlist", () => {
     expect(isChannelAllowed("overview:rescan", "main")).toBe(true);
     expect(isChannelAllowed("overview:rescan", "trace")).toBe(false);
     expect(isChannelAllowed("overview:rescan", "other")).toBe(false);
+  });
+});
+
+describe("main → renderer pushes (spec §4.3, §7)", () => {
+  it("a trace window receives only the row hint", () => {
+    expect([...TRACE_WINDOW_PUSH_CHANNELS]).toEqual(["trace:rowsAvailable"]);
+    expect(isPushAllowed("trace:rowsAvailable", "trace")).toBe(true);
+    for (const channel of ["agent:event", "composer:prefill", "terminal:data", "ui:spec", "session:state"]) {
+      expect(isPushAllowed(channel, "trace"), channel).toBe(false);
+    }
+  });
+
+  it("the main window receives every push, an unknown sender none", () => {
+    expect(isPushAllowed("trace:rowsAvailable", "main")).toBe(true);
+    expect(isPushAllowed("agent:event", "main")).toBe(true);
+    expect(isPushAllowed("trace:rowsAvailable", "other")).toBe(false);
   });
 });

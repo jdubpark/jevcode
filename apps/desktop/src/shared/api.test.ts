@@ -215,10 +215,11 @@ describe("createJevcodeApi", () => {
     expect(deps.invoke).not.toHaveBeenCalled();
   });
 
-  it("the trace namespace holds three reads, open and requestChanges", () => {
+  it("the trace namespace holds three reads, open, requestChanges and the row hint", () => {
     const trace = createJevcodeApi(makeDeps()).trace;
     expect(Object.keys(trace).sort()).toEqual([
       "listSessions",
+      "onRowsAvailable",
       "open",
       "payloads",
       "requestChanges",
@@ -270,6 +271,30 @@ describe("trace window API", () => {
     push?.({ sessionId: "", text: "note" });
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith({ sessionId: "sess_1", text: "note" });
+    quiet.mockRestore();
+  });
+});
+
+describe("trace.onRowsAvailable", () => {
+  it("subscribes to trace:rowsAvailable and drops malformed hints", () => {
+    const captured = new Map<string, (payload: unknown) => void>();
+    const deps = {
+      invoke: vi.fn(async () => undefined),
+      on: vi.fn((channel: string, listener: (payload: unknown) => void) => {
+        captured.set(channel, listener);
+        return () => undefined;
+      }),
+      platform: "test",
+    };
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = vi.fn();
+    createJevcodeApi(deps).trace.onRowsAvailable(listener);
+    const push = captured.get("trace:rowsAvailable");
+    expect(push).toBeDefined();
+    push?.({ sessionId: "sess_1", lastSeq: 12 });
+    push?.({ sessionId: "sess_1", lastSeq: "12" });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ sessionId: "sess_1", lastSeq: 12 });
     quiet.mockRestore();
   });
 });
