@@ -226,14 +226,36 @@ export class ComponentIndex {
   }
 
   /**
+   * What `apply(upserts, removed)` would cost, without changing anything: the members of the
+   * groups it would split again plus the members of the drafts whose content hash it would
+   * recompute. Null when `apply` would decline the change.
+   */
+  plan(upserts: readonly ScannedFile[], removed: readonly string[]): { files: number } | null {
+    const { added, edited, gone } = this.classify(upserts, removed);
+    if (this.altersStructure(added, gone)) return null;
+    const reshaped = new Set<string>();
+    for (const path of gone) reshaped.add(this.groupOf.get(path) as string);
+    for (const file of added) reshaped.add(this.rootOf(file.path));
+    let files = added.length;
+    for (const root of reshaped) files += this.groups.get(root)?.size ?? 0;
+    const rehashed = new Set<string>();
+    for (const file of edited) {
+      const id = this.idOf.get(file.path) as string;
+      if (reshaped.has(this.groupOf.get(file.path) as string) || rehashed.has(id)) continue;
+      rehashed.add(id);
+      files += this.draftById.get(id)?.files.length ?? 0;
+    }
+    return { files };
+  }
+
+  /**
    * Adds or replaces `upserts` and removes `removed` (paths that are not members are ignored).
    * Returns null, and changes nothing, when the change alters the chosen roots or the naming of
-   * a flat repo: the caller then builds a new index.
+   * a flat repo: the caller then builds a new index. A group that gains or loses a file is split
+   * again, and a part whose members, name and entry points did not change keeps its draft.
    */
   apply(upserts: readonly ScannedFile[], removed: readonly string[]): ComponentIndexChange | null {
-    const added = upserts.filter((file) => !this.files.has(file.path));
-    const edited = upserts.filter((file) => this.files.has(file.path));
-    const gone = removed.filter((path) => this.files.has(path) && !upserts.some((file) => file.path === path));
+    const { added, edited, gone } = this.classify(upserts, removed);
     if (this.altersStructure(added, gone)) return null;
 
     const touched = new Map<string, Set<string>>();
@@ -266,9 +288,18 @@ export class ComponentIndex {
 
     const change: ComponentIndexChange = { changed: new Set(), removed: new Set(), movedFrom: new Set() };
     for (const path of gone) this.idOf.delete(path);
+    const rewritten = new Set(edited.map((file) => file.path));
     for (const root of reshaped) {
-      for (const draft of this.draftsOf.get(root) ?? []) change.changed.add(draft.id);
-      for (const draft of this.rebuildGroup(root, change.movedFrom)) change.changed.add(draft.id);
+      const before = this.draftsOf.get(root) ?? [];
+      const after = this.rebuildGroup(root, change.movedFrom, rewritten);
+      const kept = new Set(after);
+      for (const draft of before) {
+        if (!kept.has(draft)) change.changed.add(draft.id);
+      }
+      const old = new Set(before);
+      for (const draft of after) {
+        if (!old.has(draft)) change.changed.add(draft.id);
+      }
     }
     for (const [root, paths] of touched) {
       if (reshaped.has(root)) continue;
@@ -285,6 +316,18 @@ export class ComponentIndex {
       if (!this.draftById.has(id)) change.removed.add(id);
     }
     return change;
+  }
+
+  private classify(
+    upserts: readonly ScannedFile[],
+    removed: readonly string[],
+  ): { added: ScannedFile[]; edited: ScannedFile[]; gone: string[] } {
+    const upserted = new Set(upserts.map((file) => file.path));
+    return {
+      added: upserts.filter((file) => !this.files.has(file.path)),
+      edited: upserts.filter((file) => this.files.has(file.path)),
+      gone: removed.filter((path) => this.files.has(path) && !upserted.has(path)),
+    };
   }
 
   private countSourceRoot(path: string, delta: 1 | -1): void {
@@ -364,8 +407,12 @@ export class ComponentIndex {
     for (const draft of drafts) this.draftById.set(draft.id, draft);
   }
 
-  /** Splits one group again (rule 3); records ids that lost an existing member to another id. */
-  private rebuildGroup(root: string, movedFrom: Set<string>): ComponentDraft[] {
+  /**
+   * Splits one group again (rule 3) and records ids that lost an existing member to another id.
+   * A part whose members (none in `rewritten`), name and entry points are unchanged keeps its
+   * draft, so a large group pays for the split but hashes only the parts that changed.
+   */
+  private rebuildGroup(root: string, movedFrom: Set<string>, rewritten: ReadonlySet<string> = new Set()): ComponentDraft[] {
     const members = this.groups.get(root);
     if (members === undefined || members.size === 0) {
       this.groups.delete(root);
@@ -374,7 +421,18 @@ export class ComponentIndex {
     }
     const parts = splitComponent(root, this.nameOf(root), [...members.values()]);
     const entries = this.manifest.entryPoints[root] ?? [];
-    const drafts = parts.map((part) => toDraft(part, entryPointsFor(part, parts, entries)));
+    const drafts = parts.map((part) => {
+      const entryPoints = entryPointsFor(part, parts, entries);
+      const id = componentIdFor(part.rootPath);
+      const old = this.draftById.get(id);
+      const unchanged =
+        old !== undefined &&
+        old.name === part.name &&
+        old.files.length === part.files.length &&
+        old.entryPoints.join("\n") === entryPoints.join("\n") &&
+        part.files.every((file) => this.idOf.get(file.path) === id && !rewritten.has(file.path));
+      return unchanged ? old : toDraft(part, entryPoints);
+    });
     for (const draft of drafts) {
       for (const path of draft.files) {
         const before = this.idOf.get(path);
