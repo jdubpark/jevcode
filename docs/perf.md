@@ -319,7 +319,7 @@ Spec §11 budgets for the explainer stage. Bench: `pnpm --filter jevcode-desktop
 |---|---|---|---|---|
 | Rule-based map visible after repo open, 5,000 files | ≤ 2 s | PENDING (quiet-machine run) | PENDING | bench, row 1 |
 | Full scan and map, 20,000 files | ≤ 20 s | PENDING (quiet-machine run) | PENDING | bench, row 2 |
-| Longest synchronous block of the stage, 20,000 files: single-file edit, add, remove, full rebuild (spec §6.1) | ≤ 50 ms | PENDING (quiet-machine run); under load 2026-10-02 (load average 15-21): 25.2, 24.7, 33.0, 19.4 ms | PENDING | bench, stage rows |
+| Longest synchronous block of the stage, 20,000 files: single-file edit, add, remove, full rebuild (spec §6.1) | ≤ 50 ms | PENDING (quiet-machine run). Under load, 2026-10-02, 4 runs at load average 10-21: per-run medians 22-28 ms (full rebuild 16-37 ms); per-run max 25-29 ms (edit), 24-77 ms (add), 29-50 ms (remove), 18-143 ms (full rebuild); a plain Node probe of 30 edits outside vitest: 19.3-22.7 ms | PENDING | bench, stage rows |
 | M1b soak ratio with the explainer on (5,000-file repo), against the W0 base | ≤ 1.10 | PENDING (3 + 3 alternating runs) | PENDING | guard A |
 | Ingestion under a running 20,000-file scan and its rebuilds (2,000 events, yield every 10, pause every 100) | ≤ 1.10 | PENDING (3 + 3 runs) | PENDING | guard B |
 
