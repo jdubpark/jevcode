@@ -768,6 +768,54 @@ describe("push hints (spec E5, §8.7)", () => {
     expect(control.calls.length).toBe(calls + 2);
   });
 
+  it("a hint that arrives while a commit timer is pending is polled right after that commit, 50 ms later", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(6), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 10_000, scheduler, isHidden: () => false });
+    const commits: Array<[at: number, loadedThroughSeq: number | undefined]> = [];
+    controller.subscribe((snapshot) => {
+      const seq = snapshot.session?.loadedThroughSeq;
+      if (seq !== commits.at(-1)?.[1]) commits.push([scheduler.now(), seq]);
+    });
+    controller.start();
+    await scheduler.run(300);
+    control.released = 4;
+    hint(4); // the last commit was at t = 0, so this one publishes at once
+    await scheduler.run(0);
+    control.released = 5;
+    hint(5); // its commit must wait HINT_COMMIT_GAP_MS after the commit at t = 300
+    await scheduler.run(10);
+    control.released = 6;
+    hint(6); // arrives while that commit timer is pending
+    await scheduler.run(200);
+    expect(commits.filter(([, seq]) => seq !== undefined && seq >= 4)).toEqual([
+      [300, 4],
+      [350, 5],
+      [400, 6],
+    ]);
+  });
+
+  it("a hint that arrives before the first page resolves is polled once the first commit lands", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 10_000, scheduler, isHidden: () => false });
+    const commits: Array<[at: number, loadedThroughSeq: number | undefined]> = [];
+    controller.subscribe((snapshot) => {
+      const seq = snapshot.session?.loadedThroughSeq;
+      if (seq !== undefined && seq !== commits.at(-1)?.[1]) commits.push([scheduler.now(), seq]);
+    });
+    controller.start();
+    control.released = 5;
+    hint(5); // the summary and the first page are still in flight
+    await scheduler.run(200);
+    expect(commits).toEqual([
+      [0, 3],
+      [50, 5],
+    ]);
+  });
+
   it("ignores a hint at or below the cursor", async () => {
     const scheduler = new FakeScheduler();
     const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });

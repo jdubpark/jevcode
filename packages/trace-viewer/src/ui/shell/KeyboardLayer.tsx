@@ -22,6 +22,7 @@ import {
 } from "./regions.js";
 import { useSessionView } from "./session-context.js";
 import { ShortcutSheet } from "./ShortcutSheet.js";
+import { isOwnSwitchTarget } from "./ViewSwitch.js";
 
 export interface KeyboardLayerProps {
   root: HTMLElement | null;
@@ -263,7 +264,11 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
       }
       const target = event.target instanceof Element ? event.target : null;
       const inside =
-        target === null || target === doc.body || target === doc.documentElement || root.contains(target);
+        target === null ||
+        target === doc.body ||
+        target === doc.documentElement ||
+        root.contains(target) ||
+        isOwnSwitchTarget(target, store);
       if (!inside) return;
       const input: KeyInput = {
         code: event.code,

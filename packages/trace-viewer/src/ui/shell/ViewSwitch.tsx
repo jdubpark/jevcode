@@ -57,6 +57,14 @@ export function ViewSwitch() {
   );
 }
 
+/** The viewer store each host-placed switcher belongs to, so a viewer's key layer accepts only its own switcher. */
+const switchOwners = new WeakMap<Element, ViewStore>();
+
+export function isOwnSwitchTarget(target: Element, store: ViewStore): boolean {
+  const wrapper = target.closest("[data-trace-viewer-switch]");
+  return wrapper !== null && switchOwners.get(wrapper) === store;
+}
+
 /**
  * The switcher a host places itself (TraceViewerProps.renderSwitch, deviation 8). It carries the viewer's store, view
  * list and tokens, so it works anywhere in the host's tree; its icons resolve against the Shell's sprite.
@@ -65,7 +73,14 @@ export function HostViewSwitch({ store, views }: { store: ViewStore; views: read
   return (
     <ViewStoreContext.Provider value={store}>
       <ViewDefinitionsContext.Provider value={views}>
-        <div className={styles.hostSwitch} style={tokenStyle() as CSSProperties} data-trace-viewer-switch="">
+        <div
+          className={styles.hostSwitch}
+          style={tokenStyle() as CSSProperties}
+          data-trace-viewer-switch=""
+          ref={(node) => {
+            if (node !== null) switchOwners.set(node, store);
+          }}
+        >
           <ViewSwitch />
         </div>
       </ViewDefinitionsContext.Provider>

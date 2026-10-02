@@ -203,7 +203,12 @@ button.chip {
   box-shadow: var(--tv-shadow);
 }
 
-.bar button:focus-visible {
+.bar[data-chrome="embedded"] {
+  height: 36px;
+}
+
+.bar button:focus-visible,
+.hostSwitch button:focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 1px;
 }
