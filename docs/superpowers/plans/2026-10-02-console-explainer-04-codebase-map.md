@@ -7148,8 +7148,10 @@ OUT=~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b
 cd ~/Projects/jevcode-ce-04
 uptime > $OUT/load.txt
 for i in 1 2 3; do
-  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
+  # Head first: its pauses start once its scan finished (firstPauseAt); the base pauses on the same records.
   JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=20000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
+  FROM=$(node -e 'const m=/"firstPauseAt": (\d+)/.exec(require("fs").readFileSync(process.argv[1],"utf8")); console.log(m ? m[1] : 1000000000)' $OUT/head-$i.log)
+  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=$FROM perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
   uptime >> $OUT/load.txt
 done
 echo CE04_SOAK_B_DONE >> $OUT/load.txt
@@ -7157,9 +7159,19 @@ EOF
 nohup zsh ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b.sh > /dev/null 2>&1 &
 ```
 
-Wait for `CE04_SOAK_B_DONE`, then run the Step 5 median command with `soak-b` in place of `soak-a`.
+Wait for `CE04_SOAK_B_DONE`, then run the Step 5 median command with `soak-b` in place of `soak-a`, and the same for the event loop delay:
 
-Expected: `ratio` ≤ `1.100`; every head log shows `explainer.duringIngest.scansDone` 1 and `snapshots` ≥ 1 (the scan finished and rebuilds ran while ingesting), and head `eventLoopDelayMs` p99 and max stay near base. A miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or `buildOverview`; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
+```bash
+node -e 'const fs=require("fs");const d=process.argv[1];const get=(w,k)=>[1,2,3].map(i=>{const t=fs.readFileSync(`${d}/${w}-${i}.log`,"utf8");const at=t.indexOf("\"eventLoopDelayMs\"");return Number(new RegExp(`"${k}": ([\\d.]+)`).exec(t.slice(at))[1]);});const med=a=>[...a].sort((x,y)=>x-y)[1];for(const k of ["p99","max"]){const b=get("base",k),h=get("head",k);console.log(k,JSON.stringify({base:b,head:h,ratio:(med(h)/med(b)).toFixed(3)}));}' ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b
+```
+
+Expected:
+
+- `ratio` (ingestMs) ≤ `1.100`.
+- Event loop delay gates, medians of the 3 runs: head `eventLoopDelayMs.p99` ≤ 1.10 × base, and head `eventLoopDelayMs.max` ≤ 1.25 × base. An absolute gate would measure the pipeline, not the stage: in the 2026-10-02 runs under load the pipeline alone (explainer off) blocked the loop for up to 0.59 s at 600 events, 2.48 s at 2,000 events and 7.5 s at 4,000 events, while the stage's longest block in the bench is ≤ 50 ms. The stage can add at most one block to a delay sample, so head and base maxima stayed within 0.97-1.10 of each other (p99 within 1.03-1.05); 1.25 leaves room for that run-to-run spread and fails a stage block that grows to a quarter of the pipeline's longest (about 600 ms at 2,000 events).
+- `explainer.duringIngest.scansDone`: with ingestion saturating the loop (yield every 10 records), a 20,000-file scan does not finish within 2,000 events (nor within 4,000), so guard B covers ingestion under the running scan and `firstPauseAt` stays null. Rebuild coverage during ingestion comes from the bench's stage rows, or from a guard B run on a smaller repo whose scan finishes in time (then `snapshots` ≥ 1).
+
+A ratio miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or the explainer stage; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
 
 - [ ] **Step 7: Record the results in `docs/perf.md`**
 
