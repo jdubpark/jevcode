@@ -7148,8 +7148,8 @@ OUT=/Users/jwpark/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b
 cd /Users/jwpark/Projects/jevcode-ce-04
 uptime > $OUT/load.txt
 for i in 1 2 3; do
-  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=200 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
-  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=200 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=20000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
+  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
+  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=20000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
   uptime >> $OUT/load.txt
 done
 echo CE04_SOAK_B_DONE >> $OUT/load.txt
@@ -7159,7 +7159,7 @@ nohup zsh /Users/jwpark/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b.sh > /d
 
 Wait for `CE04_SOAK_B_DONE`, then run the Step 5 median command with `soak-b` in place of `soak-a`.
 
-Expected: `ratio` ≤ `1.100`. A miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or `buildOverview`; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
+Expected: `ratio` ≤ `1.100`; every head log shows `explainer.duringIngest.scansDone` 1 and `snapshots` ≥ 1 (the scan finished and rebuilds ran while ingesting), and head `eventLoopDelayMs` p99 and max stay near base. A miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or `buildOverview`; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
 
 - [ ] **Step 7: Record the results in `docs/perf.md`**
 
@@ -7175,7 +7175,7 @@ Spec §11 budgets for the explainer stage. Bench: `pnpm --filter jevcode-desktop
 | Rule-based map visible after repo open, 5,000 files | ≤ 2 s | <mean> ms mean of 5 (min <min>, max <max>), <date>, load <load> | <PASS or FAIL> | bench, row 1 |
 | Full scan and map, 20,000 files | ≤ 20 s | <mean> ms mean of 3 (min <min>, max <max>), <date> | <PASS or FAIL> | bench, row 2 |
 | M1b soak ratio with the explainer on (5,000-file repo), against `<w0>` | ≤ 1.10 | base <b1>/<b2>/<b3> ms, median <bm>; head <h1>/<h2>/<h3> ms, median <hm>; ratio <ratio> | <PASS or FAIL> | guard A |
-| Ingestion under a running 20,000-file scan (2,000 events, yield every 200) | ≤ 1.10 | off <o1>/<o2>/<o3> ms, median <om>; on <n1>/<n2>/<n3> ms, median <nm>; ratio <ratio> | <PASS or FAIL> | guard B |
+| Ingestion under a running 20,000-file scan and its rebuilds (2,000 events, yield every 10, pause every 100) | ≤ 1.10 | off <o1>/<o2>/<o3> ms, median <om>; on <n1>/<n2>/<n3> ms, median <nm>; ratio <ratio> | <PASS or FAIL> | guard B |
 
 The rule-based map row measures scan, import extraction, componentize and snapshot assembly; the row write and push hint add under 10 ms. Guard A's ingest loop is synchronous, so it measures the stage's cost on the ingest path (the `file_changed` hook); guard B yields every 200 records so the scan's I/O, hashing and worker parsing overlap ingestion.
 ```
