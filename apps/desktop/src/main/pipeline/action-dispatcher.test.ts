@@ -34,7 +34,7 @@ function makeDeps(
   return {
     runtime,
     db,
-    terminals: { ensure: () => {}, data: () => {} },
+    terminals: { ensure: () => {} },
     activeSessionId: () => sessionId,
     repoPath: () => "/tmp/repo",
     log: () => {},

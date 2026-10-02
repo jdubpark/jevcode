@@ -23,8 +23,8 @@ export type EmitFn = (
   payload: FromMainPayload<FromMainChannelName>,
 ) => void;
 
+/** The person's own shell (TerminalPanel's sh -i). The pipeline may start it, never write to it (spec E7). */
 export interface TerminalSink {
-  data(sessionId: string, data: string): void;
   ensure(sessionId: string, cwd: string): void;
 }
 
