@@ -15,7 +15,7 @@ export const PLAIN_TEXT_REJECT = /https?:\/\/|```|<\/?[a-z][^>]*>|\*\*|__|^#{1,6
  * any scheme://, www., javascript:/data:/vbscript:, list items and block quotes.
  */
 export const MARKUP_EXTRA_REJECT =
-  /`|\[[^\]]*\]\([^)]*\)|\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.|\b(?:javascript|data|vbscript):|^\s*(?:[-*+]|\d+[.)])\s|^\s*>/im;
+  /`|\[[^\]]*\]\([^)]*\)|\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.|\b(?:javascript|data|vbscript|mailto|file|tel|blob):|(?:^|\s)\/\/\S|<[!?]|^\s*(?:[-*+]|\d+[.)])\s|^\s*>/im;
 
 export type GuardReason =
   | "shape"
@@ -61,23 +61,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** C0/C1 controls, zero-width and bidi controls, line/paragraph separators, BOM. */
+const INVISIBLE =
+  /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+
+/** Controls, format characters (bidi, zero-width, tags), surrogates, private use, separators, default-ignorables. */
 export function hasControlOrInvisible(text: string): boolean {
-  for (const char of text) {
-    const cp = char.codePointAt(0) ?? 0;
-    if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return true;
-    if (cp >= 0x200b && cp <= 0x200f) return true;
-    if (cp === 0x2028 || cp === 0x2029) return true;
-    if (cp >= 0x202a && cp <= 0x202e) return true;
-    if (cp >= 0x2060 && cp <= 0x2069) return true;
-    if (cp === 0xfeff) return true;
-  }
-  return false;
+  return INVISIBLE.test(text);
 }
 
 export function plainTextViolation(text: string): "control_char" | "markup" | null {
   if (hasControlOrInvisible(text)) return "control_char";
-  if (PLAIN_TEXT_REJECT.test(text) || MARKUP_EXTRA_REJECT.test(text)) return "markup";
+  const folded = text.normalize("NFKC");
+  if (hasControlOrInvisible(folded)) return "control_char";
+  if (PLAIN_TEXT_REJECT.test(folded) || MARKUP_EXTRA_REJECT.test(folded)) return "markup";
   return null;
 }
 
