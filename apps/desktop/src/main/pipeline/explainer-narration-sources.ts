@@ -146,6 +146,17 @@ export function exportedNames(symbols: readonly SymbolInfo[]): string[] {
   return names;
 }
 
+/** Plain identifiers only, deduplicated, at most 15: the export names any BriefSources may contribute to a brief. */
+export function exportIdentifiers(names: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const name of names) {
+    if (typeof name !== "string" || !IDENTIFIER.test(name) || out.includes(name)) continue;
+    out.push(name);
+    if (out.length >= EXPORTS_PER_COMPONENT) break;
+  }
+  return out;
+}
+
 /** Entry points first, else shallow index files; at most 3 parseable non-JSON files. */
 export function exportCandidates(component: Component): string[] {
   const parseable = (file: string): boolean => languageForPath(file) !== null && !file.endsWith(".json");
