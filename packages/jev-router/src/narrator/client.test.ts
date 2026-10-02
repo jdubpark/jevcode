@@ -213,6 +213,20 @@ describe("failures", () => {
     ).rejects.toMatchObject({ reason: "aborted" });
   });
 
+  it("keeps the timeout reason when the transport rejects synchronously on abort", async () => {
+    vi.useFakeTimers();
+    const transport: NarratorTransport = {
+      complete: (request) =>
+        new Promise((_resolve, reject) => {
+          request.signal.addEventListener("abort", () => reject(new NarratorUnavailableError("offline", "abort listener")));
+        }),
+    };
+    const pending = createNarratorClient(transport).describeComponents(SAMPLE_BRIEFS);
+    const assertion = expect(pending).rejects.toMatchObject({ reason: "timeout" });
+    await vi.advanceTimersByTimeAsync(NARRATOR_TIMEOUT_MS);
+    await assertion;
+  });
+
   it("passes NarratorUnavailableError through and wraps other errors as unavailable", async () => {
     const offline: NarratorTransport = { complete: () => Promise.reject(new NarratorUnavailableError("offline", "down")) };
     const broken: NarratorTransport = { complete: () => Promise.reject(new TypeError("boom")) };

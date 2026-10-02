@@ -5,6 +5,7 @@ import type { NarratorTransport } from "./types.js";
 
 export interface AnthropicNarratorTransportOptions {
   apiKey: string;
+  /** Test-only override; production always talks to api.anthropic.com. */
   baseURL?: string;
   /** Test seam: replaces global fetch (recorded responses; no network in tests). */
   fetch?: typeof fetch;
@@ -27,11 +28,28 @@ export function anthropicErrorToNarrator(error: unknown): NarratorUnavailableErr
 }
 
 /** Messages API with a JSON-schema output format; retries are owned by the explainer's backoff. */
+export const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+
+/** The SDK merges ANTHROPIC_CUSTOM_HEADERS from the environment; a null value removes a header. */
+function suppressedEnvHeaders(): Record<string, null> {
+  const suppressed: Record<string, null> = {};
+  for (const line of (process.env["ANTHROPIC_CUSTOM_HEADERS"] ?? "").split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon >= 0) suppressed[line.substring(0, colon).trim()] = null;
+  }
+  return suppressed;
+}
+
 export function createAnthropicNarratorTransport(options: AnthropicNarratorTransportOptions): NarratorTransport {
+  if (options.apiKey.trim() === "") {
+    throw new NarratorUnavailableError("auth", "narrator needs an API key");
+  }
   const client = new Anthropic({
     apiKey: options.apiKey,
+    authToken: null,
+    baseURL: options.baseURL ?? ANTHROPIC_BASE_URL,
+    defaultHeaders: suppressedEnvHeaders(),
     maxRetries: 0,
-    ...(options.baseURL === undefined ? {} : { baseURL: options.baseURL }),
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
   return {

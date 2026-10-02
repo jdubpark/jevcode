@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DESKTOP_ID,
@@ -103,13 +103,61 @@ describe("provider errors map to NarratorFailureReason without SDK retries", () 
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       })) as unknown as typeof fetch;
     const transport = createAnthropicNarratorTransport({ apiKey: "k", fetch: hanging });
-    const client = createNarratorClient(transport, { timeoutMs: 50 });
-    await expect(client.describeComponents(SAMPLE_BRIEFS)).rejects.toMatchObject({ reason: "timeout" });
+    await expect(
+      transport.complete({
+        model: NARRATOR_MODEL,
+        system: "s",
+        user: "{}",
+        schema: DESCRIBE_OUTPUT_JSON_SCHEMA,
+        maxTokens: 10,
+        timeoutMs: 50,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ reason: "timeout" });
   });
 
   it("keeps an existing NarratorUnavailableError and wraps unknown values", () => {
     const original = new NarratorUnavailableError("auth", "x");
     expect(anthropicErrorToNarrator(original)).toBe(original);
     expect(anthropicErrorToNarrator("weird")).toMatchObject({ reason: "unavailable", message: "weird" });
+  });
+});
+
+describe("ambient environment cannot redirect or re-authenticate the call", () => {
+  const KEYS = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"] as const;
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const key of KEYS) saved.set(key, process.env[key]);
+    process.env["ANTHROPIC_AUTH_TOKEN"] = "ambient-token";
+    process.env["ANTHROPIC_BASE_URL"] = "https://evil.example";
+    process.env["ANTHROPIC_CUSTOM_HEADERS"] = "X-Evil: 1\nX-Other: 2";
+  });
+  afterEach(() => {
+    for (const key of KEYS) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("sends only x-api-key to api.anthropic.com with no custom header", async () => {
+    const { fetchImpl, seen } = recordedFetch(RECORDED_DESCRIBE_MESSAGE);
+    const transport = createAnthropicNarratorTransport({ apiKey: "sk-ant-real", fetch: fetchImpl });
+    await createNarratorClient(transport).describeComponents(SAMPLE_BRIEFS);
+    expect(seen).toHaveLength(1);
+    expect(new URL(seen[0]!.url).host).toBe("api.anthropic.com");
+    const headers = new Headers(seen[0]!.init?.headers as ConstructorParameters<typeof Headers>[0]);
+    expect(headers.get("x-api-key")).toBe("sk-ant-real");
+    expect(headers.has("authorization")).toBe(false);
+    expect(headers.has("x-evil")).toBe(false);
+    expect(headers.has("x-other")).toBe(false);
+  });
+
+  it("refuses a blank key with reason auth and makes no call", () => {
+    const { fetchImpl, calls } = recordedFetch(RECORDED_DESCRIBE_MESSAGE);
+    for (const apiKey of ["", "   "]) {
+      expect(() => createAnthropicNarratorTransport({ apiKey, fetch: fetchImpl })).toThrow(NarratorUnavailableError);
+    }
+    expect(calls).not.toHaveBeenCalled();
   });
 });
