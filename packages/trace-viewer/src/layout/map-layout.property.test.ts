@@ -126,8 +126,8 @@ describe("layoutMap properties", () => {
     );
   });
 
-  // The random seeds above almost never reach 6 importers (about 4.5 components on average), so this property plants a
-  // fan-in one below, at or one above the threshold to exercise the rule's boundary.
+  // Few random seeds above reach 6 importers, and fewer land exactly on the threshold, so this property plants a fan-in
+  // one below, at or one above the threshold to exercise the rule's boundary.
   it("a planted fan-in is a hub exactly when its importers reach max(6, ceil(n / 4)), whatever the edge order", () => {
     const arbFanIn = fc.record({
       n: fc.integer({ min: 7, max: 40 }),

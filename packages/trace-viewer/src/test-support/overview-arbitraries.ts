@@ -46,12 +46,12 @@ function seedOf(components: readonly RawComponent[], raw: readonly { from: numbe
 
 export function arbOverviewSeed(options: { maxComponents?: number } = {}): fc.Arbitrary<OverviewSeed> {
   const max = options.maxComponents ?? 24;
-  return fc.uniqueArray(arbComponent, { maxLength: max, selector: (component) => component.rootPath }).chain((components) => {
+  return fc.uniqueArray(arbComponent, { maxLength: max, size: "medium", selector: (component) => component.rootPath }).chain((components) => {
     const n = components.length;
     const edges =
       n < 2
         ? fc.constant<{ from: number; to: number; count: number }[]>([])
-        : fc.array(fc.record({ from: fc.nat(n - 1), to: fc.nat(n - 1), count: fc.integer({ min: 1, max: 60 }) }), { maxLength: 3 * n });
+        : fc.array(fc.record({ from: fc.nat(n - 1), to: fc.nat(n - 1), count: fc.integer({ min: 1, max: 60 }) }), { maxLength: 3 * n, size: "medium" });
     return edges.map((raw) => seedOf(components, raw));
   });
 }
@@ -63,8 +63,12 @@ export function arbOverviewSuccessor(seed: OverviewSeed): fc.Arbitrary<OverviewS
   const n = seed.components.length;
   return fc
     .record({
-      keep: fc.array(fc.boolean(), { minLength: n, maxLength: n }),
-      reRole: fc.array(fc.option(fc.constantFrom(...ROLES), { nil: undefined, freq: 4 }), { minLength: n, maxLength: n }),
+      // About 80% of components are kept and 20% re-roled, so most cards keep their place and their edges survive.
+      keep: fc.array(fc.nat(4).map((value) => value > 0), { minLength: n, maxLength: n }),
+      reRole: fc.array(
+        fc.oneof({ weight: 4, arbitrary: fc.constant(undefined) }, { weight: 1, arbitrary: fc.constantFrom(...ROLES) }),
+        { minLength: n, maxLength: n },
+      ),
       added: fc.subarray(free, { maxLength: 4 }),
       addedRoles: fc.array(fc.constantFrom(...ROLES), { minLength: 4, maxLength: 4 }),
       count: fc.integer({ min: 1, max: 30 }),
