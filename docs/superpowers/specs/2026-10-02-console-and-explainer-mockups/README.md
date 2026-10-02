@@ -36,3 +36,23 @@ Decisions for the person:
 | Gate | Date | Person | Decision | Notes |
 |---|---|---|---|---|
 | H2 | PENDING | | | |
+
+## Phase C (S-0, gate H3)
+
+| Screen | File | PNGs |
+|---|---|---|
+| Brief story and pending decision card (Console summary marked rule-based) | `c-brief-story.html` | `c-brief-story-1440.png`, `c-brief-story-1000.png` |
+| Console summary blocks, decided card with its why, decided card with no why (Descriptions pending) | `c-console-summary.html` | `c-console-summary-1440.png`, `c-console-summary-1000.png` |
+| Decision in the Inspector (tradeoffs, why, components) | `c-decision-inspector.html` | `c-decision-inspector-1440.png`, `c-decision-inspector-1000.png` |
+| Map session overlay, legend and toggle | `c-map-overlay.html` | `c-map-overlay-1440.png`, `c-map-overlay-1000.png` |
+
+- Shell, Brief column and Map card style match Phase A and B. Shared CSS is `phase-c.css`; re-render with `bash render-c.sh`.
+- Story citations are the same quiet chips as the Map's; an icon shows the kind (component, decision, file, test run, narrative quote).
+- A rule-based story (ruling F1) carries a quiet "rule-based" label next to "Summary", no color. Narrator stories carry no label.
+- A decided card without a why (ruling R3) shows the narrator state in quiet ink ("Descriptions pending"; "Descriptions off" and "Descriptions unavailable" use the same slot).
+- Decision cards: pending is the accent tint, decided is neutral. The small fork graphic shows the open branches dashed and the chosen branch solid.
+- Session overlay marks sit on a badge on the card's top-right corner: ring = new, dot = changed, diamond = decided, red dot = failing. Untouched components dim.
+
+| Gate | Status | Notes |
+|---|---|---|
+| H3 | PENDING | Awaiting the person's review. S-4 and S-5 start after this row says "approved <date>". |
