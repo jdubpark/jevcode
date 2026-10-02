@@ -310,3 +310,18 @@ pnpm --filter jevcode-desktop rebuild:node    # expect: native modules restored 
 ```
 
 If `rebuild:node` leaves node-pty without `build/Release/pty.node` and `spawn-helper`, restore both from its prebuilds.
+
+## Codebase map (console-explainer lane 04, M-8)
+
+Spec §11 budgets for the explainer stage. Bench: `pnpm --filter jevcode-desktop exec vitest bench --run src/main/pipeline/explainer-overview.bench.ts` (synthetic pnpm workspace, 1 KB TypeScript files with relative, workspace and package imports; a new worker pool per iteration). Soaks: `scripts/soak.mjs` with `JEVCODE_SOAK_EXPLAINER=1` (the stage on a generated repo, narrator off), alternating runs, `uptime` before each.
+
+| Measure | Budget | Measured | Status | Source |
+|---|---|---|---|---|
+| Rule-based map visible after repo open, 5,000 files | ≤ 2 s | PENDING (quiet-machine run) | PENDING | bench, row 1 |
+| Full scan and map, 20,000 files | ≤ 20 s | PENDING (quiet-machine run) | PENDING | bench, row 2 |
+| M1b soak ratio with the explainer on (5,000-file repo), against the W0 base | ≤ 1.10 | PENDING (3 + 3 alternating runs) | PENDING | guard A |
+| Ingestion under a running 20,000-file scan (2,000 events, yield every 200) | ≤ 1.10 | PENDING (3 + 3 runs) | PENDING | guard B |
+
+Smoke run under load, not the budget measurement (2026-10-02, shared machine under heavy multi-lane load): the bench at 1,000 and 2,000 files (2 iterations each) averaged 304 ms and 417 ms; the soak with `JEVCODE_SOAK_EVENTS=300`, explainer on 500 files, finished without `SOAK_FAIL` at 238 ms ingest (explainer off: 237 ms; with `JEVCODE_SOAK_YIELD_EVERY=50`: 269 ms) and reported `explainer.rows` 1. These runs only show that the bench and the switches work.
+
+The rule-based map row measures scan, import extraction, componentize and snapshot assembly; the row write and push hint add under 10 ms. Guard A's ingest loop is synchronous, so it measures the stage's cost on the ingest path (the `file_changed` hook); guard B yields every 200 records so the scan's I/O, hashing and worker parsing overlap ingestion.

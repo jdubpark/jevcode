@@ -1,4 +1,5 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,9 @@ import { compileSkeleton } from "../packages/ui-compiler/dist/index.js";
 import { PipelineRuntime } from "../apps/desktop/dist/main/pipeline/pipeline-runtime.js";
 import { buildTraceBundle, writeTraceBundle } from "../apps/desktop/dist/main/trace-bundle.js";
 import { createTraceService, readAllRows } from "../apps/desktop/dist/main/trace-service.js";
+import { createExplainerStage } from "../apps/desktop/dist/main/pipeline/explainer-stage.js";
+import { scanPaths, scanRepo } from "../packages/codebase-map/dist/node/index.js";
+import { createImportExtractor } from "../packages/evidence-engine/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = path.join(root, "fixtures", "oauth");
@@ -42,6 +46,29 @@ const TRACE_READ_RUNS = 5;
 const TRACE_PAGE_SAMPLES = 300;
 const SESSION_ID = "sess-soak-0001";
 const REPO_ID = "repo-soak";
+// Console-explainer M-8 (spec §11 ingest guard). JEVCODE_SOAK_EXPLAINER=1 runs the explainer
+// stage beside the pipeline on a generated repo (narrator off) and forwards file_changed facts
+// to it. JEVCODE_SOAK_YIELD_EVERY=N yields to the event loop every N records, so a background
+// scan competes with ingestion; unset, the ingest loop is unchanged.
+const EXPLAINER = process.env["JEVCODE_SOAK_EXPLAINER"] === "1";
+const EXPLAINER_FILES = Number(process.env["JEVCODE_SOAK_EXPLAINER_FILES"] ?? 5_000);
+const YIELD_EVERY = Number(process.env["JEVCODE_SOAK_YIELD_EVERY"] ?? 0);
+
+/** `fileCount` small TS files in modules of 100 under src/, in a fresh `git init` directory. */
+function makeExplainerRepo(fileCount) {
+  const root = mkdtempSync(path.join(tmpdir(), "jevcode-soak-map-"));
+  for (let index = 0; index < fileCount; index += 1) {
+    const dir = path.join(root, "src", `mod-${String(Math.floor(index / 100)).padStart(3, "0")}`);
+    mkdirSync(dir, { recursive: true });
+    const next = String((index + 1) % 100).padStart(3, "0");
+    writeFileSync(
+      path.join(dir, `file-${String(index % 100).padStart(3, "0")}.ts`),
+      `import { z } from "zod";\nimport { value } from "./file-${next}.js";\nexport const v${index} = z.string().parse(value);\n`,
+    );
+  }
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  return root;
+}
 
 function nowIso(offsetMs) {
   return new Date(Date.UTC(2026, 8, 19, 9, 0, 0) + offsetMs).toISOString();
@@ -432,6 +459,15 @@ async function main() {
     return result;
   };
 
+  let explainer = null;
+  let extractor = null;
+  let explainerRepo = null;
+  let explainerRows = 0;
+  if (EXPLAINER) {
+    explainerRepo = makeExplainerRepo(EXPLAINER_FILES);
+    extractor = createImportExtractor();
+  }
+
   const runtime = new PipelineRuntime({
     db,
     emit: (channel, payload) => {
@@ -455,6 +491,7 @@ async function main() {
     jevClient: new DegradeClient(),
     evidence: false,
     log: () => {},
+    onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => explainer?.onFilesChanged(paths) : undefined,
   });
 
   await runtime.startSession({
@@ -465,12 +502,35 @@ async function main() {
     agentMode: "replay",
   });
 
+  if (EXPLAINER) {
+    explainer = createExplainerStage({
+      db,
+      repoRoot: explainerRepo,
+      sessionId: () => SESSION_ID,
+      scan: scanRepo,
+      scanPaths,
+      extract: extractor.extract,
+      emitRowsAvailable: () => {
+        explainerRows += 1;
+      },
+      now: () => Date.now(),
+      schedule: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle) },
+      log: () => {},
+      explainWithModel: () => false,
+    });
+    explainer.onRepoOpened();
+    explainer.onSessionStarted(SESSION_ID);
+  }
+
   const records = buildStream();
   console.log(`soak: ${records.length} generated records`);
 
   const ingestStarted = Date.now();
   let burstIndex = 0;
   for (const record of records) {
+    if (YIELD_EVERY > 0 && burstIndex > 0 && burstIndex % YIELD_EVERY === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
     if (burstIndex % 400 === 0) {
       setLock(true);
     }
@@ -487,6 +547,12 @@ async function main() {
   const syncStarted = Date.now();
   await runtime.syncAll();
   const syncMs = Date.now() - syncStarted;
+  if (explainer !== null) {
+    await explainer.whenIdle();
+    explainer.dispose();
+    await extractor.dispose();
+    rmSync(explainerRepo, { recursive: true, force: true });
+  }
 
   const generativeCount = manager.getGenerative().length;
   assert(generativeCount <= 1, `generative surfaces ${generativeCount} > 1`);
@@ -606,6 +672,7 @@ async function main() {
         units: db.listChangeUnits(SESSION_ID).length,
         jevDecisions: db.listJevDecisions(SESSION_ID).length,
         profile: PROFILE,
+        explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, yieldEvery: YIELD_EVERY } : null,
         traceReadMs,
         traceReadRunsMs,
         traceRows: trace.rows.length,
