@@ -114,6 +114,27 @@ describe("resolveSpecifier (spec §5.1)", () => {
     expect(resolveSpecifier("src/b/index.ts", "../util", CTX)).toEqual(file("src/util.ts"));
   });
 
+  it("treats replacement patterns in a wildcard specifier literally", () => {
+    const ctx: ResolveContext = { ...CTX, files: new Set([...CTX.files, "src/$&.ts"]) };
+    expect(resolveSpecifier("src/a.ts", "@app/$&", ctx)).toEqual(file("src/$&.ts"));
+    expect(resolveSpecifier("src/a.ts", "@app/$'x", ctx)).toEqual(UNRESOLVED);
+  });
+
+  it("keeps config-driven escapes inside the repo", () => {
+    const escaping: ResolveContext = {
+      ...CTX,
+      tsPaths: { ...CTX.tsPaths, "@esc/*": ["src/*"] },
+      workspacePackages: { ...CTX.workspacePackages },
+    };
+    expect(resolveSpecifier("src/a.ts", "@app/../../x", escaping)).toEqual(UNRESOLVED);
+    // A workspace subpath may fall back to a member file of the package, never to a path outside the repo.
+    const viaWorkspace = resolveSpecifier("src/a.ts", "@fx/core/../../../x", escaping);
+    expect(viaWorkspace.kind === "unresolved" || (viaWorkspace.kind === "file" && escaping.files.has(viaWorkspace.path))).toBe(true);
+    const up: ResolveContext = { ...CTX, baseUrl: "..", files: new Set(["x.ts", ...CTX.files]) };
+    // "../x" leaves the repo: no file hit, so "x" reads as a package.
+    expect(resolveSpecifier("src/a.ts", "x", up)).toEqual(external("x"));
+  });
+
   it("reads bare specifiers as packages when there is no baseUrl", () => {
     expect(resolveSpecifier("src/a.ts", "lib/x", { ...CTX, baseUrl: null })).toEqual(external("lib"));
   });
@@ -131,10 +152,10 @@ describe("packageNameOf", () => {
 });
 
 const OP_WORKER = `
-import { parentPort } from "node:worker_threads";
+import { parentPort, threadId } from "node:worker_threads";
 parentPort.on("message", (msg) => {
   if (msg.op === "imports") {
-    parentPort.postMessage({ id: msg.id, filePath: msg.filePath, imports: { specifiers: [msg.source], exports: [] } });
+    parentPort.postMessage({ id: msg.id, filePath: msg.filePath, imports: { specifiers: [msg.source], exports: [String(threadId)] } });
   } else {
     parentPort.postMessage({ id: msg.id, filePath: msg.filePath, symbols: [] });
   }
@@ -146,9 +167,15 @@ describe("createImportExtractor", () => {
   it("extracts in a worker pool, restarts the pool after it idles out, and refuses work after dispose", async () => {
     const extractor = createImportExtractor({ size: 1, workerUrl: opWorkerUrl(), idleMs: 20 });
     try {
-      expect(await extractor.extract("a.ts", "./one", "typescript")).toEqual({ specifiers: ["./one"], exports: [] });
+      const first = await extractor.extract("a.ts", "./one", "typescript");
+      expect(first.specifiers).toEqual(["./one"]);
+      const sameBurst = await extractor.extract("a2.ts", "./one-b", "typescript");
+      expect(sameBurst.exports).toEqual(first.exports);
       await new Promise((resolve) => setTimeout(resolve, 80));
-      expect(await extractor.extract("b.ts", "./two", "typescript")).toEqual({ specifiers: ["./two"], exports: [] });
+      const second = await extractor.extract("b.ts", "./two", "typescript");
+      expect(second.specifiers).toEqual(["./two"]);
+      // A new pool means a new worker thread; a pool that never idled out would reuse the first.
+      expect(second.exports).not.toEqual(first.exports);
       expect(await extractor.extract("c.json", "{}", "json")).toEqual({ specifiers: [], exports: [] });
     } finally {
       await extractor.dispose();
