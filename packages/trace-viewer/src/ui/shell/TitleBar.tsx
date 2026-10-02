@@ -32,6 +32,9 @@ export function displaySpanMs(session: TraceSession): number {
   return max;
 }
 
+/** Header placeholder while the session has no prompt yet. */
+const WAITING_FOR_PROMPT = "Waiting for the first prompt";
+
 function firstLine(text: string): string {
   const end = text.search(/\r?\n/);
   return end < 0 ? text : text.slice(0, end);
@@ -85,6 +88,8 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
     return () => clearInterval(id);
   }, [running]);
 
+  // Before the first event there is no prompt and no span to report (a window opened ahead of the task).
+  const hasEvents = session !== null && session.steps.length > 0;
   const spanMs = session === null ? 0 : displaySpanMs(session);
   const durationMs = running ? Math.max(spanMs, nowT()) : spanMs;
   const newProblems =
@@ -131,7 +136,9 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
           <>
             <span className={styles.repo}>{displayUntrusted(summary.repoName)}</span>
             <span className={styles.sep}> / </span>
-            <span className={styles.prompt}>{displayUntrusted(firstLine(summary.prompt))}</span>
+            <span className={styles.prompt}>
+              {summary.prompt.trim() === "" ? WAITING_FOR_PROMPT : displayUntrusted(firstLine(summary.prompt))}
+            </span>
           </>
         )}
       </p>
@@ -252,10 +259,10 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
       ) : null}
 
       <span className={styles.meta}>
-        <span className={styles.duration}>{formatDuration(durationMs)}</span>
+        {hasEvents ? <span className={styles.duration}>{formatDuration(durationMs)}</span> : null}
         {statusLine === "" ? null : (
           <>
-            <span aria-hidden="true"> · </span>
+            {hasEvents ? <span aria-hidden="true"> · </span> : null}
             <span>{statusLine}</span>
           </>
         )}

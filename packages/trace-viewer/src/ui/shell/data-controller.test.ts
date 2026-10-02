@@ -10,6 +10,7 @@ import {
   COMMIT_COST_FACTOR,
   createDataController,
   LIVE_TICK_START,
+  TERMINAL_POLL_MS,
   type DataSnapshot,
   type Scheduler,
 } from "./data-controller.js";
@@ -169,7 +170,7 @@ describe("createDataController", () => {
     expect(last.session?.loadedThroughSeq).toBe(30);
     expect(last.terminal).toBe(true);
     expect(last.rows).toBe(30);
-    expect(scheduler.pending()).toBe(0);
+    expect(scheduler.pending()).toBe(1); // only the slow terminal poll
   });
 
   it("starts the session summary and the first rows page before either resolves", async () => {
@@ -253,7 +254,7 @@ describe("createDataController", () => {
     expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 6, 9]);
     expect(controller.get().loadedFraction).toBe(1);
     expect(controller.get().terminal).toBe(true);
-    expect(scheduler.pending()).toBe(0);
+    expect(scheduler.pending()).toBe(1); // only the slow terminal poll
   });
 
   it("requests the next page while the current one folds, one request ahead at most (M5 full load)", async () => {
@@ -281,7 +282,7 @@ describe("createDataController", () => {
     expect(control.calls.map((call) => call.afterSeq)).toEqual([0, 3, 6, 9, 12]);
     expect(controller.get().session?.loadedThroughSeq).toBe(12);
     expect(controller.get().loadedFraction).toBe(1);
-    expect(scheduler.pending()).toBe(0);
+    expect(scheduler.pending()).toBe(1); // only the slow terminal poll
   });
 
   it("a failed pipelined page reconnects and re-requests from the last folded page", async () => {
@@ -305,7 +306,7 @@ describe("createDataController", () => {
     expect(last.status.kind).toBe("ready");
     expect(last.session?.loadedThroughSeq).toBe(9);
     expect(last.rows).toBe(9);
-    expect(scheduler.pending()).toBe(0);
+    expect(scheduler.pending()).toBe(1); // only the slow terminal poll
   });
 
   it("spaces progressive commits by COMMIT_COST_FACTOR x the last finalize while catching up", async () => {
@@ -357,7 +358,7 @@ describe("createDataController", () => {
     expect(commits.map((entry) => entry.t)).toEqual([100, 450]);
     expect(commits[1]?.snapshot.loadedFraction).toBe(1);
     expect(controller.get().terminal).toBe(true);
-    expect(scheduler.pending()).toBe(0);
+    expect(scheduler.pending()).toBe(1); // only the slow terminal poll
   });
 
   it("polls every pollMs until terminal, applies once more, then stops", async () => {
@@ -381,9 +382,67 @@ describe("createDataController", () => {
     control.state = "completed";
     await scheduler.run(1_000);
     expect(controller.get().terminal).toBe(true);
+  });
+
+  it("keeps a quiet slow poll after a terminal state and commits nothing while unchanged", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(3), { state: "completed" });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    expect(controller.get().terminal).toBe(true);
+    const before = controller.get();
     const calls = control.calls.length;
-    await scheduler.run(5_000);
+    await scheduler.run(TERMINAL_POLL_MS * 3);
+    expect(control.calls.length).toBe(calls + 3);
+    expect(control.calls.at(-1)?.afterSeq).toBe(3);
+    expect(controller.get()).toBe(before);
+  });
+
+  it("resumes Live polling when a terminal session goes back to running", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(5), { state: "completed", released: 3 });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    expect(controller.get().terminal).toBe(true);
+
+    control.state = "running";
+    control.released = 4;
+    await scheduler.run(TERMINAL_POLL_MS);
+    expect(controller.get().terminal).toBe(false);
+    expect(controller.get().session?.loadedThroughSeq).toBe(4);
+
+    control.released = 5;
+    const calls = control.calls.length;
+    await scheduler.run(1_000);
+    expect(control.calls.length).toBe(calls + 1);
+    expect(controller.get().session?.loadedThroughSeq).toBe(5);
+  });
+
+  it("applies new rows after a terminal state and stays terminal when the state is unchanged", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(5), { state: "failed", released: 3 });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    control.released = 5;
+    await scheduler.run(TERMINAL_POLL_MS);
+    expect(controller.get().session?.loadedThroughSeq).toBe(5);
+    expect(controller.get().terminal).toBe(true);
+  });
+
+  it("stop() ends the terminal poll", async () => {
+    const scheduler = new FakeScheduler();
+    const { source, control } = fakeSource(messageRows(3), { state: "completed" });
+    const controller = createDataController({ source, pollMs: 1_000, scheduler, isHidden: () => false });
+    controller.start();
+    await scheduler.run(100);
+    controller.stop();
+    const calls = control.calls.length;
+    await scheduler.run(TERMINAL_POLL_MS * 3);
     expect(control.calls.length).toBe(calls);
+    expect(scheduler.pending()).toBe(0);
   });
 
   it("keeps polling a paused session", async () => {

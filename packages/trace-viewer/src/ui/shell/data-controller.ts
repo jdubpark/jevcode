@@ -46,6 +46,9 @@ export interface DataControllerOptions {
   isHidden?(): boolean;
 }
 
+/** After a terminal state the controller keeps a cheap slow poll (rows after the cursor) so a resumed session goes back to Live. */
+export const TERMINAL_POLL_MS = 5_000;
+
 export const BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000, 10_000];
 
 /** While catching up, a progressive commit waits at least this many times the previous finalize (see requestCommit). */
@@ -221,8 +224,7 @@ export function createDataController(options: DataControllerOptions): DataContro
 
   function afterCommit(gen: number, caughtUp: boolean): void {
     if (gen !== generation || !caughtUp || lastPage === null) return;
-    if (isTerminalState(lastPage.state)) return; // one final apply, then stop
-    schedulePoll(gen, pollMs);
+    schedulePoll(gen, isTerminalState(lastPage.state) ? TERMINAL_POLL_MS : pollMs);
   }
 
   /**
@@ -297,8 +299,9 @@ export function createDataController(options: DataControllerOptions): DataContro
       const settled = latest.session !== null && latest.status.kind === "ready" && latest.loadedFraction >= 1;
       if (changed || !settled) {
         requestCommit(gen, true);
-      } else if (!isTerminalState(next.state)) {
-        schedulePoll(gen, pollMs);
+      } else {
+        // Quiet poll: nothing changed, so nothing commits; terminal sessions poll slowly.
+        schedulePoll(gen, isTerminalState(next.state) ? TERMINAL_POLL_MS : pollMs);
       }
       return;
     }
