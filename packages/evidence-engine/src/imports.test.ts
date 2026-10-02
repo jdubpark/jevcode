@@ -1,0 +1,158 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createImportExtractor,
+  extractImports,
+  packageNameOf,
+  resolveSpecifier,
+  type ResolveContext,
+  type ResolvedSpecifier,
+} from "./imports.js";
+
+const TS_SOURCE = `import a from "./a.js";
+import type { T } from "@scope/pkg/deep";
+import "side-effect";
+import x = require("old-style");
+export * from "./re";
+export { y as z } from "./y";
+export const one = 1, two = 2;
+export function f() {}
+export class C {}
+export interface I {}
+export type U = string;
+export enum E { A }
+export default 42;
+const w = require("cjs-dep");
+async function g() { await import("./lazy"); const t = "x"; await import(t); }
+const local = 1;
+export { local, local as aliased };
+`;
+
+describe("extractImports (spec §5.1, E14)", () => {
+  it("reads every static, re-export, require and dynamic import form in TypeScript", async () => {
+    expect(await extractImports("src/a.ts", TS_SOURCE, "typescript")).toEqual({
+      specifiers: ["./a.js", "./lazy", "./re", "./y", "@scope/pkg/deep", "cjs-dep", "old-style", "side-effect"],
+      exports: ["C", "E", "I", "U", "aliased", "default", "f", "local", "one", "two", "z"],
+    });
+  });
+
+  it("reads TSX and JavaScript", async () => {
+    expect(
+      await extractImports(
+        "src/App.tsx",
+        'import { useState } from "react";\nimport { App } from "./App.js";\nexport function Root() { return <App/>; }\nexport default function Page() { return null; }\n',
+        "tsx",
+      ),
+    ).toEqual({ specifiers: ["./App.js", "react"], exports: ["Page", "Root"] });
+    expect(
+      await extractImports(
+        "lib/x.js",
+        'const fs = require("node:fs");\nimport lib from "lib";\nexport default class Foo {}\nexport { lib };\n',
+        "javascript",
+      ),
+    ).toEqual({ specifiers: ["lib", "node:fs"], exports: ["Foo", "lib"] });
+  });
+
+  it("returns nothing for JSON without parsing it", async () => {
+    expect(await extractImports("package.json", "{ not json", "json")).toEqual({ specifiers: [], exports: [] });
+  });
+});
+
+const CTX: ResolveContext = {
+  files: new Set([
+    "src/a.ts",
+    "src/b/index.ts",
+    "src/c.tsx",
+    "src/util.ts",
+    "src/data.json",
+    "lib/x.js",
+    "packages/core/src/index.ts",
+    "packages/core/src/node.ts",
+    "packages/ui/lib/main.js",
+    "types/global.d.ts",
+  ]),
+  tsPaths: { "@app/*": ["src/*"], "~config": ["src/util.ts"] },
+  baseUrl: ".",
+  workspacePackages: { "@fx/core": "packages/core", "@fx/ui": "packages/ui" },
+};
+
+const file = (path: string): ResolvedSpecifier => ({ kind: "file", path });
+const external = (packageName: string): ResolvedSpecifier => ({ kind: "external", packageName });
+const UNRESOLVED: ResolvedSpecifier = { kind: "unresolved" };
+
+describe("resolveSpecifier (spec §5.1)", () => {
+  it.each([
+    ["./util.js", file("src/util.ts")],
+    ["./b", file("src/b/index.ts")],
+    ["./c.js", file("src/c.tsx")],
+    ["./data.json", file("src/data.json")],
+    ["./util.ts?raw", file("src/util.ts")],
+    ["../types/global", file("types/global.d.ts")],
+    ["../../outside", UNRESOLVED],
+    ["./missing", UNRESOLVED],
+    ["@app/util", file("src/util.ts")],
+    ["~config", file("src/util.ts")],
+    ["@fx/core", file("packages/core/src/index.ts")],
+    ["@fx/core/node", file("packages/core/src/node.ts")],
+    ["@fx/ui", file("packages/ui/lib/main.js")],
+    ["lib/x", file("lib/x.js")],
+    ["node:fs", UNRESOLVED],
+    ["path", UNRESOLVED],
+    ["fs/promises", UNRESOLVED],
+    ["react", external("react")],
+    ["react-dom/client", external("react-dom")],
+    ["@scope/pkg/deep/x", external("@scope/pkg")],
+    ["lodash/fp", external("lodash")],
+    ["virtual:pwa", UNRESOLVED],
+    ["$app/stores", UNRESOLVED],
+    ["/abs/path", UNRESOLVED],
+  ])("src/a.ts imports %s", (specifier, expected) => {
+    expect(resolveSpecifier("src/a.ts", specifier, CTX)).toEqual(expected);
+  });
+
+  it("resolves relative paths from the importing file's directory", () => {
+    expect(resolveSpecifier("src/b/index.ts", "../util", CTX)).toEqual(file("src/util.ts"));
+  });
+
+  it("reads bare specifiers as packages when there is no baseUrl", () => {
+    expect(resolveSpecifier("src/a.ts", "lib/x", { ...CTX, baseUrl: null })).toEqual(external("lib"));
+  });
+});
+
+describe("packageNameOf", () => {
+  it.each([
+    ["react", "react"],
+    ["@scope/pkg/deep", "@scope/pkg"],
+    ["@scope", null],
+    ["virtual:x", null],
+  ])("%s → %s", (specifier, expected) => {
+    expect(packageNameOf(specifier)).toBe(expected);
+  });
+});
+
+const OP_WORKER = `
+import { parentPort } from "node:worker_threads";
+parentPort.on("message", (msg) => {
+  if (msg.op === "imports") {
+    parentPort.postMessage({ id: msg.id, filePath: msg.filePath, imports: { specifiers: [msg.source], exports: [] } });
+  } else {
+    parentPort.postMessage({ id: msg.id, filePath: msg.filePath, symbols: [] });
+  }
+});
+`;
+const opWorkerUrl = (): URL => new URL(`data:text/javascript;base64,${Buffer.from(OP_WORKER, "utf8").toString("base64")}`);
+
+describe("createImportExtractor", () => {
+  it("extracts in a worker pool, restarts the pool after it idles out, and refuses work after dispose", async () => {
+    const extractor = createImportExtractor({ size: 1, workerUrl: opWorkerUrl(), idleMs: 20 });
+    try {
+      expect(await extractor.extract("a.ts", "./one", "typescript")).toEqual({ specifiers: ["./one"], exports: [] });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(await extractor.extract("b.ts", "./two", "typescript")).toEqual({ specifiers: ["./two"], exports: [] });
+      expect(await extractor.extract("c.json", "{}", "json")).toEqual({ specifiers: [], exports: [] });
+    } finally {
+      await extractor.dispose();
+    }
+    await expect(extractor.extract("d.ts", "x", "typescript")).rejects.toThrow(/disposed/);
+  });
+});
