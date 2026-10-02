@@ -24,12 +24,12 @@ h1{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--ink-3)}
 .hstrip>*:not(svg){grid-column:2}.hstrip>svg{grid-row:1}
 h2{margin:24px 0 12px;font-size:12px;font-weight:500;color:var(--ink-3)}
 .arch{display:block;width:100%;padding:8px;border-radius:9px;background:var(--fill);text-align:left}
-.arch svg{display:block;width:100%;height:112px}
+.arch svg{display:block;width:100%;height:132px}
 .am{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-size:12px;color:var(--ink-3)}
 .lnk{display:block;margin-top:6px;padding:0;color:var(--accent-ink);font-size:12px}
 .prose{margin-top:8px;color:var(--ink-2);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .quiet{margin-top:8px;font-size:12px;color:var(--ink-3)}
-.th rect{fill:var(--fill-2)}.th rect.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:6}
+.th .ln{fill:rgb(16 24 40 / .045)}.th .cd{fill:var(--panel)}.th .cd.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:5}
 </style>
 </head>
 <body>
@@ -42,17 +42,22 @@ h2{margin:24px 0 12px;font-size:12px;font-weight:500;color:var(--ink-3)}
 <div class="row" id="status"></div>
 <script>
 const COUNTS = [5, 2, 3, 7, 1, 3];
-const W = 220, H = 48, PITCH = 68, GAP = 40;
+/* The Map's own geometry (map.html): role-band lanes, one card size, the narrow side band last. Edges are left out at this size. */
+const GEO = { margin: 16, label: 44, w: 140, sideW: 104, h: 76, rowGap: 16, gutter: 22, lanePad: 6 };
 function thumb(touched) {
-  let x = 48, rects = "";
+  const g = GEO, pitch = g.h + g.rowGap, top = g.margin + g.label, rows = Math.max(...COUNTS);
+  const H = top + rows * pitch - g.rowGap + g.margin;
+  let x = g.margin, lanes = "", rects = "";
   COUNTS.forEach((n, col) => {
-    if (col > 0) x += col === 5 ? 64 : GAP;
-    for (let row = 0; row < n; row += 1) rects += `<rect x="${x}" y="${80 + row * PITCH}" width="${W}" height="${H}" rx="12"${touched.has(`${col}:${row}`) ? ' class="t"' : ""}/>`;
-    x += W;
+    if (col > 0) x += g.gutter;
+    const w = col === COUNTS.length - 1 ? g.sideW : g.w;
+    lanes += `<rect class="ln" x="${x - g.lanePad}" y="${g.margin - 4}" width="${w + 2 * g.lanePad}" height="${H - 2 * g.margin + 4 + g.lanePad}" rx="16"/>`;
+    for (let row = 0; row < n; row += 1) rects += `<rect class="cd${touched.has(`${col}:${row}`) ? " t" : ""}" x="${x}" y="${top + row * pitch}" width="${w}" height="${g.h}" rx="12"/>`;
+    x += w;
   });
-  return `<svg class="th" viewBox="0 0 ${x + 48} ${80 + 7 * PITCH + 48}" preserveAspectRatio="xMidYMid meet">${rects}</svg>`;
+  return `<svg class="th" viewBox="0 0 ${x + g.margin} ${H}" preserveAspectRatio="xMidYMid meet">${lanes}${rects}</svg>`;
 }
-const PROSE = "jevcode is an Electron app that supervises a coding agent and explains its work. The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core. Every event lands in the SQLite store, and the trace viewer reads it back as rows.";
+const PROSE = "jevcode is an Electron app that supervises a coding agent and explains its work. desktop main runs Codex through agent-codex and feeds its events to evidence-engine and semantic-core. Every event lands in storage, and trace-viewer model folds it back into rows.";
 const card = (cls, title, touched, counts, note) => `<div><h1>${title}</h1><div class="panel ${cls}">
   <div class="sh"><svg class="ic"><use href="#i-view-map"/></svg>Architecture</div>
   <div class="arch">${thumb(touched)}</div>

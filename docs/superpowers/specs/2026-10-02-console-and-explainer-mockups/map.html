@@ -7,8 +7,6 @@
 <style>
 :root{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#676D78;--ink-4:#9AA0AB;--hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--accent-ink:#1F5EF0;--bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--bad-ink:#CE2C31;--good:#2E9E6A;--shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#676D78;--ink-4:#9AA0AB;--hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--accent-ink:#1F5EF0;--bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--bad-ink:#CE2C31;--good:#2E9E6A;--shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
-*{box-sizing:border-box;margin:0;padding:0}
 svg.i{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 svg.i16{width:16px;height:16px}
 .el{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -102,53 +100,81 @@ button{font:inherit;color:inherit;background:none;border:0}
 .pbar{height:4px;margin-top:6px;border-radius:2px;background:var(--fill-2);overflow:hidden}.pbar i{display:block;height:100%;background:var(--ink-2);border-radius:2px}
 .retry{color:var(--accent-ink);font-size:12px}
 @media (max-width:1179px){.body{grid-template-columns:200px minmax(0,1fr)}.split{grid-template-columns:minmax(0,1fr) 264px}.seg span b{display:none}}
+.logo{font-weight:600;letter-spacing:-.01em}
+:root{--lane:rgb(16 24 40 / .024);--edge:#C4C9D1}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
+/* map header: headline, overview narrative */
 .mapmain{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--canvas);overflow:hidden}
-.mhead{flex:none;padding:10px 16px 12px;background:var(--panel);box-shadow:inset 0 -1px 0 var(--hair)}
-.hrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:24px}
+.mhead{flex:none;padding:12px 16px 14px;background:var(--panel);box-shadow:inset 0 -1px 0 var(--hair)}
+.hrow{display:flex;align-items:center;gap:8px;min-height:22px;white-space:nowrap}
 .hrow .hl{font-weight:600}
-.note{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--ink-3)}
-.tog{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:12px;color:var(--ink-2)}
-.narr{margin-top:6px;max-width:78ch;color:var(--ink-2);font-size:13px;line-height:20px}
-.cite{display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 6px;margin:0 2px 0 4px;border-radius:9px;background:var(--fill-2);color:var(--ink-2);font-size:12px;vertical-align:1px}
+.hrow .lang{color:var(--ink-3)}
+.notes{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px}
+.note{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3)}
+.tog{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:12px;color:var(--ink-3)}
+.narr{margin-top:6px;max-width:86ch;color:var(--ink-2);font-size:13px;line-height:20px}
+.ref{color:var(--ink);text-decoration:underline;text-decoration-color:rgb(16 24 40 / .2);text-decoration-thickness:1px;text-underline-offset:3px}
+.ref.on{color:var(--accent-ink);text-decoration-color:var(--accent)}
+.more{padding:0;margin-left:2px;color:var(--ink-3);font-size:12px}
+/* canvas */
 .stage{position:relative;flex:1 1 auto;min-height:0}
-.viewport{position:absolute;inset:0;overflow:hidden;background-color:var(--canvas);
-  background-image:radial-gradient(circle,var(--ink-4) .6px,transparent 1.1px)}
+.viewport{position:absolute;inset:0;overflow:hidden;background:var(--canvas)}
 .world{position:absolute;left:0;top:0;transform-origin:0 0}
-.band{position:absolute;display:flex;align-items:center;gap:6px;color:var(--ink-3);font-weight:500;white-space:nowrap}
-.band .n{color:var(--ink-3);font-weight:400}
-.world[data-level="chip"] .band{font-size:22px;line-height:28px;gap:10px}.world[data-level="chip"] .band .ic{width:22px;height:22px}
-.world[data-level="card"] .band{font-size:13px}
+.lane{position:absolute;border-radius:16px;background:var(--lane)}
+.band{position:absolute;display:flex;align-items:center;gap:7px;color:var(--ink);font-weight:600;white-space:nowrap}
+.band .ic{color:var(--ink-3)}
+.band .n{color:var(--ink-4);font-weight:500}
 .edges{position:absolute;left:0;top:0;overflow:visible}
-.edge{fill:none;stroke:var(--ink-4);stroke-linejoin:round;vector-effect:non-scaling-stroke}
-.edge.lit{stroke:var(--accent)}.edge.dim{opacity:.3}
-.card{position:absolute;display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+.edge{fill:none;stroke:var(--edge);stroke-linecap:round;vector-effect:non-scaling-stroke}
+.stub{fill:none;stroke:var(--edge);stroke-width:1.25;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.edge.lit{stroke:var(--accent)}.edge.dim{opacity:.22}
+.card{position:absolute;display:flex;flex-direction:column;justify-content:space-between;border-radius:12px;background:var(--panel);box-shadow:var(--shadow)}
 .card.sel{box-shadow:0 0 0 2px var(--accent),var(--shadow)}
-.ch{display:flex;align-items:center;gap:8px;min-width:0}
-.tile{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;background:var(--fill-2);color:var(--ink-2)}
-.card.sel .tile{background:var(--accent-soft);color:var(--accent)}
-.cn{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pp{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pp.fb{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
-.cm{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap}
-.ib{display:inline-flex;align-items:center;gap:2px;margin-left:auto}
-.ib i{display:block;height:8px;border-radius:1px}.ib .in{background:var(--ink-2)}.ib .out{box-shadow:inset 0 0 0 1.5px var(--ink-3)}
-.world[data-level="chip"] .card{flex-direction:row;align-items:center;padding:0 12px;border-radius:12px}
-.world[data-level="chip"] .tile{width:32px;height:32px;border-radius:8px}.world[data-level="chip"] .tile .ic{width:22px;height:22px}
-.world[data-level="chip"] .cn{font-size:22px;line-height:28px;font-weight:500}
-.viewport[data-zoom-band="icon"] .cn,.viewport[data-zoom-band="icon"] .band .t{visibility:hidden}
-.ext{position:absolute;display:flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:9px;background:var(--fill-2);color:var(--ink-2);font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden}
-.ext .ic{width:12px;height:12px;flex:none}
-.ext span{overflow:hidden;text-overflow:ellipsis}
+.ct{display:flex;align-items:flex-start;gap:6px;min-width:0}
+.cn{flex:1;min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hub{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--ink-3);font-weight:500}
+.pp{color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pp.fb{font-family:var(--mono);color:var(--ink-3)}
+.xr{display:flex;align-items:center;gap:4px;color:var(--ink-3);white-space:nowrap;overflow:hidden}
+.cf{display:flex;align-items:center;gap:6px;color:var(--ink-3);white-space:nowrap}
+.card.sel .cf .ic{color:var(--accent)}
+.sz{flex:1;min-width:0;display:flex;align-items:center}
+.sz i{display:block;border-radius:3px;background:var(--ink-4);opacity:.65}
+/* level content: the camera scales the world, so sizes are world units chosen to read 11 to 13 px at the level's zoom */
+.world[data-level="chip"] .card{padding:7px 8px 9px}
+.world[data-level="chip"] .cn{font-size:20.5px;line-height:23px}
+.world[data-level="chip"] .cf .ic{width:17px;height:17px}
+.world[data-level="chip"] .sz i{height:6px}
+.world[data-level="chip"] .fc{display:none}
+.world:not([data-level="detail"]) .hub{display:none}
+.world[data-level="chip"] .band{font-size:19px;gap:6px}.world[data-level="chip"] .band .ic{width:18px;height:18px}
+.world[data-level="card"] .card{padding:11px 12px 11px}
+.world[data-level="card"] .cn{font-size:17px;line-height:20px}
+.world[data-level="card"] .cf .ic{width:14px;height:14px}.world[data-level="card"] .hub .ic{width:16px;height:16px}
+.world[data-level="card"] .sz i{height:4px}
+.world[data-level="card"] .fc,.world[data-level="card"] .hub{font-size:13.5px}
+.world[data-level="card"] .band{font-size:17px;gap:8px}.world[data-level="card"] .band .ic{width:17px;height:17px}
+.world[data-level="detail"] .card{padding:7px 8px 7px;border-radius:9px}
+.world[data-level="detail"] .ct{gap:4px}
+.world[data-level="detail"] .cn{font-size:10.5px;line-height:13px;-webkit-line-clamp:1}
+.world[data-level="detail"] .hub{font-size:8.5px;gap:2px}.world[data-level="detail"] .hub .ic{width:9px;height:9px}
+.world[data-level="detail"] .pp{margin-top:2px;font-size:8.75px;line-height:11.5px}
+.world[data-level="detail"] .xr{font-size:8.25px;line-height:11px}.world[data-level="detail"] .xr .ic{width:8.5px;height:8.5px}
+.world[data-level="detail"] .cf{gap:4px;font-size:8.25px}.world[data-level="detail"] .cf .ic{width:9px;height:9px}
+.world[data-level="detail"] .sz{flex:0 0 36px}.world[data-level="detail"] .fc{margin-left:auto}.world[data-level="detail"] .sz i{height:3px}
+.world[data-level="detail"] .band{font-size:10.5px;gap:5px}.world[data-level="detail"] .band .ic{width:11px;height:11px}
+.world[data-level="detail"] .lane{border-radius:10px}
+.viewport[data-zoom-band="icon"] .cn{visibility:hidden}
 .tools{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:4px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow);font-size:12px;color:var(--ink-2)}
 .tools span{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px}.tools .on{background:var(--fill-2);color:var(--ink)}
-.mono{font-family:var(--mono);font-size:12px;line-height:18px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ex{margin:-2px 0 4px 18px}
-.prose{margin-top:8px;color:var(--ink-2);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.th rect{fill:var(--fill-2)}.th rect.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:6}
-.th path{fill:none;stroke:var(--ink-4);stroke-width:4;opacity:.6}
-
-.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
-
+/* Brief architecture thumbnail and Inspector */
+.arch svg{height:132px}
+.th .ln{fill:rgb(16 24 40 / .045)}
+.th .cd{fill:var(--panel)}
+.th .cd.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:5}
+.ex{margin:-2px 0 4px 20px}
+.lrow .mb{display:block;height:4px;border-radius:2px;background:var(--ink-4);opacity:.65}
+.lrow .ct{width:22px;text-align:right}
 </style>
 </head>
 <body>
@@ -190,6 +216,7 @@ button{font:inherit;color:inherit;background:none;border:0}
 <symbol id="i-fit" viewBox="0 0 16 16"><path d="M2.75 6V3.5a.75.75 0 0 1 .75-.75H6M10 2.75h2.5a.75.75 0 0 1 .75.75V6M13.25 10v2.5a.75.75 0 0 1-.75.75H10M6 13.25H3.5a.75.75 0 0 1-.75-.75V10"/></symbol>
 <symbol id="i-hand" viewBox="0 0 16 16"><path d="M5.25 8.5V4a1 1 0 0 1 2 0v3.5M7.25 7V2.75a1 1 0 0 1 2 0V7.5M9.25 7.25V4a1 1 0 0 1 2 0v5a4.75 4.75 0 0 1-4.75 4.75h-.4a3.8 3.8 0 0 1-3.05-1.55L1.9 10.4a1 1 0 0 1 1.45-1.35l1.9 1.45"/></symbol>
 <symbol id="i-cursor" viewBox="0 0 16 16"><path d="M3.25 2.75 12.75 7l-4.1 1.35-1.4 4.4z"/></symbol>
+<symbol id="i-fanin" viewBox="0 0 16 16"><path d="M2 3.5 7.5 8M2 8h5.5M2 12.5 7.5 8"/><path d="M10 8a2 2 0 1 0 4 0a2 2 0 1 0-4 0"/></symbol>
 </svg>
 <div class="app">
   <header class="hdr">
@@ -247,19 +274,21 @@ button{font:inherit;color:inherit;background:none;border:0}
 <script>
 const STATE = new URLSearchParams(location.search).get("state") ?? "default";
 const PENDING = STATE === "pending";
-const STATUS = ["scanning", "failed", "off", "unavailable"].includes(STATE) ? STATE : PENDING ? "pending" : "ready";
-const LV = { chip: { w: 220, h: 48, rowGap: 20, gutter: 40, side: 64, chips: 0 }, card: { w: 224, h: 84, rowGap: 40, gutter: 72, side: 112, chips: 2 } };
-const MARGIN = 48, LABEL = 32, ICON_ONLY = 0.375, CHIP = { w: 108, h: 18, gap: 4, top: 4 };
-const BANDS = [["ui", "UI", "role-ui"], ["api", "API · IPC", "role-api"], ["agent", "Agents", "role-agent"], ["domain", "Domain", "role-domain"], ["storage", "Storage", "role-storage"], ["side", "Tests · tooling · config", "stack"]];
+const STATUS = PENDING ? "pending" : "ready";
+/* Layout constants: one geometry for every level (levels change card content, never positions). */
+const GEO = { margin: 16, label: 44, w: 140, sideW: 104, h: 76, rowGap: 16, gutter: 22, lanePad: 6 };
+/* Camera: Fit centers the map and stays in the chip or card level; card from k 0.7, detail from 1.4, names hide below 0.48. */
+const FIT = { x: 20, top: 20, bottom: 68, maxK: 1 }, CARD_K = 0.7, DETAIL_K = 1.4, ICON_ONLY = 0.48;
+const BANDS = [["ui", "UI", "role-ui"], ["api", "API · IPC", "role-api"], ["agent", "Agents", "role-agent"], ["domain", "Domain", "role-domain"], ["storage", "Storage", "role-storage"], ["side", "Support", "stack"]];
 const ROLE_ICON = { ui: "role-ui", api: "role-api", agent: "role-agent", domain: "role-domain", storage: "role-storage", tests: "test", tooling: "role-tooling", config: "role-config" };
 const C = (key, name, role, purpose, files, lang, ext = []) => ({ key, name, role, purpose, files, lang, ext });
 const COMPONENTS = [
   C("renderer", "desktop renderer", "ui", "Main window: workspace, composer, surfaces and the embedded viewer.", 25, "TypeScript", ["react", "@xterm/xterm"]),
   C("tvdev", "trace-viewer-dev", "ui", "Dev host that loads trace bundles for smoke tests.", 24, "TypeScript", ["react"]),
-  C("tvui", "trace-viewer ui", "ui", "Viewer views, Inspector, shell and keyboard layer.", 133, "TypeScript", ["react", "d3-zoom", "@tanstack/react-virtual"]),
+  C("tvui", "trace-viewer ui", "ui", "Viewer views, Inspector, shell and keyboard layer.", 133, "TypeScript", ["react", "d3-zoom"]),
   C("catalog", "ui-catalog", "ui", "Generative UI components rendered from json-render specs.", 36, "TypeScript", ["@xyflow/react", "diff2html"]),
   C("compiler", "ui-compiler", "ui", "Compiles surface decisions into json-render specs.", 10, "TypeScript"),
-  C("main", "desktop main", "api", "Electron main process: IPC handlers, sessions and the event pipeline.", 61, "TypeScript", ["electron", "node-pty", "chokidar"]),
+  C("main", "desktop main", "api", "Electron main process: IPC handlers, sessions and the event pipeline.", 61, "TypeScript", ["electron", "node-pty"]),
   C("shell", "desktop shell", "api", "Preload bridge, shared IPC types and the app build config.", 25, "TypeScript"),
   C("codex", "agent-codex", "agent", "Runs Codex as a child process and normalizes its JSON events.", 22, "TypeScript", ["node-pty"]),
   C("core", "agent-core", "agent", "Adapter interface and session lifecycle shared by agents.", 15, "TypeScript"),
@@ -281,133 +310,136 @@ const ORDER = { ui: ["renderer", "tvdev", "tvui", "catalog", "compiler"], api: [
 if (PENDING) { COMPONENTS.push(C("py", "py-tools", "tooling", null, 14, "Python")); ORDER.side.push("py"); for (const c of COMPONENTS) c.purpose = null; }
 const EDGES = [["renderer", "tvui", 12], ["renderer", "catalog", 9], ["renderer", "shell", 6], ["renderer", "contracts", 14], ["tvdev", "tvui", 4],
   ["tvui", "layout", 40], ["tvui", "model", 38], ["tvui", "contracts", 6], ["catalog", "contracts", 5], ["compiler", "catalog", 3],
-  ["main", "codex", 5], ["main", "core", 3], ["main", "router", 5], ["main", "semantic", 6], ["main", "evidence", 4], ["main", "contracts", 22],
+  ["shell", "main", 3], ["main", "codex", 5], ["main", "core", 3], ["main", "router", 5], ["main", "semantic", 6], ["main", "evidence", 4], ["main", "contracts", 22],
   ["main", "storage", 9], ["main", "telemetry", 3], ["shell", "contracts", 8], ["codex", "core", 4], ["codex", "contracts", 6], ["core", "contracts", 3],
   ["router", "contracts", 7], ["router", "evidence", 2], ["semantic", "contracts", 9], ["evidence", "contracts", 5], ["model", "contracts", 11],
   ["layout", "model", 30], ["tv", "model", 6], ["storage", "contracts", 8], ["evals", "router", 3], ["evals", "contracts", 4]];
 const TOUCHED = new Set(["tvui", "layout", "model", "main"]);
 const byKey = new Map(COMPONENTS.map((c) => [c.key, c]));
-const bandOf = (role) => (role === "tests" || role === "tooling" || role === "config" ? "side" : role);
-const width = (n) => (n > 0 ? Math.min(56, Math.max(2, 8 * Math.log2(1 + n))) : 0);
+const edgeWidth = (n) => (n <= 3 ? 1 : n <= 15 ? 2 : 3);
+const STROKE = { 1: 1, 2: 1.6, 3: 2.4 };
+/* Hubs: a component imported by at least max(6, a quarter of all components) others. Their incoming edges show only for a selected or hovered card; a short stub marks the hub's port. */
+const importers = new Map();
+for (const [a, b] of EDGES) importers.set(b, (importers.get(b) ?? 0) + 1);
+const HUB_MIN = Math.max(6, Math.ceil(COMPONENTS.length / 4));
+const isHub = (id) => (importers.get(id) ?? 0) >= HUB_MIN;
+const maxFiles = Math.max(...COMPONENTS.map((c) => c.files));
+const sizePct = (files) => Math.max(8, Math.round(100 * Math.sqrt(files / maxFiles)));
 
-function layout(levelName) {
-  const s = LV[levelName];
-  const pitch = s.h + s.rowGap, top = MARGIN + LABEL;
+function layout() {
+  const g = GEO, pitch = g.h + g.rowGap, top = g.margin + g.label;
   const cols = [], cards = new Map();
-  let x = MARGIN;
+  let x = g.margin;
   for (const [band] of BANDS) {
     const ids = ORDER[band];
     if (ids.length === 0) continue;
-    if (cols.length > 0) x += band === "side" ? s.side : s.gutter;
-    cols.push({ band, x });
-    ids.forEach((id, row) => cards.set(id, { id, band, col: cols.length - 1, row, x, y: top + row * pitch, w: s.w, h: s.h }));
-    x += s.w;
+    if (cols.length > 0) x += g.gutter;
+    const w = band === "side" ? g.sideW : g.w;
+    cols.push({ band, x, w, count: ids.length });
+    ids.forEach((id, row) => cards.set(id, { id, band, col: cols.length - 1, row, x, y: top + row * pitch, w, h: g.h }));
+    x += w;
   }
-  const rows = Math.max(...Object.values(ORDER).map((l) => l.length));
-  const gutterX = (g, lane) => {
-    const left = g === 0 ? 0 : cols[g - 1].x + s.w, right = cols[g].x, half = Math.max(0, (right - left) / 2 - 8);
-    const steps = Math.floor(half / 4), slots = 2 * steps + 1, i = lane % slots;
-    return (left + right) / 2 + (i === 0 ? 0 : (i % 2 === 1 ? -1 : 1) * Math.ceil(i / 2) * 4);
-  };
-  const laneTop = s.chips > 0 ? CHIP.top + CHIP.h + 4 : 4, laneCount = Math.floor((s.rowGap - 2 - laneTop) / 4) + 1;
-  const gapY = (row, lane) => top + row * pitch + s.h + laneTop + (lane % laneCount) * 4;
-  const gutterUse = new Map(), gapUse = new Map(), take = (m, k) => { const n = m.get(k) ?? 0; m.set(k, n + 1); return n; };
-  const ports = new Map(), portKey = (id, side) => `${id}|${side}`;
-  const routes = EDGES.filter(([a, b]) => cards.has(a) && cards.has(b)).map(([a, b, count]) => {
-    const A = cards.get(a), B = cards.get(b), d = B.col - A.col;
-    const r = { a: A, b: B, count, key: `${a}>${b}`, kind: d === 0 ? "same" : Math.abs(d) === 1 ? "adjacent" : "long",
-      aSide: d > 0 ? "R" : "L", bSide: d === 0 ? "L" : d > 0 ? "L" : "R",
-      g1: d === 0 ? A.col : Math.abs(d) === 1 ? (d > 0 ? B.col : A.col) : d > 0 ? A.col + 1 : A.col, g2: d > 0 ? B.col : B.col + 1 };
-    for (const [id, side, other] of [[a, r.aSide, B], [b, r.bSide, A]]) {
-      const k = portKey(id, side); if (!ports.has(k)) ports.set(k, []); ports.get(k).push({ key: r.key, y: other.y });
-    }
-    return r;
-  }).sort((p, q) => (p.key < q.key ? -1 : 1));
-  const offset = new Map();
-  for (const [k, list] of ports) {
-    list.sort((p, q) => p.y - q.y || (p.key < q.key ? -1 : 1));
-    list.forEach((p, i) => offset.set(`${k}|${p.key}`, Math.max(-(s.h / 2 - 6), Math.min(s.h / 2 - 6, (i - (list.length - 1) / 2) * 4))));
-  }
-  const edges = routes.map((r) => {
-    const ax = r.aSide === "R" ? r.a.x + s.w : r.a.x, bx = r.bSide === "R" ? r.b.x + s.w : r.b.x;
-    const ay = r.a.y + s.h / 2 + offset.get(`${portKey(r.a.id, r.aSide)}|${r.key}`), by = r.b.y + s.h / 2 + offset.get(`${portKey(r.b.id, r.bSide)}|${r.key}`);
-    let d;
-    if (r.kind === "same") d = `M${ax} ${ay}H${gutterX(r.g1, take(gutterUse, r.g1))}V${by}H${bx}`;
-    else if (r.kind === "adjacent") d = ay === by ? `M${ax} ${ay}H${bx}` : `M${ax} ${ay}H${gutterX(r.g1, take(gutterUse, r.g1))}L${bx} ${by}`;
-    else d = `M${ax} ${ay}H${gutterX(r.g1, take(gutterUse, r.g1))}V${gapY(r.a.row, take(gapUse, r.a.row))}H${gutterX(r.g2, take(gutterUse, r.g2))}V${by}H${bx}`;
-    return { ...r, d, w: r.count <= 3 ? 1 : r.count <= 15 ? 2 : 3 };
+  const rows = Math.max(...cols.map((c) => c.count));
+  const W = x + g.margin, H = top + rows * pitch - g.rowGap + g.margin;
+  const channelY = (b) => top + b * pitch - g.rowGap / 2; // gap boundary b sits between rows b-1 and b; every band shares the pitch, so it is free in every column
+  const pairs = EDGES.filter(([a, b]) => cards.has(a) && cards.has(b)).map(([a, b, count]) => {
+    let L = cards.get(a), R = cards.get(b);
+    if (R.col < L.col || (R.col === L.col && R.row < L.row)) [L, R] = [R, L];
+    return { a, b, count, L, R };
   });
-  return { s, cols, cards, edges, bounds: { w: cols.at(-1).x + s.w + MARGIN, h: top + rows * pitch + MARGIN } };
+  /* Same-band brackets go to the band side that carries fewer cross-band edges (ties: right); the first band's left side and the last band's right side are the margins. */
+  const sideLoad = cols.map(() => ({ left: 0, right: 0 }));
+  for (const { L, R } of pairs) if (L.col !== R.col) { sideLoad[L.col].right += 1; sideLoad[R.col].left += 1; }
+  const edges = pairs.map(({ a, b, count, L, R }) => {
+    const y1 = L.y + g.h / 2, y2 = R.y + g.h / 2;
+    let d;
+    if (L.col === R.col) { // same band: a bracket in the band's right gutter (left gutter for the last band)
+      const right = sideLoad[L.col].right <= sideLoad[L.col].left, x0 = right ? L.x + L.w : L.x, bulge = Math.min(g.gutter / 2 - 2, 4 + 3 * (R.row - L.row)), bx = x0 + (right ? 1 : -1) * bulge;
+      d = `M${x0} ${y1}C${bx} ${y1} ${bx} ${y2} ${x0} ${y2}`;
+    } else {
+      const x1 = L.x + L.w, x2 = R.x;
+      if (R.col - L.col === 1) { const mx = (x1 + x2) / 2; d = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`; }
+      else { // two or more bands apart: S-curve in the first gutter into the gap channel next to the left card, straight through, S-curve in the last gutter
+        const b = Math.min(rows, Math.max(1, y2 >= y1 ? L.row + 1 : L.row)), yc = channelY(b), h = g.gutter / 2, gx1 = x1 + g.gutter, gx2 = x2 - g.gutter;
+        d = `M${x1} ${y1}C${x1 + h} ${y1} ${x1 + h} ${yc} ${gx1} ${yc}H${gx2}C${gx2 + h} ${yc} ${gx2 + h} ${y2} ${x2} ${y2}`;
+      }
+    }
+    return { from: a, to: b, count, width: edgeWidth(count), d, hub: isHub(b), same: L.col === R.col };
+  });
+  return { cols, cards, edges, rows, W, H, top };
 }
-const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
-const totals = new Map();
-for (const [a, b, n] of EDGES) { totals.set(a, { in: (totals.get(a)?.in ?? 0), out: (totals.get(a)?.out ?? 0) + n }); totals.set(b, { in: (totals.get(b)?.in ?? 0) + n, out: totals.get(b)?.out ?? 0 }); }
 
-function renderWorld(levelName, selected) {
-  const L = layout(levelName), s = L.s, world = document.getElementById("world");
-  world.dataset.level = levelName;
-  world.style.width = `${L.bounds.w}px`; world.style.height = `${L.bounds.h}px`;
-  const lit = (e) => selected !== null && (e.a.id === selected || e.b.id === selected);
-  let html = L.cols.map((c) => { const [, label, ic] = BANDS.find(([b]) => b === c.band);
-    return `<div class="band" style="left:${c.x}px;top:${MARGIN}px;width:${s.w}px">${icon(ic)}<span class="t">${label}</span><span class="n">${ORDER[c.band].length}</span></div>`; }).join("");
-  html += `<svg class="edges" width="${L.bounds.w}" height="${L.bounds.h}">${L.edges.map((e) => `<path class="edge${lit(e) ? " lit" : selected !== null ? " dim" : ""}" stroke-width="${e.w}" d="${e.d}"/>`).join("")}</svg>`;
+const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
+function renderWorld(L, level, selected) {
+  const g = GEO, world = document.getElementById("world");
+  world.dataset.level = level;
+  world.style.width = `${L.W}px`; world.style.height = `${L.H}px`;
+  const touches = (e) => selected !== null && (e.from === selected || e.to === selected);
+  let html = L.cols.map((c) => {
+    const [, label, ic] = BANDS.find(([b]) => b === c.band);
+    return `<div class="lane" style="left:${c.x - g.lanePad}px;top:${g.margin - 4}px;width:${c.w + 2 * g.lanePad}px;height:${L.H - 2 * g.margin + 4 + g.lanePad}px"></div>
+      <div class="band" style="left:${c.x - 1}px;top:${g.margin + 2}px;height:${g.label - 14}px">${icon(ic)}<span class="t">${label}</span><span class="n">${c.count}</span></div>`;
+  }).join("");
+  /* At rest the map draws band-to-band edges only; same-band and hub edges join when their card is selected or hovered. */
+  const shown = L.edges.filter((e) => touches(e) || (!e.hub && !e.same));
+  const ordered = [...shown.filter((e) => !touches(e)), ...shown.filter(touches)];
+  const stubs = [...L.cards.values()].filter((c) => isHub(c.id) && selected !== c.id).map((c) => { const y = c.y + g.h / 2, x0 = c.x - 11;
+    return `<path class="stub" d="M${x0} ${y - 7}Q${c.x - 5} ${y - 7} ${c.x} ${y}M${x0} ${y}H${c.x}M${x0} ${y + 7}Q${c.x - 5} ${y + 7} ${c.x} ${y}"/>`; }).join("");
+  html += `<svg class="edges" width="${L.W}" height="${L.H}">${stubs}${ordered.map((e) => `<path class="edge${touches(e) ? " lit" : selected !== null ? " dim" : ""}" stroke-width="${STROKE[e.width]}" d="${e.d}"/>`).join("")}</svg>`;
   for (const card of L.cards.values()) {
-    const c = byKey.get(card.id), t = totals.get(card.id), sel = card.id === selected;
-    const body = levelName === "chip" ? "" : `<div class="pp${c.purpose === null ? " fb" : ""}">${c.purpose ?? (c.key === "py" ? "tools/py" : `packages/${c.name}`)}</div>
-      <div class="cm"><span>${c.files} files · ${c.lang}</span>${c.key === "py" || t === undefined ? "" : `<span class="ib"><i class="in" style="width:${width(t.in)}px"></i><i class="out" style="width:${width(t.out)}px"></i></span>`}</div>`;
-    html += `<div class="card${sel ? " sel" : ""}" style="left:${card.x}px;top:${card.y}px;width:${s.w}px;height:${s.h}px"><div class="ch"><span class="tile">${icon(ROLE_ICON[c.role], "ic s14")}</span><span class="cn">${c.name}</span></div>${body}</div>`;
-    if (s.chips > 0) c.ext.slice(0, s.chips).forEach((name, i) => {
-      html += `<span class="ext" style="left:${card.x + i * (CHIP.w + CHIP.gap)}px;top:${card.y + s.h + CHIP.top}px;width:${CHIP.w}px">${icon("pkg")}<span>${name}</span></span>`;
-    });
+    const c = byKey.get(card.id), sel = card.id === selected;
+    const hub = isHub(card.id) ? `<span class="hub" title="Imported by ${importers.get(card.id)} components">${icon("fanin")}${importers.get(card.id)}</span>` : "";
+    const detail = level === "detail"
+      ? `<div class="pp${c.purpose === null ? " fb" : ""}">${c.purpose ?? (c.key === "py" ? "tools/py" : `packages/${c.name}`)}</div>${c.ext.length > 0 ? `<div class="xr">${icon("pkg")}${c.ext.slice(0, 2).join(" · ")}</div>` : ""}`
+      : "";
+    const count = level === "detail" ? `${c.files} files` : c.files;
+    html += `<div class="card${sel ? " sel" : ""}" style="left:${card.x}px;top:${card.y}px;width:${card.w}px;height:${card.h}px">
+      <div><div class="ct"><span class="cn">${c.name}</span>${hub}</div>${detail}</div>
+      <div class="cf">${icon(ROLE_ICON[c.role])}<span class="sz"><i style="width:${sizePct(c.files)}%"></i></span><span class="fc">${count}</span></div></div>`;
   }
   world.innerHTML = html;
-  return L;
 }
 
+const levelFor = (k) => (k < CARD_K ? "chip" : k < DETAIL_K ? "card" : "detail");
 function camera(L, mode) {
   const vp = document.getElementById("viewport"), vw = vp.clientWidth, vh = vp.clientHeight;
   let k, tx, ty;
   if (mode === "fit") {
-    k = Math.min(0.49, (vw - 96) / L.bounds.w, (vh - 96) / L.bounds.h);
-    tx = (vw - L.bounds.w * k) / 2; ty = 24;
+    const aw = vw - 2 * FIT.x, ah = vh - FIT.top - FIT.bottom;
+    k = Math.min(aw / L.W, ah / L.H, FIT.maxK);
+    tx = (vw - L.W * k) / 2; ty = FIT.top + (ah - L.H * k) / 2;
   } else {
-    const focus = L.cards.get(mode); k = 0.92;
-    tx = vw / 2 - (focus.x + focus.w / 2) * k; ty = 24 - (MARGIN - 8) * k;
+    k = 1.5; tx = 16 - (GEO.margin - GEO.lanePad) * k; ty = 16 - (GEO.margin - 4) * k;
   }
   document.getElementById("world").style.transform = `translate(${tx}px,${ty}px) scale(${k})`;
-  const cell = 20 * k * (k < 0.5 ? 2 : 1);
-  vp.style.backgroundSize = `${cell}px ${cell}px`; vp.style.backgroundPosition = `${tx}px ${ty}px`;
   vp.dataset.zoomBand = k < ICON_ONLY ? "icon" : "full";
   document.getElementById("zoom").textContent = `${Math.round(k * 100)}%`;
+  return k;
 }
 
-const SENTENCES = [
-  ["jevcode is an Electron app that supervises a coding agent and explains its work.", ["main", "renderer"]],
-  ["The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core.", ["main", "codex", "semantic"]],
-  ["Every event lands in the SQLite store, and the trace viewer reads it back as rows.", ["storage", "model"]],
-  ["Jev's questions go through jev-router with schema-checked answers.", ["router"]],
-  ["contracts holds the shared schemas that every package imports.", ["contracts"]],
+/* Overview narrative: plain sentences; component names are quiet links. The first two sentences show, the rest sit behind More. */
+const ref = (key, on = false) => `<a class="ref${on ? " on" : ""}" data-component="${key}">${byKey.get(key).name}</a>`;
+const SENTENCES = (sel) => [
+  `jevcode is an Electron app that supervises a coding agent and explains its work.`,
+  `${ref("main", sel === "main")} runs Codex through ${ref("codex")} and feeds its events to ${ref("evidence")} and ${ref("semantic")}.`,
+  `Every event lands in ${ref("storage")}, and ${ref("model")} folds it back into rows.`,
+  `Jev's questions go through ${ref("router")}; ${ref("contracts")} holds the schemas every package imports.`,
 ];
-const chip = (key) => `<span class="cite">${icon(ROLE_ICON[byKey.get(key).role], "ic s12")}${byKey.get(key).name}</span>`;
+const plain = SENTENCES(null).map((s) => s.replace(/<[^>]+>/g, ""));
+const selected = STATE === "selected" ? "main" : null;
 document.getElementById("mhead").innerHTML = PENDING
-  ? `<div class="hrow">${icon("map")}<span class="hl">22 components · TypeScript, JSON, Python</span>
-     <span class="note">${icon("stack", "ic s12")}Partial map · 20,000 files mapped</span>
-     <span class="note">Imports not analyzed for Python</span><span class="note">Descriptions pending</span></div>`
-  : `<div class="hrow">${icon("map")}<span class="hl">21 components · TypeScript, JSON</span><button class="tog">${icon("chev", "ic s12")}Overview</button></div>
-     <p class="narr">${SENTENCES.map(([t, keys]) => `${t}${keys.map(chip).join("")}`).join(" ")}</p>`;
+  ? `<div class="hrow">${icon("map")}<span class="hl">22 components</span><span class="lang">TypeScript · JSON · Python</span><button class="tog">Overview${icon("chev", "ic s12")}</button></div>
+     <div class="notes"><span class="note">${icon("stack", "ic s12")}Partial · 20,000 of 25,200 files</span><span class="note">${icon("route", "ic s12")}Imports not analyzed for Python</span><span class="note">${icon("brief", "ic s12")}Descriptions pending</span></div>`
+  : `<div class="hrow">${icon("map")}<span class="hl">21 components</span><span class="lang">TypeScript · JSON</span><button class="tog">Overview${icon("chev", "ic s12")}</button></div>
+     <p class="narr">${SENTENCES(selected).slice(0, 2).join(" ")} <button class="more">More</button></p>`;
 
-const thumb = () => {
-  const L = layout("chip");
-  return `<svg class="th" viewBox="0 0 ${L.bounds.w} ${L.bounds.h}" preserveAspectRatio="xMidYMid meet">${L.edges.map((e) => `<path d="${e.d}"/>`).join("")}${[...L.cards.values()].map((c) => `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="12"${TOUCHED.has(c.id) ? ' class="t"' : ""}/>`).join("")}</svg>`;
-};
-const arch = () => `<div class="sec"><h4>${icon("route", "i")}Architecture</h4>
-      ${STATUS === "scanning" ? `<div class="empty"><svg class="i"><use href="#i-map"/></svg><span><b>Mapping codebase · 3,200 / 9,800 files</b><span class="pbar" style="display:block"><i style="width:33%"></i></span></span></div>`
-      : STATUS === "failed" ? `<div class="empty"><svg class="i"><use href="#i-map"/></svg><span><b>Codebase map unavailable</b><button class="retry">Retry</button></span></div>`
-      : `<div class="arch">${thumb()}</div>
+const thumb = (L) => `<svg class="th" viewBox="0 0 ${L.W} ${L.H}" preserveAspectRatio="xMidYMid meet">${L.cols.map((c) => `<rect class="ln" x="${c.x - GEO.lanePad}" y="${GEO.margin - 4}" width="${c.w + 2 * GEO.lanePad}" height="${L.H - 2 * GEO.margin + 4 + GEO.lanePad}" rx="16"/>`).join("")}${[...L.cards.values()].map((c) => `<rect class="cd${TOUCHED.has(c.id) ? " t" : ""}" x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="12"/>`).join("")}</svg>`;
+const arch = (L) => `<div class="sec"><h4>${icon("route", "i")}Architecture</h4>
+      <div class="arch">${thumb(L)}</div>
       <p class="am"><span>${PENDING ? 22 : 21} components</span><span>4 touched</span></p>
-      ${PENDING ? `<p class="quiet">Descriptions pending</p>` : `<p class="prose">${SENTENCES.map(([t]) => t).join(" ")}</p>`}
-      <button class="lnk">Open the map</button>`}</div>`;
-const brief = () => `<div class="bh">${icon("brief", "i i16")}Brief<span class="sub">Live</span></div>
+      ${PENDING ? `<p class="quiet">Descriptions pending</p>` : `<p class="prose">${plain.slice(0, 3).join(" ")}</p>`}
+      <button class="lnk">Open the map</button></div>`;
+const brief = (L) => `<div class="bh">${icon("brief", "i i16")}Brief<span class="sub">Live</span></div>
     <div class="sec"><h4>${icon("live", "i")}Now</h4>
       <div class="now"><div class="nowrow"><span class="pulse"></span><span class="t el">Editing <span class="mono">src/layout/map-layout.ts</span></span></div></div></div>
     <div class="sec"><h4>${icon("list", "i")}Changes so far · 3</h4>
@@ -416,20 +448,29 @@ const brief = () => `<div class="bh">${icon("brief", "i i16")}Brief<span class="
         <div class="c">${icon("edit", "i")}<span class="t el">Overview fold</span><span class="db"><i class="a" style="width:30px"></i><i class="r" style="width:6px"></i></span><span></span><span></span></div>
         <div class="c">${icon("test", "i")}<span class="t el">Layout properties</span><span></span><span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i class="f"></i></span><span></span></div>
       </div></div>
-    ${arch()}`;
+    ${arch(L)}`;
+const io = (rows) => { const max = Math.max(...rows.map(([, , n]) => n)); return rows.map(([n, r, c, ex]) => `<div class="lrow">${r === null ? "" : icon(ROLE_ICON[r], "ic s12")}<span class="nm">${n}</span><span class="mb" style="width:${Math.max(4, Math.round(48 * c / max))}px"></span><span class="ct">${c}</span></div>${ex ? `<div class="mono ex">${ex}</div>` : ""}`).join(""); };
 const inspector = () => `<div class="ihead"><span class="tile" style="background:var(--accent-soft);color:var(--accent)">${icon("role-api", "ic s14")}</span><div>desktop main<span class="ml">API · described by model</span></div></div>
     <div class="sec"><p>Electron main process: IPC handlers, sessions and the event pipeline.</p><p class="mono" style="margin-top:4px">apps/desktop/src/main</p></div>
     <div class="sec"><div class="sh">${icon("file", "ic s12")}Files · 61 <span class="d">TypeScript</span></div>
       ${["main/index.ts", "main/ipc.ts", "main/pipeline/coordinator.ts", "main/pipeline/explainer-stage.ts", "main/sessions.ts"].map((f) => `<div class="mono">${f}</div>`).join("")}<p class="quiet" style="margin-top:2px">56 more</p></div>
-    <div class="sec"><div class="sh">Imports out</div>
-      ${[["contracts", "domain", 22, "main/ipc.ts → contracts/src/index.ts"], ["storage", "storage", 9, null], ["semantic-core", "domain", 6, null], ["jev-router", "agent", 5, null]].map(([n, r, c, ex]) => `<div class="lrow">${icon(ROLE_ICON[r], "ic s12")}<span class="nm">${n}</span><span class="ct">${c}</span></div>${ex ? `<div class="mono ex">${ex}</div>` : ""}`).join("")}
-      <div class="sh" style="margin-top:6px">Imports in</div><div class="lrow">${icon("role-api", "ic s12")}<span class="nm">desktop shell</span><span class="ct">3</span></div></div>
-    <div class="sec"><div class="sh">${icon("pkg", "ic s12")}External packages</div><div class="lrow"><span class="nm">electron</span><span class="ct">14</span></div><div class="lrow"><span class="nm">node-pty</span><span class="ct">3</span></div></div>
+    <div class="sec"><div class="sh">Imports out · 8</div>
+      ${io([["contracts", "domain", 22, "main/ipc.ts → contracts/src/index.ts"], ["storage", "storage", 9], ["semantic-core", "domain", 6], ["agent-codex", "agent", 5], ["jev-router", "agent", 5]])}
+      <p class="quiet" style="margin:0 0 4px">3 more</p>
+      <div class="sh" style="margin-top:6px">Imports in · 1</div>${io([["desktop shell", "api", 3]])}</div>
+    <div class="sec"><div class="sh">${icon("pkg", "ic s12")}External packages</div>${io([["electron", null, 14], ["node-pty", null, 3]])}</div>
     <div class="sec"><div class="sh">This session</div><div class="sess">${icon("edit", "ic s12")}<span class="nm mono" style="flex:1">…/pipeline/explainer-stage.ts</span><span class="bar"><i class="a" style="width:40px"></i><i class="r" style="width:8px"></i></span></div></div>`;
-document.getElementById("insp").innerHTML = STATE === "selected" ? inspector() : brief();
-const level = STATE === "zoomed" || STATE === "selected" ? "card" : "chip";
-const L = renderWorld(level, STATE === "selected" ? "main" : null);
-camera(L, level === "chip" ? "fit" : "main");
+
+const L = layout();
+document.getElementById("insp").innerHTML = STATE === "selected" ? inspector() : brief(L);
+/* Fit runs after layout settles and again on resize (headless Chrome sizes the window after the first script pass). */
+function draw() {
+  const k = camera(L, STATE === "zoomed" ? "main" : "fit");
+  renderWorld(L, STATE === "zoomed" ? "detail" : levelFor(Math.min(k, DETAIL_K - 0.01)), selected);
+}
+draw();
+addEventListener("load", draw);
+addEventListener("resize", draw);
 </script>
 </body>
 </html>
