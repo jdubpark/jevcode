@@ -54,18 +54,23 @@ const REPO_ID = "repo-soak";
 // and reports that path to the stage, so its settle and rebuild run on real content changes.
 // JEVCODE_SOAK_YIELD_EVERY=N yields to the event loop every N records, so the scan and rebuilds
 // compete with ingestion (guard B uses 10). JEVCODE_SOAK_PAUSE_EVERY=N pauses ingestion for
-// longer than the stage's 500 ms settle every N records, so rebuilds run between records;
-// ingestMs leaves the pauses out. Unset, the ingest loop is unchanged.
+// longer than the stage's 500 ms settle every N records, so rebuilds run between records; with
+// the explainer on, pauses start once its first scan finished, so a pause never hides the scan
+// from ingestMs, which leaves the pauses out. The JSON reports the first record that paused
+// (`firstPauseAt`); JEVCODE_SOAK_PAUSE_FROM=<that record> gives an explainer-off base run the
+// same pauses. Unset, the ingest loop is unchanged.
 const EXPLAINER = process.env["JEVCODE_SOAK_EXPLAINER"] === "1";
 const EXPLAINER_FILES = Number(process.env["JEVCODE_SOAK_EXPLAINER_FILES"] ?? 5_000);
 const YIELD_EVERY = Number(process.env["JEVCODE_SOAK_YIELD_EVERY"] ?? 0);
 const PAUSE_EVERY = Number(process.env["JEVCODE_SOAK_PAUSE_EVERY"] ?? 0);
+const PAUSE_FROM = Number(process.env["JEVCODE_SOAK_PAUSE_FROM"] ?? 0);
 const PAUSE_MS = FILES_SETTLE_MS + 100;
 const EXPLAINER_REBUILD_TARGETS = 200;
 for (const [name, value, min] of [
   ["JEVCODE_SOAK_EXPLAINER_FILES", EXPLAINER_FILES, 1],
   ["JEVCODE_SOAK_YIELD_EVERY", YIELD_EVERY, 0],
   ["JEVCODE_SOAK_PAUSE_EVERY", PAUSE_EVERY, 0],
+  ["JEVCODE_SOAK_PAUSE_FROM", PAUSE_FROM, 0],
 ]) {
   assert(Number.isInteger(value) && value >= min, `${name} must be an integer >= ${min}, got ${process.env[name]}`);
 }
@@ -487,7 +492,8 @@ async function main() {
   let explainerRepo = null;
   let explainerRows = 0;
   let ingesting = false;
-  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0 };
+  let scansDone = 0;
+  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0 };
   if (EXPLAINER) {
     explainerRepo = makeExplainerRepo(EXPLAINER_FILES);
     extractor = createImportExtractor();
@@ -567,6 +573,7 @@ async function main() {
       now: () => Date.now(),
       schedule: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle) },
       log: (event) => {
+        if (event.kind === "scan") scansDone += 1;
         if (!ingesting) return;
         if (event.kind === "scan") duringIngest.scansDone += 1;
         if (event.kind === "snapshot") duringIngest.snapshots += 1;
@@ -587,16 +594,22 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 25));
   ingesting = true;
   let pausedMs = 0;
+  let firstPauseAt = null;
   const ingestStarted = Date.now();
   let burstIndex = 0;
   for (const record of records) {
     if (YIELD_EVERY > 0 && burstIndex > 0 && burstIndex % YIELD_EVERY === 0) {
       await new Promise((resolve) => setImmediate(resolve));
     }
-    if (PAUSE_EVERY > 0 && burstIndex > 0 && burstIndex % PAUSE_EVERY === 0) {
-      // Only the planned pause leaves ingestMs; a late timer (a blocked loop) still counts.
-      await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
-      pausedMs += PAUSE_MS;
+    if (PAUSE_EVERY > 0 && burstIndex > 0 && burstIndex % PAUSE_EVERY === 0 && burstIndex >= PAUSE_FROM) {
+      if (EXPLAINER && scansDone === 0) {
+        duringIngest.pausesBeforeScan += 1;
+      } else {
+        firstPauseAt ??= burstIndex;
+        // Only the planned pause leaves ingestMs; a late timer (a blocked loop) still counts.
+        await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+        pausedMs += PAUSE_MS;
+      }
     }
     if (burstIndex % 400 === 0) {
       setLock(true);
@@ -752,6 +765,8 @@ async function main() {
         jevDecisions: db.listJevDecisions(SESSION_ID).length,
         profile: PROFILE,
         pauseEvery: PAUSE_EVERY,
+        pauseFrom: PAUSE_FROM,
+        firstPauseAt,
         pausedMs,
         eventLoopDelayMs,
         explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, yieldEvery: YIELD_EVERY, duringIngest } : null,
