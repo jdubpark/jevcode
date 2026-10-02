@@ -11,7 +11,14 @@ import type {
   OverviewStatus,
   Role,
 } from "@jevcode/contracts";
-import { assembleSnapshot, clipText, type ComponentDraft, type ComponentText, type WorkspaceManifest } from "@jevcode/codebase-map";
+import {
+  assembleSnapshot,
+  clipText,
+  type AssembleSnapshotInput,
+  type ComponentDraft,
+  type ComponentText,
+  type WorkspaceManifest,
+} from "@jevcode/codebase-map";
 import type { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import type { extractImports } from "@jevcode/evidence-engine";
 import type { JevcodeDb } from "@jevcode/storage";
@@ -178,10 +185,15 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
   let persistedKey: string | null = null;
   /** What the single row writer writes next: a full snapshot, or a progress or failure snapshot. */
   let latest: { snapshot: OverviewSnapshot; key: string } | null = null;
+  /**
+   * The scan state rows carry instead of "done": the progress of a scan past 2 s, or the last
+   * failure. It stays until a scan succeeds, so a narration refresh or an incremental rebuild
+   * cannot hide a failure (and its Retry) behind a "done" row. `tag` identifies it in row keys.
+   */
+  let scanState: { scan: OverviewStatus["scan"]; tag: string } | null = null;
   let scanning: AbortController | null = null;
   let generation = 0;
   let scanCount = 0;
-  let rebuildFailures = 0;
   let scanPromise: Promise<void> = Promise.resolve();
   let rebuildChain: Promise<void> = Promise.resolve();
   let settleTimer: unknown = null;
@@ -199,7 +211,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     schedule: deps.schedule,
     log: (event) => deps.log(event),
     refresh: () => {
-      if (!disposed && built !== null && model !== null) publishOrFail(built, model);
+      if (!disposed && built !== null) rebuild(built);
     },
   });
 
@@ -336,22 +348,29 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
   }
 
   /**
-   * Ruling R3: progress and failure rows carry the previous full snapshot's components (or
-   * none) with a new `status.scan`. Their keys are unique per scan step, so the progress path
-   * hashes nothing; the 2 s writer decides which of them reach the store.
+   * Ruling R3: progress and failure rows carry the last full snapshot's components (or none)
+   * with the scan state. The key joins the state's tag and the content key, so the progress path
+   * hashes nothing and republishing unchanged content writes no second row.
    */
-  function publishScanStatus(scan: OverviewStatus["scan"], key: string): void {
+  function scanStateRow(state: NonNullable<typeof scanState>): { snapshot: OverviewSnapshot; key: string } {
+    const base = content?.snapshot ?? emptySnapshot();
+    const narrator = narratorState();
+    return {
+      snapshot: {
+        ...base,
+        scanId: nextScanId(),
+        generatedAt: new Date(deps.now()).toISOString(),
+        status: { scan: state.scan, narrator },
+      },
+      key: `${state.tag}|${narrator}|${content?.key ?? ""}`,
+    };
+  }
+
+  /** Makes `scan` the sticky scan state and writes it (through the 2 s writer). */
+  function publishScanStatus(scan: OverviewStatus["scan"], tag: string): void {
+    scanState = { scan, tag };
     try {
-      const base = content?.snapshot ?? emptySnapshot();
-      latest = {
-        snapshot: {
-          ...base,
-          scanId: nextScanId(),
-          generatedAt: new Date(deps.now()).toISOString(),
-          status: { scan, narrator: narratorState() },
-        },
-        key,
-      };
+      latest = scanStateRow(scanState);
     } catch (error) {
       deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
       return;
@@ -359,29 +378,74 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     requestWriteForCurrentSession();
   }
 
+  /** A narration seam error: logged, and the stage goes on with rule-based data (spec E10, §6.6). */
+  function seamFailed(error: unknown): void {
+    deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
+  }
+
+  /**
+   * Spec E10, E15, §6.6: model text never costs the map. The seam's text is dropped when the
+   * snapshot that includes it cannot be assembled (a RangeError when it cannot fit), and the
+   * narrative when the seam throws or the snapshot with it cannot be assembled. Only a failure
+   * of the rule-only snapshot throws.
+   */
+  function assembleWithFallback(input: AssembleSnapshotInput, view: OverviewView): OverviewSnapshot {
+    let used = input;
+    let base: OverviewSnapshot;
+    try {
+      base = assembleSnapshot(used);
+    } catch (error) {
+      if (used.text.size === 0) throw error;
+      seamFailed(error);
+      used = { ...used, text: new Map() };
+      base = assembleSnapshot(used);
+    }
+    let narrative: OverviewSnapshot["narrative"] = null;
+    try {
+      narrative = narration.narrative(base, view) ?? null;
+    } catch (error) {
+      seamFailed(error);
+    }
+    if (narrative === null) return base;
+    try {
+      return assembleSnapshot({ ...used, narrative });
+    } catch (error) {
+      seamFailed(error);
+      return base;
+    }
+  }
+
   function publish(overview: BuiltOverview, repo: RepoModel): void {
     const view = viewOf(overview, repo);
     const scanned = repo.files.size;
-    const input = {
-      sessionId: "",
-      repoRoot: deps.repoRoot,
-      scanId: nextScanId(),
-      partial: repo.partial,
-      drafts: overview.drafts,
-      totalFiles: repo.partial ? repo.totalFiles : scanned,
-      edges: overview.edges,
-      externals: overview.externals,
-      text: new Map(narration.textFor(view)),
-      narrative: null,
-      generatedAt: new Date(deps.now()).toISOString(),
-    };
-    const ruleOnly = assembleSnapshot(input);
-    const narrative = narration.narrative(ruleOnly, view);
-    const assembled = narrative === null ? ruleOnly : assembleSnapshot({ ...input, narrative });
+    const totalFiles = repo.partial ? repo.totalFiles : scanned;
+    let text = new Map<string, ComponentText>();
+    try {
+      // Lane 05 reads component_text_cache here, so a database error can surface.
+      text = new Map(narration.textFor(view));
+    } catch (error) {
+      seamFailed(error);
+    }
+    const assembled = assembleWithFallback(
+      {
+        sessionId: "",
+        repoRoot: deps.repoRoot,
+        scanId: nextScanId(),
+        partial: repo.partial,
+        drafts: overview.drafts,
+        totalFiles,
+        edges: overview.edges,
+        externals: overview.externals,
+        text,
+        narrative: null,
+        generatedAt: new Date(deps.now()).toISOString(),
+      },
+      view,
+    );
     const snapshot: OverviewSnapshot = {
       ...assembled,
       status: {
-        scan: { state: "done", scanned, total: input.totalFiles },
+        scan: { state: "done", scanned, total: totalFiles },
         narrator: narratorState(),
       },
     };
@@ -395,46 +459,39 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         bytes: Buffer.byteLength(JSON.stringify(snapshot)),
       });
     }
-    latest = content;
+    // A running or failed scan keeps its state on the row until a scan succeeds.
+    latest = scanState === null ? content : scanStateRow(scanState);
     try {
       narration.onSnapshot(content.snapshot, view);
     } catch (error) {
-      deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
+      seamFailed(error);
     }
     requestWriteForCurrentSession();
   }
 
   /**
-   * Publishes, or turns a failure (a RangeError from assembleSnapshot when the snapshot cannot
-   * fit, or a seam error) into a failed status row with the previous components. Never throws.
+   * Builds the overview of the current model (or reuses `overview`, built from it) and publishes
+   * it. A rule-based failure (buildOverview, or a rule-only snapshot that cannot fit) becomes a
+   * failed row with the previous components, which stays until a scan succeeds. Never throws.
    */
-  function publishOrFail(overview: BuiltOverview, repo: RepoModel): void {
+  function rebuild(overview?: BuiltOverview): void {
+    if (disposed || model === null) return;
+    const repo = model;
     try {
-      publish(overview, repo);
-      if (status.phase === "failed") setStatus({ phase: "ready", done: repo.files.size, total: repo.files.size, error: null });
+      const next = overview ?? buildOverview(repo);
+      built = next;
+      publish(next, repo);
     } catch (error) {
+      // Nothing left for refresh() to republish until the next rebuild of a changed model.
+      built = null;
       const message = messageOf(error);
       deps.log({ kind: "error", where: "rebuild", message });
       const total = repo.partial ? repo.totalFiles : repo.files.size;
+      const clipped = clipText(message, SCAN_ERROR_MAX);
       setStatus({ phase: "failed", done: repo.files.size, total, error: message });
-      publishScanStatus(
-        { state: "failed", scanned: repo.files.size, total, error: clipText(message, SCAN_ERROR_MAX) },
-        `failed:rebuild:${(rebuildFailures += 1)}`,
-      );
+      // The same failure again (a refresh of the same model) keeps its key and writes no new row.
+      publishScanStatus({ state: "failed", scanned: repo.files.size, total, error: clipped }, `rebuild-failed:${generation}:${clipped}`);
     }
-  }
-
-  function rebuild(): void {
-    if (disposed || model === null) return;
-    let overview: BuiltOverview;
-    try {
-      overview = buildOverview(model);
-    } catch (error) {
-      deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
-      return;
-    }
-    built = overview;
-    publishOrFail(overview, model);
   }
 
   function startScan(): void {
@@ -466,6 +523,8 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         scanning = null;
         model = next;
         deps.log({ kind: "scan", files: next.files.size, partial: next.partial, ms: deps.now() - started });
+        // A scan succeeded: rows say "done" again unless the rebuild below fails.
+        scanState = null;
         setStatus({ phase: "ready", done: next.files.size, total: next.files.size, error: null });
         rebuild();
         if (dirty.size > 0) scheduleSettle();
@@ -480,6 +539,9 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
           { state: "failed", scanned: progress.done, total: progress.total, error: clipText(message, SCAN_ERROR_MAX) },
           `failed:${scanGeneration}`,
         );
+        // Changes queued during the scan still apply: incrementally to the previous model, or
+        // as a new scan when a manifest changed.
+        if (dirty.size > 0) scheduleSettle();
       },
     );
   }

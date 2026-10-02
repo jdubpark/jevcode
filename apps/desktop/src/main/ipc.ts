@@ -166,6 +166,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     });
   }
 
+  /**
+   * Spec §6.6: explainer problems never affect repo or agent work, so a throw from the explainer
+   * (its stage, a narration seam or a status listener) is logged and the handler goes on.
+   */
+  function toExplainer(what: string, call: (explainer: ExplainerRegistry) => void): void {
+    if (deps.explainer === undefined) return;
+    try {
+      call(deps.explainer);
+    } catch (error) {
+      deps.log(`explainer ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   handle(RendererToMainLocalChannels.repoBrowse, async () => {
     const requestedPath = await deps.requestRepoPath();
     if (!requestedPath) return null;
@@ -173,7 +186,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.state.repo = repo;
     deps.state.info = info;
     deps.state.session = session;
-    deps.explainer?.repoOpened(repo.gitRoot);
+    toExplainer("repoOpened", (explainer) => explainer.repoOpened(repo.gitRoot));
     const payload = repoOpenedPayload(repo);
     emitRepoOpened(payload);
     emitRecentRepos(deps.db);
@@ -186,7 +199,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.state.repo = repo;
     deps.state.info = info;
     deps.state.session = session;
-    deps.explainer?.repoOpened(repo.gitRoot);
+    toExplainer("repoOpened", (explainer) => explainer.repoOpened(repo.gitRoot));
     const payload = repoOpenedPayload(repo);
     emitRepoOpened(payload);
     emitRecentRepos(deps.db);
@@ -205,7 +218,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     if (activeSessionId !== undefined && deps.runtime.hasSession(activeSessionId)) {
       await deps.runtime.stopSession(activeSessionId);
     }
-    if (deps.state.repo) deps.explainer?.repoClosed(deps.state.repo.gitRoot);
+    const closedRoot = deps.state.repo?.gitRoot;
+    if (closedRoot !== undefined) toExplainer("repoClosed", (explainer) => explainer.repoClosed(closedRoot));
     deps.state.repo = null;
     deps.state.info = null;
     deps.state.session = null;
@@ -219,7 +233,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     if (openRoot === undefined || repoRoot !== openRoot) {
       throw new IpcError("NO_ACTIVE_SESSION", "overview:rescan: repoRoot is not the open repo");
     }
-    deps.explainer?.rescan(repoRoot);
+    toExplainer("rescan", (explainer) => explainer.rescan(repoRoot));
     return null;
   });
 
@@ -283,7 +297,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       reasoningEffort,
       approvalMode,
     });
-    deps.explainer?.sessionStarted(info.gitRoot, active.id);
+    toExplainer("sessionStarted", (explainer) => explainer.sessionStarted(info.gitRoot, active.id));
     deps.state.session = deps.db.getSession(active.id) ?? null;
     sendToRenderer(
       MainToRendererChannels.sessionState,
