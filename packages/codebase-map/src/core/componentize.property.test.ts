@@ -137,7 +137,9 @@ describe("ComponentIndex (spec §6.1: only dirty components are recomputed)", ()
             }
           }
           const before = byId(index.drafts());
+          const plan = index.plan([...upserts.values()], [...removed]);
           const change = index.apply([...upserts.values()], [...removed]);
+          expect(plan === null).toBe(change === null);
           for (const path of removed) current.delete(path);
           for (const file of upserts.values()) current.set(file.path, file);
           if (change === null) {
@@ -163,6 +165,21 @@ describe("ComponentIndex (spec §6.1: only dirty components are recomputed)", ()
       }),
       { numRuns: 150 },
     );
+  });
+
+  it("keeps the drafts of untouched parts when a split group gains a file, and plans the cost", () => {
+    const paths = ["x", "y", "z"].flatMap((dir) => Array.from({ length: 100 }, (_, n) => `src/app/${dir}/f${n}.ts`));
+    const index = ComponentIndex.build(paths.map(toFile), emptyManifest());
+    const before = byId(index.drafts());
+    expect([...before.values()].map((d) => d.rootPath)).toEqual(["src/app/x", "src/app/y", "src/app/z"]);
+    const extra = toFile("src/app/y/extra.ts");
+    expect(index.plan([extra], [])).toEqual({ files: 301 });
+    const change = index.apply([extra], []);
+    const after = byId(index.drafts());
+    expect(change?.changed).toEqual(new Set([componentIdFor("src/app/y")]));
+    expect(after.get(componentIdFor("src/app/x"))).toBe(before.get(componentIdFor("src/app/x")));
+    expect(after.get(componentIdFor("src/app/y"))?.files).toHaveLength(101);
+    expect(index.plan([{ ...extra, hash: "edited" }], [])).toEqual({ files: 101 });
   });
 
   it("moves members between parts when a group crosses the 150-file split threshold", () => {
