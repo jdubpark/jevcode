@@ -265,3 +265,36 @@ describe("expansion, esc and live bookkeeping", () => {
     expect(selectNewCount(s, final)).toBe(0);
   });
 });
+
+describe("Brief pin (spec §3.3, E4) and the opening view", () => {
+  it("B pins the Brief over a selection; a new selection or a cleared one unpins it", () => {
+    const base = initialViewState({ live: false });
+    expect(base.brief).toBe(false);
+    expect(reduce(base, { type: "brief/toggle" }, index)).toBe(base);
+    let s = run(base, [{ type: "select", id: test.id, by: "shell" }, { type: "brief/toggle" }]);
+    expect(s).toMatchObject({ selection: test.id, brief: true });
+    s = run(s, [{ type: "select", id: claim.id, by: "shell" }]);
+    expect(s.brief).toBe(false);
+    s = run(s, [{ type: "brief/toggle" }, { type: "brief/toggle" }]);
+    expect(s.brief).toBe(false);
+    s = run(s, [{ type: "brief/toggle" }, { type: "select", id: null, by: "shell" }]);
+    expect(s).toMatchObject({ selection: null, brief: false });
+  });
+
+  it("view switches keep the pin", () => {
+    const s = run(initialViewState({ live: false }), [
+      { type: "select", id: test.id, by: "shell" },
+      { type: "brief/toggle" },
+      { type: "view/switch", view: "console" },
+      { type: "view/switch", view: "hybrid" },
+    ]);
+    expect(s.brief).toBe(true);
+  });
+
+  it("takes the opening view from the input, then the location, then Hybrid", () => {
+    const location = { v: 1 as const, sessionId: "s", view: "canvas", level: "chapter" as const, brush: { kind: "session" as const } };
+    expect(initialViewState({ live: false }).view).toBe("hybrid");
+    expect(initialViewState({ live: false, location }).view).toBe("canvas");
+    expect(initialViewState({ live: false, location, view: "console" }).view).toBe("console");
+  });
+});

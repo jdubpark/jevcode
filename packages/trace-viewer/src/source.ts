@@ -21,6 +21,12 @@ export interface TraceSource {
   payloads(seqs: readonly number[]): Promise<TraceRow[]>;
   /** Epoch ms on the session's source clock: Date.now() over IPC; a virtual clock for a drip source. */
   now(): number;
+  /**
+   * Optional push hint (spec E5, §8.7): the host calls `listener(lastSeq)` when rows up to lastSeq are stored for
+   * this session. A hint carries no rows; the data controller polls at once and keeps its 1 s poll as the fallback.
+   * Returns the unsubscribe function.
+   */
+  onRowsAvailable?(listener: (lastSeq: number) => void): () => void;
 }
 
 /** The afterSeq for the request that follows `page`. */

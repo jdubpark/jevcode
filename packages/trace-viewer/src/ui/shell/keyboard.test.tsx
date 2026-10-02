@@ -328,4 +328,25 @@ describe("KeyboardLayer", () => {
     fireEvent.pointerLeave(root);
     expect(fireEvent.keyDown(document.body, { code: "Space", key: " " })).toBe(true);
   });
+
+  it("Shift+B pins the Brief only with a selection and announces it; Shift+0 returns the zoom to its preset", () => {
+    const session = foldFixture("oauth");
+    const step = session.steps[3];
+    if (step === undefined) throw new Error("oauth has fewer than 4 steps");
+    const port = fakePort([]);
+    const h = renderHarness(<KeyHarness />, session);
+    act(() => {
+      h.registry.register("hybrid", port);
+    });
+    fireEvent.keyDown(document.body, { code: "KeyB", key: "B", shiftKey: true });
+    expect(h.store.get().brief).toBe(false);
+    act(() => h.store.dispatch({ type: "select", id: step.id, by: "shell" }));
+    fireEvent.keyDown(document.body, { code: "KeyB", key: "B", shiftKey: true });
+    expect(h.store.get().brief).toBe(true);
+    expect(h.announcements.at(-1)).toBe("Brief");
+    fireEvent.keyDown(document.body, { code: "KeyB", key: "B", shiftKey: true });
+    expect(h.announcements.at(-1)).toBe("Inspector");
+    fireEvent.keyDown(document.body, { code: "Digit0", key: ")", shiftKey: true });
+    expect(port.calls).toContain("resetToPreset");
+  });
 });

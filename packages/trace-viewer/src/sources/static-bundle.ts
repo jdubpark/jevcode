@@ -29,6 +29,8 @@ export function parseTraceBundle(json: unknown): ParsedBundle {
 export interface DripOptions { rowsPerTick: number; intervalMs: number; manual?: boolean; startAtSeq?: number }
 
 export interface StaticBundleSource extends TraceSource {
+  /** Each drip tick that releases rows calls the listeners with the last released seq (spec E5 on the dev host). */
+  onRowsAvailable(listener: (lastSeq: number) => void): () => void;
   /** Rows released so far (all rows without drip). */
   released(): number;
   /** Releases rowsPerTick more rows now (manual drip and tests). */
@@ -76,9 +78,14 @@ export function createStaticBundleSource(bundle: TraceBundle, options: { drip?: 
     if (timer !== null) clearInterval(timer);
     timer = null;
   };
+  const listeners = new Set<(lastSeq: number) => void>();
   const tick = (): void => {
+    const before = released;
     released = Math.min(rows.length, released + perTick);
     if (done()) stop();
+    if (released === before) return;
+    const seq = lastReleasedSeq();
+    for (const listener of [...listeners]) listener(seq);
   };
   if (drip !== undefined && drip.manual !== true && !done()) timer = setInterval(tick, Math.max(1, drip.intervalMs));
 
@@ -108,6 +115,12 @@ export function createStaticBundleSource(bundle: TraceBundle, options: { drip?: 
         if (ms !== null) return ms;
       }
       return startedAtMs;
+    },
+    onRowsAvailable(listener: (lastSeq: number) => void): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
     released: () => released,
     tick,

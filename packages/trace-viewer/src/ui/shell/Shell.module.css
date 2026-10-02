@@ -23,6 +23,21 @@
   }
 }
 
+/* Embedded in the main window (spec §8.5): a 36 px view bar, the active view and the Brief or Inspector. */
+.grid[data-chrome="embedded"] {
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: 36px minmax(0, 1fr);
+  grid-template-areas:
+    "title title"
+    "main inspector";
+}
+
+@container (max-width: 1179px) {
+  .grid[data-chrome="embedded"] {
+    grid-template-columns: minmax(0, 1fr) 264px;
+  }
+}
+
 .title {
   grid-area: title;
   min-width: 0;
