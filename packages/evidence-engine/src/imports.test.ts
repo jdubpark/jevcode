@@ -5,6 +5,7 @@ import {
   extractImports,
   packageNameOf,
   probeCandidatesFor,
+  probeFile,
   resolveSpecifier,
   type ResolveContext,
   type ResolvedSpecifier,
@@ -188,16 +189,29 @@ describe("resolveSpecifier trace (incremental resolution)", () => {
         [without, withTarget],
         [withTarget, without],
       ] as const) {
-        const probes = new Set<string>();
-        const under = new Set<string>();
-        const trace = { probe: (candidate: string) => void probes.add(candidate), under: (dir: string) => void under.add(dir) };
+        const probes = new Map<string, string | null>();
+        const under = new Map<string, string | null>();
+        const trace = {
+          probe: (candidate: string, hit: string | null) => void probes.set(candidate, hit),
+          under: (dir: string, first: string | null) => void under.set(dir, first),
+        };
         const was = resolveSpecifier(from, specifier, { ...config, files: before }, trace);
         const now = resolveSpecifier(from, specifier, { ...config, files: after });
+        // The traced answers are the real lookups, and they decided the result: if they all
+        // still hold after the toggle, so does the result.
+        const smallestUnder = (files: ReadonlySet<string>, dir: string): string | null =>
+          [...files].filter((path) => path.startsWith(`${dir}/`)).sort()[0] ?? null;
+        for (const [candidate, hit] of probes) expect(probeFile(candidate, before)).toBe(hit);
+        for (const [dir, first] of under) expect(smallestUnder(before, dir)).toBe(first);
+        const answersHold =
+          [...probes].every(([candidate, hit]) => probeFile(candidate, after) === hit) &&
+          [...under].every(([dir, first]) => smallestUnder(after, dir) === first);
+        if (answersHold) expect(now, `${from} imports ${specifier}; ${target} toggled`).toEqual(was);
         if (JSON.stringify(was) === JSON.stringify(now)) continue;
         changed += 1;
         const heard =
           probeCandidatesFor(target).some((candidate) => probes.has(candidate)) ||
-          [...under].some((dir) => target.startsWith(`${dir}/`));
+          [...under.keys()].some((dir) => target.startsWith(`${dir}/`));
         expect(heard, `${from} imports ${specifier}; ${target} toggled`).toBe(true);
       }
     }
