@@ -23,6 +23,7 @@ import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
+import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
@@ -152,6 +153,7 @@ app.whenReady().then(() => {
       // Ruling R3: narrator status "off" when the setting is off. Lane 05 N-5 adds `narration`.
       explainWithModel: () => normalizeExplainWithModel(eventsDb.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)),
     }),
+    (message) => console.error(`[explainer] ${message}`),
   );
   explainer = explainerRegistry;
 
@@ -256,16 +258,23 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  // The stage writes rows and overview_state, so it stops before the database closes.
-  explainer?.dispose();
+  const stopping = { explainer, importExtractor, terminals, traceReader, db };
   explainer = null;
-  void importExtractor?.dispose();
   importExtractor = null;
-  terminals?.disposeAll();
   terminals = null;
-  traceReader?.close();
   traceReader = null;
-  db?.close();
   db = null;
   runtime = null;
+  // The stage writes rows and overview_state, so it stops before the database closes. A step
+  // that throws is logged and the rest still run.
+  runShutdown(
+    [
+      { name: "explainer", run: () => stopping.explainer?.dispose() },
+      { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
+      { name: "terminals", run: () => stopping.terminals?.disposeAll() },
+      { name: "trace reader", run: () => stopping.traceReader?.close() },
+      { name: "database", run: () => stopping.db?.close() },
+    ],
+    (message) => console.error(`[quit] ${message}`),
+  );
 });

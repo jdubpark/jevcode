@@ -53,7 +53,7 @@ export type ExplainerLogEvent =
       error?: string;
     }
   | { kind: "snapshot"; components: number; edges: number; bytes: number }
-  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state"; message: string };
+  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state" | "dispose"; message: string };
 
 /** Scan progress and failure for the Brief (spec §6.1, §6.6); see the lane's spec gap 1. */
 export interface ExplainerStatus {
@@ -623,7 +623,13 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       settleTimer = null;
       for (const handle of writeTimers.values()) deps.schedule.clearTimeout(handle);
       writeTimers.clear();
-      narration.dispose();
+      // The stage is already stopped; a seam that fails to stop must not fail the caller (repo
+      // switch or app quit, which still closes the database).
+      try {
+        narration.dispose();
+      } catch (error) {
+        deps.log({ kind: "error", where: "dispose", message: messageOf(error) });
+      }
     },
   };
 }
@@ -639,31 +645,44 @@ export interface ExplainerRegistry {
   dispose(): void;
 }
 
-/** One stage for the open repo; opening another repo disposes the previous stage. */
-export function createExplainerRegistry(factory: (repoRoot: string) => ExplainerStage): ExplainerRegistry {
+/**
+ * One stage for the open repo; opening another repo disposes the previous stage. The registry
+ * forgets a stage before disposing it, and a dispose that throws is logged, so a failed dispose
+ * never leaves a dead stage active or stops a repo switch or app quit.
+ */
+export function createExplainerRegistry(
+  factory: (repoRoot: string) => ExplainerStage,
+  log: (message: string) => void = () => {},
+): ExplainerRegistry {
   let active: { repoRoot: string; stage: ExplainerStage } | null = null;
+  const release = (): void => {
+    const previous = active;
+    active = null;
+    if (previous === null) return;
+    try {
+      previous.stage.dispose();
+    } catch (error) {
+      log(`explainer stage for ${previous.repoRoot} failed to dispose: ${messageOf(error)}`);
+    }
+  };
   const ensure = (repoRoot: string): ExplainerStage => {
     if (active !== null && active.repoRoot === repoRoot) return active.stage;
-    active?.stage.dispose();
-    active = { repoRoot, stage: factory(repoRoot) };
-    return active.stage;
+    release();
+    const stage = factory(repoRoot);
+    active = { repoRoot, stage };
+    return stage;
   };
   const existing = (repoRoot: string): ExplainerStage | undefined =>
     active !== null && active.repoRoot === repoRoot ? active.stage : undefined;
   return {
     repoOpened: (repoRoot) => ensure(repoRoot).onRepoOpened(),
     repoClosed(repoRoot) {
-      if (active === null || active.repoRoot !== repoRoot) return;
-      active.stage.dispose();
-      active = null;
+      if (active !== null && active.repoRoot === repoRoot) release();
     },
     sessionStarted: (repoRoot, sessionId) => ensure(repoRoot).onSessionStarted(sessionId),
     filesChanged: (repoRoot, paths) => existing(repoRoot)?.onFilesChanged(paths),
     rescan: (repoRoot) => existing(repoRoot)?.rescan(),
     get: existing,
-    dispose() {
-      active?.stage.dispose();
-      active = null;
-    },
+    dispose: release,
   };
 }
