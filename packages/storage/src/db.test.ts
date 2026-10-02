@@ -16,9 +16,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EVENT_TYPES,
   LATEST_SCHEMA_VERSION,
+  MIGRATIONS,
   defaultDbPath,
   openDb,
 } from "./index.js";
+import { makeOverviewSnapshot } from "./fixtures.js";
 import { openTempDb, tempDbPath } from "./test-utils.js";
 
 describe("openDb", () => {
@@ -161,6 +163,90 @@ describe("openDb", () => {
     expect(sessionColumns.map((column) => column.name)).toContain("resume_attempts");
     rawCheck.close();
     db.close();
+  });
+
+  it("upgrades a v4 database built by migrations 1-4 to v5 without touching its rows", () => {
+    const dbPath = tempDbPath();
+    const TS0 = "2026-09-01T00:00:00.000Z";
+    const v4 = new Database(dbPath);
+    v4.exec("CREATE TABLE schema_version (version INTEGER NOT NULL, appliedAt TEXT NOT NULL)");
+    for (const migration of MIGRATIONS) {
+      if (migration.version > 4) continue;
+      v4.transaction(() => {
+        migration.up(v4);
+        v4.prepare("INSERT INTO schema_version (version, appliedAt) VALUES (?, ?)").run(migration.version, TS0);
+      })();
+    }
+    v4.prepare(
+      "INSERT INTO repositories (id, path, gitRoot, name, lastOpenedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("repo_v4", "/work/v4", "/work/v4", "v4", TS0, TS0);
+    v4.prepare(
+      "INSERT INTO sessions (id, repoId, prompt, lastEventSeq, startedAt, createdAt) VALUES (?, ?, ?, 1, ?, ?)",
+    ).run("sess_v4", "repo_v4", "old prompt", TS0, TS0);
+    v4.prepare(
+      "INSERT INTO events (id, sessionId, seq, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(
+      "evt_v4",
+      "sess_v4",
+      1,
+      "agent_event",
+      JSON.stringify({ type: "agent_started", sessionId: "sess_v4", prompt: "old prompt", ts: TS0 }),
+      TS0,
+    );
+    expect(v4.prepare("SELECT MAX(version) AS v FROM schema_version").get()).toEqual({ v: 4 });
+    expect(
+      v4
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('component_text_cache', 'overview_state')")
+        .all(),
+    ).toEqual([]);
+    v4.close();
+
+    const db = openDb({ dbPath });
+    expect(LATEST_SCHEMA_VERSION).toBe(5);
+    expect(db.schemaVersion()).toBe(5);
+
+    const raw = new Database(dbPath);
+    const columns = (table: string) =>
+      (raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string; pk: number; notnull: number }[]).map(
+        (column) => [column.name, column.pk, column.notnull],
+      );
+    expect(columns("component_text_cache")).toEqual([
+      ["repo_root", 1, 1],
+      ["component_id", 2, 1],
+      ["content_hash", 3, 1],
+      ["purpose", 0, 0],
+      ["role", 0, 1],
+      ["model", 0, 1],
+      ["created_at", 0, 1],
+    ]);
+    expect(columns("overview_state")).toEqual([
+      ["repo_root", 1, 0],
+      ["snapshot_json", 0, 1],
+      ["narrative_inputs_hash", 0, 0],
+      ["narrative_json", 0, 0],
+      ["updated_at", 0, 1],
+    ]);
+    expect(raw.prepare("SELECT version FROM schema_version ORDER BY version").all()).toEqual(
+      [1, 2, 3, 4, 5].map((version) => ({ version })),
+    );
+    raw.close();
+
+    // Rows written at v4 are untouched and the session's seq continues gaplessly.
+    expect(db.listEvents("sess_v4").map((event) => [event.seq, event.type])).toEqual([[1, "agent_event"]]);
+    const appended = db.appendEvent(
+      "sess_v4",
+      "overview_snapshot",
+      makeOverviewSnapshot({ sessionId: "sess_v4", repoRoot: "/work/v4" }),
+    );
+    expect(appended.seq).toBe(2);
+    expect(db.getSession("sess_v4")?.lastEventSeq).toBe(2);
+    db.putComponentText("/work/v4", "cmp_0123456789ab", "1".repeat(40), { purpose: "Core logic.", role: "domain", model: "m" });
+    db.close();
+
+    const reopened = openDb({ dbPath });
+    expect(reopened.schemaVersion()).toBe(5);
+    expect(reopened.getComponentText("/work/v4", "cmp_0123456789ab", "1".repeat(40))?.purpose).toBe("Core logic.");
+    reopened.close();
   });
 });
 

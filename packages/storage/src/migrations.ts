@@ -311,6 +311,33 @@ const v4: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [v1, v2, v3, v4];
+// Console-explainer spec §6.4: narrator text cache and the latest overview per repo.
+const v5: Migration = {
+  version: 5,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS component_text_cache (
+        repo_root TEXT NOT NULL,
+        component_id TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        purpose TEXT,
+        role TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (repo_root, component_id, content_hash)
+      );
+
+      CREATE TABLE IF NOT EXISTS overview_state (
+        repo_root TEXT PRIMARY KEY,
+        snapshot_json TEXT NOT NULL,
+        narrative_inputs_hash TEXT,
+        narrative_json TEXT,
+        updated_at TEXT NOT NULL
+      );
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [v1, v2, v3, v4, v5];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

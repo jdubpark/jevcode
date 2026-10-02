@@ -6,12 +6,14 @@ export {
   EVENT_TYPES,
 } from "./db.js";
 export type {
+  ComponentTextValue,
   CreateSessionInput,
   EventStoreType,
   InstructionInboxRecord,
   InstructionMode,
   InstructionStatus,
   OpenDbOptions,
+  OverviewStateValue,
   RebuildStats,
   RepositoryRecord,
   SessionRecord,
