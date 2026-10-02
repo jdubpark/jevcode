@@ -276,8 +276,11 @@ describe("trace bundle", () => {
     expect(redacted.length).toBeGreaterThan(128);
     const story = { sessionId: redacted, kind: "story", sentences: [], basisSeq: 1 };
     expect((capRedactedRow("explainer", story) as { sessionId: string }).sessionId).toBe(redacted.slice(0, 128));
+    // A snapshot sessionId may be up to 256 characters (lane 04 stamps "" and restamps later).
     const snapshot = { sessionId: redacted, components: [], edges: [], externals: [], narrative: null };
-    expect((capRedactedRow("overview_snapshot", snapshot) as { sessionId: string }).sessionId).toHaveLength(128);
+    expect((capRedactedRow("overview_snapshot", snapshot) as { sessionId: string }).sessionId).toBe(redacted);
+    const longSnapshot = { ...snapshot, sessionId: "s".repeat(300) };
+    expect((capRedactedRow("overview_snapshot", longSnapshot) as { sessionId: string }).sessionId).toHaveLength(256);
 
     const other = { text: "x".repeat(5000) };
     expect(capRedactedRow("agent_event", other)).toBe(other);

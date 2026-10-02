@@ -338,4 +338,15 @@ describe("per-string caps and component-id pattern", () => {
     expect(ComponentEdgeSchema.safeParse({ ...edge(1), from: "cmp_ABCDEF012345" }).success).toBe(false);
     expect(ComponentEdgeSchema.safeParse({ ...edge(1), to: "not-a-component" }).success).toBe(false);
   });
+
+  it("allows an empty snapshot sessionId up to 256 characters; explainer sessionId stays 1 to 128", () => {
+    const of = (id: string) => OverviewSnapshotSchema.safeParse({ ...snapshot(), sessionId: id }).success;
+    expect(of("")).toBe(true);
+    expect(of("s".repeat(256))).toBe(true);
+    expect(of("s".repeat(257))).toBe(false);
+    const story = (id: string) => ExplainerRecordSchema.safeParse({ sessionId: id, kind: "story", sentences: [sentence("x")], basisSeq: 1 }).success;
+    expect(story("")).toBe(false);
+    expect(story("s".repeat(128))).toBe(true);
+    expect(story("s".repeat(129))).toBe(false);
+  });
 });

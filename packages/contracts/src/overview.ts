@@ -90,7 +90,7 @@ export type OverviewStatus = z.infer<typeof OverviewStatusSchema>;
 
 export const OverviewSnapshotSchema = z.object({
   /** The session the row belongs to; storage requires it to match the event's session. */
-  sessionId: z.string().min(1).max(128),
+  sessionId: z.string().max(256),
   repoRoot: z.string().min(1).max(1024),
   scanId: z.string().min(1).max(128),
   /** True when the 20,000-file scan cap was hit. */

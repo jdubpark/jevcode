@@ -363,6 +363,7 @@ The lane files were drafted against the real code, and some names above had to c
 
   A row without `status` reads as scan done, with narrator `pending` if any purpose is null and `ready` otherwise.
 - Snapshot size is counted in UTF-8 bytes of the JSON (`TextEncoder`).
+- K-2 string caps (`overview.ts`): paths (`rootPath`, `files[]`, `entryPoints[]`, `repoRoot`) 1–1,024; snapshot `sessionId` 0–256 (empty allowed); explainer `sessionId`, `scanId`, `decisionId`, `unitIds[]` 1–128; `languages[]` ≤ 40; `generatedAt` ≤ 64; `externalDeps[].name` 1–214; component ids, edge `from`/`to`, `usedBy[].componentId` and highlight ids match `cmp_` + 12 lowercase hex.
 
 ### 8.2 Narrator (lane 05)
 
