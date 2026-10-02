@@ -151,3 +151,38 @@ describe("AnalysisPool queue bounds and per-file merge", () => {
     }
   });
 });
+
+describe("AnalysisPool import extraction", () => {
+  const OP_WORKER = `
+import { parentPort } from "node:worker_threads";
+parentPort.on("message", (msg) => {
+  setTimeout(() => {
+    if (msg.op === "imports") {
+      parentPort.postMessage({ id: msg.id, filePath: msg.filePath, imports: { specifiers: [msg.source], exports: [] } });
+    } else {
+      parentPort.postMessage({
+        id: msg.id,
+        filePath: msg.filePath,
+        symbols: [{ name: msg.source, kind: "function", signature: "op", startLine: 1, endLine: 1 }],
+      });
+    }
+  }, 20);
+});
+`;
+  const opWorkerUrl = (): URL => new URL(`data:text/javascript;base64,${Buffer.from(OP_WORKER, "utf8").toString("base64")}`);
+
+  it("routes import scans and symbol parses of the same queued file separately", async () => {
+    const pool = new AnalysisPool({ size: 1, workerUrl: opWorkerUrl() });
+    try {
+      const busy = pool.parseFile("busy.ts", "busy");
+      const symbols = pool.parseFile("a.ts", "sym");
+      const imports = pool.extractImports("a.ts", "./dep");
+      expect(imports).not.toBe(symbols);
+      expect((await symbols)[0]?.name).toBe("sym");
+      expect(await imports).toEqual({ specifiers: ["./dep"], exports: [] });
+      await busy;
+    } finally {
+      await pool.dispose();
+    }
+  });
+});
