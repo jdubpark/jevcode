@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { componentize, type ComponentDraft } from "./componentize.js";
+import { ComponentIndex, componentIdFor, componentize, type ComponentDraft } from "./componentize.js";
 import { languageOf } from "./paths.js";
 import { sha1Hex } from "./sha1.js";
 import { emptyManifest, type ScannedFile, type WorkspaceManifest } from "./types.js";
@@ -100,5 +100,84 @@ describe("componentize properties (spec §12)", () => {
       }),
       { numRuns: 150 },
     );
+  });
+});
+
+/** A package one or two files from the 150-file split threshold, so batches move files between parts. */
+const nearSplitArb = fc
+  .uniqueArray(
+    fc.tuple(fc.constantFrom("x", "y", "z/deep", "test"), fc.nat({ max: 400 })).map(([dir, n]) => `packages/big/src/${dir}/f${n}.ts`),
+    { minLength: 148, maxLength: 152 },
+  )
+  .map((paths) => paths.map(toFile));
+
+/** One batch of watcher changes: new paths, re-hashed members and removed members. */
+const batchArb = fc.array(
+  fc.record({ kind: fc.constantFrom("add", "edit", "remove"), path: fc.oneof(pathArb, fc.nat({ max: 500 }).map((n) => `packages/big/src/x/n${n}.ts`)), pick: fc.nat() }),
+  { minLength: 1, maxLength: 4 },
+);
+
+describe("ComponentIndex (spec §6.1: only dirty components are recomputed)", () => {
+  it("equals a fresh componentize after any sequence of adds, edits and removes, and reports every changed draft", () => {
+    fc.assert(
+      fc.property(fc.oneof(filesArb, bigPackageArb, nearSplitArb), fc.boolean(), fc.array(batchArb, { minLength: 1, maxLength: 12 }), (start, workspace, batches) => {
+        const layout = layoutFor(start, workspace);
+        const current = new Map(start.map((f) => [f.path, f]));
+        let index = ComponentIndex.build(start, layout);
+        for (const batch of batches) {
+          const upserts = new Map<string, ScannedFile>();
+          const removed = new Set<string>();
+          for (const op of batch) {
+            const members = [...current.keys()].filter((path) => !removed.has(path) && !upserts.has(path));
+            if (op.kind === "add" && !current.has(op.path) && !upserts.has(op.path)) upserts.set(op.path, toFile(op.path));
+            if (op.kind !== "add" && members.length > 0) {
+              const path = members[op.pick % members.length] as string;
+              if (op.kind === "edit") upserts.set(path, { ...(current.get(path) as ScannedFile), hash: sha1Hex(`${path}!${op.pick}`) });
+              else removed.add(path);
+            }
+          }
+          const before = byId(index.drafts());
+          const change = index.apply([...upserts.values()], [...removed]);
+          for (const path of removed) current.delete(path);
+          for (const file of upserts.values()) current.set(file.path, file);
+          if (change === null) {
+            index = ComponentIndex.build([...current.values()], layout);
+            continue;
+          }
+          const fresh = componentize([...current.values()], layout);
+          expect(index.drafts()).toEqual(fresh);
+          const after = byId(fresh);
+          for (const id of new Set([...before.keys(), ...after.keys()])) {
+            if (JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id))) expect(change.changed.has(id)).toBe(true);
+            if (!after.has(id)) expect(change.removed.has(id)).toBe(true);
+          }
+          for (const draft of fresh) {
+            for (const path of draft.files) {
+              expect(index.componentOf(path)).toBe(draft.id);
+              const was = [...before.values()].find((old) => old.files.includes(path));
+              if (was !== undefined && was.id !== draft.id) expect(change.movedFrom.has(was.id)).toBe(true);
+            }
+          }
+          for (const path of removed) expect(index.componentOf(path)).toBeUndefined();
+        }
+      }),
+      { numRuns: 150 },
+    );
+  });
+
+  it("moves members between parts when a group crosses the 150-file split threshold", () => {
+    const paths: string[] = [...Array.from({ length: 75 }, (_, n) => `src/app/x/f${n}.ts`), ...Array.from({ length: 75 }, (_, n) => `src/app/y/f${n}.ts`)];
+    const index = ComponentIndex.build(paths.map(toFile), emptyManifest());
+    expect(index.drafts().map((d) => d.rootPath)).toEqual(["src/app"]);
+    const whole = index.componentOf("src/app/x/f0.ts") as string;
+
+    const split = index.apply([toFile("src/app/x/extra.ts")], []);
+    expect(index.drafts().map((d) => d.rootPath)).toEqual(["src/app/x", "src/app/y"]);
+    expect(split?.movedFrom).toEqual(new Set([whole]));
+    expect(split?.removed).toEqual(new Set([whole]));
+
+    const merged = index.apply([], ["src/app/x/extra.ts"]);
+    expect(index.drafts().map((d) => d.rootPath)).toEqual(["src/app"]);
+    expect(merged?.movedFrom).toEqual(new Set([componentIdFor("src/app/x"), componentIdFor("src/app/y")]));
   });
 });

@@ -87,6 +87,14 @@ export function aggregateExternals(
     users.set(componentId, (users.get(componentId) ?? 0) + 1);
     byName.set(name, users);
   }
+  return rankExternals(byName);
+}
+
+/**
+ * The ranking and caps of `aggregateExternals` over counted users: package name → component id
+ * → number of the component's files that import the package.
+ */
+export function rankExternals(byName: ReadonlyMap<string, ReadonlyMap<string, number>>): ExternalDep[] {
   const ranked = [...byName.entries()].map(([name, users]) => {
     const usedBy = [...users.entries()]
       .map(([componentId, count]) => ({ componentId, count }))
