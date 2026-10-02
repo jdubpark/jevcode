@@ -23,7 +23,17 @@ import type { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import type { extractImports } from "@jevcode/evidence-engine";
 import type { JevcodeDb } from "@jevcode/storage";
 
-import { applyFileChanges, buildOverview, scanRepoModel, type BuiltOverview, type RepoModel } from "./explainer-overview.js";
+import {
+  OverviewIndex,
+  applyFileChanges,
+  hasFileChanges,
+  nextTurn,
+  runSliced,
+  scanRepoModel,
+  type BuiltOverview,
+  type FileChanges,
+  type RepoModel,
+} from "./explainer-overview.js";
 
 /** Spec §5.5: at most one snapshot row per session every 2 s. */
 export const SNAPSHOT_WRITE_INTERVAL_MS = 2_000;
@@ -38,6 +48,11 @@ export const SCAN_ERROR_MAX = 200;
  * with a 256-task queue, so 6 × 4 keeps the queue far from full across overlapping scans.
  */
 export const EXTRACT_CONCURRENCY = 24;
+/**
+ * Spec §6.1 (the stage never blocks ingestion): a full rebuild runs in slices of about this many
+ * milliseconds and yields to the event loop between them.
+ */
+export const REBUILD_SLICE_MS = 12;
 /** Edits that can move component boundaries or import resolution rerun the full scan. */
 const MANIFEST_CHANGE = /(^|\/)(package\.json|pnpm-workspace\.yaml|tsconfig[^/]*\.json|\.gitignore)$/;
 
@@ -141,7 +156,7 @@ export interface ExplainerStage {
   /** overview:rescan (spec §6.6 Retry): aborts a running scan and starts a new one. */
   rescan(): void;
   status(): ExplainerStatus;
-  /** Resolves when no scan or rebuild is in flight. Timers are not awaited. */
+  /** Resolves when no scan, rebuild or queued row write is in flight. Timers are not awaited. */
   whenIdle(): Promise<void>;
   dispose(): void;
 }
@@ -178,7 +193,10 @@ export function snapshotKey(snapshot: OverviewSnapshot): string {
 export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
   let disposed = false;
   let model: RepoModel | null = null;
-  let built: BuiltOverview | null = null;
+  /** The incremental overview of `model`; null until its full build finishes. */
+  let index: OverviewIndex | null = null;
+  /** The last published overview and the model it was built from, for refresh(). */
+  let built: { overview: BuiltOverview; repo: RepoModel } | null = null;
   /** The last full snapshot (sessionId ""): the base of progress and failure rows. */
   let content: { snapshot: OverviewSnapshot; key: string } | null = null;
   /** Key of the snapshot in overview_state; only a full snapshot that was appended as a row gets there. */
@@ -196,6 +214,9 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
   let scanCount = 0;
   let scanPromise: Promise<void> = Promise.resolve();
   let rebuildChain: Promise<void> = Promise.resolve();
+  /** Row appends and overview_state saves, each in a turn of its own (spec §6.1). */
+  let writing: Promise<void> = Promise.resolve();
+  const queuedWrites = new Set<string>();
   let settleTimer: unknown = null;
   let status: ExplainerStatus = { phase: "idle", done: 0, total: 0, error: null };
   const dirty = new Set<string>();
@@ -211,7 +232,8 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     schedule: deps.schedule,
     log: (event) => deps.log(event),
     refresh: () => {
-      if (!disposed && built !== null) rebuild(built);
+      const last = built;
+      if (!disposed && last !== null) publishBuilt(last.repo, last.overview);
     },
   });
 
@@ -296,8 +318,12 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     }
     written.set(sessionId, { key: pending.key, at: deps.now() });
     if (pending === content && persistedKey !== pending.key) {
-      persist(pending.snapshot);
       persistedKey = pending.key;
+      const snapshot = pending.snapshot;
+      writing = writing.then(async () => {
+        await nextTurn();
+        if (!disposed) persist(snapshot);
+      });
     }
     try {
       deps.emitRowsAvailable(sessionId, seq);
@@ -306,15 +332,28 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     }
   }
 
-  /** One row per session at start, then on change, at most every 2 s (spec §5.5). */
-  function requestWrite(sessionId: string): void {
+  /**
+   * One row per session at start, then on change, at most every 2 s (spec §5.5). A rebuild
+   * passes `nextTurnOnly`, so the row append does not add to the turn that assembled the snapshot.
+   */
+  function requestWrite(sessionId: string, nextTurnOnly = false): void {
     if (disposed || latest === null) return;
     const last = written.get(sessionId);
     if (last !== undefined && last.key === latest.key) return;
     if (writeTimers.has(sessionId)) return;
+    if (queuedWrites.has(sessionId)) return;
     const wait = last === undefined ? 0 : Math.max(0, last.at + SNAPSHOT_WRITE_INTERVAL_MS - deps.now());
-    if (wait === 0) {
+    if (wait === 0 && !nextTurnOnly) {
       writeNow(sessionId);
+      return;
+    }
+    if (wait === 0) {
+      queuedWrites.add(sessionId);
+      writing = writing.then(async () => {
+        await nextTurn();
+        queuedWrites.delete(sessionId);
+        writeNow(sessionId);
+      });
       return;
     }
     writeTimers.set(
@@ -326,9 +365,9 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     );
   }
 
-  function requestWriteForCurrentSession(): void {
+  function requestWriteForCurrentSession(nextTurnOnly = false): void {
     const sessionId = deps.sessionId();
-    if (sessionId !== null) requestWrite(sessionId);
+    if (sessionId !== null) requestWrite(sessionId, nextTurnOnly);
   }
 
   /** A snapshot with no components: the base of progress and failure rows before any scan finished. */
@@ -467,32 +506,93 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     } catch (error) {
       seamFailed(error);
     }
-    requestWriteForCurrentSession();
+    requestWriteForCurrentSession(true);
   }
 
   /**
-   * Builds the overview of the current model (or reuses `overview`, built from it) and publishes
-   * it. A rule-based failure (buildOverview, or a rule-only snapshot that cannot fit) becomes a
-   * failed row with the previous components, which stays until a scan succeeds. Never throws.
+   * A rule-based failure (building the overview, or a rule-only snapshot that cannot fit) becomes
+   * a failed row with the previous components, which stays until a scan succeeds.
    */
-  function rebuild(overview?: BuiltOverview): void {
-    if (disposed || model === null) return;
-    const repo = model;
+  function buildFailed(repo: RepoModel, error: unknown): void {
+    // Nothing left for refresh() to republish until the next rebuild of a changed model.
+    built = null;
+    const message = messageOf(error);
+    deps.log({ kind: "error", where: "rebuild", message });
+    const total = repo.partial ? repo.totalFiles : repo.files.size;
+    const clipped = clipText(message, SCAN_ERROR_MAX);
+    setStatus({ phase: "failed", done: repo.files.size, total, error: message });
+    // The same failure again (a refresh of the same model) keeps its key and writes no new row.
+    publishScanStatus({ state: "failed", scanned: repo.files.size, total, error: clipped }, `rebuild-failed:${generation}:${clipped}`);
+  }
+
+  /** Publishes `overview` of `repo`, unless the model moved on. Never throws. */
+  function publishBuilt(repo: RepoModel, overview: BuiltOverview): void {
+    if (disposed || model !== repo) return;
+    built = { overview, repo };
     try {
-      const next = overview ?? buildOverview(repo);
-      built = next;
-      publish(next, repo);
+      publish(overview, repo);
     } catch (error) {
-      // Nothing left for refresh() to republish until the next rebuild of a changed model.
-      built = null;
-      const message = messageOf(error);
-      deps.log({ kind: "error", where: "rebuild", message });
-      const total = repo.partial ? repo.totalFiles : repo.files.size;
-      const clipped = clipText(message, SCAN_ERROR_MAX);
-      setStatus({ phase: "failed", done: repo.files.size, total, error: message });
-      // The same failure again (a refresh of the same model) keeps its key and writes no new row.
-      publishScanStatus({ state: "failed", scanned: repo.files.size, total, error: clipped }, `rebuild-failed:${generation}:${clipped}`);
+      buildFailed(repo, error);
     }
+  }
+
+  /**
+   * The overview of `index` in one turn, its snapshot in the next (spec §6.1: no long block).
+   * A failure to build the overview drops the index, so the next change rebuilds it.
+   */
+  async function publishIndex(repo: RepoModel, current: OverviewIndex, stale: () => boolean): Promise<void> {
+    let overview: BuiltOverview;
+    try {
+      overview = current.overview();
+    } catch (error) {
+      index = null;
+      buildFailed(repo, error);
+      return;
+    }
+    await nextTurn();
+    if (!stale()) publishBuilt(repo, overview);
+  }
+
+  /**
+   * Builds a new index of `repo` in slices of REBUILD_SLICE_MS (spec §6.1) and publishes it.
+   * Runs on rebuildChain; a newer scan or dispose cancels it between slices.
+   */
+  async function fullBuild(repo: RepoModel, buildGeneration: number): Promise<void> {
+    const stale = (): boolean => disposed || buildGeneration !== generation || model !== repo;
+    if (stale()) return;
+    index = null;
+    let result: { value: OverviewIndex; yielded: boolean } | null;
+    try {
+      result = await runSliced(OverviewIndex.steps(repo), { sliceMs: REBUILD_SLICE_MS, cancelled: stale });
+    } catch (error) {
+      if (!stale()) buildFailed(repo, error);
+      return;
+    }
+    if (result === null || stale()) return;
+    index = result.value;
+    // The build's last slice ran up to here; the overview gets a turn of its own.
+    await nextTurn();
+    if (!stale()) await publishIndex(repo, result.value, stale);
+  }
+
+  /** An incremental rebuild (spec §6.1: only dirty components are recomputed), else a full one. */
+  async function rebuildChanged(repo: RepoModel, changes: FileChanges, buildGeneration: number): Promise<void> {
+    const current = index;
+    if (current !== null && current.model === repo) {
+      let updated: boolean;
+      try {
+        updated = current.update(changes);
+      } catch (error) {
+        index = null;
+        buildFailed(repo, error);
+        return;
+      }
+      if (updated) {
+        await publishIndex(repo, current, () => disposed || buildGeneration !== generation || model !== repo);
+        return;
+      }
+    }
+    await fullBuild(repo, buildGeneration);
   }
 
   function startScan(): void {
@@ -524,10 +624,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         scanning = null;
         model = next;
         deps.log({ kind: "scan", files: next.files.size, partial: next.partial, ms: deps.now() - started });
+        index = null;
         // A scan succeeded: rows say "done" again unless the rebuild below fails.
         scanState = null;
         setStatus({ phase: "ready", done: next.files.size, total: next.files.size, error: null });
-        rebuild();
+        rebuildChain = rebuildChain.then(() => fullBuild(next, scanGeneration));
         if (dirty.size > 0) scheduleSettle();
       },
       (error: unknown) => {
@@ -559,16 +660,15 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     const target = model;
     const targetGeneration = generation;
     rebuildChain = rebuildChain.then(async () => {
+      let changes: FileChanges;
       try {
-        const changed = await applyFileChanges(deps.repoRoot, target, paths, {
-          scanPaths: deps.scanPaths,
-          extract,
-        });
-        if (disposed || targetGeneration !== generation || model !== target) return;
-        if (changed) rebuild();
+        changes = await applyFileChanges(deps.repoRoot, target, paths, { scanPaths: deps.scanPaths, extract });
       } catch (error) {
         deps.log({ kind: "error", where: "rebuild", message: messageOf(error) });
+        return;
       }
+      if (disposed || targetGeneration !== generation || model !== target || !hasFileChanges(changes)) return;
+      await rebuildChanged(target, changes, targetGeneration);
     });
   }
 
@@ -610,8 +710,9 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       for (;;) {
         const scan = scanPromise;
         const chain = rebuildChain;
-        await Promise.allSettled([scan, chain]);
-        if (scan === scanPromise && chain === rebuildChain) return;
+        const writes = writing;
+        await Promise.allSettled([scan, chain, writes]);
+        if (scan === scanPromise && chain === rebuildChain && writes === writing) return;
       }
     },
     dispose() {
