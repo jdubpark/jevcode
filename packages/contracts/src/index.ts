@@ -7,6 +7,7 @@ export * from "./ipc.js";
 export * from "./jev.js";
 export * from "./json-render.js";
 export * from "./model.js";
+export * from "./overview.js";
 export * from "./security.js";
 export * from "./semantic.js";
 export * from "./trace.js";
