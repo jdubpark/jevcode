@@ -92,7 +92,6 @@ export function clipText(text: string, max: number): string {
   return `${text.slice(0, end)}…`;
 }
 
-
 const SKIP_DIRS: ReadonlySet<string> = new Set(["node_modules", "dist", "build", "out", ".next", "coverage", "vendor", ".git"]);
 const GENERATED_FILES: ReadonlySet<string> = new Set([
   "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "bun.lockb",
@@ -102,7 +101,7 @@ const GENERATED_SUFFIX = /\.(min\.js|min\.css|map|snap)$/i;
 const BINARY_EXTENSION =
   /\.(png|jpe?g|gif|webp|bmp|ico|icns|tiff?|psd|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|wasm|node|so|dylib|dll|exe|bin|o|a|class|pyc|woff2?|ttf|otf|eot|mp3|mp4|m4a|mov|avi|wav|ogg|webm|flac|sqlite3?|db)$/i;
 const SECRET_NAME =
-  /^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?|.+\.(pem|key|p12|pfx|jks|keystore|asc|gpg))$/i;
+  /^(\.env(\..+)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.envrc|\.npmrc|\.pypirc|\.netrc|\.htpasswd|\.git-credentials|credentials(\.json)?|service-account.*\.json|.+\.(pem|key|p8|p12|pfx|jks|keystore|asc|gpg|tfvars))$/i;
 const SECRET_TEMPLATE = /^\.env\.(example|sample|template)$/i;
 
 /**

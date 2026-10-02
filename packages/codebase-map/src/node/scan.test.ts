@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { OVERVIEW_SNAPSHOT_MAX_BYTES, OverviewSnapshotSchema } from "@jevcode/contracts";
@@ -9,7 +10,7 @@ import { componentize } from "../core/componentize.js";
 import { utf8ByteLength } from "../core/sha1.js";
 import { assembleSnapshot } from "../core/snapshot.js";
 import type { ScannedFile } from "../core/types.js";
-import { scanPaths, scanRepo } from "./scan.js";
+import { ScanError, scanPaths, scanRepo } from "./scan.js";
 import {
   PNPM_WORKSPACE_KEPT,
   PNPM_WORKSPACE_REPO,
@@ -119,6 +120,39 @@ describe("scanRepo (spec §5.1, §10)", () => {
     expect(visited).toBe(600);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(32);
+  });
+
+  it("rejects a non-git directory with a typed error that hides the command line", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jevcode-nogit-"));
+    try {
+      const error = await scanRepo(dir).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ScanError);
+      expect((error as ScanError).code).toBe("not-a-repo");
+      expect((error as ScanError).message).not.toMatch(/ls-files|fatal/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an empty repo root with a git-failed ScanError", async () => {
+    await expect(scanRepo("")).rejects.toMatchObject({ name: "ScanError", code: "git-failed" });
+  });
+
+  it("stops reading after visit throws", async () => {
+    let calls = 0;
+    await expect(
+      scanRepo(repo(generatedRepoFiles(10, 60)).root, {
+        visit: async () => {
+          calls += 1;
+          await new Promise((resolve) => setImmediate(resolve));
+          throw new Error("boom");
+        },
+      }),
+    ).rejects.toThrow("boom");
+    expect(calls).toBeLessThanOrEqual(32);
   });
 
   it("stops with an AbortError when the signal aborts", async () => {
