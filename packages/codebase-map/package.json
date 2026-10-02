@@ -1,0 +1,33 @@
+{
+  "name": "@jevcode/codebase-map",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@jevcode/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "eslint": "9.39.5",
+    "fast-check": "4.10.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
