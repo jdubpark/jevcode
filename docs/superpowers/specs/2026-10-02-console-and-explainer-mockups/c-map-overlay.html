@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phase C · Map session overlay</title>
+<link rel="stylesheet" href="phase-c.css">
+<style>
+/* Map canvas: the same card, lane and edge style as map.html (P-0) */
+:root{--lane:rgb(16 24 40 / .024);--edge:#C4C9D1}
+.ic.s12{width:12px;height:12px}
+.mapmain{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--canvas);overflow:hidden}
+.mhead{flex:none;padding:12px 16px;background:var(--panel);box-shadow:inset 0 -1px 0 var(--hair)}
+.hrow{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;min-height:24px;white-space:nowrap}
+.hrow .hl{display:flex;align-items:center;gap:8px;font-weight:600}
+.hrow .lang{margin-left:-6px;color:var(--ink-3)}
+.toggle{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:7px;background:var(--fill-2);color:var(--ink);font-size:12px;font-weight:500}
+.legend{display:flex;align-items:center;gap:12px;list-style:none;font-size:12px;color:var(--ink-2)}
+.legend li{display:flex;align-items:center;gap:5px}
+.tog{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:12px;color:var(--ink-3)}
+.stage{position:relative;flex:1 1 auto;min-height:0}
+.viewport{position:absolute;inset:0;overflow:hidden;background:var(--canvas)}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.lane{position:absolute;border-radius:16px;background:var(--lane)}
+.band{position:absolute;display:flex;align-items:center;gap:8px;color:var(--ink);font-size:17px;font-weight:600;white-space:nowrap}
+.band .ic{width:17px;height:17px;color:var(--ink-3)}
+.band .n{color:var(--ink-4);font-weight:500}
+.edges{position:absolute;left:0;top:0;overflow:visible}
+.edge{fill:none;stroke:var(--edge);stroke-linecap:round;vector-effect:non-scaling-stroke}
+.edge.t{stroke:var(--ink-3)}
+.mcard{position:absolute;display:flex;flex-direction:column;justify-content:space-between;padding:11px 12px;border-radius:12px;background:var(--panel);box-shadow:var(--shadow)}
+.mcard.dim{background:rgb(255 255 255 / .55);box-shadow:none}
+.mcard.dim .cn,.mcard.dim .cf{opacity:.45}
+.ct{display:flex;align-items:flex-start;gap:6px;min-width:0}
+.cn{flex:1;min-width:0;font-size:17px;line-height:20px;font-weight:600;overflow-wrap:anywhere}
+.mks{display:flex;align-items:center;gap:7px;flex:none;--s:11px;--w:1.75px}
+.cf{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--ink-3);white-space:nowrap}
+.cf .ic{width:14px;height:14px}
+.sz{flex:1;min-width:0;display:flex;align-items:center}
+.sz i{display:block;height:4px;border-radius:3px;background:var(--ink-4);opacity:.65}
+.tools{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:4px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow);font-size:12px;color:var(--ink-2)}
+.tools span{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px}
+.tools .on{background:var(--fill-2);color:var(--ink)}
+@media (max-width:1179px){.legend{gap:10px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-console" viewBox="0 0 16 16"><path d="M3.25 4.25 6.75 8l-3.5 3.75"/><path d="M8.5 11.75h4.25"/></symbol>
+<symbol id="i-canvas" viewBox="0 0 16 16"><path d="M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z"/><path d="M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"/></symbol>
+<symbol id="i-hybrid" viewBox="0 0 16 16"><path d="M2.25 3.25h11.5M2.25 6h11.5"/><path d="M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"/></symbol>
+<symbol id="i-map" viewBox="0 0 16 16"><path d="M2.25 3.25h4v3h-4zM9.75 3.25h4v3h-4zM6 9.75h4v3H6z"/><path d="M4.25 6.25v1.5h7.5v-1.5M8 7.75v2"/></symbol>
+<symbol id="i-surfaces" viewBox="0 0 16 16"><path d="M3.75 2.75h8.5a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z"/><path d="M2.75 6h10.5M6.5 6v7.25"/></symbol>
+<symbol id="i-brief" viewBox="0 0 16 16"><path d="M4 2.25h8a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1z"/><path d="M5.5 5.25h5M5.5 8h5M5.5 10.75h3"/></symbol>
+<symbol id="i-live" viewBox="0 0 16 16"><path d="M6.75 8a1.25 1.25 0 1 0 2.5 0a1.25 1.25 0 1 0-2.5 0"/><path d="M4.75 4.75a4.6 4.6 0 0 0 0 6.5M11.25 4.75a4.6 4.6 0 0 1 0 6.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 16 16"><path d="M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0"/><path d="M8 4.75V8l2.25 1.5"/></symbol>
+<symbol id="i-search" viewBox="0 0 16 16"><path d="M2.75 7a4.25 4.25 0 1 0 8.5 0a4.25 4.25 0 1 0-8.5 0"/><path d="M10.25 10.25l3.5 3.5"/></symbol>
+<symbol id="i-term" viewBox="0 0 16 16"><path d="M4 2.75h8a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2z"/><path d="M5 6.25 7 8l-2 1.75M8.75 10h2.5"/></symbol>
+<symbol id="i-edit" viewBox="0 0 16 16"><path d="M7.75 13.25H4.5A1.5 1.5 0 0 1 3 11.75v-8a1.5 1.5 0 0 1 1.5-1.5h4l3 3v1.5"/><path d="M12.4 8.1l1.5 1.5-4.4 4.4H8v-1.5z"/></symbol>
+<symbol id="i-test" viewBox="0 0 16 16"><path d="M5.75 2.25h4.5M6.75 2.25v4.1L3.3 12.1a1.1 1.1 0 0 0 .95 1.65h7.5a1.1 1.1 0 0 0 .95-1.65L9.25 6.35v-4.1M4.9 9.75h6.2"/></symbol>
+<symbol id="i-fork" viewBox="0 0 16 16"><path d="M3 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M10 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M6.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M4.5 5v.75A2.25 2.25 0 0 0 6.75 8h2.5a2.25 2.25 0 0 0 2.25-2.25V5M8 8v3"/></symbol>
+<symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.5 14V2.5M3.5 3h8.5l-2 3 2 3H3.5"/></symbol>
+<symbol id="i-route" viewBox="0 0 16 16"><path d="M2 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M11 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M3.5 11V7a2 2 0 0 1 2-2h4a1.5 1.5 0 0 0 1.5-1.5"/></symbol>
+<symbol id="i-list" viewBox="0 0 16 16"><path d="M6.5 4.25h7M6.5 8h7M6.5 11.75h7"/></symbol>
+<symbol id="i-pkg" viewBox="0 0 16 16"><path d="M8 1.75l5.5 3v6.5L8 14.25l-5.5-3v-6.5z"/><path d="M2.5 4.75 8 7.75l5.5-3M8 7.75v6.5"/></symbol>
+<symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.25l3 3 6-6.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 16 16"><path d="M4.75 6.5 8 9.75l3.25-3.25"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M6.5 4.75 9.75 8 6.5 11.25"/></symbol>
+<symbol id="i-role-ui" viewBox="0 0 16 16"><path d="M3 2.75h10a1.25 1.25 0 0 1 1.25 1.25v8a1.25 1.25 0 0 1-1.25 1.25H3A1.25 1.25 0 0 1 1.75 12V4A1.25 1.25 0 0 1 3 2.75z"/><path d="M1.75 5.75h12.5M4.5 8.75h4M4.5 11h2.5"/></symbol>
+<symbol id="i-role-api" viewBox="0 0 16 16"><path d="M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13"/></symbol>
+<symbol id="i-role-agent" viewBox="0 0 16 16"><path d="M5 4.75h6a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-.75.75H5a.75.75 0 0 1-.75-.75v-5A.75.75 0 0 1 5 4.75z"/><path d="M6.5 2.25v2.5M9.5 2.25v2.5M6.5 11.25v2.5M9.5 11.25v2.5M1.75 6.5h2.5M1.75 9.5h2.5M11.75 6.5h2.5M11.75 9.5h2.5"/></symbol>
+<symbol id="i-role-domain" viewBox="0 0 16 16"><path d="M8 1.75l5.25 3v6.5L8 14.25l-5.25-3v-6.5z"/><path d="M6 8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/></symbol>
+<symbol id="i-role-storage" viewBox="0 0 16 16"><path d="M2.75 4.25c0-1.1 2.35-2 5.25-2s5.25.9 5.25 2-2.35 2-5.25 2-5.25-.9-5.25-2z"/><path d="M2.75 4.25v7.5c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2v-7.5M2.75 8c0 1.1 2.35 2 5.25 2s5.25-.9 5.25-2"/></symbol>
+<symbol id="i-role-tooling" viewBox="0 0 16 16"><path d="M10.1 2.35a3.25 3.25 0 0 0-3.85 4.4L2.6 10.4a1.4 1.4 0 0 0 2 2l3.65-3.65a3.25 3.25 0 0 0 4.4-3.85l-1.9 1.9-1.75-.35-.35-1.75z"/></symbol>
+<symbol id="i-role-config" viewBox="0 0 16 16"><path d="M2.75 4.75h10.5M2.75 11.25h10.5"/><path d="M4.5 4.75a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M8.5 11.25a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0"/></symbol>
+<symbol id="i-stack" viewBox="0 0 16 16"><path d="M8 2.25 13.75 5 8 7.75 2.25 5z"/><path d="M2.25 8 8 10.75 13.75 8M2.25 11 8 13.75 13.75 11"/></symbol>
+<symbol id="i-view-map" viewBox="0 0 16 16"><path d="M2 4l4-1.75 4 1.75 4-1.75v9.75l-4 1.75-4-1.75-4 1.75z"/><path d="M6 2.25v9.75M10 4v9.75"/></symbol>
+<symbol id="i-view-console" viewBox="0 0 16 16"><path d="M3 2.75h10a1.25 1.25 0 0 1 1.25 1.25v8a1.25 1.25 0 0 1-1.25 1.25H3A1.25 1.25 0 0 1 1.75 12V4A1.25 1.25 0 0 1 3 2.75z"/><path d="M4.75 6.25 6.5 8l-1.75 1.75M8.25 10h3"/></symbol>
+<symbol id="i-view-canvas" viewBox="0 0 16 16"><path d="M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z"/><path d="M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"/></symbol>
+<symbol id="i-view-hybrid" viewBox="0 0 16 16"><path d="M2.25 3.25h11.5M2.25 6h11.5M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"/></symbol>
+<symbol id="i-file" viewBox="0 0 16 16"><path d="M4.5 1.75h4.75l3.25 3.25v8.5a.75.75 0 0 1-.75.75H4.5a.75.75 0 0 1-.75-.75v-11a.75.75 0 0 1 .75-.75z"/><path d="M9.25 1.75V5h3.25"/></symbol>
+<symbol id="i-chev-d" viewBox="0 0 16 16"><path d="M4.75 6.5 8 9.75l3.25-3.25"/></symbol>
+<symbol id="i-fit" viewBox="0 0 16 16"><path d="M2.75 6V3.5a.75.75 0 0 1 .75-.75H6M10 2.75h2.5a.75.75 0 0 1 .75.75V6M13.25 10v2.5a.75.75 0 0 1-.75.75H10M6 13.25H3.5a.75.75 0 0 1-.75-.75V10"/></symbol>
+<symbol id="i-hand" viewBox="0 0 16 16"><path d="M5.25 8.5V4a1 1 0 0 1 2 0v3.5M7.25 7V2.75a1 1 0 0 1 2 0V7.5M9.25 7.25V4a1 1 0 0 1 2 0v5a4.75 4.75 0 0 1-4.75 4.75h-.4a3.8 3.8 0 0 1-3.05-1.55L1.9 10.4a1 1 0 0 1 1.45-1.35l1.9 1.45"/></symbol>
+<symbol id="i-cursor" viewBox="0 0 16 16"><path d="M3.25 2.75 12.75 7l-4.1 1.35-1.4 4.4z"/></symbol>
+<symbol id="i-jev" viewBox="0 0 16 16"><path d="M2.5 8a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0-11 0"/><path d="M5.5 8.25l1.9 1.9 3.2-4"/></symbol>
+</svg>
+<div class="app">
+  <header class="hdr">
+    <span class="logo">jevcode</span>
+    <div class="crumb el"><span class="repo">acme-api</span><span class="repo">/</span><span class="task el">Add a Redis-backed rate limiter to the API server</span></div>
+    <span class="chip"><span class="dot"></span>Working · 1 m 31 s</span>
+    <span class="btn"><svg class="i"><use href="#i-hybrid"/></svg>Trace</span>
+  </header>
+  <div class="body">
+    <aside class="side">
+      <div><h3>Recent repos</h3>
+        <div class="item on"><svg class="i"><use href="#i-list"/></svg><span class="el">acme-api</span></div>
+        <div class="item"><svg class="i"><use href="#i-list"/></svg><span class="el">acme-web</span></div>
+      </div>
+      <div><h3>Sessions</h3>
+        <div class="item on"><svg class="i"><use href="#i-live"/></svg><span class="el">Redis rate limiter</span><span class="meta">now</span></div>
+        <div class="item"><svg class="i"><use href="#i-check"/></svg><span class="el">Fix flaky auth test</span><span class="meta">2 h</span></div>
+        <div class="item"><svg class="i"><use href="#i-check"/></svg><span class="el">Schema for invoices</span><span class="meta">1 d</span></div>
+      </div>
+      <div class="grow"></div>
+      <div class="item"><svg class="i"><use href="#i-list"/></svg>Agent settings</div>
+    </aside>
+    <main class="work">
+      <div class="vbar">
+        <div class="seg" role="radiogroup" aria-label="View"><span><svg class="i"><use href="#i-console"/></svg><b>Console</b><kbd>0</kbd></span><span><svg class="i"><use href="#i-canvas"/></svg><b>Canvas</b><kbd>1</kbd></span><span><svg class="i"><use href="#i-hybrid"/></svg><b>Hybrid</b><kbd>2</kbd></span><span class=on><svg class="i"><use href="#i-map"/></svg><b>Map</b><kbd>3</kbd></span><span><svg class="i"><use href="#i-surfaces"/></svg><b>Surfaces</b><kbd>4</kbd></span></div>
+        <div class="grow"></div>
+        <div class="seg"><span><svg class="i"><use href="#i-clock"/></svg>Review</span><span class="on"><svg class="i"><use href="#i-live"/></svg>Live</span></div>
+        <span class="btn" title="Brief (B)"><svg class="i"><use href="#i-brief"/></svg>Brief</span>
+      </div>
+      <div class="split">
+        <div class="mapmain main">
+          <div class="mhead"><div class="hrow">
+            <span class="hl"><svg class="i i16"><use href="#i-map"/></svg>6 components</span><span class="lang">TypeScript</span>
+            <button class="toggle" aria-pressed="true"><svg class="i"><use href="#i-jev"/></svg>Session</button>
+            <ul class="legend" aria-label="Session overlay legend"><li><i class="mk n" style="--s:9px"></i>3 new</li><li><i class="mk c" style="--s:9px"></i>1 changed</li><li><i class="mk d" style="--s:9px"></i>2 decided</li><li><i class="mk f" style="--s:9px"></i>1 failing</li></ul>
+            <span class="tog">Overview<svg class="i"><use href="#i-chev"/></svg></span></div></div>
+          <div class="stage">
+            <div class="viewport" id="viewport"><div class="world" id="world" role="img" aria-label="Codebase map with session overlay"></div></div>
+            <div class="tools"><span class="on"><svg class="i"><use href="#i-cursor"/></svg></span><span><svg class="i"><use href="#i-hand"/></svg></span><span><svg class="i"><use href="#i-fit"/></svg>Fit</span><span id="zoom">100%</span></div>
+          </div>
+        </div>
+        <aside class="brief" aria-label="Brief">
+          <div class="bh"><svg class="i i16"><use href="#i-brief"/></svg>Brief<span class="sub">Live</span></div>
+          <div class="sec"><h4><svg class="i"><use href="#i-jev"/></svg>Now<span class="tagq" style="margin-left:auto">+1:31</span></h4>
+            <ol class="story">
+              <li>You chose to fail open, so requests keep flowing when Redis is down.<span class="cite"><svg class="i"><use href="#i-fork"/></svg><span>Redis unavailable</span></span></li>
+              <li>The outage test fails in tests; the limiter lives in new middleware.<span class="cite"><svg class="i"><use href="#i-stack"/></svg><span>tests</span></span><span class="cite"><svg class="i"><use href="#i-stack"/></svg><span>middleware</span></span></li>
+            </ol></div>
+          <div class="sec"><h4><svg class="i"><use href="#i-route"/></svg>This session · 4 components</h4>
+            <div class="lrow"><svg class="i"><use href="#i-role-domain"/></svg><span class="nm">middleware</span><span class="bar" style="display:inline-flex;gap:6px;align-items:center"><i class="mk n" style="--s:9px"></i><i class="mk d" style="--s:9px"></i></span></div>
+            <div class="lrow"><svg class="i"><use href="#i-role-storage"/></svg><span class="nm">redis</span><span style="display:inline-flex;gap:6px;align-items:center"><i class="mk n" style="--s:9px"></i><i class="mk d" style="--s:9px"></i></span></div>
+            <div class="lrow"><svg class="i"><use href="#i-role-api"/></svg><span class="nm">server</span><span style="display:inline-flex;gap:6px;align-items:center"><i class="mk c" style="--s:9px"></i></span></div>
+            <div class="lrow"><svg class="i"><use href="#i-test"/></svg><span class="nm">tests</span><span style="display:inline-flex;gap:6px;align-items:center"><i class="mk n" style="--s:9px"></i><i class="mk f" style="--s:9px"></i></span></div></div>
+        </aside>
+      </div>
+      <div class="dock">
+        <div class="input"><span class="caret">›</span><span class="ph">Message the agent · Enter for a new line</span></div>
+        <div class="dockbar"><span class="mode">Steer<svg class="i"><use href="#i-chev"/></svg></span><span class="grow"></span><span>⌘↵ send</span><span class="send">Send</span></div>
+      </div>
+    </main>
+  </div>
+  <footer class="status"><span>Codex · gpt-5-codex</span><span>Jev on</span><span class="grow"></span><span>64 events</span></footer>
+</div>
+<script>
+/* Same layout rules as map.html: role bands as lanes, one geometry, gutter curves, Fit centered. */
+const GEO = { margin: 16, label: 44, w: 140, sideW: 104, h: 76, rowGap: 16, gutter: 22, lanePad: 6 };
+const FIT = { x: 20, top: 20, bottom: 68, maxK: 1 };
+const BANDS = [["api", "API · IPC", "role-api"], ["domain", "Domain", "role-domain"], ["storage", "Storage", "role-storage"], ["side", "Support", "stack"]];
+const CMP = { server: ["server", "role-api", 9, "c"], middleware: ["middleware", "role-domain", 3, "nd"], redis: ["redis", "role-storage", 2, "nd"], tests: ["tests", "test", 14, "nf"], config: ["config", "role-config", 4, ""], scripts: ["scripts", "role-tooling", 3, ""] };
+const ORDER = { api: ["server"], domain: ["middleware"], storage: ["redis"], side: ["tests", "config", "scripts"] };
+const EDGES = [["server", "middleware", 6], ["middleware", "redis", 4], ["tests", "middleware", 3]]; // band-to-band only, as at rest on the Map
+const MARK = { n: "n", c: "c", d: "d", f: "f" };
+const maxFiles = Math.max(...Object.values(CMP).map(([, , f]) => f));
+const icon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
+function draw() {
+  const g = GEO, pitch = g.h + g.rowGap, top = g.margin + g.label, cols = [], cards = new Map();
+  let x = g.margin;
+  for (const [band] of BANDS) { const ids = ORDER[band]; if (cols.length) x += g.gutter; const w = band === "side" ? g.sideW : g.w;
+    cols.push({ band, x, w, count: ids.length }); ids.forEach((id, row) => cards.set(id, { id, col: cols.length - 1, row, x, y: top + row * pitch, w })); x += w; }
+  const rows = Math.max(...cols.map((c) => c.count)), W = x + g.margin, H = top + rows * pitch - g.rowGap + g.margin;
+  const touched = (id) => CMP[id][3] !== "";
+  const paths = EDGES.map(([a, b, n]) => { let L = cards.get(a), R = cards.get(b); if (R.col < L.col || (R.col === L.col && R.row < L.row)) [L, R] = [R, L];
+    const y1 = L.y + g.h / 2, y2 = R.y + g.h / 2; let d;
+    if (L.col === R.col) { const x0 = L.x + L.w, bx = x0 + Math.min(g.gutter / 2 - 2, 4 + 3 * (R.row - L.row)); d = `M${x0} ${y1}C${bx} ${y1} ${bx} ${y2} ${x0} ${y2}`; }
+    else { const x1 = L.x + L.w, x2 = R.x;
+      if (R.col - L.col === 1) { const mx = (x1 + x2) / 2; d = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`; }
+      else { const yc = top + Math.min(rows, Math.max(1, y2 >= y1 ? L.row + 1 : L.row)) * pitch - g.rowGap / 2, h = g.gutter / 2, gx1 = x1 + g.gutter, gx2 = x2 - g.gutter;
+        d = `M${x1} ${y1}C${x1 + h} ${y1} ${x1 + h} ${yc} ${gx1} ${yc}H${gx2}C${gx2 + h} ${yc} ${gx2 + h} ${y2} ${x2} ${y2}`; } }
+    return `<path class="edge${touched(a) && touched(b) ? " t" : ""}" stroke-width="${n <= 3 ? 1 : 1.6}" d="${d}"/>`; });
+  let html = cols.map((c) => { const [, label, ic] = BANDS.find(([b]) => b === c.band);
+    return `<div class="lane" style="left:${c.x - g.lanePad}px;top:${g.margin - 4}px;width:${c.w + 2 * g.lanePad}px;height:${H - 2 * g.margin + 4 + g.lanePad}px"></div><div class="band" style="left:${c.x - 1}px;top:${g.margin + 2}px;height:${g.label - 14}px">${icon(ic)}<span>${label}</span><span class="n">${c.count}</span></div>`; }).join("");
+  html += `<svg class="edges" width="${W}" height="${H}">${paths.join("")}</svg>`;
+  for (const card of cards.values()) { const [name, ic, files, marks] = CMP[card.id];
+    html += `<div class="mcard${marks === "" ? " dim" : ""}" style="left:${card.x}px;top:${card.y}px;width:${card.w}px;height:${g.h}px"><div class="ct"><span class="cn">${name}</span></div>
+      <div class="cf">${icon(ic)}<span class="sz"><i style="width:${Math.max(8, Math.round(100 * Math.sqrt(files / maxFiles)))}%"></i></span>${marks === "" ? `<span>${files}</span>` : `<span class="mks" aria-label="${name}: session marks">${[...marks].map((m) => `<i class="mk ${MARK[m]}"></i>`).join("")}</span>`}</div></div>`; }
+  const world = document.getElementById("world"); world.innerHTML = html; world.style.width = `${W}px`; world.style.height = `${H}px`;
+  const vp = document.getElementById("viewport"), aw = vp.clientWidth - 2 * FIT.x, ah = vp.clientHeight - FIT.top - FIT.bottom;
+  const k = Math.min(aw / W, ah / H, FIT.maxK);
+  world.style.transform = `translate(${(vp.clientWidth - W * k) / 2}px,${FIT.top + (ah - H * k) / 2}px) scale(${k})`;
+  document.getElementById("zoom").textContent = `${Math.round(k * 100)}%`;
+}
+draw(); addEventListener("load", draw); addEventListener("resize", draw);
+</script>
+</body>
+</html>
