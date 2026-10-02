@@ -368,7 +368,7 @@ The lane files were drafted against the real code, and some names above had to c
 ### 8.2 Narrator (lane 05)
 
 - R2. The transport is `@anthropic-ai/sdk` with `ANTHROPIC_API_KEY` and `NARRATOR_MODEL`. With no key the narrator makes no calls and reports `unavailable`.
-- Methods return `NarratorResult<T>`, which is `JevResult<T>` plus `model`, `latencyMs`, `usage` and `schemaValid`. They take an optional `AbortSignal` and reject with `NarratorUnavailableError`.
+- Methods return `NarratorResult<T>`, which is `JevResult<T>` plus `model`, `ms` (latency), `usage` and `schemaValid`. They take an optional `AbortSignal` and reject with `NarratorUnavailableError`.
 - `decisionWhy` returns `NarrativeSentence | null`.
 - `CitationUniverse.componentNameById?` is added.
 - `createFakeNarratorClient` records the calls it receives.
