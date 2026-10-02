@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
 import { FIXTURE_NAMES, loadFixtureTrace, stripCaptureFields } from "../test-support/fixture-rows.js";
-import { arbDenseRowSession, arbRowSession, soakShapedRows } from "../test-support/row-arbitraries.js";
+import { arbDenseRowSession, arbRowSession, OVERVIEW_ROWS, soakShapedRows } from "../test-support/row-arbitraries.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { accumulateAll, createTraceState, finalize, foldRows, type FinalizeOptions, type TraceState } from "./fold.js";
 import { lastFinalizeWork } from "./fold-finalize.js";
@@ -218,5 +218,21 @@ describe("incremental finalize: identity and work", () => {
     // is touched, however long the session. The signal rules categorize only the two new steps.
     expect(large).toEqual(small);
     expect(large).toEqual({ steps: 2, stepFields: 2, chapters: 2, validationOnly: 2, entities: 1, signalSteps: 2 });
+  });
+});
+
+describe("incremental finalize: overview snapshots (spec §8.1)", () => {
+  it("every prefix of a session with snapshot rows finalizes to the fresh fold", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Map the repo" });
+    for (const snapshot of OVERVIEW_ROWS) {
+      b.overview(snapshot);
+      b.agent({ type: "agent_message", role: "assistant", text: "Working" });
+    }
+    b.raw("overview_snapshot", { sessionId: "sess-test", repoRoot: "" });
+    const meta = testMeta({ lastEventSeq: b.rows.length });
+    for (const live of [false, true]) {
+      checkIncremental(meta, b.rows, b.rows.map((_, index) => index + 1), () => ({ live, nowMs: NOW }));
+    }
   });
 });

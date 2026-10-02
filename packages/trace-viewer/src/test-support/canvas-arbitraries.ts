@@ -347,6 +347,7 @@ export function buildCanvasSession(
     gaps: [],
     coverage: { capabilities: [], signals: [], approximateJoins: false, inferredSteps: 0 },
     hidden: { byType: {}, unreceived: 0 },
+    overview: null,
   };
 }
 

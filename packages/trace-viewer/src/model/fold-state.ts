@@ -4,6 +4,7 @@ import type {
   EventStoreType,
   JevClientKind,
   NormalizedAgentEventType,
+  OverviewSnapshot,
   TraceSessionSummary,
 } from "@jevcode/contracts";
 
@@ -267,6 +268,8 @@ export class FoldState {
   readonly changes: FoldChanges = createChanges();
   /** Steps with dirty set, in the order they were first touched. */
   readonly touchedSteps: StepDraft[] = [];
+  /** The latest valid overview_snapshot row and its seq (spec §8.1, replace semantics); null until one arrives. */
+  overview: { snapshot: OverviewSnapshot; seq: number } | null = null;
   /** The incremental finalize's derived state (fold-finalize.ts); null until the first finalize. */
   derived: unknown = null;
 
