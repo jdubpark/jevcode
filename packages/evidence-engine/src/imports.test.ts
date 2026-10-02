@@ -4,6 +4,7 @@ import {
   createImportExtractor,
   extractImports,
   packageNameOf,
+  probeCandidatesFor,
   resolveSpecifier,
   type ResolveContext,
   type ResolvedSpecifier,
@@ -137,6 +138,75 @@ describe("resolveSpecifier (spec §5.1)", () => {
 
   it("reads bare specifiers as packages when there is no baseUrl", () => {
     expect(resolveSpecifier("src/a.ts", "lib/x", { ...CTX, baseUrl: null })).toEqual(external("lib"));
+  });
+});
+
+/** mulberry32: a seeded PRNG, so the property run is the same on every machine. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let x = state;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+describe("resolveSpecifier trace (incremental resolution)", () => {
+  const DIRS = ["", "src", "src/b", "lib", "types", "packages/core", "packages/core/src", "packages/ui", "packages/ui/lib"];
+  const STEMS = ["a", "b", "index", "util", "main", "node", "x", "global"];
+  const EXTS = ["", ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
+  const SPECIFIERS = [
+    "./a", "./a.js", "./b", "../b", "./b/index.js", "./util.js", "../types/global", "./x.mjs", "./main.cjs",
+    "@app/a", "@app/b/index", "~cfg", "@fx/core", "@fx/core/node", "@fx/ui", "@fx/ui/main", "lib/x", "a", "util",
+    "types/global", "react", "./data.json",
+  ];
+
+  it("hears a lookup of every path whose addition or removal changes the result", () => {
+    const random = seeded(0x1d3a);
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T;
+    const somePath = (): string => {
+      const dir = pick(DIRS);
+      const name = `${pick(STEMS)}${pick(EXTS)}`;
+      return dir === "" ? name : `${dir}/${name}`;
+    };
+    let changed = 0;
+    for (let run = 0; run < 4_000; run += 1) {
+      const base = new Set(Array.from({ length: Math.floor(random() * 14) }, somePath));
+      const target = somePath();
+      const from = somePath();
+      const specifier = pick(SPECIFIERS);
+      const config = {
+        tsPaths: random() < 0.5 ? { "@app/*": ["src/*"], "~cfg": ["src/util.ts", "lib/x.js"] } : {},
+        baseUrl: pick([".", null, "src"]),
+        workspacePackages: { "@fx/core": "packages/core", "@fx/ui": "packages/ui" },
+      };
+      const without = new Set([...base].filter((path) => path !== target));
+      const withTarget = new Set([...without, target]);
+      for (const [before, after] of [
+        [without, withTarget],
+        [withTarget, without],
+      ] as const) {
+        const probes = new Set<string>();
+        const under = new Set<string>();
+        const trace = { probe: (candidate: string) => void probes.add(candidate), under: (dir: string) => void under.add(dir) };
+        const was = resolveSpecifier(from, specifier, { ...config, files: before }, trace);
+        const now = resolveSpecifier(from, specifier, { ...config, files: after });
+        if (JSON.stringify(was) === JSON.stringify(now)) continue;
+        changed += 1;
+        const heard =
+          probeCandidatesFor(target).some((candidate) => probes.has(candidate)) ||
+          [...under].some((dir) => target.startsWith(`${dir}/`));
+        expect(heard, `${from} imports ${specifier}; ${target} toggled`).toBe(true);
+      }
+    }
+    expect(changed).toBeGreaterThan(200);
+  });
+
+  it("lists the candidates whose probes read a path", () => {
+    expect(probeCandidatesFor("src/b/index.ts").sort()).toEqual(["src/b", "src/b/index", "src/b/index.js", "src/b/index.ts"]);
+    expect(probeCandidatesFor("src/c.tsx").sort()).toEqual(["src/c", "src/c.js", "src/c.jsx", "src/c.tsx"]);
   });
 });
 
