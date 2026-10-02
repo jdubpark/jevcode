@@ -7,6 +7,7 @@ const SAMPLE_PREFS = {
   model: "gpt-5.6-luna",
   reasoningEffort: "xhigh",
   usageBudgetFraction: "0.25",
+  explainWithModel: true,
 };
 
 describe("preference IPC channels", () => {
@@ -30,6 +31,12 @@ describe("preference IPC channels", () => {
     expect(() =>
       parseToMain("preferences:set", { usageBudgetFraction: "1.5" }),
     ).toThrowError();
+    expect(parseToMain("preferences:set", { explainWithModel: false })).toEqual({
+      explainWithModel: false,
+    });
+    expect(() =>
+      parseToMain("preferences:set", { explainWithModel: "no" }),
+    ).toThrowError();
     expect(() => parseToMain("preferences:set", {})).toThrowError();
   });
 
@@ -41,6 +48,13 @@ describe("preference IPC channels", () => {
       parseFromMain("preferences:updated", {
         model: "gpt-5.6-luna",
         reasoningEffort: "extreme",
+        usageBudgetFraction: "0.25",
+      }),
+    ).toThrowError();
+    expect(() =>
+      parseFromMain("preferences:updated", {
+        model: "gpt-5.6-luna",
+        reasoningEffort: "xhigh",
         usageBudgetFraction: "0.25",
       }),
     ).toThrowError();

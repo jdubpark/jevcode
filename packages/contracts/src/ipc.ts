@@ -36,6 +36,7 @@ export const RendererToMainChannels = {
   surfacePin: "surface:pin",
   surfaceDismiss: "surface:dismiss",
   telemetryFlush: "telemetry:flush",
+  overviewRescan: "overview:rescan",
 } as const;
 
 export const MainToRendererChannels = {
@@ -55,6 +56,7 @@ export const MainToRendererChannels = {
   terminalScrollback: "terminal:scrollback",
   jevDebug: "jev:debug",
   telemetryAck: "telemetry:ack",
+  traceRowsAvailable: "trace:rowsAvailable",
 } as const;
 
 export type RendererToMainChannelName =
@@ -211,6 +213,27 @@ export const TelemetryAckPayloadSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+/**
+ * Console-explainer spec §7: main tells a window that rows up to lastSeq are stored, and
+ * the window pulls them through trace:rows. Strict, because the hint carries no content
+ * (spec §10) and sendToRenderer sends the caller's object after validating it.
+ */
+export const TraceRowsAvailablePayloadSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    lastSeq: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type TraceRowsAvailablePayload = z.infer<typeof TraceRowsAvailablePayloadSchema>;
+
+/** Console-explainer spec §6.6: Retry after a failed repo scan. Main window only (desktop trace-allowlist.ts). */
+export const OverviewRescanPayloadSchema = z.object({
+  repoRoot: z.string().min(1),
+});
+
+export type OverviewRescanPayload = z.infer<typeof OverviewRescanPayloadSchema>;
+
 export const rendererToMainPayloads = {
   [RendererToMainChannels.repoOpen]: RepoOpenPayloadSchema,
   [RendererToMainChannels.repoClose]: RepoClosePayloadSchema,
@@ -226,6 +249,7 @@ export const rendererToMainPayloads = {
   [RendererToMainChannels.surfacePin]: SurfacePinPayloadSchema,
   [RendererToMainChannels.surfaceDismiss]: SurfaceDismissPayloadSchema,
   [RendererToMainChannels.telemetryFlush]: TelemetryFlushPayloadSchema,
+  [RendererToMainChannels.overviewRescan]: OverviewRescanPayloadSchema,
 } as const;
 
 export const mainToRendererPayloads = {
@@ -245,6 +269,7 @@ export const mainToRendererPayloads = {
   [MainToRendererChannels.terminalScrollback]: TerminalScrollbackPayloadSchema,
   [MainToRendererChannels.jevDebug]: JevDebugPayloadSchema,
   [MainToRendererChannels.telemetryAck]: TelemetryAckPayloadSchema,
+  [MainToRendererChannels.traceRowsAvailable]: TraceRowsAvailablePayloadSchema,
 } as const;
 
 export type RendererToMainPayloads = {

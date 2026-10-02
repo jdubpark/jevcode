@@ -20,24 +20,30 @@ export type ReasoningEffortOption = (typeof REASONING_EFFORT_OPTIONS)[number];
 export const AGENT_MODEL_PREF_KEY = "agent.model";
 export const REASONING_EFFORT_PREF_KEY = "agent.reasoningEffort";
 export const USAGE_BUDGET_PREF_KEY = "agent.usageBudgetFraction";
+/** Console-explainer spec E15: "Explain with a model". Off stops every narrator call. */
+export const EXPLAIN_WITH_MODEL_PREF_KEY = "explainer.withModel";
 
 export interface AgentPreferences {
   model: AgentModelOption;
   reasoningEffort: ReasoningEffortOption;
   /** Fraction of the usage budget in [0, 1] as a decimal string, or null when unknown. */
   usageBudgetFraction: string | null;
+  /** On by default (spec E15). False: rule-based explainer data only, no model calls. */
+  explainWithModel: boolean;
 }
 
 export interface AgentPreferencesPatch {
   model?: AgentModelOption;
   reasoningEffort?: ReasoningEffortOption;
   usageBudgetFraction?: string | null;
+  explainWithModel?: boolean;
 }
 
 export const DEFAULT_AGENT_PREFERENCES: AgentPreferences = {
   model: "auto",
   reasoningEffort: "auto",
   usageBudgetFraction: null,
+  explainWithModel: true,
 };
 
 const BUDGET_RE = /^(0(\.\d+)?|1(\.0+)?)$/;
@@ -95,7 +101,12 @@ export function parseBudgetNumber(
   return normalized === null ? undefined : Number(normalized);
 }
 
-/** Reads the three agent preferences through a storage getter, applying defaults. */
+/** Only a stored boolean counts; anything else (missing, corrupt) reads as the default, on. */
+export function normalizeExplainWithModel(value: unknown): boolean {
+  return typeof value === "boolean" ? value : true;
+}
+
+/** Reads the agent preferences through a storage getter, applying defaults. */
 export function readAgentPreferences(
   get: (key: string) => unknown,
 ): AgentPreferences {
@@ -103,6 +114,7 @@ export function readAgentPreferences(
     model: normalizeModel(get(AGENT_MODEL_PREF_KEY)),
     reasoningEffort: normalizeReasoningEffort(get(REASONING_EFFORT_PREF_KEY)),
     usageBudgetFraction: normalizeBudgetFraction(get(USAGE_BUDGET_PREF_KEY)),
+    explainWithModel: normalizeExplainWithModel(get(EXPLAIN_WITH_MODEL_PREF_KEY)),
   };
 }
 
@@ -117,6 +129,7 @@ export function applyPreferencesPatch(
       patch.usageBudgetFraction !== undefined
         ? patch.usageBudgetFraction
         : current.usageBudgetFraction,
+    explainWithModel: patch.explainWithModel ?? current.explainWithModel,
   };
 }
 
