@@ -66,31 +66,40 @@ function segmentEnters(a: { x: number; y: number }, b: { x: number; y: number },
 
 export function expectNoOverlaps(layout: MapLayout): void {
   const boxes: Box[] = layout.cards.map((card) => ({ label: `card ${card.id}`, x: card.x, y: card.y, w: card.w, h: card.h }));
+  // Problems are collected and asserted once: a per-pair expect dominates the property run time on larger maps.
+  const overlaps: string[] = [];
   for (let i = 0; i < boxes.length; i += 1) {
     for (let j = i + 1; j < boxes.length; j += 1) {
       const a = boxes[i];
       const b = boxes[j];
       if (a === undefined || b === undefined) continue;
       const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
-      expect(apart, `${a.label} overlaps ${b.label}`).toBe(true);
+      if (!apart) overlaps.push(`${a.label} overlaps ${b.label}`);
     }
   }
+  expect(overlaps).toEqual([]);
 }
 
 /** No edge, curve or line, passes under a card other than its two endpoints (spec §8.3). */
 export function expectNoCardCrossings(layout: MapLayout): void {
+  const boxes: Box[] = layout.cards.map((card) => ({ label: card.id, x: card.x, y: card.y, w: card.w, h: card.h }));
+  const crossings: string[] = [];
   for (const edge of layout.edges) {
     const points = pathPoints(edge.d);
-    for (const card of layout.cards) {
-      if (card.id === edge.from || card.id === edge.to) continue;
+    for (const box of boxes) {
+      if (box.label === edge.from || box.label === edge.to) continue;
       for (let i = 1; i < points.length; i += 1) {
         const a = points[i - 1];
         const b = points[i];
         if (a === undefined || b === undefined) continue;
-        expect(segmentEnters(a, b, { label: card.id, ...card }), `${edge.from}>${edge.to} crosses ${card.id}: ${edge.d}`).toBe(false);
+        if (segmentEnters(a, b, box)) {
+          crossings.push(`${edge.from}>${edge.to} crosses ${box.label}: ${edge.d}`);
+          break;
+        }
       }
     }
   }
+  expect(crossings).toEqual([]);
 }
 
 function onPort(point: { x: number; y: number } | undefined, card: Box | undefined): boolean {
@@ -102,17 +111,16 @@ function onPort(point: { x: number; y: number } | undefined, card: Box | undefin
  * side, no spreading). Either end may be `from`: the path runs from the lower column (or row) to the higher.
  */
 export function expectEdgesOnPorts(layout: MapLayout): void {
+  const boxes = new Map<string, Box>(layout.cards.map((card) => [card.id, { label: card.id, x: card.x, y: card.y, w: card.w, h: card.h }]));
+  const offPort: string[] = [];
   for (const edge of layout.edges) {
-    const box = (id: string): Box | undefined => {
-      const card = layout.cards.find((item) => item.id === id);
-      return card === undefined ? undefined : { label: card.id, x: card.x, y: card.y, w: card.w, h: card.h };
-    };
-    const from = box(edge.from);
-    const to = box(edge.to);
+    const from = boxes.get(edge.from);
+    const to = boxes.get(edge.to);
     const points = pathPoints(edge.d);
     const start = points[0];
     const end = points.at(-1);
     const joined = (onPort(start, from) && onPort(end, to)) || (onPort(start, to) && onPort(end, from));
-    expect(joined, `${edge.from}>${edge.to} does not join a port on each of its two cards: ${edge.d}`).toBe(true);
+    if (!joined) offPort.push(`${edge.from}>${edge.to} does not join a port on each of its two cards: ${edge.d}`);
   }
+  expect(offPort).toEqual([]);
 }

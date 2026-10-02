@@ -88,12 +88,11 @@ describe("layoutMap properties", () => {
         for (const edge of layout.edges) {
           const gap = Math.abs((column.get(edge.to) ?? 0) - (column.get(edge.from) ?? 0));
           expect(edge.kind).toBe(gap === 0 ? "same" : gap === 1 ? "adjacent" : "long");
-          for (const point of pathPointsOf(edge.d)) {
-            expect(point.x).toBeGreaterThanOrEqual(0);
-            expect(point.x).toBeLessThanOrEqual(layout.bounds.w);
-            expect(point.y).toBeGreaterThanOrEqual(0);
-            expect(point.y).toBeLessThanOrEqual(layout.bounds.h);
-          }
+          // One assertion per edge: a per-point expect dominates the run time on larger maps.
+          const outside = pathPointsOf(edge.d).filter(
+            (point) => point.x < 0 || point.x > layout.bounds.w || point.y < 0 || point.y > layout.bounds.h,
+          );
+          expect(outside, `${edge.from}>${edge.to} leaves the bounds: ${edge.d}`).toEqual([]);
         }
       }),
       RUNS,
