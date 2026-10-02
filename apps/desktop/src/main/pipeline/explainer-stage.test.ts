@@ -1161,6 +1161,37 @@ describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
     expect(last.components.find((c) => c.id === DB)?.files).toContain("packages/db/src/new.ts");
   });
 
+  it("publishes a batch that lands after a rescan already failed, with no later change", async () => {
+    const h = harness();
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+
+    const paths = deferred();
+    h.control.pathsGate = paths.promise;
+    h.sources["packages/db/src/new.ts"] = 'import { user } from "@fx/core";\nexport const n = user;\n';
+    stage.onFilesChanged(["packages/db/src/new.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await flush();
+    // The rescan fails first; the batch's read finishes afterwards.
+    h.control.fail = new Error("git ls-files failed");
+    stage.rescan();
+    await flush();
+    expect(stage.status().phase).toBe("failed");
+    paths.resolve();
+    h.control.pathsGate = null;
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+
+    const last = snapshotRows(h.db, SESSION).at(-1)?.snapshot as OverviewSnapshot;
+    expect(last.status?.scan.state).toBe("failed");
+    expect(last.components.find((c) => c.id === DB)?.files).toContain("packages/db/src/new.ts");
+    expect([last.counts.files, last.counts.totalFiles]).toEqual([7, 7]);
+    expect(last.edges.find((e) => e.from === DB && e.to === CORE)?.count).toBe(2);
+  });
+
   it("rebuilds from scratch after a read that failed halfway parsed files into the model", async () => {
     const h = harness();
     const stage = start(h);
