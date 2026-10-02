@@ -17,6 +17,7 @@ function fakeBridge(): Pick<JevcodeApi, "trace"> & {
       payloads: vi.fn<Bridge["payloads"]>(async () => []),
       open: vi.fn<Bridge["open"]>(async () => undefined),
       requestChanges,
+      onRowsAvailable: vi.fn<Bridge["onRowsAvailable"]>(() => () => undefined),
     },
   };
 }

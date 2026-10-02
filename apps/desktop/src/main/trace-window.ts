@@ -55,6 +55,8 @@ export interface TraceWindowRegistry {
   isTraceSender(webContentsId: number): boolean;
   /** The session a trace window shows, by its webContents.id; undefined for any other sender. */
   sessionForSender(webContentsId: number): string | undefined;
+  /** webContents ids of the open trace windows that show sessionId (trace:rowsAvailable recipients). */
+  sendersForSession(sessionId: string): number[];
   closeAll(): void;
   count(): number;
 }
@@ -110,6 +112,13 @@ export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceW
     },
     sessionForSender(webContentsId) {
       return senders.get(webContentsId);
+    },
+    sendersForSession(sessionId) {
+      const ids: number[] = [];
+      for (const [webContentsId, shown] of senders) {
+        if (shown === sessionId) ids.push(webContentsId);
+      }
+      return ids;
     },
     closeAll() {
       for (const window of [...bySession.values()]) {
