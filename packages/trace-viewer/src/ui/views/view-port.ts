@@ -9,6 +9,7 @@ import {
 
 import type { SelectionId } from "../../layout/trace-index.js";
 import type { IconName } from "../icons/icon-names.js";
+import { BUILT_IN_VIEW_KEYS, FIRST_HOST_VIEW_KEY } from "../state/keymap.js";
 import { useView } from "../state/store.js";
 import type { CanvasCamera, HybridCamera, ViewKind } from "../state/view-state.js";
 
@@ -111,5 +112,19 @@ export interface ViewDefinition {
   Component: ComponentType<ViewProps>;
 }
 
-/** The views the Shell mounts, in switch order (Canvas | Hybrid). */
+/** The views the Shell mounts, in switch order: Console, Canvas, Hybrid, Map, then host views (spec §8.5). */
 export const ViewDefinitionsContext = createContext<readonly ViewDefinition[]>([]);
+
+/** Views that are not built in, in registration order. */
+export function hostViewsOf(views: readonly ViewDefinition[]): ViewDefinition[] {
+  return views.filter((view) => BUILT_IN_VIEW_KEYS[view.kind] === undefined);
+}
+
+/** Spec §3.7, §8.6: the number key of a view; null for a host view past key 9 or a kind not in `views`. */
+export function viewKeyOf(kind: ViewKind, views: readonly ViewDefinition[]): number | null {
+  const builtIn = BUILT_IN_VIEW_KEYS[kind];
+  if (builtIn !== undefined) return builtIn;
+  const position = hostViewsOf(views).findIndex((view) => view.kind === kind);
+  const key = FIRST_HOST_VIEW_KEY + position;
+  return position < 0 || key > 9 ? null : key;
+}

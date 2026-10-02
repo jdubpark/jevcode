@@ -67,10 +67,12 @@ function withoutCameras(state: ViewState): Record<string, unknown> {
 const SYNCED = initialViewState({ live: false }).focusRev;
 
 describe("view registry", () => {
-  it("registers Canvas before Hybrid", () => {
+  it("registers Console, Canvas, Hybrid and Map in key order", () => {
     expect(VIEWS.map((definition) => [definition.kind, definition.label, definition.icon])).toEqual([
+      ["console", "Console", "view-console"],
       ["canvas", "Canvas", "view-canvas"],
       ["hybrid", "Hybrid", "view-hybrid"],
+      ["map", "Map", "view-map"],
     ]);
   });
 });

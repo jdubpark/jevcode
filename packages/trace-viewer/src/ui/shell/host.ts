@@ -12,6 +12,11 @@ export interface ViewerReadyInfo {
   loadedThroughSeq: number;
 }
 
+export interface AnswerDecisionRequest {
+  decisionId: string;
+  optionId: string;
+}
+
 export interface ViewerDiagnostics {
   errors: string[];
   maxAnchorDriftPx: number;
@@ -26,4 +31,10 @@ export interface ViewerHost {
   onReady?(info: ViewerReadyInfo): void;
   /** Dev-host selftest only; enables anchor-drift measurement. */
   onDiagnostics?(diagnostics: ViewerDiagnostics): void;
+  /** Main window only (spec §9): answers a pending decision through the host's allowlisted dispatch. */
+  answerDecision?(request: AnswerDecisionRequest): void | Promise<void>;
+  /** Main window only: opens the read-only trace window for this session. */
+  openTraceWindow?(): void;
+  /** Main window only (spec §6.6): Retry after "Codebase map unavailable". */
+  rescanOverview?(): void;
 }
