@@ -184,7 +184,7 @@ function resolveTsPath(specifier: string, ctx: ResolveContext): string | null {
   }
   if (best === null) return null;
   for (const target of best.targets) {
-    const hit = probeFile(joinBase(ctx.baseUrl, target.replace("*", best.wildcard)), ctx.files);
+    const hit = probeFile(joinBase(ctx.baseUrl, target.replace("*", () => best.wildcard)), ctx.files);
     if (hit !== null) return hit;
   }
   return null;
