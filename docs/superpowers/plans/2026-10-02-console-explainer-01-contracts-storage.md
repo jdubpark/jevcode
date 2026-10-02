@@ -25,7 +25,7 @@ Every name in interfaces §1 and §2 is kept. These points follow the real code;
 4. **K-1 touches two exhaustive maps outside contracts.** `eventStoreSchemas` (`packages/storage/src/db.ts:59-74`) and `ENVELOPE_RULES` (`packages/trace-viewer/src/model/registry.ts:38-53`) are typed over every `EventStoreType`, so adding the event types breaks both typechecks. K-1 therefore:
    - maps both types to a `z.never()` placeholder in storage (storage refuses both rows until K-4 swaps in the real schemas);
    - marks both types `"consume"` in the viewer. `accumulate` (`packages/trace-viewer/src/model/fold.ts:110-139`) sends consumed types without a `case` to its `default` branch, which counts them in `hidden`. Lane 06 P-1 and lane 07 S-3 add the `case`s.
-5. **Additive exports:** `OVERVIEW_SCAN_STATES`, `NARRATOR_STATES`, `OverviewStatusSchema`, `OverviewStatus`, the optional `OverviewSnapshot.status` and `counts.totalFiles` (orchestrator ruling R3, K-2); `TRACE_BUNDLE_VERSIONS_SUPPORTED` (interfaces §1.1, listed); `TraceRowsAvailablePayload`, `OverviewRescanPayloadSchema`, `OverviewRescanPayload` (contracts); `EXPLAIN_WITH_MODEL_PREF_KEY`, `normalizeExplainWithModel` (desktop `shared/prefs.ts`); the types `ComponentTextValue` and `OverviewStateValue` (storage, the inline types of interfaces §2 given names).
+5. **Additive exports:** `OVERVIEW_SCAN_STATES`, `NARRATOR_STATES`, `NarratorState`, `OverviewStatusSchema`, `OverviewStatus`, the optional `OverviewSnapshot.status` and `counts.totalFiles` (orchestrator ruling R3, K-2); `TRACE_BUNDLE_VERSIONS_SUPPORTED` (interfaces §1.1, listed); `TraceRowsAvailablePayload`, `OverviewRescanPayloadSchema`, `OverviewRescanPayload` (contracts); `EXPLAIN_WITH_MODEL_PREF_KEY`, `normalizeExplainWithModel` (desktop `shared/prefs.ts`); the types `ComponentTextValue` and `OverviewStateValue` (storage, the inline types of interfaces §2 given names).
 6. **Cache method behavior** (interfaces §2 gives only signatures):
    - `put*` validate their input with the contract schemas and throw `TypeError` on invalid values.
    - `putOverviewState` also throws when `state.snapshot.repoRoot !== repoRoot`.
@@ -38,7 +38,7 @@ Every name in interfaces §1 and §2 is kept. These points follow the real code;
 ## Spec alignment notes
 
 - **`overview_state` columns.** Spec §4.2/§7 lists `overview_state(repo_root, snapshot_json, updated_at)`. This lane follows interfaces §2, which adds `narrative_inputs_hash` and `narrative_json` (spec §6.4 says the narrative is stored there and reused while its inputs hash is unchanged).
-- **Redaction can lengthen capped strings.** Bundle export runs `redactText` over every string (`apps/desktop/src/main/trace-bundle.ts:43-64`). A short secret becomes `[REDACTED:token]`, so a 135-character purpose such as `… token=ab …` can exceed the 140-character `ComponentSchema.purpose` cap. A sentence near 220 characters or an edge example near 300 can overflow the same way. Such a row then fails the viewer's schema parse and becomes an `invalid_row` gap. K-4's export test uses a case that stays inside the caps. The spec owner should choose one of two fixes: re-cap redacted strings in `buildTraceBundle`, or have the narrator guardrails (N-1) and the snapshot builder (M-3) leave headroom.
+- **Redaction can lengthen capped strings (ruling F16: K-4 owns the fix).** Bundle export runs `redactText` over every string (`apps/desktop/src/main/trace-bundle.ts`). A short secret becomes `[REDACTED:token]`, so a 129-character purpose such as `… token=ab` grows past the 140-character `ComponentSchema.purpose` cap, and a sentence near 220 characters, an edge example near 300 or a long name can overflow the same way. A row over a cap would fail the viewer's schema parse and become an `invalid_row` gap. K-4 re-caps the redacted strings of `overview_snapshot` and `explainer` rows in `buildTraceBundle` to the K-2 schema limits (truncating, so the secret stays redacted), with a regression test.
 - **v1 bundles with new row types.** Spec §7 says "a v1 bundle simply has no new rows". `TraceRowSchema.type` is any non-empty string (forward compatibility), so a v1 bundle that does carry such a row still parses. No rule is added.
 - **Push-hint audience.** Spec §7 sends `trace:rowsAvailable` "to every window whose viewer shows that session (main window and trace windows)". The current `sendToRenderer` reaches only the main window. Lane 03 D-1 must add delivery to trace windows.
 - **Snapshot `sessionId` in `overview_state`.** The cached snapshot keeps the `sessionId` of the session that built it. A writer that appends it for another session must restamp `sessionId` first, or `appendEvent` rejects it (payload `sessionId` must match).
@@ -46,7 +46,7 @@ Every name in interfaces §1 and §2 is kept. These points follow the real code;
 
 ## Lane prerequisites
 
-- **Wave:** W0, from `main`. Lane 02a runs beside this lane. It edits `packages/trace-viewer/src/source.ts`, `src/ui/**` and `src/ui/state/**`, none of the files below. W0 merges 01 first, then 02a.
+- **Wave:** W0, from `main`. Lane 02a runs beside this lane. It edits `packages/trace-viewer/src/source.ts`, `src/ui/**` and `src/ui/state/**`, none of the files below except `packages/trace-viewer/src/sources/static-bundle.ts` (K-1 changes `parseTraceBundle`; V-1 changes `StaticBundleSource`). W0 merges 01 first, then 02a, whose rebase step keeps both edits.
 - **Plan documents:** if `git -C ~/Projects/jevcode ls-files docs/superpowers/plans/2026-10-02-console-explainer-00-index.md` prints nothing, the plan files are untracked in the main checkout. Read them by absolute path and never commit them from this lane.
 - **Worktree** (once):
 
@@ -72,11 +72,11 @@ The index Global Constraints apply. Lane-specific additions:
 - **Package names and scripts** (from each `package.json`):
   - `@jevcode/contracts`, `@jevcode/storage`, `@jevcode/trace-viewer`: `build`, `typecheck`, `test`.
   - `jevcode-desktop`: `build`, `typecheck` (main, preload and web tsconfigs), `test`, `run rebuild:node`.
-  - Root: `pnpm lint` runs `pnpm exec eslint .`.
+  - Root: `perl -e 'alarm 170; exec @ARGV' pnpm lint` runs `pnpm exec eslint .`.
 - **Every package imports workspace packages from `dist`.**
-  - After any change under `packages/contracts/src`, run `pnpm --filter @jevcode/contracts build` before testing storage, the viewer or desktop.
-  - After a storage change, run `pnpm --filter @jevcode/storage build` before testing desktop.
-  - After a viewer `src/sources` change, run `pnpm --filter @jevcode/trace-viewer build` before testing desktop.
+  - After any change under `packages/contracts/src`, run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts build` before testing storage, the viewer or desktop.
+  - After a storage change, run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage build` before testing desktop.
+  - After a viewer `src/sources` change, run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build` before testing desktop.
 - **Native ABI.** If a storage or desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop run rebuild:node`, then rerun. Never run `pnpm --filter jevcode-desktop rebuild`: the pnpm builtin wipes node-pty.
 - **No new dependency** and no `package.json` or `pnpm-lock.yaml` change. fast-check is available in `packages/contracts` only, so storage tests use explicit boundary values.
 - **Only files listed in a task's Files block may change.** `docs/SPEC.md`, `eslint.config.mjs` and `fixtures/**` are out of bounds.
@@ -368,7 +368,7 @@ export const TraceBundleSchema = z.object({
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/contracts exec vitest run src/trace.test.ts`
 Expected: PASS, 8 tests.
 
-Run: `pnpm --filter @jevcode/contracts typecheck && pnpm --filter @jevcode/contracts build`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts typecheck && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts build`
 Expected: both exit 0.
 
 - [ ] **Step 5: Run the viewer tests to verify they fail on the rebuilt contracts**
@@ -480,16 +480,16 @@ In `apps/desktop/src/main/replay/cli-entry.ts`, change line 30 from `  /** <outD
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/sources/static-bundle.test.ts src/model/registry.test.ts`
 Expected: PASS.
 
-Run: `pnpm --filter @jevcode/trace-viewer typecheck && pnpm --filter @jevcode/storage typecheck`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage typecheck`
 Expected: both exit 0.
 
-Run: `pnpm --filter @jevcode/storage build && pnpm --filter @jevcode/trace-viewer build`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build`
 Expected: both exit 0.
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts src/main/replay/cli-entry.test.ts`
 Expected: PASS. `cli-entry.test.ts` parses the replayed bundle with `TraceBundleSchema`, which now reads `version: 2`.
 
-Run: `pnpm --filter jevcode-desktop typecheck`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck`
 Expected: exits 0.
 
 - [ ] **Step 8: Package suites and lint**
@@ -499,9 +499,9 @@ Run each command separately, each under the hang-safety wrapper (`perl -e 'alarm
 - `pnpm --filter @jevcode/storage test`
 - `pnpm --filter @jevcode/trace-viewer test`
 - `pnpm --filter jevcode-desktop test`
-- `pnpm lint`
+- `perl -e 'alarm 170; exec @ARGV' pnpm lint`
 
-Expected: each exits 0. `pnpm lint` prints nothing after `> pnpm exec eslint .`. A flake from the known list passes when rerun alone.
+Expected: each exits 0. `perl -e 'alarm 170; exec @ARGV' pnpm lint` prints nothing after `> pnpm exec eslint .`. A flake from the known list passes when rerun alone.
 
 - [ ] **Step 9: Commit**
 
@@ -537,6 +537,7 @@ git commit -m "feat(contracts): add overview_snapshot and explainer row types an
   - Orchestrator ruling R3:
     - `OVERVIEW_SCAN_STATES = ["running", "done", "failed"] as const`
     - `NARRATOR_STATES = ["off", "unavailable", "pending", "ready"] as const`
+    - `type NarratorState = (typeof NARRATOR_STATES)[number]` (lanes 04 and 05 import it from `@jevcode/contracts`; neither declares its own)
     - `OverviewStatusSchema` (strict at both levels): `{ scan: { state, scanned, total, error?: string ≤ 200 }, narrator }`
     - `type OverviewStatus`
     - `OverviewSnapshotSchema.status?: OverviewStatus`
@@ -573,7 +574,7 @@ import {
   ROLES,
   RoleSchema,
 } from "./overview.js";
-import type { Component, ComponentEdge, ExternalDep, OverviewSnapshot, OverviewStatus } from "./overview.js";
+import type { Component, ComponentEdge, ExternalDep, NarratorState, OverviewSnapshot, OverviewStatus } from "./overview.js";
 
 const HASH = "0123456789abcdef0123456789abcdef01234567";
 
@@ -790,6 +791,8 @@ describe("OverviewStatusSchema (ruling R3)", () => {
   it("pins the scan and narrator state lists", () => {
     expect(OVERVIEW_SCAN_STATES).toEqual(["running", "done", "failed"]);
     expect(NARRATOR_STATES).toEqual(["off", "unavailable", "pending", "ready"]);
+    const states: NarratorState[] = [...NARRATOR_STATES];
+    expect(states).toHaveLength(4);
   });
 
   it("parses a snapshot with and without status; a pre-status row keeps no status", () => {
@@ -960,6 +963,7 @@ export const OVERVIEW_SCAN_STATES = ["running", "done", "failed"] as const;
  * being written; ready = narration for this snapshot finished (some purposes may still be null).
  */
 export const NARRATOR_STATES = ["off", "unavailable", "pending", "ready"] as const;
+export type NarratorState = (typeof NARRATOR_STATES)[number];
 
 /**
  * Strict at both levels: a status carries only these fields. `error` is a short, untrusted
@@ -1061,13 +1065,13 @@ Expected: PASS (all `overview.test.ts` tests; 3 browser-safety tests).
 - [ ] **Step 5: Typecheck, build, package suite, lint**
 
 Run, one per call:
-- `pnpm --filter @jevcode/contracts typecheck`
-- `pnpm --filter @jevcode/contracts build`
+- `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts typecheck`
+- `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts build`
 - `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/contracts test`
-- `pnpm --filter @jevcode/storage typecheck`
-- `pnpm --filter @jevcode/trace-viewer typecheck`
-- `pnpm --filter jevcode-desktop typecheck`
-- `pnpm lint`
+- `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage typecheck`
+- `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck`
+- `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck`
+- `perl -e 'alarm 170; exec @ARGV' pnpm lint`
 
 Expected: each exits 0. The three downstream typechecks prove the new barrel names collide with nothing.
 
@@ -1411,7 +1415,7 @@ export type OverviewRescanPayload = z.infer<typeof OverviewRescanPayloadSchema>;
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/contracts exec vitest run src/ipc.test.ts`
 Expected: PASS.
 
-Run: `pnpm --filter @jevcode/contracts typecheck && pnpm --filter @jevcode/contracts build`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts typecheck && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/contracts build`
 Expected: both exit 0.
 
 - [ ] **Step 5: Run the desktop tests to verify they fail**
@@ -1559,7 +1563,7 @@ with
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/shared/ipc-registry.test.ts src/main/trace-allowlist.test.ts src/shared/prefs.test.ts src/shared/prefs-ipc.test.ts src/main/ipc.test.ts`
 Expected: PASS.
 
-Run: `pnpm --filter jevcode-desktop typecheck`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck`
 Expected: exits 0, including `tsconfig.web.json`, which type-checks `App.tsx` and `AgentSettings.tsx` against the widened `AgentPreferences`.
 
 - [ ] **Step 8: Package suites and lint**
@@ -1567,7 +1571,7 @@ Expected: exits 0, including `tsconfig.web.json`, which type-checks `App.tsx` an
 Run, one per call, each under the wrapper:
 - `pnpm --filter @jevcode/contracts test`
 - `pnpm --filter jevcode-desktop test`
-- `pnpm lint`
+- `perl -e 'alarm 170; exec @ARGV' pnpm lint`
 
 Expected: each exits 0.
 
@@ -1591,6 +1595,7 @@ git commit -m "feat(contracts): add trace:rowsAvailable, overview:rescan and the
 - Modify: `packages/storage/src/migrations.ts` (after line 312; line 314)
 - Modify: `packages/storage/src/index.ts` (type exports)
 - Modify: `packages/storage/src/fixtures.ts` (append fixtures)
+- Modify: `apps/desktop/src/main/trace-bundle.ts` (`buildTraceBundle` re-caps redacted strings of `overview_snapshot` and `explainer` rows to the K-2 schema limits; ruling F16)
 - Test: `packages/storage/src/db.test.ts`, `packages/storage/src/explainer-store.test.ts` (create), `packages/storage/src/trace-reader.test.ts`, `apps/desktop/src/main/trace-bundle.test.ts`
 
 **Interfaces:**
@@ -1608,9 +1613,9 @@ git commit -m "feat(contracts): add trace:rowsAvailable, overview:rescan and the
   - `LATEST_SCHEMA_VERSION = 5`
 
   Consumers: lane 04 M-6 (rows, overview state), lane 05 N-3 (component text cache, narrative hash).
-- Produces (behavior, no code change):
-  - `TraceReader.rows(…, TRACE_ROW_TYPES)` and `payloads()` return the new rows.
-  - `buildTraceBundle` writes v2 bundles that include and redact them.
+- Produces (behavior):
+  - `TraceReader.rows(…, TRACE_ROW_TYPES)` and `payloads()` return the new rows (no code change in the reader or `trace-service.ts`).
+  - `buildTraceBundle` writes v2 bundles that include and redact them, and re-caps the redacted strings of `overview_snapshot` and `explainer` rows to the K-2 limits: `purpose` 140, `name` 120, `language` 40, a sentence's `text` 220, a citation `id` 512, an edge example 300, an external's `name` 214 and `status.scan.error` 200 (ruling F16). `export function capRedactedRow(type: string, payload: unknown): unknown` in `trace-bundle.ts` is the pure helper.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2421,19 +2426,158 @@ export type {
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/storage exec vitest run src/db.test.ts src/explainer-store.test.ts src/trace-reader.test.ts`
 Expected: PASS. If it fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop run rebuild:node` and rerun.
 
-Run: `pnpm --filter @jevcode/storage typecheck && pnpm --filter @jevcode/storage build`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage typecheck && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/storage build`
 Expected: both exit 0.
 
-- [ ] **Step 6: Run the export test**
+- [ ] **Step 6: Run the export test, then re-cap redacted strings (ruling F16), test first**
 
-Run: `pnpm --filter @jevcode/trace-viewer build`
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build`
 Expected: exits 0. The desktop test imports `parseTraceBundle` from `dist`.
 
 Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts src/main/trace-service.test.ts src/main/trace-parity.test.ts`
 
-Expected: PASS. `trace-bundle.test.ts` "exports overview and explainer rows in a redacted v2 bundle …" passes with no change to `trace-bundle.ts` or `trace-service.ts`: the read path follows `TRACE_ROW_TYPES` and `TRACE_BUNDLE_VERSION`. If that test fails, the defect is in K-1 or in this task's storage code. Do not patch the export to special-case the new types.
+Expected: PASS. `trace-bundle.test.ts` "exports overview and explainer rows in a redacted v2 bundle …" passes without any change to the read path (`trace-service.ts`, the reader): it follows `TRACE_ROW_TYPES` and `TRACE_BUNDLE_VERSION`. If that test fails, the defect is in K-1 or in this task's storage code. Do not special-case the new types in the reader or the service.
 
-Run: `pnpm --filter jevcode-desktop typecheck`
+Now the cap overflow. Add this test to `apps/desktop/src/main/trace-bundle.test.ts`, right after the export test above:
+
+```ts
+  it("keeps redacted strings inside the schema caps (a short secret grows into a marker)", () => {
+    const db = openDb({ dbPath: path.join(tempDir(), "caps.db") });
+    db.upsertRepository({ id: REPO, path: "/work/bundle", gitRoot: "/work/bundle" });
+    db.createSession({ id: SESSION, repoId: REPO, prompt: "Map it" });
+    db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "Map it", ts: TS });
+    // Each string is under its cap before redaction and over it after: "token=ab" (8 characters) becomes
+    // "token=[REDACTED:token]" (22 characters).
+    const near = (cap: number): string => `${"p".repeat(cap - 21)} token=ab`; // cap - 12 characters before, cap + 2 after
+    const componentId = "cmp_0123456789ab";
+    const sentence = { text: near(220), citations: [{ kind: "component" as const, id: componentId }] };
+    db.appendEvent(SESSION, "overview_snapshot", {
+      sessionId: SESSION,
+      repoRoot: "/work/bundle",
+      scanId: "scan_1",
+      partial: false,
+      counts: { files: 1, components: 1, edges: 1, languages: ["TypeScript"] },
+      components: [
+        {
+          id: componentId,
+          rootPath: "src",
+          name: near(120),
+          fileCount: 1,
+          files: ["src/a.ts"],
+          language: "TypeScript",
+          roleGuess: "domain",
+          role: "domain",
+          purpose: near(140),
+          provenance: "model",
+          contentHash: "0".repeat(40),
+          externalDeps: [],
+          entryPoints: [],
+          importsAnalyzed: true,
+        },
+      ],
+      edges: [{ from: componentId, to: componentId, count: 1, examples: [near(300)] }],
+      externals: [],
+      narrative: { sentences: [sentence], provenance: "model" },
+      generatedAt: TS,
+    });
+    db.appendEvent(SESSION, "explainer", { sessionId: SESSION, kind: "story", sentences: [sentence], basisSeq: 1 });
+    const reader = openTraceReader(db.dbPath);
+    closers.push(() => {
+      reader.close();
+      db.close();
+    });
+
+    const bundle = buildTraceBundle(createTraceService(reader), SESSION, { homeDir: HOME, now: () => TS });
+    const snapshot = OverviewSnapshotSchema.parse(bundle.rows[1]?.payload);
+    expect(snapshot.components[0]?.purpose).toHaveLength(140);
+    expect(snapshot.components[0]?.name).toHaveLength(120);
+    expect(snapshot.edges[0]?.examples[0]).toHaveLength(300);
+    expect(snapshot.narrative?.sentences[0]?.text).toHaveLength(220);
+    expect(ExplainerRecordSchema.parse(bundle.rows[2]?.payload)).toMatchObject({ kind: "story" });
+    expect(JSON.stringify(bundle)).not.toContain("token=ab");
+    expect(bundle.redactionCount).toBeGreaterThan(0);
+  });
+```
+
+Run the same vitest command. Expected: FAIL in this test with a ZodError (`Too big: expected string to have <=140 characters`) from `OverviewSnapshotSchema.parse`.
+
+In `apps/desktop/src/main/trace-bundle.ts`, add after `redactBundleValue`:
+
+```ts
+type JsonObject = Record<string, unknown>;
+
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Truncates to `max` UTF-16 code units (the unit zod's `.max` counts) without leaving half a surrogate pair. */
+function clipChars(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const end = text.charCodeAt(max - 1) >= 0xd800 && text.charCodeAt(max - 1) <= 0xdbff ? max - 1 : max;
+  return text.slice(0, end);
+}
+
+function capFields(value: unknown, caps: Record<string, number>): unknown {
+  if (!isJsonObject(value)) return value;
+  const out: JsonObject = { ...value };
+  for (const [key, max] of Object.entries(caps)) {
+    const field = out[key];
+    if (typeof field === "string") out[key] = clipChars(field, max);
+  }
+  return out;
+}
+
+const mapArray = (value: unknown, fn: (item: unknown) => unknown): unknown => (Array.isArray(value) ? value.map(fn) : value);
+
+function capSentence(value: unknown): unknown {
+  if (!isJsonObject(value)) return value;
+  const capped = capFields(value, { text: 220 }) as JsonObject;
+  return { ...capped, citations: mapArray(value["citations"], (citation) => capFields(citation, { id: 512 })) };
+}
+
+/**
+ * Redaction can lengthen a string ("token=ab" becomes "token=[REDACTED:token]"), which would push a capped
+ * string of an overview_snapshot or explainer row over its K-2 schema limit and turn the row into an
+ * `invalid_row` gap in the viewer. This truncates those strings back to the limits (ruling F16). Truncating
+ * keeps the secret redacted. Other row types pass through.
+ */
+export function capRedactedRow(type: string, payload: unknown): unknown {
+  if (!isJsonObject(payload)) return payload;
+  if (type === "explainer") {
+    // A record carries `sentences` (story) or `sentence` (decision_why), never both; leave absent keys absent.
+    const out: JsonObject = { ...payload };
+    if ("sentences" in payload) out["sentences"] = mapArray(payload["sentences"], capSentence);
+    if ("sentence" in payload) out["sentence"] = capSentence(payload["sentence"]);
+    return out;
+  }
+  if (type !== "overview_snapshot") return payload;
+  const narrative = payload["narrative"];
+  const status = payload["status"];
+  const out: JsonObject = {
+    ...payload,
+    components: mapArray(payload["components"], (component) => capFields(component, { name: 120, language: 40, purpose: 140 })),
+    edges: mapArray(payload["edges"], (edge) =>
+      isJsonObject(edge) ? { ...edge, examples: mapArray(edge["examples"], (example) => (typeof example === "string" ? clipChars(example, 300) : example)) } : edge,
+    ),
+    externals: mapArray(payload["externals"], (dep) => capFields(dep, { name: 214 })),
+  };
+  if (isJsonObject(narrative)) out["narrative"] = { ...narrative, sentences: mapArray(narrative["sentences"], capSentence) };
+  if (isJsonObject(status) && isJsonObject(status["scan"])) out["status"] = { ...status, scan: capFields(status["scan"], { error: 200 }) };
+  return out;
+}
+```
+
+In `buildTraceBundle`, change the per-row push so it re-caps after redaction and before the clip:
+
+```ts
+      const payload = redactBundleValue(row.payload, homeDir);
+      redactionCount += payload.count;
+      rows.push(clipTraceRow({ ...row, payload: capRedactedRow(row.type, payload.value) }));
+```
+
+Run: `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/trace-bundle.test.ts src/main/trace-service.test.ts src/main/trace-parity.test.ts`
+Expected: PASS, including the new test (the original export test still passes: its strings are inside the caps, so the re-cap changes nothing).
+
+Run: `perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck`
 Expected: exits 0.
 
 - [ ] **Step 7: Package suites and lint**
@@ -2442,7 +2586,7 @@ Run, one per call, each under the wrapper:
 - `pnpm --filter @jevcode/storage test`
 - `pnpm --filter @jevcode/trace-viewer test`
 - `pnpm --filter jevcode-desktop test`
-- `pnpm lint`
+- `perl -e 'alarm 170; exec @ARGV' pnpm lint`
 
 Expected: each exits 0. A flake from the known list passes when rerun alone.
 
@@ -2451,7 +2595,7 @@ Expected: each exits 0. A flake from the known list passes when rerun alone.
 ```bash
 git add packages/storage/src/db.ts packages/storage/src/migrations.ts packages/storage/src/index.ts \
   packages/storage/src/fixtures.ts packages/storage/src/db.test.ts packages/storage/src/explainer-store.test.ts \
-  packages/storage/src/trace-reader.test.ts apps/desktop/src/main/trace-bundle.test.ts
+  packages/storage/src/trace-reader.test.ts apps/desktop/src/main/trace-bundle.ts apps/desktop/src/main/trace-bundle.test.ts
 git commit -m "feat(storage): store overview and explainer rows, add migration v5 with narrator cache and overview state"
 ```
 

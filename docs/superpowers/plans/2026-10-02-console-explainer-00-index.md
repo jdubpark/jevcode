@@ -107,7 +107,7 @@ Pure and backend tasks never wait.
 | K-2 | Overview and explainer zod schemas (`src/overview.ts`) | K-1 |
 | K-3 | IPC `trace:rowsAvailable`, `overview:rescan`, preference `explainWithModel` | K-1 |
 | K-4 | Storage: schemas in `eventStoreSchemas`, migration v5, cache and state methods, TraceReader and export | K-2 |
-| V-1 | `TraceSource.onRowsAvailable` and controller push hint | K-3 (merged W0) |
+| V-1 | `TraceSource.onRowsAvailable` and controller push hint | none (a viewer-side signature; lane 03 adapts the IPC channel; its only overlap with lane 01 is `static-bundle.ts`, which 02a's rebase step resolves) |
 | V-2 | View kinds, registry with Console and Map slots, `chrome`, `hostViews`, `initialView`, view keys | — |
 | V-0 | Mockups: main window on Console, Brief v0 (HUMAN H1) | — |
 | V-3 | `buildConsoleRows` (pure) | V-2 |
@@ -153,7 +153,7 @@ Pure and backend tasks never wait.
 cd ~/Projects/jevcode
 git status --short                       # expect empty
 git log --oneline -1                     # record as <w-1>
-pnpm install --frozen-lockfile && pnpm -r build
+pnpm install --frozen-lockfile && perl -e 'alarm 170; exec @ARGV' pnpm -r build
 ```
 
 Copy the orchestration helpers (they already exist):

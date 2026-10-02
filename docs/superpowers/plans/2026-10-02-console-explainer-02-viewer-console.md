@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. This file holds two lane parts with their own worktrees: Part A (W0) and Part B (W1).
 
-**Goal:** Give `@jevcode/trace-viewer` the API the main window needs (push hints, a Console and a Map slot, host views, an embedded chrome, view keys 0–4, `B` and Esc for the Brief), then build the Console view, the rule-based Brief v0 and the Console performance harness.
+**Goal:** Give `@jevcode/trace-viewer` the API the main window needs (push hints, a Console and a Map slot, host views, an embedded chrome, view keys 0–4, Shift+B and Esc for the Brief), then build the Console view, the rule-based Brief v0 and the Console performance harness.
 
 **Architecture:** Part A changes only contracts inside the viewer: `TraceSource.onRowsAvailable` feeds the data controller, which polls at once on a hint; the view registry gains `console` and `map` slots (quiet placeholders), host views and a key table; `TraceViewer` gains `chrome`, `hostViews`, `initialView` and `renderSwitch`. Part B adds two pure builders in `src/layout` (`buildConsoleRows`, incremental by step identity; `buildBrief`), the virtualized `ConsoleView` that replaces the Console placeholder, the `Brief` panel that the Inspector region shows when nothing is selected, and the dev-host wiring and perf harness that measure the spec §11 Console budgets.
 
@@ -16,7 +16,7 @@ Every name in interfaces §6.1–6.4 is kept with its type. These additions and 
 
 1. **`ViewerLocation.view` becomes optional and accepts any view kind** (V-2). The schema was `z.enum(["canvas", "hybrid"]).default("hybrid")`. It becomes `ViewKindSchema.optional()` with `ViewKindSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/)`, so `console`, `map` and host kinds round-trip, and `initialView` can apply when the location names no view. `decodeLocation`'s defaults no longer contain `view`.
 2. **`InitialViewStateInput.view?: ViewKind`** (V-2). `TraceViewer` resolves the opening view with `openingView(views, chrome, location?.view, initialView)` (new, `src/ui/views/registry.ts`) and passes it in; `initialViewState` uses `input.view ?? location?.view ?? "hybrid"`.
-3. **`ViewState.brief: boolean` and the action `{ type: "brief/toggle" }`** (V-2). `B` pins the Brief over a selection; any new selection, a cleared selection or a brush that drops the selection unpins it. With nothing selected the Brief already shows and `brief/toggle` returns the same state.
+3. **`ViewState.brief: boolean` and the action `{ type: "brief/toggle" }`** (V-2). Shift+B pins the Brief over a selection (lowercase `b` stays `brushChapter` in Hybrid); any new selection, a cleared selection or a brush that drops the selection unpins it. With nothing selected the Brief already shows and `brief/toggle` returns the same state.
 4. **Key table** (V-2, spec §3.7, §8.6). `KeyCommand` gains `{ cmd: "hostView"; position: number }` (Digit4–Digit9) and `{ cmd: "brief" }` (Shift+B). `Digit0` → Console and `Digit3` → Map. The viewer's existing `0` (zoom back to the level preset, viewer spec §7.9) moves to **Shift+0**, beside Shift+1 (fit all) and Shift+2 (zoom to selection). `keymap.ts` exports `BUILT_IN_VIEW_KEYS = { console: 0, canvas: 1, hybrid: 2, map: 3 }` and `FIRST_HOST_VIEW_KEY = 4`; `view-port.ts` exports `viewKeyOf(kind, views)` and `hostViewsOf(views)`; `registry.ts` exports `composeViews(hostViews)` and `openingView(...)`. A host view whose `kind` equals a built-in kind is dropped.
 5. **New icon names** `view-console`, `view-map`, `view-surfaces` and `brief` (V-2). `ViewDefinition.icon` is the closed `IconName` union, so lane 03's `surfacesView` (`icon: "view-surfaces"`) typechecks only after V-2.
 6. **Package exports for host views** (V-2): `ViewDefinition`, `ViewProps`, `ViewKind`, `IconName`, `ViewerChrome`, `AnswerDecisionRequest`, `useView`, `useDispatch`, `useSessionView` and `SessionView` from `@jevcode/trace-viewer`. Lane 03's Surfaces view uses them to read the store.
@@ -36,7 +36,8 @@ Points where the spec's text differs from what this lane builds. The spec owner 
 
 - **Key `0`.** Spec §3.7 maps `0` to Console and says existing viewer keys keep their meaning, but viewer spec §7.9 already uses `0` for "zoom back to the level preset". This lane moves the preset to Shift+0 (deviation 4). Spec §3.7 and viewer spec §7.9 should both say so.
 - **Switcher order.** Spec §3.1's sketch reads "Console · Hybrid · Canvas · Map · Surfaces"; interfaces §6.2 orders the registry Console, Canvas, Hybrid, Map. The switcher follows the registry, so its order equals the key order 0–4.
-- **`B` with nothing selected.** The Brief already fills the panel, so `B` does nothing; with a selection it switches between the Brief and the Inspector. Esc keeps the viewer's unwind (menu → search → hand tool → collapse → parent → clear); its last step clears the selection, which shows the Brief (spec §3.3 "Esc from a selection returns to it").
+- **Brief key is Shift+B, not `B`.** Spec §3.3, §3.7 and E4 name `B`, but lowercase `b` is the viewer's `brushChapter` key in Hybrid (viewer spec §7.9), so the toggle is Shift+B (deviation 4). Spec §3.7's key table now says Shift+B and notes that lowercase `b` keeps brushing; a rebind to plain `b` would break brushing.
+- **Shift+B with nothing selected.** The Brief already fills the panel, so Shift+B does nothing; with a selection it switches between the Brief and the Inspector. Esc keeps the viewer's unwind (menu → search → hand tool → collapse → parent → clear); its last step clears the selection, which shows the Brief (spec §3.3 "Esc from a selection returns to it").
 - **The Brief replaces the Inspector's session summary** in both windows (spec E4). The summary's findings list and its "No problems found by 5 signals" line no longer show when nothing is selected; findings stay reachable with `n`/`N` and the Changes list flags units that need attention.
 - **Console live follow.** Spec §3.2 says the Console auto-follows "while the reader is at the bottom". The Console therefore turns Live on again when the reader's own scroll reaches the bottom of a running session, and Live off when the reader scrolls away from it. Viewer spec §7.10 names only `G` and the pill; the Hybrid spine is unchanged.
 - **Reasoning duration.** A reasoning step is a single-row step, so `durationMs` is `null` and the row reads "thinking" without seconds unless the model gives a duration (spec §3.2 shows "thinking · 2.3 s").
@@ -69,7 +70,7 @@ git -C ~/Projects/jevcode show main:packages/trace-viewer/src/ui/views/registry.
 git -C ~/Projects/jevcode show main:packages/contracts/src/overview.ts | grep -c "export const NarrativeSentenceSchema"
 ```
 
-Expected: each prints `1`.
+Expected: `1`, `1`, `2` (`registry.ts` names `ConsolePlaceholder` in its import and in the console entry), `1`.
 
 - **Worktree** (once):
 
@@ -126,7 +127,7 @@ All paths are under `packages/trace-viewer/` unless they start with `apps/` or `
 | `src/ui/shell/TitleBar.tsx`, `TitleBar.module.css` | Full and embedded bars; Brief toggle (V-5); zoom hidden for "" (V-4) | V-2, V-4, V-5 |
 | `src/ui/shell/Shell.tsx`, `Shell.module.css` | `chrome`, `views`, `showSwitch`; embedded grid; host context (V-4); right panel (V-5) | V-2, V-4, V-5 |
 | `src/ui/shell/TraceViewer.tsx` | `chrome`, `hostViews`, `initialView`, `renderSwitch` | V-2 |
-| `src/ui/shell/KeyboardLayer.tsx`, `ShortcutSheet.tsx` | Host-view keys, `B`, search fallback; `ViewPort.toggle` (V-4) | V-2, V-4 |
+| `src/ui/shell/KeyboardLayer.tsx`, `ShortcutSheet.tsx` | Host-view keys, Shift+B, search fallback; `ViewPort.toggle` (V-4) | V-2, V-4 |
 | `src/ui/shell/host.ts` | `answerDecision?`, `openTraceWindow?`, `rescanOverview?` | V-2 |
 | `src/index.ts` | Host-view exports | V-2 |
 | `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/` | Phase A mockups, PNGs, README with the H1 record | V-0 |
@@ -867,7 +868,7 @@ In `packages/trace-viewer/src/ui/shell/title-bar.test.tsx`, append inside the to
 In `packages/trace-viewer/src/ui/shell/keyboard.test.tsx`, append inside `describe("KeyboardLayer", …)`:
 
 ```ts
-  it("B pins the Brief only with a selection and announces it; Shift+0 returns the zoom to its preset", () => {
+  it("Shift+B pins the Brief only with a selection and announces it; Shift+0 returns the zoom to its preset", () => {
     const session = foldFixture("oauth");
     const step = session.steps[3];
     if (step === undefined) throw new Error("oauth has fewer than 4 steps");
@@ -2161,7 +2162,7 @@ Replace it with:
 ```ts
   ["0 / 1 / 2 / 3", "Console / Canvas / Hybrid / Map"],
   ["4", "Surfaces (main window)"],
-  ["B", "Brief or Inspector for the selection"],
+  ["Shift+B", "Brief or Inspector for the selection"],
 ```
 
 Find:
@@ -2198,10 +2199,10 @@ Expected: both exit 0. Run the package suite in the background; expect no failur
 The title bar now shows four segments (Console, Canvas, Hybrid, Map). Run the existing smoke in the background and inspect its screenshots:
 
 ```bash
-perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid,canvas --port 4181 > .superpowers/smoke-v2.log 2>&1
+(perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views hybrid,canvas --port 4181 > .superpowers/smoke-v2.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-v2.log) &
 ```
 
-Poll `tail -3 .superpowers/smoke-v2.log` until it prints `SMOKE_OK 4 screenshots`. Open `apps/trace-viewer-dev/.smoke/hybrid-1440.png` and `hybrid-1000.png` with the Read tool and check against `docs/superpowers/specs/2026-09-28-trace-viewer-mockups/hybrid-1440.png`: the segmented control holds four segments and still fits at 1000 px without pushing the zoom control off the bar; nothing else moved. If it overflows at 1000 px, hide the segment labels below 1180 px (`@container (max-width: 1179px) { .segment span { display: none; } }` in `TitleBar.module.css`) and rerun.
+Poll `tail -3 .superpowers/smoke-v2.log` every 15 s until it prints `SMOKE_OK 4 screenshots` or an `EXIT=` line (a nonzero exit or `SMOKE_FAIL` means the smoke failed). Open `apps/trace-viewer-dev/.smoke/hybrid-1440.png` and `hybrid-1000.png` with the Read tool and check against `docs/superpowers/specs/2026-09-28-trace-viewer-mockups/hybrid-1440.png`: the segmented control holds four segments and still fits at 1000 px without pushing the zoom control off the bar; nothing else moved. If it overflows at 1000 px, hide the segment labels below 1180 px (`@container (max-width: 1179px) { .segment span { display: none; } }` in `TitleBar.module.css`) and rerun.
 
 - [ ] **Step 14: Commit**
 
@@ -2924,7 +2925,7 @@ export type ConsoleRow =
   | { kind: "decision"; key: string; stepId: string; decisionId: string; question: string; options: { id: string; label: string }[]; status: "pending" | "answered"; answer: string | null }
   | { kind: "lifecycle"; key: string; stepId: string; state: "waiting" | "completed" | "failed" | "interrupted"; text: string }
   | { kind: "finding"; key: string; stepId: string; findingId: string }
-  | { kind: "summary"; key: string; sentences: NarrativeSentence[] };
+  | { kind: "summary"; key: string; sentences: NarrativeSentence[]; provenance?: "rule" | "model" };
 
 export interface ConsoleRowsState {
   rows: readonly ConsoleRow[];
@@ -4852,9 +4853,10 @@ Replace it with:
 Run in the background and poll the log:
 
 ```bash
-perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console,hybrid --port 4182 > .superpowers/smoke-v4.log 2>&1
-tail -4 .superpowers/smoke-v4.log
+(perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console,hybrid --port 4182 > .superpowers/smoke-v4.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-v4.log) &
 ```
+
+Poll `tail -4 .superpowers/smoke-v4.log` every 15 s until it shows `SMOKE_OK 4 screenshots` or an `EXIT=` line.
 
 Expected: `console: selftest ok (rows …, max drift 0px)` (or ≤ 1 px), `hybrid: selftest ok …` and `SMOKE_OK 4 screenshots`. Open `apps/trace-viewer-dev/.smoke/console-1440.png` and `console-1000.png` with the Read tool beside `console-main-1440.png` and `console-main-1000.png`, and compare the Console column: glyph column and gutter rule, row rhythm (no boxes), mono commands with their dim output tails, the neutral `✕ exit n`, DiffBars, TestDots with red only on the failing test, the decision block, the lifecycle rule, the search field and step count in the bar. List each difference and fix it in `ConsoleView.module.css` or `ConsoleRowView.tsx`, then rerun. (The full chrome around it differs from the mockup on purpose; V-6 screenshots the embedded chrome.)
 
@@ -5056,7 +5058,7 @@ function renderView(model: BriefModel, onSelect = vi.fn(), onOpenMap = vi.fn()) 
 }
 
 describe("Brief (spec §3.3, E4)", () => {
-  it("fills the panel when nothing is selected, gives way to the Inspector on a selection, and B pins it back", () => {
+  it("fills the panel when nothing is selected, gives way to the Inspector on a selection, and Shift+B pins it back", () => {
     const session = foldFixture("oauth");
     const step = session.steps[2];
     if (step === undefined) throw new Error("oauth has fewer than 3 steps");
@@ -5161,7 +5163,7 @@ import type { TraceIndex } from "./trace-index.js";
 export interface BriefModel {
   now:
     | { kind: "rule"; runningStepId: string | null; latestUnitId: string | null; pendingDecisionId: string | null }
-    | { kind: "story"; sentences: NarrativeSentence[]; basisSeq: number };
+    | { kind: "story"; sentences: NarrativeSentence[]; basisSeq: number; provenance?: "rule" | "model" };
   changes: { unitId: string; title: string; added: number; removed: number; tests: { passed: number; failed: number } | null; attention: boolean }[];
   architecture: { overviewSentences: NarrativeSentence[] | null; componentCount: number; touched: string[]; scanning: { done: number; total: number } | null } | null;
 }
@@ -6470,10 +6472,10 @@ Expected: each exits 0 and lint prints nothing. Run the package suite in the bac
 Run in the background (the perf run alone takes about two minutes):
 
 ```bash
-perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console,hybrid,canvas --embedded --console-perf --port 4185 > .superpowers/smoke-v6.log 2>&1
+(perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console,hybrid,canvas --embedded --console-perf --port 4185 > .superpowers/smoke-v6.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-v6.log) &
 ```
 
-Poll `tail -6 .superpowers/smoke-v6.log` until it prints `SMOKE_OK 8 screenshots` (or `SMOKE_FAIL`). Expected: the three selftests ok (Console drift ≤ 1 px), a `CONSOLE_PERF steps=… append_p95=… scroll_dropped=…%` line within budget, then `SMOKE_OK 8 screenshots`.
+Poll `tail -6 .superpowers/smoke-v6.log` every 15 s until it prints `SMOKE_OK 8 screenshots` (or `SMOKE_FAIL`, or an `EXIT=` line). Expected: the three selftests ok (Console drift ≤ 1 px), a `CONSOLE_PERF steps=… append_p95=… scroll_dropped=…%` line within budget, then `SMOKE_OK 8 screenshots`.
 
 Open `apps/trace-viewer-dev/.smoke/console-embedded-1440.png` and `console-embedded-1000.png` beside `console-main-1440.png` and `console-main-1000.png`. The dev frame stands in for the header, sidebar and dock, so compare the workspace: the view bar with the host-placed switcher (Console checked, keys in titles), the Console column, the Brief at 300 px (264 px at 1000), and no Outline. List every difference; fix it in the viewer's CSS and rerun.
 
@@ -6526,7 +6528,7 @@ git commit -m "perf(trace-viewer): Console append and scroll budgets on a 10k-st
 ```bash
 git rebase main
 pnpm install --frozen-lockfile
-pnpm -r build
+perl -e 'alarm 170; exec @ARGV' pnpm -r build
 ```
 
 Lane 01 edits `packages/trace-viewer/src/sources/static-bundle.ts` (`parseTraceBundle` accepts versions 1 and 2) and V-1 edits the same file (`StaticBundleSource.onRowsAvailable`, `tick`): keep both. Rerun the root checks.
@@ -6546,7 +6548,7 @@ Lane 01 edits `packages/trace-viewer/src/sources/static-bundle.ts` (`parseTraceB
 ```bash
 git rebase main
 pnpm install --frozen-lockfile
-pnpm -r build
+perl -e 'alarm 170; exec @ARGV' pnpm -r build
 ```
 
 Shared docs take both sides: `docs/perf.md` (lane 04 M-8 adds scan and ingest rows) and the mockups `README.md` (lane 06 P-0 adds its Phase B section). Rerun the root checks and the smoke.
@@ -6555,4 +6557,4 @@ Shared docs take both sides: `docs/perf.md` (lane 04 M-8 adds scan and ingest ro
    - Lane 03 (merges next): D-3's context rail content now lives in the Brief (Now and Changes); D-6 can assert the Console with `[data-console]` and `data-step-count`, and read append latency from the `TRACE_PERF tv:console-append` lines once its renderer marks `ROWS_RELEASED_MARK` when a `trace:rowsAvailable` hint arrives (or from its own end-to-end probe).
    - Lane 06 (P-4, after rebasing on 02b): extend `buildBrief` to fill `architecture` (`BriefArchitecture`); `Brief.tsx`'s `Architecture` already renders the four states (null, scanning, `overviewSentences: null` as "Descriptions pending", sentences) and has a test for each; restyle it with the Map thumbnail against the approved P-0 mockup.
    - Lane 07 (S-4): emit `summary` rows from `buildConsoleRows` and restyle the `summary` case in `ConsoleRowView.tsx`; produce `now: { kind: "story", … }` from `buildBrief` and restyle the story branch of `Now` in `Brief.tsx`.
-   - The spec alignment notes above (key `0`, switcher order, `B` with nothing selected, Brief replacing the session summary, Console live follow, reasoning duration, tool arguments).
+   - The spec alignment notes above (key `0`, the Shift+B Brief key, switcher order, Shift+B with nothing selected, Brief replacing the session summary, Console live follow, reasoning duration, tool arguments).

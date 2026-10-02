@@ -17,7 +17,7 @@ Lanes 01–06 are not in code when this file is written. Their plans are, and th
 1. **`ExplainerModel` carries history and row seqs** (S-3, `packages/trace-viewer/src/model/types.ts`). Interfaces §6.5 gives `{story: {sentences, basisSeq} | null; decisionWhy; highlights: {basisSeq, byComponent} | null}`. This lane adds `seq` (the explainer row's seq) to `story` and `highlights`, and a new `stories: readonly StoryModel[]`: every story that replaced the previous one with different sentences, in seq order. Spec §3.2 asks for one `◆ Summary` block per story refresh, which needs the refreshes, while spec §8.1 keeps only the latest story. `story` keeps the latest-story meaning. Named types: `StoryModel`, `HighlightsModel`, `HighlightEntryModel`, `HighlightState`, `HIGHLIGHT_STATES`, `emptyExplainer()`.
 2. **`DecisionDetail.options[].tradeoffs?: DecisionTradeoff[]`** (S-3, model). Spec §3.5 shows "the options with their tradeoffs"; the decision row carries them (`DecisionOptionSchema.tradeoffs`) but the fold dropped them. Additive and optional; set only when the row has at least one tradeoff.
 3. **New model export** (S-4): `resolveCitation(session, citation): CitationTarget` in `src/model/citations.ts`. The path rule `componentIdForPath(components, path)` is lane 06's (P-1, ruling R6, `src/model/component-path.ts`); this lane consumes it in the desktop stage and does not create it.
-4. **`BriefModel.decisions: readonly BriefDecisionCard[]`** and **`BriefViewProps.onAnswer?(decisionId, optionId)`** (S-4). Interfaces §6.4 has no field for the spec §3.5 decision cards. S-4 also fills the `now: {kind: "story", …}` variant; the rule-based Now drops its "Needs your decision" link because the open decision now has its card.
+4. **`BriefModel.decisions: readonly BriefDecisionCard[]`** and **`BriefViewProps.onAnswer?(decisionId, optionId)`** (S-4). Interfaces §6.4 has no field for the spec §3.5 decision cards. S-4 also fills the `now: {kind: "story", …}` variant (which gains `provenance`, as does the `summary` `ConsoleRow`, so the viewer can show the "rule-based" label); the rule-based Now drops its "Needs your decision" link because the open decision now has its card.
 5. **`ConsoleRowsState` gains two optional internal fields, `base?` and `stories?`** (S-4). `buildConsoleRows` keeps its interfaces signature; V-3's body becomes a private `buildStepRows`, and the exported function merges `summary` rows after it (`src/layout/console-summary.ts`).
 6. **Runtime hook** (S-2): `PipelineRuntimeOptions.onPipelineSync?(repoPath, sync: PipelineSyncSnapshot)` and `PipelineSyncSnapshot` in `apps/desktop/src/main/pipeline/types.ts`. The interfaces file defines `ExplainerStage.onPipelineSync` but not how the runtime reaches the stage; the hook mirrors lane 04's `onRepoFilesChanged(repoPath, paths)`, and `index.ts` routes it through lane 04's explainer registry.
 7. **Stage additions** (S-2, lane 04's `explainer-stage.ts`): `ExplainerStageDeps.storyIntervalMs?: number` (default 20,000; the S-6 live smoke shortens it to prove "within one debounce window" in seconds), and `"session"` added to the `where` list of lane 04's `{ kind: "error"; where; message }` log variant. N-5's `setNarrator` also switches the session explainer, and N-5's `recordNarratorCall` sink receives this lane's calls.
@@ -26,14 +26,13 @@ Lanes 01–06 are not in code when this file is written. Their plans are, and th
 10. **Lane-internal order S-0, S-1, S-3, S-2, S-4, S-5, S-6.** Index §3 lists S-2 as depending on M-6 and N-5 only. S-2 also uses S-3's `TraceSession.explainer` (to seed after a restart), so S-3 runs first. Both are in this lane, so no other lane waits.
 11. **The session explainer folds the session's trace rows in main** with `@jevcode/trace-viewer/model` (already a desktop dependency; pure). Step ids in narrator inputs and citations are therefore `step:<firstSeq>` exactly as the viewer computes them.
 12. **Narrator wiring (ruling R4).** There is no `ExplainerStageDeps.narrator`. The session explainer starts from N-5's `ExplainerStageDeps.initialNarrator ?? null` and follows N-5's `ExplainerStage.setNarrator(narrator)`, to which S-2 adds the forward `sessionExplainer.setNarrator(narrator)` after N-5's `narration.setNarrator?.(narrator)`. Calls are recorded through N-5's `ExplainerStageDeps.recordNarratorCall?`. `index.ts` routes the runtime hook with lane 04's `explainerRegistry.get(repoPath)?.onPipelineSync(sync)`.
-13. **Story provenance (ruling R3 follow-up).** Lane 01's K-2 `ExplainerRecordSchema` story variant has no provenance field, so story rows cannot carry `provenance: "rule" | "model"` yet. Lane 01 needs to add, to the `kind: "story"` object: `provenance: z.enum(["rule", "model"]).optional()` (optional so rows written before it still parse). Until then S-2 writes no provenance and the viewer cannot label rule stories.
 
 ## Spec alignment notes
 
 Points where the spec is open or where this lane picks one reading. The spec owner should confirm them; none blocks the lane.
 
 - **Narrator provider** (ruling R2): Claude Haiku 4.5 through `@anthropic-ai/sdk` with `ANTHROPIC_API_KEY`; no key means no calls and narrator state "unavailable". S-1 rides on lane 05's transport.
-- **Story provenance.** See deviation 13: the schema field is missing, so a rule-based story (written with the narrator off, unavailable or dropped) cannot be labeled in v1. It uses factual templates and no agent text.
+- **Story provenance.** K-2's story variant carries an optional `provenance` (absent reads as `"model"`). S-2 writes `"model"` for narrated sentences and `"rule"` for the factual-template fallback (narrator off, unavailable or dropped); S-3 folds it into `StoryModel.provenance`; S-4 shows a quiet "rule-based" label on rule stories (H3 mockups).
 - **Triggers (spec §6.1).** "Change unit closed" means a unit reaching `validated` or `failed`. "Test result" means a settled test or check step (`Step.tests` set, status not `running`). "Agent completed" means the last terminal turn (`completed` or `failed`) is newer than the last one seen. The lane brief's "N changes" is 3 new change units since the last story (`STORY_UNIT_THRESHOLD`). Calls are leading-edge, then at most one per 20 s (`STORY_MIN_INTERVAL_MS`), with one trailing call within 20 s of any trigger.
 - **Highlights** are rule-based and written on the sync after they change, not on the 20 s story schedule. A component's state is the strongest of failing > decision > new > changed over the units that touch it. `new` means the component was not in the first overview snapshot this session folded. `failing` comes from a unit with status `failed` or a failing test file in the latest run of a test command.
 - **`decision_why` has no rule-based fallback.** An answered decision without a why shows the choice, who chose it, and the narrator state in lane 06's quiet words (ruling R3, `narratorNote` from `src/ui/views/map/map-text.ts`): "Descriptions off", "Descriptions unavailable" or "Descriptions pending"; "No explanation yet" only when the narrator is `ready` or no snapshot exists. One call per answered or delegated decision; a failed call is retried after the backoff.
@@ -77,7 +76,7 @@ git -C ~/Projects/jevcode worktree add -b ce/07-session ~/Projects/jevcode-ce-07
 bash ~/Projects/jevcode/.superpowers/orchestration/setup-worktree.sh ~/Projects/jevcode-ce-07
 ```
 
-- **Baseline** before S-1: `pnpm -r build` exits 0; `perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer test` and `perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop test` exit 0 (the known flakes in index §7 step 3 pass alone); `pnpm lint` prints nothing after `> pnpm exec eslint .`.
+- **Baseline** before S-1: `perl -e 'alarm 170; exec @ARGV' pnpm -r build` exits 0; the package suite in the background (`(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &`, then poll `tail -6 .superpowers/tv-suite.log` every 15 s until `EXIT=0` appears) and the package suite in the background (`(perl -e 'alarm 590; exec @ARGV' pnpm --filter jevcode-desktop test > .superpowers/desktop-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/desktop-suite.log) &`, then poll `tail -6 .superpowers/desktop-suite.log` every 15 s until `EXIT=0` appears) exit 0 (the known flakes in index §7 step 3 pass alone); `perl -e 'alarm 170; exec @ARGV' pnpm lint` prints nothing after `> pnpm exec eslint .`.
 - **Tooling:** `node --version` prints `v22.x`; `pnpm --version` prints `9.15.0`; `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version` prints a version (set `CHROME_PATH` otherwise).
 
 ## Global Constraints
@@ -91,7 +90,7 @@ The index's Global Constraints apply in full. Lane additions:
 - **Viewer purity:** `src/model` and `src/layout` additions import no React, no `src/ui` and no clocks; `src/ui` additions read DOM globals only through elements (lessons-w2).
 - **Commits:** one conventional commit per task step that says "commit", listing its files in `git add`; identity `Jongwon Park <contact@parkjongwon.com>` (pass `-c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com` if the worktree config differs); no `Claude-Session:` or `Co-Authored-By` trailers; never `git stash`, `git reset --hard` or `git clean`.
 - **Hang safety:** every vitest run is wrapped as `perl -e 'alarm 150; exec @ARGV' pnpm --filter <pkg> exec vitest run <file>`. Chrome, vite preview and Electron run with timeouts and are killed by the scripts that start them.
-- **Rebuild rule:** the desktop and dev-host code import `@jevcode/trace-viewer/model` and `@jevcode/jev-router` from `dist`. Run `pnpm --filter @jevcode/trace-viewer build` after S-3 and S-4 model changes and `pnpm --filter @jevcode/jev-router build` after S-1, before any desktop test.
+- **Rebuild rule:** the desktop and dev-host code import `@jevcode/trace-viewer/model` and `@jevcode/jev-router` from `dist`. Run `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build` after S-3 and S-4 model changes and `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/jev-router build` after S-1, before any desktop test.
 
 ## Review Focus
 
@@ -130,7 +129,7 @@ Inputs the spec implies and a happy-path test would miss, most likely first. Eac
 **Commands used by every task** (from `~/Projects/jevcode-ce-07`):
 
 - Targeted tests: `perl -e 'alarm 150; exec @ARGV' pnpm --filter <pkg> exec vitest run <path relative to the package>`, with `<pkg>` one of `@jevcode/jev-router`, `@jevcode/trace-viewer`, `jevcode-desktop`.
-- Typecheck: `pnpm --filter <pkg> typecheck`. Lint: `pnpm lint`.
+- Typecheck: `perl -e 'alarm 170; exec @ARGV' pnpm --filter <pkg> typecheck`. Lint: `perl -e 'alarm 170; exec @ARGV' pnpm lint`.
 - If a desktop test fails with `NODE_MODULE_VERSION`, run `pnpm --filter jevcode-desktop run rebuild:node` and restore node-pty's `build/Release/pty.node` and `spawn-helper` from `prebuilds/<platform-arch>/` (index Global Constraints, "Native modules").
 
 ---
@@ -477,21 +476,27 @@ Replace every `<!-- sprite from Step 3 -->`, `<!-- top bar … -->` and `<!-- do
 
 - [ ] **Step 4: Render the PNGs headlessly**
 
+Run the loop in the background (eight renders, each capped at 60 s, so the loop ends within 480 s) and poll its log:
+
 ```bash
-CHROME="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-DIR="$PWD/docs/superpowers/specs/2026-10-02-console-and-explainer-mockups"
-for f in c-brief-story c-console-summary c-decision-inspector c-map-overlay; do
-  for w in 1440 1000; do
-    P=$(mktemp -d)
-    perl -e 'alarm 60; exec @ARGV' "$CHROME" --headless=new --disable-gpu --hide-scrollbars --no-first-run --no-default-browser-check \
-      --user-data-dir="$P" --window-size=${w},900 --screenshot="$DIR/${f}-${w}.png" "file://$DIR/${f}.html"
-    rm -rf "$P"
+mkdir -p .superpowers
+(
+  CHROME="${CHROME_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+  DIR="$PWD/docs/superpowers/specs/2026-10-02-console-and-explainer-mockups"
+  for f in c-brief-story c-console-summary c-decision-inspector c-map-overlay; do
+    for w in 1440 1000; do
+      P=$(mktemp -d)
+      perl -e 'alarm 60; exec @ARGV' "$CHROME" --headless=new --disable-gpu --hide-scrollbars --no-first-run --no-default-browser-check \
+        --user-data-dir="$P" --window-size=${w},900 --screenshot="$DIR/${f}-${w}.png" "file://$DIR/${f}.html"
+      rm -rf "$P"
+    done
   done
-done
-ls -1 "$DIR"/c-*.png | wc -l
+  echo "PNGS=$(ls -1 "$DIR"/c-*.png | wc -l)"
+  echo "EXIT=$?"
+) > .superpowers/s0-render.log 2>&1 &
 ```
 
-Expected: the last line prints `8`. Open each PNG (Read tool) and check: no horizontal overflow at 1000 px (the right panel narrows to 320 px and the Map world scales to 0.66), no border around Console steps, red only on the failing test dots, the failing Map mark and the failing count, and every chip's label is short.
+Poll `tail -3 .superpowers/s0-render.log` every 15 s until the `EXIT=` line appears. Expected: `PNGS=8`. Open each PNG (Read tool) and check: no horizontal overflow at 1000 px (the right panel narrows to 320 px and the Map world scales to 0.66), no border around Console steps, red only on the failing test dots, the failing Map mark and the failing count, and every chip's label is short.
 
 - [ ] **Step 5: Record the gate in the README**
 
@@ -981,10 +986,10 @@ Expected: PASS: 7 tests in `session.test.ts` and every other narrator test (`nar
 - [ ] **Step 8: Package checks**
 
 ```bash
-pnpm --filter @jevcode/jev-router typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/jev-router typecheck
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/jev-router test
-pnpm --filter @jevcode/jev-router build
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/jev-router build
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: each exits 0; lint prints nothing after `> pnpm exec eslint .`.
@@ -1013,7 +1018,6 @@ Runs before S-2 (deviation 10).
 - Modify: `packages/trace-viewer/src/model/fold.ts` (`case "explainer"`)
 - Modify: `packages/trace-viewer/src/model/fold-finalize.ts` (`explainer` in the session literal of `Finalizer.run`)
 - Modify: `packages/trace-viewer/src/model/fold-chapters.ts` (`decisionDetail` carries tradeoffs)
-- Modify: `packages/trace-viewer/src/model/index.ts` (two export lines)
 - Modify: `packages/trace-viewer/src/test-support/trace-builder.ts` (`explainer()`), `row-arbitraries.ts` (`explainerOp` in `opArb`), `session-builder.ts` and `canvas-arbitraries.ts` (`explainer` on built sessions)
 
 **Interfaces:**
@@ -1021,7 +1025,7 @@ Runs before S-2 (deviation 10).
 - Consumes: K-2 `ExplainerRecordSchema`, `ExplainerRecord`, `NarrativeSentence`, `Component` from `@jevcode/contracts`; K-1 `EVENT_TYPES` containing `"explainer"` and `ENVELOPE_RULES.explainer === "consume"` (K-1 had to add the key for `registry.ts` to typecheck); P-1 `TraceSession.overview: OverviewModel | null` and `OverviewModel { snapshot; componentById; seq }`; existing `parseOrGap`, `addGap`, `Finalizer.run` (`fold-finalize.ts:407`), `decisionDetail` (`fold-chapters.ts:42`), `TraceBuilder.raw` (`test-support/trace-builder.ts:54`), `opArb` (`test-support/row-arbitraries.ts`).
 - Produces (exported from `@jevcode/trace-viewer/model`):
   - `type HighlightState = "new" | "changed" | "decision" | "failing"`, `const HIGHLIGHT_STATES: readonly HighlightState[]`
-  - `interface StoryModel { sentences: NarrativeSentence[]; basisSeq: number; seq: number }`
+  - `interface StoryModel { sentences: NarrativeSentence[]; basisSeq: number; seq: number; provenance: "rule" | "model" }` (K-2's optional field folded; absent reads as `"model"`)
   - `interface HighlightEntryModel { state: HighlightState; unitIds: readonly string[] }`
   - `interface HighlightsModel { basisSeq: number; seq: number; byComponent: ReadonlyMap<string, HighlightEntryModel> }`
   - `interface ExplainerModel { story: StoryModel | null; stories: readonly StoryModel[]; decisionWhy: ReadonlyMap<string, NarrativeSentence>; highlights: HighlightsModel | null }`
@@ -1095,7 +1099,7 @@ describe("explainer fold", () => {
     const second = b.explainer({ kind: "story", sentences: [S2], basisSeq: 2 });
     b.explainer({ kind: "story", sentences: [S3], basisSeq: 1 });
     const explainer = fold(b).explainer;
-    expect(explainer.story).toEqual({ sentences: [S2], basisSeq: 2, seq: second });
+    expect(explainer.story).toEqual({ sentences: [S2], basisSeq: 2, seq: second, provenance: "model" });
     expect(explainer.stories.map((story) => story.seq)).toEqual([first, second]);
   });
 
@@ -1106,6 +1110,17 @@ describe("explainer fold", () => {
     const explainer = fold(b).explainer;
     expect(explainer.stories.map((story) => story.seq)).toEqual([first]);
     expect(explainer.story?.seq).toBe(same);
+  });
+
+  it("folds a story's provenance and reads a row without the field as model text", () => {
+    const b = started();
+    const rule = b.explainer({ kind: "story", sentences: [S1], basisSeq: 1, provenance: "rule" });
+    const legacy = b.explainer({ kind: "story", sentences: [S2], basisSeq: 2 });
+    const explainer = fold(b).explainer;
+    expect(explainer.stories.map((story) => [story.seq, story.provenance])).toEqual([
+      [rule, "rule"],
+      [legacy, "model"],
+    ]);
   });
 
   it("keeps the latest why per decision", () => {
@@ -1310,6 +1325,8 @@ export interface StoryModel {
   basisSeq: number;
   /** seq of the explainer row. */
   seq: number;
+  /** "rule" for the factual-template fallback, "model" for narrator text (a row without the field reads as "model"). */
+  provenance: "rule" | "model";
 }
 
 export interface HighlightEntryModel {
@@ -1382,7 +1399,12 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
     case "story": {
       const current = state.story;
       if (current !== null && record.basisSeq < current.basisSeq) return;
-      const next: StoryModel = { sentences: record.sentences.map(copySentence), basisSeq: record.basisSeq, seq };
+      const next: StoryModel = {
+        sentences: record.sentences.map(copySentence),
+        basisSeq: record.basisSeq,
+        seq,
+        provenance: record.provenance ?? "model",
+      };
       if (current === null || !sameSentences(current.sentences, next.sentences)) state.stories.push(next);
       state.story = next;
       break;
@@ -1528,11 +1550,11 @@ Expected: the first run passes 9 tests. The second passes every model test, incl
 - [ ] **Step 9: Package checks and build**
 
 ```bash
-pnpm --filter @jevcode/trace-viewer typecheck
-pnpm --filter @jevcode/trace-viewer build
-pnpm --filter jevcode-trace-viewer-dev typecheck
-pnpm --filter jevcode-desktop typecheck
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-trace-viewer-dev typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: every command exits 0; lint prints nothing after `> pnpm exec eslint .`.
@@ -1570,7 +1592,7 @@ git commit -m "feat(trace-viewer): fold explainer rows into TraceSession.explain
 - Consumes (S-3; P-1's `componentIdForPath(components, path): string | null` per ruling R6; existing model): `accumulate`, `createTraceState`, `finalize`, `componentIdForPath`, `truncateMiddle`, `TraceSession` (`overview`, `explainer`, `steps`, `turns`, `meta`, `loadedThroughSeq`), `Step` from `@jevcode/trace-viewer/model`; `isTraceRowType`, `ExplainerRecord`, `NarrativeSentence`, `ChangeUnit`, `Decision`, `TraceSessionSummary` from `@jevcode/contracts`; `JevcodeDb.listEvents(sessionId, {fromSeq, limit})`, `getSession(id)`, `appendEvent(sessionId, "explainer", record): StoredEvent` (K-4 schema).
 - Produces:
   - `types.ts`: `interface PipelineSyncSnapshot { sessionId: string; lastSeq: number; changeUnits: ChangeUnit[]; decisions: Decision[] }`; `PipelineRuntimeOptions.onPipelineSync?(repoPath: string, sync: PipelineSyncSnapshot): void` (called after every successful `runSync`; the repo path routes it to that repo's stage, like M-6's `onRepoFilesChanged`).
-  - `explainer-session-rules.ts`: `STORY_MIN_INTERVAL_MS = 20_000`, `STORY_RECENT_STEPS = 12`, `STORY_UNIT_THRESHOLD = 3`, `DECISION_NEARBY = 3`, `backoffMs(failures): number` (over N-3's `NARRATOR_BACKOFF_MS`, one backoff table for every narrator call), `type HighlightEntry`, `latestTestRuns(session): Step[]`, `failingTestFiles(session): Set<string>`, `computeHighlights(input: HighlightInput): HighlightEntry[]`, `sessionStoryInput(session, decisions, highlights): SessionStoryInput`, `decisionWhyInput(session, decision): DecisionWhyInput | null`, `ruleStory(session, input, units, highlights): NarrativeSentence[]`.
+  - `explainer-session-rules.ts`: `STORY_MIN_INTERVAL_MS = 20_000`, `STORY_RECENT_STEPS = 12`, `STORY_UNIT_THRESHOLD = 3`, `DECISION_NEARBY = 3`, `backoffMs(failures): number` (over N-3's `NARRATOR_BACKOFF_MS`, one backoff table for every narrator call), `type HighlightEntry`, `repoRelative(repoRoot, path): string` (strips the repo root and `./` before every `componentIdForPath` call), `latestTestRuns(session): Step[]`, `failingTestFiles(session): Set<string>`, `computeHighlights(input: HighlightInput): HighlightEntry[]`, `sessionStoryInput(session, decisions, highlights): SessionStoryInput`, `decisionWhyInput(session, decision): DecisionWhyInput | null`, `ruleStory(session, input, units, highlights): NarrativeSentence[]`.
   - `explainer-session.ts`: `interface SessionExplainerDeps { db: JevcodeDb; repoRoot: string; sessionId(): string | null; narrator: NarratorClient | null; emitRowsAvailable(sessionId: string, lastSeq: number): void; now(): number; schedule: {…}; log(event: ExplainerLogEvent): void; recordCall?(record: NarratorCallRecord): void; storyIntervalMs?: number }`, `interface SessionExplainer { onPipelineSync(sync: PipelineSyncSnapshot): void; setNarrator(narrator: NarratorClient | null): void; idle(): Promise<void>; dispose(): void }`, `createSessionExplainer(deps): SessionExplainer`.
   - `explainer-stage.ts`: `ExplainerStageDeps.storyIntervalMs?: number`; the error log's `where` gains `"session"`; `setNarrator` also switches the session explainer.
   - Rows: `explainer` rows `story`, `decision_why`, `highlights` per `ExplainerRecordSchema`, each followed by `emitRowsAvailable(sessionId, row.seq)`; one `NarratorCallRecord` per narrator call through `recordNarratorCall` (Inspect, N-4).
@@ -1591,7 +1613,7 @@ grep -nE "onPipelineSync|setNarrator|initialNarrator|recordNarratorCall|whenIdle
 grep -n "export const NARRATOR_BACKOFF_MS" apps/desktop/src/main/pipeline/explainer-narration.ts
 grep -n "onRepoFilesChanged\|explainerRegistry" apps/desktop/src/main/index.ts apps/desktop/src/main/pipeline/types.ts
 grep -rn "case \"error\"" apps/desktop/src | grep -v "\.test\." | head
-pnpm --filter @jevcode/trace-viewer build && pnpm --filter @jevcode/jev-router build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/jev-router build
 ```
 
 Expected: the stage file shows M-6's no-op `onPipelineSync`, N-5's `setNarrator` (forwarding to `narration.setNarrator?.(narrator)`), N-5's `initialNarrator?` and `recordNarratorCall?` deps, `whenIdle`, `dispose` and the log union with its `where` list; N-3 exports `NARRATOR_BACKOFF_MS`; `index.ts` shows `explainerRegistry` and M-6's `onRepoFilesChanged: (repoPath, paths) => explainerRegistry.filesChanged(repoPath, paths)`; the fourth command lists every `switch` over the log kinds (check each handles an unknown `where` string); both builds exit 0.
@@ -1629,7 +1651,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 import { NARRATOR_BACKOFF_MS } from "./explainer-narration.js";
 import { createSessionExplainer, type SessionExplainer, type SessionExplainerDeps } from "./explainer-session.js";
-import { STORY_MIN_INTERVAL_MS, backoffMs, computeHighlights, decisionWhyInput } from "./explainer-session-rules.js";
+import { STORY_MIN_INTERVAL_MS, backoffMs, computeHighlights, decisionWhyInput, repoRelative } from "./explainer-session-rules.js";
 import type { ExplainerLogEvent } from "./explainer-stage.js";
 import type { PipelineSyncSnapshot } from "./types.js";
 
@@ -1894,6 +1916,26 @@ describe("session explainer: highlights", () => {
     expect(entries[0]?.unitIds).toHaveLength(50);
     expect(entries[0]?.state).toBe("changed");
   });
+
+  it("maps absolute and ./-prefixed paths to their component instead of the root", () => {
+    const w = new World();
+    w.overview([SERVER, REDIS]);
+    const overview = w.fold().overview;
+    expect(repoRelative("/work/app", "/work/app/src/server/app.ts")).toBe("src/server/app.ts");
+    expect(repoRelative("/work/app/", "./src/server/app.ts")).toBe("src/server/app.ts");
+    expect(repoRelative("/work/app", "/work/application/src/x.ts")).toBe("/work/application/src/x.ts");
+    const entries = computeHighlights({
+      units: [w.unit("u1", ["/work/app/src/server/app.ts"]), w.unit("u2", ["./src/server/routes.ts"])],
+      decisions: [],
+      overview,
+      initialComponentIds: new Set([SERVER.id, REDIS.id]),
+      failingFiles: new Set(["/work/app/src/redis/client.test.ts"]),
+    });
+    expect(entries).toEqual([
+      { id: SERVER.id, state: "changed", unitIds: ["u1", "u2"] },
+      { id: REDIS.id, state: "failing", unitIds: [] },
+    ]);
+  });
 });
 
 describe("session explainer: story schedule", () => {
@@ -1913,6 +1955,7 @@ describe("session explainer: story schedule", () => {
     const story = storyOf(rows[0]);
     const session = w.fold();
     expect(story.sentences).toHaveLength(1);
+    expect(story.provenance).toBe("model");
     expect(story.sentences.every((s) => s.citations.every((c) => resolves(session, c)))).toBe(true);
     expect(story.basisSeq).toBeLessThan(rows[0]?.seq ?? 0);
     expect(w.hints.map((hint) => hint.seq)).toContain(rows[0]?.seq);
@@ -2006,6 +2049,7 @@ describe("session explainer: narrator off, offline or hostile", () => {
 
     expect(w.rows("story")).toHaveLength(2);
     const story = storyOf(w.rows("story")[0]);
+    expect(story.provenance).toBe("rule");
     expect(story.sentences.map((s) => s.text)).toEqual([
       "Changed 1 file in server.",
       "Latest tests: 14 passed, 1 failed.",
@@ -2318,6 +2362,17 @@ function compareText(a: string, b: string): number {
 }
 
 /** The latest settled run of each test or check command, in seq order. */
+/**
+ * Change units and test failures carry the path the agent used, often absolute; the model's path rule
+ * (P-1's componentIdForPath) needs repo-relative paths. Strips the repo root and any leading "./".
+ */
+export function repoRelative(repoRoot: string, path: string): string {
+  const prefix = `${repoRoot.replace(/\/+$/, "")}/`;
+  let relative = path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  while (relative.startsWith("./")) relative = relative.slice(2);
+  return relative;
+}
+
 export function latestTestRuns(session: TraceSession): Step[] {
   const latest = new Map<string, Step>();
   for (const step of session.steps) {
@@ -2363,14 +2418,14 @@ export function computeHighlights(input: HighlightInput): HighlightEntry[] {
     const unitState: HighlightState =
       unit.status === "failed" ? "failing" : decided.has(unit.id) || unit.relatedDecisions.length > 0 ? "decision" : "changed";
     for (const file of unit.files) {
-      const componentId = componentIdForPath(components, file);
+      const componentId = componentIdForPath(components, repoRelative(overview.snapshot.repoRoot, file));
       if (componentId === null) continue;
       const isNew = input.initialComponentIds !== null && !input.initialComponentIds.has(componentId);
       mark(componentId, unitState === "changed" && isNew ? "new" : unitState, unit.id);
     }
   }
   for (const file of input.failingFiles) {
-    const componentId = componentIdForPath(components, file);
+    const componentId = componentIdForPath(components, repoRelative(overview.snapshot.repoRoot, file));
     if (componentId !== null) mark(componentId, "failing", null);
   }
   return [...byComponent.entries()]
@@ -2880,7 +2935,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     const narrated = canCall && client !== null ? await narrateStory(t, client, input) : null;
     const sentences = narrated ?? ruleStory(session, input, sync.changeUnits, t.highlights);
     if (sentences.length === 0 || !current(t)) return;
-    append(t, { sessionId: t.sessionId, kind: "story", sentences, basisSeq });
+    append(t, { sessionId: t.sessionId, kind: "story", sentences, basisSeq, provenance: narrated !== null ? "model" : "rule" });
     t.storyKey = key;
     t.storyFromModel = narrated !== null;
   }
@@ -3066,9 +3121,9 @@ Expected: PASS: 15 tests in `explainer-session.test.ts`, the new stage test, the
 - [ ] **Step 9: Package checks**
 
 ```bash
-pnpm --filter jevcode-desktop typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck
 perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/pipeline
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: typecheck exits 0; every pipeline test passes (the flake rule of index §7 step 3 applies to `stall-watchdog.test.ts`); lint prints nothing after `> pnpm exec eslint .`.
@@ -3106,7 +3161,7 @@ Blocked by H3 (S-0 Step 7).
 - Modify: `packages/trace-viewer/src/ui/views/console/ConsoleRowView.tsx` (V-4: the `summary` placeholder case)
 
 **Interfaces:**
-- Consumes (V-3, interfaces §6.3): `ConsoleRow` (including `{ kind: "summary"; key: string; sentences: NarrativeSentence[] }`), `ConsoleRowsState { rows; byStep }`, `buildConsoleRows(session, index, prev?)`. Assumed: V-3's builder body is one function that this task renames to `buildStepRows`.
+- Consumes (V-3, interfaces §6.3): `ConsoleRow` (including `{ kind: "summary"; key: string; sentences: NarrativeSentence[] }`; S-4 adds `provenance?: "rule" | "model"` to the summary variant, and `provenance?: "rule" | "model"` to the `now: { kind: "story" }` variant of `BriefModel`), `ConsoleRowsState { rows; byStep }`, `buildConsoleRows(session, index, prev?)`. Assumed: V-3's builder body is one function that this task renames to `buildStepRows`.
 - Consumes (lane 06, ruling R3): `narratorNote(overview): string | null` (`src/ui/views/map/map-text.ts`: "Descriptions off" / "Descriptions unavailable" / "Descriptions pending", null when `ready`), `overviewSnapshot(seed)` with `status?`.
 - Consumes (V-5, lane 02's plan): `buildBrief(session, index)` returning `{ now: { kind: "rule", runningStepId, latestUnitId, pendingDecisionId }, changes, architecture }`; `Brief.tsx` with `Now(props)`, `BriefView(props: BriefViewProps)` and the connected `Brief()`; `useViewerHost()` (`src/ui/shell/host-context.ts`, V-4); `ConsoleRowView` (`src/ui/views/console/ConsoleRowView.tsx`) with a placeholder `case "summary"` and a `lineId` prop. P-3: `ViewState.mapSelection` and `{ type: "map/select"; componentId }`; P-2: `componentForPath(overview, path)`.
 - Consumes (V-4): `ConsoleView` renders rows in a `switch (row.kind)`.
@@ -3115,9 +3170,9 @@ Blocked by H3 (S-0 Step 7).
 - Produces:
   - `src/model/citations.ts` (exported from `@jevcode/trace-viewer/model`): `CITATION_LABEL_MAX = 28`; `type CitationTarget = { kind: "select"; id: StepId; label: string; full: string } | { kind: "component"; componentId: string; label: string; full: string } | { kind: "none"; label: string; full: string }`; `resolveCitation(session: TraceSession, citation: Citation): CitationTarget`.
   - `src/layout/brief-decisions.ts`: `BRIEF_DECISIONS_MAX = 3`; `interface BriefDecisionCard { decisionId: string; stepId: StepId; title: string; status: DecisionDetail["status"]; decidedBy: "supervisor" | "delegated" | "open"; options: { id: string; label: string; chosen: boolean; tradeoffs: DecisionTradeoff[] }[]; why: NarrativeSentence | null; components: { id: string; name: string }[] }`; `buildBriefDecisions(session): readonly BriefDecisionCard[]` (open decisions oldest first, then the latest answered or delegated one; at most 3); `decisionComponents(session, decisionId): { id: string; name: string }[]`.
-  - `BriefModel.decisions: readonly BriefDecisionCard[]`; `now` is `{ kind: "story", sentences, basisSeq }` whenever `session.explainer.story` is set (P-4's `architecture.touched` stays as P-4 computes it, from the session's edited files); `BriefViewProps.onAnswer?(decisionId, optionId)`.
+  - `BriefModel.decisions: readonly BriefDecisionCard[]`; `now` is `{ kind: "story", sentences, basisSeq, provenance }` whenever `session.explainer.story` is set (P-4's `architecture.touched` stays as P-4 computes it, from the session's edited files); `BriefViewProps.onAnswer?(decisionId, optionId)`.
   - `src/layout/console-summary.ts`: `summaryRowKey(story): string` (`summary:<seq>`), `rowAnchorSeq(row): number | null`, `mergeSummaryRows(base: ConsoleRowsState, stories: readonly StoryModel[]): ConsoleRowsState` (a summary row sits after every step whose firstSeq is below its story row's seq). `ConsoleRowsState` gains `base?: ConsoleRowsState; stories?: readonly StoryModel[]`.
-  - `src/ui/explainer`: `CitationChips({ citations })`, `StoryBlock({ sentences, label })`, `DecisionCard({ card, onAnswer? })` (a `region` named `Decision card: <title>`), `SummaryBlock({ sentences })` (a `region` named `Session summary`).
+  - `src/ui/explainer`: `CitationChips({ citations })`, `StoryBlock({ sentences, label, provenance? })`, `DecisionCard({ card, onAnswer? })` (a `region` named `Decision card: <title>`), `SummaryBlock({ sentences, provenance? })` (a `region` named `Session summary`).
 
 - [ ] **Step 1: Pre-check and open the approved mockups**
 
@@ -3272,7 +3327,7 @@ describe("buildBrief with explainer rows", () => {
   it("uses the story for Now and carries the decision cards", () => {
     const session = scenario({ story: true });
     const brief = buildBrief(session, buildTraceIndex(session));
-    expect(brief.now).toEqual({ kind: "story", sentences: [STORY], basisSeq: session.explainer.story?.basisSeq });
+    expect(brief.now).toEqual({ kind: "story", sentences: [STORY], basisSeq: session.explainer.story?.basisSeq, provenance: "model" });
     expect(brief.decisions).toBe(buildBriefDecisions(session));
   });
 
@@ -3307,7 +3362,7 @@ function state(rows: ConsoleRow[]): ConsoleRowsState {
 }
 
 function story(seq: number, basisSeq: number): StoryModel {
-  return { seq, basisSeq, sentences: [sentence(`story ${seq}`, { kind: "step", id: "step:1" })] };
+  return { seq, basisSeq, provenance: "model", sentences: [sentence(`story ${seq}`, { kind: "step", id: "step:1" })] };
 }
 
 describe("mergeSummaryRows", () => {
@@ -3450,6 +3505,18 @@ describe("StoryBlock and CitationChips", () => {
     expect(harness.store.get().view).toBe("map");
     expect(harness.store.get().mapSelection).toBe(MIDDLEWARE.id);
     expect(screen.getByLabelText("step, not in this trace").tagName).toBe("SPAN");
+  });
+});
+
+describe("StoryBlock provenance", () => {
+  it("labels a rule-based story quietly and leaves model text unlabeled", () => {
+    const { session } = scenario(false, false);
+    const line = sentence("Changed 1 file in server.", { kind: "component", id: MIDDLEWARE.id });
+    const { unmount } = renderHarness(<StoryBlock sentences={[line]} label="Now" provenance="rule" />, session);
+    expect(screen.getByText("rule-based")).toBeTruthy();
+    unmount();
+    renderHarness(<StoryBlock sentences={[line]} label="Now" provenance="model" />, session);
+    expect(screen.queryByText("rule-based")).toBeNull();
   });
 });
 
@@ -3768,7 +3835,7 @@ In `packages/trace-viewer/src/layout/brief.ts` (V-5):
   return {
     now:
       story !== null
-        ? { kind: "story", sentences: story.sentences, basisSeq: story.basisSeq }
+        ? { kind: "story", sentences: story.sentences, basisSeq: story.basisSeq, provenance: story.provenance }
         : {
             kind: "rule",
             runningStepId: runningStepOf(session),
@@ -3809,7 +3876,7 @@ export function rowAnchorSeq(row: ConsoleRow): number | null {
 }
 
 function summaryRow(story: StoryModel): ConsoleRow {
-  return { kind: "summary", key: summaryRowKey(story), sentences: story.sentences };
+  return { kind: "summary", key: summaryRowKey(story), sentences: story.sentences, provenance: story.provenance };
 }
 
 export function mergeSummaryRows(base: ConsoleRowsState, stories: readonly StoryModel[]): ConsoleRowsState {
@@ -3866,6 +3933,8 @@ Create `packages/trace-viewer/src/ui/explainer/explainer.module.css`:
 ```css
 .story { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .storyLine { color: var(--tv-ink); font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+.storyWrap { display: flex; flex-direction: column; gap: 4px; }
+.provenance { color: var(--tv-ink-3); font-size: 12px; line-height: 16px; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: 1px; }
 .chip, .chipOff {
   display: inline-flex; align-items: center; gap: 4px; height: 20px; max-width: 180px; padding: 0 6px;
@@ -3982,19 +4051,30 @@ import { CitationChips } from "./CitationChips.js";
 import styles from "./explainer.module.css";
 
 /** Narrator sentences (untrusted): plain text through displayUntrusted, each with its citation chips. */
-export function StoryBlock({ sentences, label }: { sentences: readonly NarrativeSentence[]; label: string }): JSX.Element {
+export function StoryBlock({
+  sentences,
+  label,
+  provenance,
+}: {
+  sentences: readonly NarrativeSentence[];
+  label: string;
+  provenance?: "rule" | "model";
+}): JSX.Element {
   return (
-    <ol className={styles.story} aria-label={label}>
-      {sentences.map((item, index) => {
-        const text = displayUntrusted(item.text);
-        return (
-          <li key={index} className={styles.storyLine}>
-            <span title={text}>{text}</span>
-            <CitationChips citations={item.citations} />
-          </li>
-        );
-      })}
-    </ol>
+    <div className={styles.storyWrap}>
+      <ol className={styles.story} aria-label={label}>
+        {sentences.map((item, index) => {
+          const text = displayUntrusted(item.text);
+          return (
+            <li key={index} className={styles.storyLine}>
+              <span title={text}>{text}</span>
+              <CitationChips citations={item.citations} />
+            </li>
+          );
+        })}
+      </ol>
+      {provenance === "rule" && <span className={styles.provenance}>rule-based</span>}
+    </div>
   );
 }
 ```
@@ -4123,7 +4203,15 @@ import styles from "./explainer.module.css";
 import { StoryBlock } from "./StoryBlock.js";
 
 /** Spec §3.2 summary row: "◆ Summary", the story's sentences, a link back to the Brief (clears the selection). */
-export function SummaryBlock({ id, sentences }: { id?: string; sentences: readonly NarrativeSentence[] }): JSX.Element {
+export function SummaryBlock({
+  id,
+  sentences,
+  provenance,
+}: {
+  id?: string;
+  sentences: readonly NarrativeSentence[];
+  provenance?: "rule" | "model";
+}): JSX.Element {
   const dispatch = useDispatch();
   return (
     <section id={id} className={styles.summary} aria-label="Session summary">
@@ -4139,7 +4227,7 @@ export function SummaryBlock({ id, sentences }: { id?: string; sentences: readon
           Brief
         </button>
       </div>
-      <StoryBlock sentences={sentences} label="Summary sentences" />
+      <StoryBlock sentences={sentences} label="Summary sentences" {...(provenance !== undefined ? { provenance } : {})} />
     </section>
   );
 }
@@ -4150,7 +4238,7 @@ Clearing the selection shows the Brief (V-2: `ViewState.brief` only pins the Bri
 - [ ] **Step 8: Render them in the Brief, the Inspector and the Console**
 
 In `packages/trace-viewer/src/ui/inspector/Brief.tsx` (V-5):
-- add the imports `import { DecisionCard } from "../explainer/DecisionCard.js";`, `import { StoryBlock } from "../explainer/StoryBlock.js";`, `import { useViewerHost } from "../shell/host-context.js";` and `import { useAnnounce } from "../shell/LiveRegion.js";`;
+- add the imports `import { DecisionCard } from "../explainer/DecisionCard.js";`, `import { StoryBlock } from "../explainer/StoryBlock.js";` and `import { useAnnounce } from "../shell/LiveRegion.js";`, and add `import { useViewerHost } from "../shell/host-context.js";` only if `Brief.tsx` does not already import it (P-4 added it for `Architecture`; check with `grep -n "useViewerHost" packages/trace-viewer/src/ui/inspector/Brief.tsx`, since a second import line is a TS2300 duplicate identifier);
 - add to `BriefViewProps`:
 
 ```ts
@@ -4161,7 +4249,7 @@ In `packages/trace-viewer/src/ui/inspector/Brief.tsx` (V-5):
 - in `Now`, replace the story placeholder (`return <p className={styles.prose}>…</p>;` under `if (now.kind === "story")`) with:
 
 ```tsx
-    return <StoryBlock sentences={now.sentences} label="Now" />;
+    return <StoryBlock sentences={now.sentences} label="Now" {...(now.provenance !== undefined ? { provenance: now.provenance } : {})} />;
 ```
 
   and delete the `decisionStep` loop, its "Needs your decision" button and its term in `idle` (`const idle = running === undefined && latest === undefined;`): the open decision now shows as its card;
@@ -4277,7 +4365,7 @@ In `packages/trace-viewer/src/ui/views/console/ConsoleRowView.tsx` (V-4), import
 
 ```tsx
     case "summary":
-      return <SummaryBlock id={lineId} sentences={row.sentences} />;
+      return <SummaryBlock id={lineId} sentences={row.sentences} {...(row.provenance !== undefined ? { provenance: row.provenance } : {})} />;
 ```
 
 - [ ] **Step 9: Run the tests and the package suite**
@@ -4285,7 +4373,7 @@ In `packages/trace-viewer/src/ui/views/console/ConsoleRowView.tsx` (V-4), import
 ```bash
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/model/citations.test.ts src/layout/brief-decisions.test.ts src/layout/console-summary.test.ts src/ui/explainer/explainer.test.tsx src/ui/views/console/console-summary-view.test.tsx src/ui/inspector/inspector.test.tsx
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/layout src/ui/views/console src/ui/inspector
-perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer test
+(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &   # poll `tail -6 .superpowers/tv-suite.log` every 15 s until the EXIT= line appears; expect EXIT=0
 ```
 
 Expected: the first run passes (9 citation cases, 5 brief tests, 3 summary-row tests, 9 UI tests, 1 Console test, and every Inspector test); the second and third pass, including V-3's `buildConsoleRows` properties and V-4's scroll-back/append test (Review Focus 3), now with summary rows in the row list.
@@ -4293,10 +4381,10 @@ Expected: the first run passes (9 citation cases, 5 brief tests, 3 summary-row t
 - [ ] **Step 10: Package checks**
 
 ```bash
-pnpm --filter @jevcode/trace-viewer typecheck
-pnpm --filter @jevcode/trace-viewer build
-pnpm --filter jevcode-desktop typecheck
-pnpm lint
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter jevcode-desktop typecheck
+perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: all exit 0; `lint-boundaries.test.ts` (part of the suite above) stays green: `src/model/citations.ts` and `src/layout/*` import no React or `src/ui`.
@@ -4496,7 +4584,7 @@ main().catch((error) => {
 Run it in the background with a hard limit and wait for the result:
 
 ```bash
-pnpm -r build
+perl -e 'alarm 170; exec @ARGV' pnpm -r build
 perl -e 'alarm 400; exec @ARGV' node apps/trace-viewer-dev/scripts/explainer-shots.mjs > /tmp/explainer-shots.log 2>&1 &
 ```
 
@@ -4887,8 +4975,8 @@ Append to `packages/trace-viewer/src/ui/views/map/MapView.module.css`:
 
 ```bash
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/ui/views/map
-perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/trace-viewer test
-pnpm --filter @jevcode/trace-viewer typecheck && pnpm --filter @jevcode/trace-viewer build && pnpm lint
+(perl -e 'alarm 590; exec @ARGV' pnpm --filter @jevcode/trace-viewer test > .superpowers/tv-suite.log 2>&1; echo "EXIT=$?" >> .superpowers/tv-suite.log) &   # poll `tail -6 .superpowers/tv-suite.log` every 15 s until the EXIT= line appears; expect EXIT=0
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer typecheck && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build && perl -e 'alarm 170; exec @ARGV' pnpm lint
 ```
 
 Expected: the 3 new tests pass with P-3's Map tests (P-3's "no overlay in phase B" expectations still hold: sessions without highlights return `null`); the package suite passes; typecheck, build and lint are clean.
@@ -4918,7 +5006,8 @@ git commit -m "feat(trace-viewer): Map session overlay from explainer highlights
 **Files:**
 - Create: `apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts`
 - Create: `packages/trace-viewer/src/layout/console-summary.bench.ts`
-- Modify: M-8's ingest soak harness (the file that creates the explainer stage for the soak; found in Step 1) so its runtime passes `onPipelineSync`
+- Modify: `scripts/soak.mjs` (M-8's ingest soak: its `PipelineRuntime` options pass `onPipelineSync` to the explainer stage)
+- Modify: `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6's 10k-step bundle: with `JEVCODE_CONSOLE_STORIES=1` it interleaves `story` rows, so the Console perf run measures summary rows)
 - Modify: `docs/perf.md` (a "Phase C (session explainer)" section)
 
 **Interfaces:**
@@ -4931,11 +5020,11 @@ git commit -m "feat(trace-viewer): Map session overlay from explainer highlights
 
 ```bash
 grep -n "from \"@jevcode/codebase-map\|from \"@jevcode/evidence-engine" apps/desktop/src/main/pipeline/explainer-stage.ts apps/desktop/src/main/index.ts
-grep -rn "createExplainerStage" scripts apps/desktop/scripts apps/desktop/src/main | grep -v "\.test\.ts" | grep -v "explainer-stage.ts"
+grep -n "onRepoFilesChanged\|let explainer\|EXPLAINER" scripts/soak.mjs | head
 grep -n "Console append\|console perf\|soak" docs/perf.md | tail -20
 ```
 
-Expected: the import paths for `scanRepo`, `scanPaths` and `extractImports` (use them in Step 2 if they differ); the soak harness that builds a stage (M-8) besides `main/index.ts`; the V-6 Console perf command and the M-8 soak-guard command documented in `docs/perf.md`.
+Expected: the import paths for `scanRepo`, `scanPaths` and `extractImports` (use them in Step 2 if they differ); `scripts/soak.mjs` has M-8's `onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => explainer?.onFilesChanged(paths) : undefined` line and a `let explainer = null` the soak assigns; `apps/trace-viewer-dev/scripts/console-bundle.mjs` exists (V-6); the M-8 soak-guard command is documented in `docs/perf.md`.
 
 - [ ] **Step 2: Write the live smoke**
 
@@ -4969,6 +5058,11 @@ import { PipelineRuntime } from "./pipeline-runtime.js";
 // PipelineRuntime and the real explainer stage), story and highlights rows land within one debounce
 // window of their triggers, and each answered decision gets a why whose citations resolve in the
 // viewer's fold. The story interval is shortened to 1.5 s so the window is measured in real time.
+
+// The stage runs with the injected EchoNarrator. Keep a shell's key and the kill switch from ever reaching a
+// real client: no billed calls, no nondeterministic rows during the timing windows.
+delete process.env["ANTHROPIC_API_KEY"];
+process.env["JEVCODE_NARRATOR"] = "off";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../../");
 const fixturePath = path.join(repoRoot, "fixtures", "rate-limit");
@@ -5176,7 +5270,7 @@ describe("explainer stage in a live mock session (phase C exit)", () => {
 - [ ] **Step 3: Run it**
 
 ```bash
-pnpm --filter @jevcode/trace-viewer build && pnpm --filter @jevcode/jev-router build
+perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer build && perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/jev-router build
 perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts
 ```
 
@@ -5205,6 +5299,7 @@ const base: ConsoleRowsState = { rows, byStep };
 const stories: StoryModel[] = Array.from({ length: 500 }, (_, i) => ({
   seq: 40 * i + 1,
   basisSeq: 40 * i,
+  provenance: "model",
   sentences: [{ text: "The agent made progress.", citations: [{ kind: "step", id: "step:2" }] }],
 }));
 
@@ -5221,8 +5316,47 @@ Expected: a mean under 2 ms on the reference machine (Apple M3 Max). Record the 
 
 - [ ] **Step 5: Console append and ingest budgets with the explainer on**
 
-1. Console append p95 (spec §11, ≤ 150 ms): run the V-6 Console perf harness command from `docs/perf.md` with the bundle `apps/trace-viewer-dev/public/bundles/rate-limit-explainer.json` (built by `explainer-shots.mjs` in S-4/S-5) dripped live, and record the p95.
-2. Ingest soak ratio (spec §11, ≤ 1.10 with the narrator stubbed): in M-8's soak harness found in Step 1, add `onPipelineSync: (sync) => stage.onPipelineSync(sync)` to the `new PipelineRuntime({ … })` options next to its stage (so the soak now runs the session explainer on every sync), then run M-8's guard command from `docs/perf.md` in the background with its documented timeout, three runs per side, alternating with the merge base `<w1>`, exactly as the M1b procedure in `docs/perf.md` describes.
+1. Console append p95 (spec §11, ≤ 150 ms) on `console-10k` with story rows. In `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6), add `const STORIES = process.env.JEVCODE_CONSOLE_STORIES === "1";` after `PROMPT`, and in the unit loop capture the message row's seq and add a story row every fifth unit:
+
+```js
+for (let unit = 0; unit < UNITS; unit += 1) {
+  const messageSeq = rows.length + 1; // the step the story cites
+```
+
+   (keep the loop's existing first line and add `messageSeq` as its first statement), then after the loop's `agent({ type: "agent_message", … })` call add:
+
+```js
+  if (STORIES && unit % 5 === 0) {
+    const seq = rows.length + 1;
+    rows.push({
+      seq,
+      type: "explainer",
+      ts: iso(seq),
+      payload: {
+        sessionId: SESSION_ID,
+        kind: "story",
+        sentences: [{ text: `Unit ${unit} is in progress.`, citations: [{ kind: "step", id: `step:${messageSeq}` }] }],
+        basisSeq: seq - 1,
+        provenance: "model",
+      },
+    });
+  }
+```
+
+   The bundle then holds about 420 stories, one per five units, and the drip window (the last 600 rows) crosses about 23 of them, so every append sample covers a summary merge. Run it in the background and poll:
+
+```bash
+(JEVCODE_CONSOLE_STORIES=1 perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console --console-perf --port 4186 > .superpowers/smoke-s6-console.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-s6-console.log) &
+```
+
+   Poll `tail -3 .superpowers/smoke-s6-console.log` every 15 s until an `EXIT=` line appears. Expected: `CONSOLE_PERF steps=… append_n=<≥300> append_p95=<≤150> …` and `SMOKE_OK`. The harness itself fails on fewer than 300 samples or p95 above 150 ms. Record the p95 and `append_n`. (Unset `JEVCODE_CONSOLE_STORIES` afterwards; V-6's own runs stay story-free.)
+2. Ingest soak ratio (spec §11, ≤ 1.10 with the narrator stubbed): in `scripts/soak.mjs` find M-8's line `onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => explainer?.onFilesChanged(paths) : undefined,` in the `new PipelineRuntime({ … })` options and add right after it:
+
+```js
+    onPipelineSync: EXPLAINER ? (_repoPath, sync) => explainer?.onPipelineSync(sync) : undefined,
+```
+
+   (so the soak runs the session explainer on every sync; the hook's signature is `(repoPath, sync)`, as in S-2). Then run M-8's guard command from `docs/perf.md` in the background with its documented timeout and log polling, three runs per side, alternating with the merge base `<w1>`, exactly as the M1b procedure in `docs/perf.md` describes.
 
 Expected: Console append p95 ≤ 150 ms; soak median ratio ≤ 1.10. A ratio above 1.10 is a defect in the session explainer (likely the per-sync `countRuns` or `failingTestFiles` scans over all steps): profile at 5,000 events as the M1b section did, fix, and rerun.
 
@@ -5240,11 +5374,11 @@ Append to `docs/perf.md`:
 | Story calls per interval | ≤ 1 | min gap <gap> ms | <PASS/FAIL> |
 | Decision why with resolvable citations | every answered decision | 1 of 1 | <PASS/FAIL> |
 | `mergeSummaryRows`, 10,000 rows and 500 stories | small part of a Console rebuild | mean <mean> ms | <recorded> |
-| Console append p95 with summary rows (V-6 harness) | ≤ 150 ms | <p95> ms | <PASS/FAIL> |
+| Console append p95 with summary rows (`console-10k` plus about 420 story rows, V-6 harness) | ≤ 150 ms, ≥ 300 samples | <p95> ms over <append_n> samples | <PASS/FAIL> |
 | Ingest soak ratio, stage on, narrator stubbed (M-8 guard) | ≤ 1.10 | <ratio> (medians <base> / <head> ms) | <PASS/FAIL> |
 
 Reproduce: `pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts`,
-`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`, and the V-6 and M-8 commands above.
+`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`, `JEVCODE_CONSOLE_STORIES=1 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --console-perf`, and the M-8 guard command.
 ```
 
 Fill every `<…>` with the measured value from Steps 3–5 before committing.
@@ -5252,11 +5386,10 @@ Fill every `<…>` with the measured value from Steps 3–5 before committing.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts packages/trace-viewer/src/layout/console-summary.bench.ts docs/perf.md
+git add apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts packages/trace-viewer/src/layout/console-summary.bench.ts docs/perf.md scripts/soak.mjs apps/trace-viewer-dev/scripts/console-bundle.mjs
 git commit -m "test(desktop): live mock-session smoke and phase C budgets for the session explainer"
 ```
 
-(add M-8's soak harness file from Step 5).
 
 ---
 
@@ -5266,4 +5399,4 @@ git commit -m "test(desktop): live mock-session smoke and phase C budgets for th
 2. **Done (index §9, lane 07):** the S-6 smoke shows story and highlights within one debounce window in a mock live session; every answered decision has a `decision_why` whose citations resolve; `explainer-shots.mjs` screenshots match the approved H3 mockups at 1440 and 1000 px.
 3. **Wave check:** after the merge, `wave-verify.sh` (index §7 step 7) on a detached main worktree with the views the W1 lanes added to the dev-host smoke, plus `node apps/trace-viewer-dev/scripts/explainer-shots.mjs` on that worktree.
 4. **HUMAN H6 (phase C exit, index §8):** the person reviews the story, decision cards and overlay on a mock live session (`JEVC_AGENT=mock pnpm --filter jevcode-desktop start`, open `fixtures/rate-limit/repo`, enter the demo prompt). Record the outcome under the spec's §13 table as `H6 (phase C exit): <approved | changes requested> <date>`, or `PENDING — deferred by the person on <date>; revisit before the phase C exit` under the deferral ruling.
-5. **Hand-off notes** for the merge: the interface deviations above (new exports `componentIdForPath`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs`, `BriefModel.decisions`); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.
+5. **Hand-off notes** for the merge: the interface deviations above (new exports `repoRelative`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs`, `BriefModel.decisions`); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.

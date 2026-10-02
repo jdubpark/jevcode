@@ -2200,7 +2200,7 @@ git -c user.name='Jongwon Park' -c user.email=contact@parkjongwon.com commit -m 
 
 **Interfaces:**
 - Consumes:
-  - lane 01 K-2 types `Component`, `ComponentEdge`, `OverviewSnapshot`, `Role`, `OverviewSnapshotSchema`, and R3's `NarratorState` (`(typeof NARRATOR_STATES)[number]`; if K-2 exports only `NARRATOR_STATES`, declare that alias locally and record it);
+  - lane 01 K-2 types `Component`, `ComponentEdge`, `OverviewSnapshot`, `Role`, `OverviewSnapshotSchema`, and R3's `NarratorState` (`(typeof NARRATOR_STATES)[number]`, exported by K-2 from `@jevcode/contracts`);
   - lane 01 K-4 `JevcodeDb.getComponentText`, `putComponentText`, `getOverviewState`, `putOverviewState` (interfaces §2);
   - from N-1/N-2: `guardComponents`, `guardSentences`, `citationResolves`, `narratorCostUsd`, `NARRATOR_MODEL`, `NarratorUnavailableError`, `createFakeNarratorClient`, `FAKE_SCHEMA_INVALID`, `createNarratorClient`, `clipChars`;
   - from the existing code: `redactText` (`apps/desktop/src/main/pipeline/redactor.ts:105`), and `languageForPath`, `ParseService` and `createInlineParseService` from `@jevcode/evidence-engine`.
@@ -4576,7 +4576,7 @@ Append to `apps/desktop/src/renderer/styles.css`, after the `.budget-unknown` ru
   margin: 2px 0 10px;
   font-size: 11px;
   line-height: 1.4;
-  color: var(--tv-ink-3, #6b7280);
+  color: var(--tv-ink-3);
 }
 
 .narrator-availability {
@@ -4730,13 +4730,13 @@ The orchestrator's R4 makes lane 04's seam canonical: `ExplainerStageDeps.narrat
 ```bash
 git -C ~/Projects/jevcode-ce-05 status --short
 git -C ~/Projects/jevcode-ce-05 rebase main
-pnpm install --frozen-lockfile
+pnpm install
 perl -e 'alarm 170; exec @ARGV' pnpm -r build
 perl -e 'alarm 150; exec @ARGV' pnpm --filter @jevcode/jev-router test
 perl -e 'alarm 150; exec @ARGV' pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-narration.test.ts src/main/pipeline/explainer-stage.test.ts
 ```
 
-Expected: the status output is empty before the rebase, and every command exits 0. Conflicts can only be in `pnpm-lock.yaml`, `apps/desktop/src/main/index.ts` and `ipc.ts`. Resolve them by keeping both sides (lane 04's registry and N-4's switch and log) and running `pnpm install` to regenerate the lockfile.
+Expected: the status output is empty before the rebase, and every command exits 0. Conflicts can be in `pnpm-lock.yaml`, `apps/desktop/src/main/index.ts`, `ipc.ts`, `ipc.test.ts`, `shared/api.ts` and `apps/desktop/package.json`. Keep both sides in every source file (lane 04's registry and N-4's switch and log). For `pnpm-lock.yaml` take main's version (`git checkout --ours pnpm-lock.yaml` during the rebase, then `git add` it); the `pnpm install` above (not `--frozen-lockfile`) regenerates it, and a changed lockfile gets its own commit (`git add pnpm-lock.yaml && git commit -m "chore: regenerate lockfile after rebase"`, no trailers).
 
 - [ ] **Step 2: Check the seam on `main`**
 
@@ -5218,7 +5218,7 @@ import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 import type { BriefSources } from "./explainer-narration.js";
 ```
 
-   Skip `NarratorState` if lane 04 already imports it.
+   Lane 04 imports `NarratorState` from `@jevcode/contracts` as well (K-2 exports it); keep a single import line.
 
 2. In `interface NarrationSeam`, after `onSnapshot(…)`, add the members Step 2 found missing:
 
