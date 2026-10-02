@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Brief architecture card (P-0)</title>
+<style>
+:root{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#676D78;--ink-4:#9AA0AB;--hair:rgb(16 24 40 / .07);
+  --fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--good:#2E9E6A;--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--accent-ink:#1F5EF0;
+  --shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{padding:24px;background:#E9EBEF;color:var(--ink);font:400 13px/18px var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0}
+.ic{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}#status>div{flex:0 0 280px}#status .panel{width:280px}
+h1{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.panel{padding:12px 16px 16px;border-radius:12px;background:var(--panel);box-shadow:0 0 0 1px var(--hair),var(--shadow)}
+.w280{width:280px}.w248{width:248px}
+.sh{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.empty{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:9px;background:var(--fill);color:var(--ink-3);font-size:12px;line-height:16px}.empty b{display:block;font-weight:500;color:var(--ink-2)}
+.pbar{display:block;height:4px;margin-top:8px;border-radius:2px;background:var(--fill-2);overflow:hidden}.pbar i{display:block;height:100%;background:var(--ink-2);border-radius:2px}
+.retry{padding:0;margin-top:2px;color:var(--accent-ink);font-size:12px}
+.hstrip{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:10px;row-gap:2px;justify-items:start;width:280px;padding:10px 16px;border-radius:12px;background:var(--panel);box-shadow:0 0 0 1px var(--hair),var(--shadow);font-size:12px;color:var(--ink-3)}.hstrip .hl{font-size:13px;font-weight:600;color:var(--ink)}.hstrip .ic{width:16px;height:16px;color:var(--ink)}.hstrip .ic.s{width:12px;height:12px;color:inherit}
+.hstrip>*:not(svg){grid-column:2}.hstrip>svg{grid-row:1}
+h2{margin:24px 0 12px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.arch{display:block;width:100%;padding:8px;border-radius:9px;background:var(--fill);text-align:left}
+.arch svg{display:block;width:100%;height:112px}
+.am{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-size:12px;color:var(--ink-3)}
+.lnk{display:block;margin-top:6px;padding:0;color:var(--accent-ink);font-size:12px}
+.prose{margin-top:8px;color:var(--ink-2);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.quiet{margin-top:8px;font-size:12px;color:var(--ink-3)}
+.th rect{fill:var(--fill-2)}.th rect.t{fill:var(--accent-soft);stroke:var(--accent);stroke-width:6}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-view-map" viewBox="0 0 16 16"><path d="M2.25 3.25h4v3h-4zM9.75 3.25h4v3h-4zM6 9.75h4v3H6z"/><path d="M4.25 6.25v1.5h7.5v-1.5M8 7.75v2"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 16 16"><path d="M8 2.25 13.75 5 8 7.75 2.25 5z"/><path d="M2.25 8 8 10.75 13.75 8M2.25 11 8 13.75 13.75 11"/></symbol>
+</defs></svg>
+<div class="row" id="row"></div>
+<h2>Overview status states (interfaces §8 R3): Map header strip and Brief card at 280 px</h2>
+<div class="row" id="status"></div>
+<script>
+const COUNTS = [5, 2, 3, 7, 1, 3];
+const W = 220, H = 48, PITCH = 68, GAP = 40;
+function thumb(touched) {
+  let x = 48, rects = "";
+  COUNTS.forEach((n, col) => {
+    if (col > 0) x += col === 5 ? 64 : GAP;
+    for (let row = 0; row < n; row += 1) rects += `<rect x="${x}" y="${80 + row * PITCH}" width="${W}" height="${H}" rx="12"${touched.has(`${col}:${row}`) ? ' class="t"' : ""}/>`;
+    x += W;
+  });
+  return `<svg class="th" viewBox="0 0 ${x + 48} ${80 + 7 * PITCH + 48}" preserveAspectRatio="xMidYMid meet">${rects}</svg>`;
+}
+const PROSE = "jevcode is an Electron app that supervises a coding agent and explains its work. The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core. Every event lands in the SQLite store, and the trace viewer reads it back as rows.";
+const card = (cls, title, touched, counts, note) => `<div><h1>${title}</h1><div class="panel ${cls}">
+  <div class="sh"><svg class="ic"><use href="#i-view-map"/></svg>Architecture</div>
+  <div class="arch">${thumb(touched)}</div>
+  <p class="am">${counts}</p>
+  ${note}
+  <button class="lnk">Open the map</button></div></div>`;
+const touched = new Set(["0:2", "1:0", "3:3", "3:4"]);
+const states = [
+  ["Narrator text, 4 touched", touched, "21 components · 4 touched", `<p class="prose">${PROSE}</p>`],
+  ["Narrator pending or off", touched, "21 components · 4 touched", `<p class="quiet">Descriptions pending</p>`],
+  ["Fresh session", new Set(), "21 components", `<p class="prose">${PROSE}</p>`],
+];
+document.getElementById("row").innerHTML = ["w280", "w248"].flatMap((cls) => states.map(([t, s, tt, n]) => card(cls, `${t} · ${cls.slice(1)} px`, s, tt, n))).join("");
+const map = '<svg class="ic"><use href="#i-view-map"/></svg>';
+const note = (t) => `<span>${t}</span>`;
+const scan = `<div class="empty"><svg class="ic" style="flex:none;margin-top:1px"><use href="#i-view-map"/></svg><span><b>Mapping codebase · 3,200 / 9,800 files</b><span class="pbar"><i style="width:33%"></i></span></span></div>`;
+const fail = `<div class="empty"><svg class="ic" style="flex:none;margin-top:1px"><use href="#i-view-map"/></svg><span><b>Codebase map unavailable</b><button class="retry">Retry</button></span></div>`;
+const ready = (n) => `<div class="arch">${thumb(touched)}</div><p class="am"><span>21 components</span><span>4 touched</span></p>${n}<button class="lnk">Open the map</button>`;
+const SF = [
+  ["Scanning", `${map}<span class="hl">Mapping codebase · 3,200 / 9,800 files</span>${note("Components appear as files are read")}`, scan],
+  ["Scan failed", `${map}<span class="hl">Codebase map unavailable</span><button class="retry">Retry</button>`, fail],
+  ["Descriptions off", `${map}<span class="hl">21 components · TypeScript, JSON</span>${note("Descriptions off")}`, ready('<p class="quiet">Descriptions off</p>')],
+  ["Descriptions unavailable", `${map}<span class="hl">21 components · TypeScript, JSON</span>${note("Descriptions unavailable")}`, ready('<p class="quiet">Descriptions unavailable</p>')],
+  ["Descriptions pending", `${map}<span class="hl">21 components · TypeScript, JSON</span>${note("Descriptions pending")}`, ready('<p class="quiet">Descriptions pending</p>')],
+];
+document.getElementById("status").innerHTML = SF.map(([t, strip, body]) => `<div><h1>${t}</h1><div class="hstrip" style="margin-bottom:12px">${strip}</div><div class="panel w280"><div class="sh"><svg class="ic"><use href="#i-view-map"/></svg>Architecture</div>${body}</div></div>`).join("");
+</script>
+</body>
+</html>
