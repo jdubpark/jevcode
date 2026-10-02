@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phase A · Console and Brief states</title>
+<style>
+:root{--canvas:#F4F5F7;--panel:#FFFFFF;--ink:#16181D;--ink-2:#5B616E;--ink-3:#676D78;--ink-4:#9AA0AB;--hair:rgb(16 24 40 / .07);--fill:rgb(16 24 40 / .04);--fill-2:rgb(16 24 40 / .07);--accent:#2F6BFF;--accent-soft:rgb(47 107 255 / .10);--accent-ink:#1F5EF0;--bad:#E5484D;--bad-soft:rgb(229 72 77 / .09);--bad-ink:#CE2C31;--good:#2E9E6A;--shadow:0 1px 2px rgb(16 24 40 / .06),0 4px 12px rgb(16 24 40 / .05);--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--panel);color:var(--ink);font:400 13px/18px var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+svg.i{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+svg.i16{width:16px;height:16px}
+.mono{font-family:var(--mono);font-size:12px;line-height:18px}
+.el{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app{display:grid;grid-template-rows:44px minmax(0,1fr) 24px;height:100vh;min-width:1000px}
+/* header */
+.hdr{display:flex;align-items:center;gap:12px;padding:0 16px;box-shadow:inset 0 -1px 0 var(--hair)}
+.logo{font-weight:600;letter-spacing:-.01em}
+.crumb{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.crumb .repo{color:var(--ink-3)}
+.crumb .task{font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;background:var(--fill);color:var(--ink-2);font-size:12px;white-space:nowrap}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;color:var(--ink-2);font-size:12px}
+/* body */
+.body{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0}
+.side{display:flex;flex-direction:column;gap:18px;padding:12px 10px;box-shadow:inset -1px 0 0 var(--hair);min-height:0;overflow:hidden}
+.side h3{padding:0 8px 4px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.side .item{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:7px;color:var(--ink-2)}
+.side .item.on{background:var(--accent-soft);color:var(--accent-ink)}
+.side .item .meta{margin-left:auto;font-size:12px;color:var(--ink-3)}
+/* workspace */
+.work{display:grid;grid-template-rows:36px minmax(0,1fr) auto;min-width:0;min-height:0}
+.vbar{display:flex;align-items:center;gap:10px;padding:0 12px;box-shadow:inset 0 -1px 0 var(--hair)}
+.seg{display:inline-flex;gap:2px;padding:2px;border-radius:7px;background:var(--fill)}
+.seg span{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:5px;color:var(--ink-2);font-size:12px;white-space:nowrap}
+.seg .on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.seg kbd{font:inherit;font-size:11px;color:var(--ink-4)}
+.grow{flex:1}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+/* console */
+.console{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.cbar{display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;color:var(--ink-3);font-size:12px}
+.search{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:6px;background:var(--fill);width:180px}
+.log{flex:1;min-height:0;overflow:hidden;padding:4px 0 24px;background:linear-gradient(var(--hair),var(--hair)) 25px 0/1px 100% no-repeat}
+.row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;column-gap:10px;padding:3px 16px 3px 15px;color:var(--ink-2)}
+.row.sel{background:var(--accent-soft)}
+.g{display:grid;place-items:center;height:18px;background:var(--panel);color:var(--ink-3);font-family:var(--mono);font-size:12px}
+.row.sel .g{background:transparent}
+.prompt{color:var(--ink);font-weight:500}
+.tag{margin-left:8px;font-size:12px;font-weight:400;color:var(--ink-3)}
+.prose{white-space:normal}
+.dim{color:var(--ink-3)}
+.line{display:flex;align-items:center;gap:8px;min-width:0}
+.meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.out{grid-column:2/4;margin-top:2px;padding:2px 0 2px 10px;box-shadow:inset 1px 0 0 var(--hair);color:var(--ink-3);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.badink{color:var(--bad-ink)}
+.db{display:inline-flex;gap:2px;height:6px}
+.db i{display:block;height:6px;border-radius:1.5px}
+.db .a{background:var(--ink-2)}
+.db .r{box-shadow:inset 0 0 0 1.25px var(--ink-3)}
+.dots{display:inline-flex;gap:3px;align-items:center}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--good)}
+.dots i.f{width:7px;height:7px;background:var(--bad)}
+.du{display:inline-flex;align-items:center;gap:0}
+.du i{display:block;height:6px;border-radius:3px;background:var(--ink-3)}
+.du i.run{background:none;box-shadow:inset 0 0 0 1.25px var(--ink-4);border-radius:0 3px 3px 0}
+.rule{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;color:var(--ink-3)}
+.rule:before,.rule:after{content:"";flex:1;height:1px;background:var(--hair)}
+.decide{grid-column:1/4;margin:6px 0;padding:10px 12px;border-radius:9px;background:var(--accent-soft);color:var(--ink)}
+.decide .q{display:flex;align-items:center;gap:8px;font-weight:500}
+.decide .why{margin:2px 0 0 22px;font-size:12px;color:var(--ink-2)}
+.opts{display:flex;gap:6px;margin:8px 0 0 22px}
+.opt{height:26px;padding:0 10px;border:0;border-radius:6px;background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font:inherit;font-size:12px}
+.opt.focus{outline:2px solid var(--accent);outline-offset:1px}
+.flag{font-size:12px;color:var(--ink-2)}
+/* brief */
+.brief{display:flex;flex-direction:column;gap:18px;padding:14px 16px;box-shadow:inset 1px 0 0 var(--hair);min-height:0;overflow:hidden}
+.bh{display:flex;align-items:center;gap:8px;font-weight:600}
+.bh .sub{margin-left:auto;font-size:12px;font-weight:400;color:var(--ink-3)}
+.sec h4{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.now{display:flex;flex-direction:column;gap:8px}
+.nowrow{display:flex;align-items:center;gap:8px;min-width:0}
+.nowrow .t{flex:1}
+.card{padding:10px 12px;border-radius:9px;background:var(--accent-soft)}
+.card .q{display:flex;gap:8px;font-weight:500}
+.card .s{margin:4px 0 0 22px;font-size:12px;color:var(--accent-ink)}
+.chg{display:flex;flex-direction:column}
+.chg .c{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto 14px;align-items:center;column-gap:8px;height:30px;padding:0 6px;margin:0 -6px;border-radius:6px;color:var(--ink-2)}
+.chg .c .t{color:var(--ink)}
+.empty{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:9px;background:var(--fill);color:var(--ink-3);font-size:12px;line-height:16px}
+.empty b{display:block;font-weight:500;color:var(--ink-2)}
+/* prompt dock */
+.dock{display:flex;flex-direction:column;gap:6px;padding:8px 16px 12px;box-shadow:inset 0 1px 0 var(--hair)}
+.queued{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)}
+.queued .x{margin-left:auto}
+.input{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;min-height:44px;padding:10px 12px;border-radius:10px;background:var(--panel);box-shadow:var(--shadow)}
+.input .caret{font-family:var(--mono);color:var(--accent)}
+.input .ph{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.dockbar{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--ink-3)}
+.dockbar .mode{display:inline-flex;align-items:center;gap:4px;color:var(--ink-2)}
+.send{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;background:var(--accent-ink);color:#fff}
+.status{display:flex;align-items:center;gap:12px;padding:0 16px;font-size:12px;color:var(--ink-3);box-shadow:inset 0 1px 0 var(--hair)}
+@media (max-width:1179px){.body{grid-template-columns:200px minmax(0,1fr)}.split{grid-template-columns:minmax(0,1fr) 264px}.seg span b{display:none}.search{width:120px}}
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;padding:24px;background:var(--canvas);min-height:100vh}
+.panel{display:flex;flex-direction:column;border-radius:12px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden;min-width:0}
+.panel>h2{padding:12px 16px 4px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.panel .console{height:560px}
+.panel .brief{box-shadow:none;height:560px}
+.pill{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:14px;background:var(--panel);box-shadow:var(--shadow);font-size:12px;color:var(--ink)}
+.bar{display:block;height:4px;border-radius:2px;background:var(--fill-2);overflow:hidden;margin-top:8px}
+.bar i{display:block;height:4px;width:33%;background:var(--ink-3)}
+@media (max-width:1179px){.states{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-console" viewBox="0 0 16 16"><path d="M3.25 4.25 6.75 8l-3.5 3.75"/><path d="M8.5 11.75h4.25"/></symbol>
+<symbol id="i-canvas" viewBox="0 0 16 16"><path d="M2.75 3.25h4.5v4h-4.5zM8.75 8.75h4.5v4h-4.5z"/><path d="M7.25 5.25h1.5a1.25 1.25 0 0 1 1.25 1.25v2.25"/></symbol>
+<symbol id="i-hybrid" viewBox="0 0 16 16"><path d="M2.25 3.25h11.5M2.25 6h11.5"/><path d="M2.25 9.5h3M7.25 9.5h6.5M2.25 12.5h3M7.25 12.5h6.5"/></symbol>
+<symbol id="i-map" viewBox="0 0 16 16"><path d="M2.25 3.25h4v3h-4zM9.75 3.25h4v3h-4zM6 9.75h4v3H6z"/><path d="M4.25 6.25v1.5h7.5v-1.5M8 7.75v2"/></symbol>
+<symbol id="i-surfaces" viewBox="0 0 16 16"><path d="M3.75 2.75h8.5a1 1 0 0 1 1 1v8.5a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z"/><path d="M2.75 6h10.5M6.5 6v7.25"/></symbol>
+<symbol id="i-brief" viewBox="0 0 16 16"><path d="M4 2.25h8a1 1 0 0 1 1 1v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1z"/><path d="M5.5 5.25h5M5.5 8h5M5.5 10.75h3"/></symbol>
+<symbol id="i-live" viewBox="0 0 16 16"><path d="M6.75 8a1.25 1.25 0 1 0 2.5 0a1.25 1.25 0 1 0-2.5 0"/><path d="M4.75 4.75a4.6 4.6 0 0 0 0 6.5M11.25 4.75a4.6 4.6 0 0 1 0 6.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 16 16"><path d="M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0"/><path d="M8 4.75V8l2.25 1.5"/></symbol>
+<symbol id="i-search" viewBox="0 0 16 16"><path d="M2.75 7a4.25 4.25 0 1 0 8.5 0a4.25 4.25 0 1 0-8.5 0"/><path d="M10.25 10.25l3.5 3.5"/></symbol>
+<symbol id="i-term" viewBox="0 0 16 16"><path d="M4 2.75h8a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2z"/><path d="M5 6.25 7 8l-2 1.75M8.75 10h2.5"/></symbol>
+<symbol id="i-edit" viewBox="0 0 16 16"><path d="M7.75 13.25H4.5A1.5 1.5 0 0 1 3 11.75v-8a1.5 1.5 0 0 1 1.5-1.5h4l3 3v1.5"/><path d="M12.4 8.1l1.5 1.5-4.4 4.4H8v-1.5z"/></symbol>
+<symbol id="i-test" viewBox="0 0 16 16"><path d="M5.75 2.25h4.5M6.75 2.25v4.1L3.3 12.1a1.1 1.1 0 0 0 .95 1.65h7.5a1.1 1.1 0 0 0 .95-1.65L9.25 6.35v-4.1M4.9 9.75h6.2"/></symbol>
+<symbol id="i-fork" viewBox="0 0 16 16"><path d="M3 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M10 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M6.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M4.5 5v.75A2.25 2.25 0 0 0 6.75 8h2.5a2.25 2.25 0 0 0 2.25-2.25V5M8 8v3"/></symbol>
+<symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.5 14V2.5M3.5 3h8.5l-2 3 2 3H3.5"/></symbol>
+<symbol id="i-route" viewBox="0 0 16 16"><path d="M2 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M11 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0"/><path d="M3.5 11V7a2 2 0 0 1 2-2h4a1.5 1.5 0 0 0 1.5-1.5"/></symbol>
+<symbol id="i-list" viewBox="0 0 16 16"><path d="M6.5 4.25h7M6.5 8h7M6.5 11.75h7"/></symbol>
+<symbol id="i-pkg" viewBox="0 0 16 16"><path d="M8 1.75l5.5 3v6.5L8 14.25l-5.5-3v-6.5z"/><path d="M2.5 4.75 8 7.75l5.5-3M8 7.75v6.5"/></symbol>
+<symbol id="i-check" viewBox="0 0 16 16"><path d="M3.5 8.25l3 3 6-6.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 16 16"><path d="M4.75 6.5 8 9.75l3.25-3.25"/></symbol>
+<symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M6.5 4.75 9.75 8 6.5 11.25"/></symbol>
+</svg>
+<div class="states">
+  <section class="panel"><h2>Console · scrolled back while Live (Review Focus 3)</h2>
+    <div class="console">
+      <div class="cbar"><span class="grow">Review · 215 steps</span><span class="search"><svg class="i"><use href="#i-search"/></svg>Search</span></div>
+      <div class="log">
+        <div class="row"><span class="g">·</span><span class="prose">Reading the session store before touching the callback.</span><span></span></div>
+        <div class="row"><span class="g">◦</span><span class="dim">read 2 files</span><span class="meta"><svg class="i"><use href="#i-chev"/></svg></span></div>
+        <div class="row"><span class="g"></span><span class="mono dim">src/auth/session.ts</span><span></span></div>
+        <div class="row"><span class="g"></span><span class="mono dim">src/auth/callback.ts</span><span></span></div>
+        <div class="row sel"><span class="g">$</span><span class="mono">rg -n "linkAccount" src</span><span class="meta">exit 0 · 0.2 s</span>
+          <span class="out mono">src/auth/identity.ts:42:export async function linkAccount(user, profile) {
+src/auth/google.ts:88:  await linkAccount(existing, profile);</span></div>
+        <div class="row"><span class="g">✎</span><span class="line"><span class="mono el">src/auth/callback.ts</span></span><span class="meta"><span class="db"><i class="a" style="width:20px"></i><i class="r" style="width:8px"></i></span>+6 −2</span></div>
+        <div class="row"><span class="g">·</span><span class="dim">thinking</span><span class="meta"><svg class="i"><use href="#i-chev-r"/></svg></span></div>
+      </div>
+      <span class="pill">↓ 3 new</span>
+    </div>
+  </section>
+  <section class="panel"><h2>Brief · finished session</h2>
+    <aside class="brief">
+      <div class="bh"><svg class="i i16"><use href="#i-brief"/></svg>Brief<span class="sub">Completed · 6 m 40 s</span></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-check"/></svg>Now</h4>
+        <div class="now"><div class="nowrow"><svg class="i"><use href="#i-check"/></svg><span class="t">Completed</span><span class="meta">6 m 40 s</span></div>
+          <div class="nowrow"><svg class="i"><use href="#i-list"/></svg><span class="t el">Identity linking</span><span class="db"><i class="a" style="width:44px"></i><i class="r" style="width:30px"></i></span></div></div></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-list"/></svg>Changes so far · 3</h4>
+        <div class="chg">
+          <div class="c"><svg class="i"><use href="#i-list"/></svg><span class="t el">Identity linking</span><span class="db"><i class="a" style="width:44px"></i><i class="r" style="width:30px"></i></span><span class="dots"><i></i><i></i><i></i><i></i></span><span></span></div>
+          <div class="c"><svg class="i"><use href="#i-list"/></svg><span class="t el">Google provider</span><span class="db"><i class="a" style="width:48px"></i></span><span></span><span></span></div>
+          <div class="c"><svg class="i"><use href="#i-pkg"/></svg><span class="t el">Dependencies</span><span class="db"><i class="a" style="width:8px"></i></span><span></span><span></span></div>
+        </div></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-route"/></svg>Architecture</h4>
+        <div class="empty"><svg class="i"><use href="#i-map"/></svg><span><b>Codebase map</b>Appears here once this repository is scanned.</span></div></div>
+    </aside>
+  </section>
+  <section class="panel"><h2>Brief · before the first event</h2>
+    <aside class="brief">
+      <div class="bh"><svg class="i i16"><use href="#i-brief"/></svg>Brief<span class="sub">Starting</span></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-live"/></svg>Now</h4>
+        <div class="now"><div class="nowrow dim"><svg class="i"><use href="#i-clock"/></svg><span class="t">Waiting for the agent's first event</span></div></div></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-list"/></svg>Changes so far</h4>
+        <p class="dim">No changes yet</p></div>
+      <div class="sec"><h4><svg class="i"><use href="#i-route"/></svg>Architecture</h4>
+        <div class="empty"><svg class="i"><use href="#i-map"/></svg><span><b>Mapping codebase · 3,200 / 9,800 files</b><span class="bar"><i></i></span></span></div></div>
+    </aside>
+  </section>
+</div>
+</body>
+</html>
