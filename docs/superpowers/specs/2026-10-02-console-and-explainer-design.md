@@ -28,7 +28,7 @@ Three phases ship independently:
 | E7 | The person's interactive shell (`TerminalPanel`, `sh -i`) stays a separate pane. The pipeline stops writing agent one-liners into that PTY stream. | The Console is now the agent log. Mixing agent lines into the user's shell was confusing. |
 | E8 | Components come from the repo's structure: workspace packages and `apps/*` first, otherwise top-level source directories; a component over 150 files is split one level deeper. Edges are imports collapsed to component pairs. Roles come from a closed list. | Approved in chat (section 1). The result is deterministic, explainable and stable across sessions. |
 | E9 | The explainer stage runs in the desktop main process and stores `overview_snapshot` and `explainer` rows. The viewer never calls a model. | Approved (approach A). The viewer spec forbids network or model calls from the viewer (§1). |
-| E10 | The narrator uses Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) through Jev's typed client, with a fixed output schema, required citations, length caps, plain text only, and a rule-based fallback. Its inputs are names, paths, exported symbols, component edges, manifest descriptions and redacted first README paragraphs, never whole files. | Approved (section 2). Cheap and fast. Grounded output limits the impact of prompt injection. |
+| E10 | The narrator uses Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) through a narrator client in `jev-router` that calls the Anthropic SDK directly (Jev's TypeSafe transport cannot return free text), with a fixed output schema, required citations, length caps, plain text only, and a rule-based fallback. Its inputs are names, paths, exported symbols, component edges, manifest descriptions and redacted first README paragraphs, never whole files. | Approved (section 2). Cheap and fast. Grounded output limits the impact of prompt injection. |
 | E11 | Narrator text is cached per repo by (component id, content hash), so unchanged components are never re-described. | Approved (section 2). Reopening a repo costs no model calls. |
 | E12 | The Map is laid out by a pure, sticky layered layout. Roles become bands: UI, API/IPC, agent/integration, domain, storage. Tests, tooling and config sit at the side. Order within a band minimizes edge crossings and stays sticky across updates. | Readable as an architecture diagram, and stable while live (no jumping). It follows the Canvas layout's purity and stickiness rules (viewer spec §7.5). |
 | E13 | The Map is rendered with the viewer's own camera controller, DOM cards and SVG edges, not React Flow. | The trace window bars `@xyflow` (R17), and the viewer has one rendering approach. |
@@ -52,7 +52,7 @@ The header, left sidebar (recent repos, sessions, agent settings) and status bar
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-- **View switcher.** A segmented control with five views; number keys switch views when focus is not in a text field (§3.7; existing viewer keys `1` Canvas and `2` Hybrid keep their meaning). Every view keeps the same selection, playhead and brush (viewer spec §7.8). The last view used is remembered per window.
+- **View switcher.** A segmented control with five views; number keys switch views when focus is not in a text field (§3.7; existing viewer keys `1` Canvas and `2` Hybrid keep their meaning). Every view keeps the same selection, playhead and brush (viewer spec §7.8). A window opens on the Console, and so does every session switch; the view is not remembered per window. (Ruled during planning: switching sessions is a fresh start on the live log.)
 - **Prompt line.** The existing composer, docked under every view in a CLI style: a `›` prompt glyph, monospace input, Enter for a new line, Cmd+Enter to send. Steer and Queue modes, Continue on a finished session, and trace-note prefill keep their current behavior (`WorkspaceHost` reducer, D-5).
 - **Before the first prompt.** The onboarding prompt (`TaskPrompt`) stays as the empty state of the Console.
 
@@ -155,7 +155,7 @@ Phase A, B and C UI tasks begin with HTML mockups (E16).
 | Cmd+Enter | Send the prompt |
 | Cmd+L | Focus the prompt line |
 
-Existing viewer keys keep their meaning. Keys never fire while typing in an input, textarea or contenteditable element (viewer spec §7.9).
+Existing viewer keys keep their meaning, except the viewer's old `0` (zoom to preset), which moves to Shift+0. Keys never fire while typing in an input, textarea or contenteditable element (viewer spec §7.9).
 
 ## 4. Architecture
 
@@ -196,7 +196,7 @@ events store → TraceReader → trace:rows (pull) ──→ data controller (vi
 ### 5.1 Scan
 
 - **Triggers:** a repo open, or the first session start in a repo without fresh overview state.
-- **Input files:** files git tracks (`git ls-files`), so `.gitignore` is respected. Skipped: `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `vendor`, binary and LFS files, and files over 1 MiB. Hard cap 20,000 files; past the cap, the map is flagged partial with the counts.
+- **Input files:** files git tracks plus untracked files that are not ignored (`git ls-files --cached --others --exclude-standard`), so `.gitignore` is respected and new files the agent just wrote appear. Skipped: `node_modules`, `dist`, `build`, `out`, `.next`, `coverage`, `vendor`, binary and LFS files, and files over 1 MiB. Hard cap 20,000 files; past the cap, the map is flagged partial with the counts.
 - **Imports:** extracted in the evidence-engine parse worker. Import specifiers are resolved to repo files using relative paths, `tsconfig` `paths`/`baseUrl` and workspace package names. Unresolved bare specifiers become external dependencies under their package name, with deep imports collapsed.
 - **Incremental updates:** after the first scan, the file watcher's changes re-parse only the changed files. A component's content hash changes only when its member files change.
 
@@ -206,7 +206,7 @@ Cut rules (E8):
 
 1. Workspace packages from `pnpm-workspace.yaml`, `package.json` `workspaces` or yarn workspaces, plus `apps/*`.
 2. Otherwise, top-level directories under `src/`, `lib/` or `packages/`. A flat `src/` is one component.
-3. A component with more than 150 files splits by its next directory level. Files directly in the root stay in a `<name>/root` part.
+3. A component with more than 150 files splits by its next directory level, and the split repeats in any part still over 150 files. Files directly in a split directory stay in a `<name>/root` part.
 4. Test files (`*.test.*`, `*.spec.*`, `__tests__/`, `test/`) join the component they test (the nearest component by path). Repo-root config and tooling files (`*.config.*`, `scripts/`, `.github/`) form `config` and `tooling` components.
 
 **Ids.**
@@ -244,12 +244,18 @@ Cut rules (E8):
 
 ```
 {
-  repoRoot, scanId, partial, counts: {files, components, edges, languages},
+  repoRoot, scanId, partial, counts: {files, totalFiles?, components, edges, languages},
   components[], edges[], externals[],
   narrative: {sentences[], provenance} | null,
+  status?: {
+    scan: {state: "running" | "done" | "failed", scanned, total, error?},
+    narrator: "off" | "unavailable" | "pending" | "ready"
+  },
   generatedAt
 }
 ```
+
+`totalFiles` is the repo's file count before the 20,000 cap, so a partial map can say "20,000 of 25,200 files". `status` carries what the Brief and Map show while work is in flight: scan progress ("Mapping codebase · 3,200 / 9,800 files"), a failed scan (with Retry), and the narrator state. Narrator `off` means the setting is off; `unavailable` means no API key or a failure backoff; `pending` means descriptions are being written; `ready` means narration for this snapshot finished. A scan longer than 2 s writes progress snapshots at most once per 2 s, carrying the previous components. A snapshot without `status` reads as scan done, narrator `pending` if any purpose is null, else `ready`.
 
 Caps: 200 components (beyond that the smallest are grouped into "other"), 1,000 edges, 120 externals, and 512 KB serialized. One snapshot row is written per session at session start and again whenever the snapshot changes, debounced to at most one per 2 s. The viewer keeps only the latest snapshot.
 
@@ -285,7 +291,7 @@ Whole files are never sent.
 - **Citations:** every sentence must cite something that resolves: a component id, file path, decision id, fact id or step id. A sentence with no citation, or with a citation that doesn't resolve, is dropped. If more than half of a batch's sentences are dropped, the whole batch is discarded.
 - **Roles and names:** `role` must be in `Role`. A purpose must not name a component other than the one it describes, checked by matching it against the component name set.
 - **Plain text:** no URLs, Markdown, HTML or code fences (rejected). Purpose text is capped at 140 characters and sentences at 220.
-- **Logging:** each narrator call is logged like a Jev decision, with question, latency, model, accepted or dropped counts, and cost. It is visible in Inspect.
+- **Logging:** each narrator call is recorded with question, latency, model, accepted or dropped counts, and cost, in an in-memory log that Inspect shows in a Narrator tab (`debug:listNarratorCalls`). Calls are not written as `jev_decision` rows, which would appear as steps in the trace.
 
 ### 6.4 Cache
 
@@ -388,7 +394,7 @@ The controller subscribes to `source.onRowsAvailable` when available. A hint for
 
 ## 10. Security and privacy
 
-- **Data sent to the model provider:** with the narrator on, the provider jevcode already uses for Jev receives repo metadata (paths, symbol names, dependency names, redacted README first paragraphs, component edges) and session summaries (headlines, decisions). File contents and diffs are never sent. Turning the setting off stops every narrator call; rule-based data still works.
+- **Data sent to the model provider:** with the narrator on, Anthropic (Claude Haiku 4.5 through `@anthropic-ai/sdk`, keyed by `ANTHROPIC_API_KEY`) receives repo metadata (paths, symbol names, dependency names, redacted README first paragraphs, component edges) and session summaries (headlines, decisions). File contents and diffs are never sent. Turning the setting off, or having no `ANTHROPIC_API_KEY`, stops every narrator call; rule-based data still works. Jev's TypeSafe provider is not used for narration, because it only answers scoring, choice and yes/no questions.
 - **Prompt injection:** repo text can try to steer the narrator. The fixed output schema, citation checks, caps, plain-text rendering and the absence of any action path bound the impact to wrong or missing captions. A dropped batch falls back to rule-based labels.
 - **Untrusted text:** narrator text, component names (from paths) and README text render through `displayUntrusted` in every slot, with the full text in tooltips and accessible names, exactly as agent text is handled.
 - **Allowlist and export:** the trace window allowlist is unchanged. `trace:rowsAvailable` carries no content. Export redaction covers the new rows, and bundles carry the snapshot (paths and names) the way they already carry paths.
@@ -434,7 +440,7 @@ Measured on the reference machine (Apple M3 Max), as in the viewer spec §10.
 | Phase | Contents | Exit |
 |---|---|---|
 | A. Console-first workspace | Mockups (Console, Brief v0, main window); contracts (`trace:rowsAvailable`, `hostViews`, `chrome`); push-hint IPC and controller hook; Console view; Brief v0 (rule-based Now and Changes); embed in the main window with the view switcher, prompt dock and Surfaces view; light restyle; terminal pane separation. | Mockups approved; smoke opens the main window on Console; append latency budget met; all views reachable with selection preserved; suites green. Product review by the person. |
-| B. Codebase overview | Mockups (Map, Brief architecture card); contracts and storage (`overview_snapshot`, snapshot schemas, cache tables, bundle v2); `codebase-map` package; scan in evidence-engine; explainer stage overview builder; narrator `describeComponents` and `overviewNarrative` with guardrails and cache; viewer fold of snapshots; Map layout and view; Brief architecture card; setting to turn off the narrator; fix of ArchitectureDelta edge ids. | Map of this repo matches the expected component table; budgets in §11 met for scan, layout and narrator; reopen costs 0 calls; ingest soak ratio ≤ 1.10; product review. |
+| B. Codebase overview | Mockups (Map, Brief architecture card); contracts and storage (`overview_snapshot`, snapshot schemas, cache tables, bundle v2); `codebase-map` package; scan in evidence-engine; explainer stage overview builder; narrator `describeComponents` and `overviewNarrative` with guardrails and cache; viewer fold of snapshots; Map layout and view; Brief architecture card; setting to turn off the narrator; fix of ArchitectureDelta edge ids (the mismatch is in the desktop `ui-stage.ts`: surface ids `file:<path>` never match the semantic graph's `file_<hash>` ids). | Map of this repo matches the expected component table; budgets in §11 met for scan, layout and narrator; reopen costs 0 calls; ingest soak ratio ≤ 1.10; product review. |
 | C. Session explainer | `explainer` rows; `sessionStory`, `decisionWhy`, highlights; Map overlay; decision cards in Brief and Inspector; Console summary blocks; budgets and smoke. | Story and highlights update during a mock live session within one debounce window; decisions show the "why" with a resolvable citation; product review. |
 
 **Parallel lanes.**
