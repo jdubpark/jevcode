@@ -74,7 +74,7 @@ describe("buildOverview on a pnpm workspace fixture (spec §5, §12)", () => {
     expect(OverviewSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect([built.totalEdges, snapshot.counts.edges]).toEqual([3, 3]);
     expect(snapshot.components.map((c) => [c.rootPath, c.name, c.roleGuess, c.importsAnalyzed])).toEqual([
-      [".", "config", "config", true],
+      [".", "config", "config", false],
       ["apps/web", "@fx/web", "ui", true],
       ["packages/core", "@fx/core", "domain", true],
       ["packages/db", "@fx/db", "storage", true],

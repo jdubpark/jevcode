@@ -24,7 +24,7 @@ export interface ComponentDraft {
   language: string | null;
   contentHash: string;
   entryPoints: string[];
-  /** True when at least one member file has a grammar the import parser reads (TS, JS, JSON). */
+  /** True when at least one member is a TS, TSX or JS file, whose imports the parser reads. */
   importsAnalyzed: boolean;
 }
 

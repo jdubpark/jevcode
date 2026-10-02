@@ -2,8 +2,11 @@
 // snapshot. Paths are repo-relative with "/" separators. Comparisons use UTF-16 code unit
 // order (never localeCompare), so output is identical on every machine.
 
-/** Languages whose imports the evidence-engine parser reads (spec E14). */
-export const IMPORT_LANGUAGES: ReadonlySet<string> = new Set(["TypeScript", "JavaScript", "JSON"]);
+/**
+ * Languages whose import statements the evidence-engine parser reads (spec E14). The parser
+ * also accepts JSON, which has no imports, so a JSON-only component is not analyzed.
+ */
+export const IMPORT_LANGUAGES: ReadonlySet<string> = new Set(["TypeScript", "JavaScript"]);
 
 /** Data and prose languages; a component's main language prefers code over these. */
 const NON_CODE_LANGUAGES: ReadonlySet<string> = new Set(["Markdown", "JSON", "YAML", "TOML"]);
