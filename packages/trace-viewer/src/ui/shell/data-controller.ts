@@ -54,6 +54,13 @@ export const BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000, 10_000];
 /** While catching up, a progressive commit waits at least this many times the previous finalize (see requestCommit). */
 export const COMMIT_COST_FACTOR = 4;
 
+/**
+ * The caught-up commit of a poll that a push hint started waits at least this long after the previous commit (spec
+ * E5: tens of milliseconds), and at least COMMIT_COST_FACTOR times the last finalize, instead of the 250 ms
+ * progressive cap. Main coalesces hints to one per 50 ms per session (spec §7), so this matches their rate.
+ */
+export const HINT_COMMIT_GAP_MS = 50;
+
 export interface DataController {
   start(): void;
   stop(): void;
@@ -142,6 +149,13 @@ export function createDataController(options: DataControllerOptions): DataContro
   let yieldTimer: unknown = null;
   let failures = 0;
   let foldPoisoned = false;
+  let unsubscribeHints: (() => void) | null = null;
+  /** A page loop of the current generation is in flight. */
+  let polling = false;
+  /** Highest lastSeq a hint announced while the summary, a poll or a commit was pending; read when the next poll is scheduled. */
+  let hintedSeq = 0;
+  /** The pending caught-up commit belongs to a hint-started poll and may use HINT_COMMIT_GAP_MS. */
+  let hintCommit = false;
 
   function flush(): void {
     if (visible === latest) return;
@@ -222,9 +236,20 @@ export function createDataController(options: DataControllerOptions): DataContro
     }, delayMs);
   }
 
+  /** 0 when a hint announced rows past the cursor while this poll ran (that poll is hint-started); else the timer. */
+  function nextPollDelay(state: AgentState): number {
+    const hinted = hintedSeq > cursor;
+    hintedSeq = 0;
+    if (hinted) {
+      hintCommit = true;
+      return 0;
+    }
+    return isTerminalState(state) ? TERMINAL_POLL_MS : pollMs;
+  }
+
   function afterCommit(gen: number, caughtUp: boolean): void {
     if (gen !== generation || !caughtUp || lastPage === null) return;
-    schedulePoll(gen, isTerminalState(lastPage.state) ? TERMINAL_POLL_MS : pollMs);
+    schedulePoll(gen, nextPollDelay(lastPage.state));
   }
 
   /**
@@ -241,7 +266,13 @@ export function createDataController(options: DataControllerOptions): DataContro
       scheduler.clearTimeout(commitTimer);
       commitTimer = null;
     }
-    const gapMs = caughtUp ? minCommitGapMs : Math.max(minCommitGapMs, COMMIT_COST_FACTOR * lastCommitCostMs);
+    const fast = caughtUp && hintCommit;
+    if (caughtUp) hintCommit = false;
+    const gapMs = caughtUp
+      ? fast
+        ? Math.max(HINT_COMMIT_GAP_MS, COMMIT_COST_FACTOR * lastCommitCostMs)
+        : minCommitGapMs
+      : Math.max(minCommitGapMs, COMMIT_COST_FACTOR * lastCommitCostMs);
     const wait = lastCommitAt + gapMs - scheduler.now();
     if (wait <= 0) {
       if (commitNow(caughtUp)) afterCommit(gen, caughtUp);
@@ -301,13 +332,15 @@ export function createDataController(options: DataControllerOptions): DataContro
         requestCommit(gen, true);
       } else {
         // Quiet poll: nothing changed, so nothing commits; terminal sessions poll slowly.
-        schedulePoll(gen, isTerminalState(next.state) ? TERMINAL_POLL_MS : pollMs);
+        hintCommit = false;
+        schedulePoll(gen, nextPollDelay(next.state));
       }
       return;
     }
   }
 
   async function poll(gen: number, first?: Promise<TraceRowsPage>): Promise<void> {
+    polling = true;
     try {
       await page(gen, first);
     } catch (error) {
@@ -320,7 +353,26 @@ export function createDataController(options: DataControllerOptions): DataContro
       const retryInMs = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1] ?? 10_000;
       emit({ ...latest, status: { kind: "reconnecting", attempt: failures, retryInMs } });
       schedulePoll(gen, retryInMs);
+    } finally {
+      if (gen === generation) polling = false;
     }
+  }
+
+  /** Spec §8.7: a hint past the cursor polls at once and resets the poll timer; one poll in flight at most. */
+  function onHint(lastSeq: number): void {
+    if (!running || !Number.isFinite(lastSeq) || lastSeq <= cursor) return;
+    // A reconnect keeps its backoff (BACKOFF_MS) and an error waits for Retry: hints never start a retry storm.
+    if (failures > 0 || latest.status.kind === "error") return;
+    if (fold === null || polling || commitTimer !== null) {
+      hintedSeq = Math.max(hintedSeq, lastSeq);
+      return;
+    }
+    if (pollTimer !== null) {
+      scheduler.clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    hintCommit = true;
+    void poll(generation);
   }
 
   async function load(gen: number): Promise<void> {
@@ -351,6 +403,9 @@ export function createDataController(options: DataControllerOptions): DataContro
     commitCaughtUp = false;
     failures = 0;
     foldPoisoned = false;
+    polling = false;
+    hintedSeq = 0;
+    hintCommit = false;
   }
 
   return {
@@ -358,12 +413,16 @@ export function createDataController(options: DataControllerOptions): DataContro
       if (running) return;
       running = true;
       reset();
+      unsubscribeHints?.();
+      unsubscribeHints = source.onRowsAvailable?.(onHint) ?? null;
       void load(generation);
     },
     stop() {
       running = false;
       clearTimers();
       generation += 1;
+      unsubscribeHints?.();
+      unsubscribeHints = null;
     },
     retry() {
       if (!running) return;

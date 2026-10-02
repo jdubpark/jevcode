@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useState } from "react";
 
 import type { AgentState, TraceSessionSummary } from "@jevcode/contracts";
 
@@ -6,15 +6,20 @@ import { agentStateLabel, displayUntrusted, formatDuration, type GapKind, type T
 import { Icon } from "../icons/Icon.js";
 import { useDispatch, useView } from "../state/store.js";
 import { selectNewCount } from "../state/view-state.js";
-import { useActiveViewPort, ViewDefinitionsContext } from "../views/view-port.js";
+import { useActiveViewPort } from "../views/view-port.js";
 import type { DataStatus } from "./data-controller.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { useSessionView } from "./session-context.js";
 import styles from "./TitleBar.module.css";
 import { usePopoverDismissal } from "./use-popover.js";
+import { ViewSwitch } from "./ViewSwitch.js";
 
 export interface TitleBarProps {
   onRetry(): void;
+  /** "embedded": no repo, prompt or duration; the main window header shows them (spec §8.5). Default "full". */
+  chrome?: "full" | "embedded";
+  /** false when the host places the view switcher itself (TraceViewerProps.renderSwitch). Default true. */
+  showSwitch?: boolean;
 }
 
 const GAP_LABEL: Record<GapKind, string> = {
@@ -61,11 +66,10 @@ function statusText(
   }
 }
 
-function TitleBarBody({ onRetry }: TitleBarProps) {
+function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarProps) {
   const { summary, session, index, status, loadedFraction, terminal, nowT } = useSessionView();
-  const views = useContext(ViewDefinitionsContext);
+  const embedded = chrome === "embedded";
   const dispatch = useDispatch();
-  const view = useView((state) => state.view);
   const follow = useView((state) => state.follow);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
   const newCount = useView((state) => selectNewCount(state, index));
@@ -110,38 +114,26 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
     if (running) dispatch({ type: "follow/set", follow: true });
   };
 
-  // WAI-ARIA radio group: the checked view is the one tab stop; arrows (wrapping), Home and End check and focus.
-  const viewRadios = useRef<Array<HTMLButtonElement | null>>([]);
-  const checkedView = Math.max(0, views.findIndex((definition) => definition.kind === view));
-  const onViewKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    const count = views.length;
-    let target: number;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") target = (checkedView + 1) % count;
-    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") target = (checkedView - 1 + count) % count;
-    else if (event.key === "Home") target = 0;
-    else if (event.key === "End") target = count - 1;
-    else return;
-    event.preventDefault();
-    const next = views[target];
-    if (next === undefined) return;
-    if (next.kind !== view) dispatch({ type: "view/switch", view: next.kind });
-    viewRadios.current[target]?.focus();
-  };
-
   return (
-    <div className={styles.bar}>
-      <p className={styles.title} title={displayUntrusted(summary?.prompt ?? "")}>
-        {summary === null ? null : (
-          <>
-            <span className={styles.repo}>{displayUntrusted(summary.repoName)}</span>
-            <span className={styles.sep}> / </span>
-            <span className={styles.prompt}>
-              {summary.prompt.trim() === "" ? WAITING_FOR_PROMPT : displayUntrusted(firstLine(summary.prompt))}
-            </span>
-          </>
-        )}
-      </p>
+    <div className={styles.bar} data-chrome={chrome}>
+      {embedded ? (
+        <>
+          {showSwitch ? <ViewSwitch /> : null}
+          <span className={styles.spacer} />
+        </>
+      ) : (
+        <p className={styles.title} title={displayUntrusted(summary?.prompt ?? "")}>
+          {summary === null ? null : (
+            <>
+              <span className={styles.repo}>{displayUntrusted(summary.repoName)}</span>
+              <span className={styles.sep}> / </span>
+              <span className={styles.prompt}>
+                {summary.prompt.trim() === "" ? WAITING_FOR_PROMPT : displayUntrusted(firstLine(summary.prompt))}
+              </span>
+            </>
+          )}
+        </p>
+      )}
 
       {approximate ? (
         <span className={styles.anchor} ref={approxPopover.anchorRef}>
@@ -199,28 +191,7 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
         </span>
       ) : null}
 
-      {views.length > 1 ? (
-        <div role="radiogroup" aria-label="View" className={styles.segmented} onKeyDown={onViewKeyDown}>
-          {views.map((definition, position) => (
-            <button
-              key={definition.kind}
-              ref={(node) => {
-                viewRadios.current[position] = node;
-              }}
-              type="button"
-              role="radio"
-              aria-checked={definition.kind === view}
-              tabIndex={position === checkedView ? 0 : -1}
-              className={styles.segment}
-              title={`${definition.label} (${position + 1})`}
-              onClick={() => dispatch({ type: "view/switch", view: definition.kind })}
-            >
-              <Icon name={definition.icon} size={14} />
-              <span>{definition.label}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {!embedded && showSwitch ? <ViewSwitch /> : null}
 
       <div role="group" aria-label="Follow" className={styles.segmented}>
         <button
@@ -259,10 +230,10 @@ function TitleBarBody({ onRetry }: TitleBarProps) {
       ) : null}
 
       <span className={styles.meta}>
-        {hasEvents ? <span className={styles.duration}>{formatDuration(durationMs)}</span> : null}
-        {statusLine === "" ? null : (
+        {hasEvents && !embedded ? <span className={styles.duration}>{formatDuration(durationMs)}</span> : null}
+        {statusLine === "" || (embedded && status.kind === "ready" && loadedFraction >= 1) ? null : (
           <>
-            {hasEvents ? <span aria-hidden="true"> · </span> : null}
+            {hasEvents && !embedded ? <span aria-hidden="true"> · </span> : null}
             <span>{statusLine}</span>
           </>
         )}

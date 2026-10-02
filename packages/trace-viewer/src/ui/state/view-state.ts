@@ -5,7 +5,8 @@ import {
 } from "../../layout/trace-index.js";
 import type { ViewerLocation } from "./location.js";
 
-export type ViewKind = "canvas" | "hybrid";
+/** Built-in views (spec §8.5, §8.6); a host view uses its own lower-case kind, e.g. "surfaces". */
+export type ViewKind = "console" | "canvas" | "hybrid" | "map" | (string & { readonly __host?: true });
 export type FocusBy = ViewKind | "shell";
 export type InspectorTab = "summary" | "evidence" | "raw";
 export type Tool = "select" | "hand";
@@ -36,6 +37,8 @@ export interface ViewState {
   /** Finding ids the reader collapsed; later folds never re-expand them. */
   collapsed: ReadonlySet<string>;
   inspectorTab: InspectorTab;
+  /** B pinned the Brief over the selection (spec §3.3, E4); a new or cleared selection unpins it. */
+  brief: boolean;
   tool: Tool;
   search: SearchState | null;
   lastSeenSeq: number;
@@ -73,9 +76,15 @@ export type ViewAction =
   | { type: "search/set"; query: string; matchIds: readonly SelectionId[] }
   | { type: "search/next"; dir: 1 | -1 }
   | { type: "esc" }
+  | { type: "brief/toggle" }
   | { type: "seen"; seq: number };
 
-export interface InitialViewStateInput { live: boolean; location?: ViewerLocation }
+export interface InitialViewStateInput {
+  live: boolean;
+  location?: ViewerLocation;
+  /** The opening view TraceViewer resolved (openingView); wins over location.view. */
+  view?: ViewKind;
+}
 
 /** Spec §7.8: the brush stays `session` when the Chapter-level spine has at most this many rows. */
 export const SPINE_ROWS_BRUSH_LIMIT = 150;
@@ -89,7 +98,7 @@ export function initialViewState(input: InitialViewStateInput): ViewState {
     ? (selected as SelectionId)
     : null;
   return {
-    view: location?.view ?? "hybrid",
+    view: input.view ?? location?.view ?? "hybrid",
     level: location?.level ?? "chapter",
     follow: input.live,
     selection,
@@ -102,6 +111,7 @@ export function initialViewState(input: InitialViewStateInput): ViewState {
     expanded: EMPTY,
     collapsed: EMPTY,
     inspectorTab: "summary",
+    brief: false,
     tool: "select",
     search: null,
     lastSeenSeq: 0,
@@ -235,6 +245,7 @@ function selectId(state: ViewState, id: SelectionId | null, by: FocusBy, origin:
     focusRev: state.focusRev + 1,
     focusBy: by,
     inspectorTab: state.inspectorTab === "raw" && id !== state.selection ? "summary" : state.inspectorTab,
+    brief: false,
     follow,
     unitAnchors: rememberAnchors(state.unitAnchors, [id], index),
   };
@@ -258,6 +269,7 @@ function writeBrush(state: ViewState, brush: Brush, by: FocusBy, index: TraceInd
     brush,
     selection,
     selectionNote: keep ? base.selectionNote : null,
+    brief: keep ? base.brief : false,
     playhead,
     focusRev: base.focusRev + 1,
     focusBy: by,
@@ -533,6 +545,9 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
       if (parent !== null) return selectId(state, parent, "shell", "keys", index);
       return selectId(state, null, "shell", "keys", index);
     }
+    case "brief/toggle":
+      // With nothing selected the Brief already fills the panel.
+      return state.selection === null ? state : { ...state, brief: !state.brief };
     case "seen":
       return action.seq > state.lastSeenSeq ? { ...state, lastSeenSeq: action.seq } : state;
   }
