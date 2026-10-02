@@ -41,6 +41,17 @@ describe("view registry (spec §3.7, §8.5, §8.6)", () => {
     expect(composeViews([])).toBe(VIEWS);
   });
 
+  it("a host view whose kind is not a valid view kind is dropped; a host kind named like an Object.prototype member gets a key", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const invalid: ViewDefinition = { ...surfaces, kind: "Bad Kind" };
+    expect(composeViews([invalid])).toBe(VIEWS);
+    expect(warn).toHaveBeenCalled();
+    const proto: ViewDefinition = { ...surfaces, kind: "constructor" };
+    const views = composeViews([proto]);
+    expect(hostViewsOf(views).map((view) => view.kind)).toEqual(["constructor"]);
+    expect(viewKeyOf("constructor", views)).toBe(4);
+  });
+
   it("opens on the location's view, else initialView, else Console embedded and Hybrid in full chrome", () => {
     const views = composeViews([surfaces]);
     expect(openingView(views, "embedded", undefined, undefined)).toBe("console");
@@ -99,6 +110,30 @@ describe("chrome (spec §8.5)", () => {
     await waitFor(() => expect(lastView(onLocation)).toBe("hybrid"));
     rerender(<Host show={false} />);
     expect(slot.childElementCount).toBe(0);
+  });
+
+  it("an inline renderSwitch that sets parent state and an inline hostViews array render a bounded number of times", async () => {
+    let renders = 0;
+    function Host() {
+      const [switcher, setSwitcher] = useState<ReactNode>(null);
+      renders += 1;
+      return (
+        <>
+          <div data-testid="slot">{switcher}</div>
+          <TraceViewer
+            source={createStaticBundleSource(fixtureBundle("oauth"))}
+            chrome="embedded"
+            hostViews={[surfaces]}
+            renderSwitch={(node) => setSwitcher(node)}
+          />
+        </>
+      );
+    }
+    render(<Host />);
+    const group = await within(screen.getByTestId("slot")).findByRole("radiogroup", { name: "View" });
+    expect(within(group).getAllByRole("radio")).toHaveLength(5);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(renders).toBeLessThanOrEqual(3);
   });
 
   it("host views follow the built-ins, and keys 0 to 4 switch between all five", async () => {
