@@ -57,7 +57,12 @@ export function ArchitectureDelta({ props }: { props: ArchitectureDeltaProps }) 
       data: { label: node.label, kind: node.kind, path: node.path },
       className: `jevcode-arch-node ${nodeKindClass(node.kind)}`,
     }));
-    const edges: Edge[] = props.edges.map((edge, index) => ({
+    // React Flow silently skips an edge whose endpoint is not a node; drop it here so the
+    // count below matches what is drawn.
+    const nodeIds = new Set(positioned.map((node) => node.id));
+    const edges: Edge[] = props.edges
+      .filter((edge) => edge.from !== edge.to && nodeIds.has(edge.from) && nodeIds.has(edge.to))
+      .map((edge, index) => ({
       id: `e-${index}`,
       source: edge.from,
       target: edge.to,

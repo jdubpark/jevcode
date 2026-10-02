@@ -349,6 +349,23 @@ describe("ArchitectureDelta", () => {
     ).toHaveLength(4);
   });
 
+  it("draws and counts only edges whose endpoints are nodes", async () => {
+    const dangling: ArchitectureDeltaProps = {
+      ...props,
+      edges: [...props.edges, { from: "n-client", to: "n-missing" }, { from: "n-app", to: "n-app" }],
+    };
+    const { container } = render(
+      <JSONUIProvider registry={registry} handlers={{}}>
+        <ArchitectureDelta props={dangling} />
+      </JSONUIProvider>,
+    );
+    await waitFor(() => {
+      expect(container.querySelectorAll("svg").length).toBeGreaterThan(0);
+    });
+    expect(screen.getByTestId("arch-graph").getAttribute("data-edge-count")).toBe("4");
+    expect(container.querySelectorAll('[aria-label^="edge "]')).toHaveLength(4);
+  });
+
   it("shows node labels and paths", async () => {
     const { container } = render(
       <JSONUIProvider registry={registry} handlers={{}}>

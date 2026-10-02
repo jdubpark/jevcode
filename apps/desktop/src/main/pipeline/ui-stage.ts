@@ -400,6 +400,40 @@ function buildChangeUnitPayload(
   };
 }
 
+/**
+ * The semantic graph names nodes by hashed ids (`file_…`, `sym_…`, `dep_…`; semantic-core
+ * graph.ts), while this surface names them `file:<path>`, `sym:<symbol id>` and `dep:<name>`.
+ * Maps each graph node to the surface node it stands for, so graph edges survive. A symbol
+ * name shared by two surface symbols is ambiguous and maps to neither.
+ */
+function architectureIdsByGraphId(
+  graphNodes: readonly GraphNode[],
+  nodes: readonly ArchitectureNode[],
+): Map<string, string> {
+  const surfaceIds = new Set(nodes.map((node) => node.id));
+  const symbolIdsByName = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.id.startsWith("sym:")) continue;
+    symbolIdsByName.set(node.label, [...(symbolIdsByName.get(node.label) ?? []), node.id]);
+  }
+  const byGraphId = new Map<string, string>();
+  for (const graphNode of graphNodes) {
+    let id: string | undefined;
+    if (graphNode.type === "File") {
+      const filePath = graphNode.data?.["path"];
+      id = `file:${typeof filePath === "string" ? filePath : graphNode.label}`;
+    } else if (graphNode.type === "Symbol") {
+      const candidates = symbolIdsByName.get(graphNode.label) ?? [];
+      id = candidates.length === 1 ? candidates[0] : undefined;
+    } else if (graphNode.type === "Dependency") {
+      const at = graphNode.label.lastIndexOf("@");
+      id = `dep:${at > 0 ? graphNode.label.slice(0, at) : graphNode.label}`;
+    }
+    if (id !== undefined && surfaceIds.has(id)) byGraphId.set(graphNode.id, id);
+  }
+  return byGraphId;
+}
+
 function buildArchitectureData(
   unit: ChangeUnit,
   ctx: UiStageContext,
@@ -437,12 +471,18 @@ function buildArchitectureData(
       addNode({ id: `dep:${added.name}`, label: added.name, kind: "external" });
     }
   }
-  const nodeIds = new Set(nodes.map((node) => node.id));
+  const idByGraphId = architectureIdsByGraphId(ctx.graphNodes, nodes);
   const edges: ArchitectureEdge[] = [];
+  const seen = new Set<string>();
   for (const edge of ctx.graphEdges) {
-    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) continue;
+    const from = idByGraphId.get(edge.from);
+    const to = idByGraphId.get(edge.to);
+    if (from === undefined || to === undefined || from === to) continue;
+    const key = `${from}\u0000${to}\u0000${edge.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     if (edges.length >= 50) break;
-    edges.push({ from: edge.from, to: edge.to, label: edge.type });
+    edges.push({ from, to, label: edge.type });
   }
   return {
     nodes,
