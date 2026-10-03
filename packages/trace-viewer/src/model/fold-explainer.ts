@@ -12,12 +12,14 @@ export interface ExplainerFoldState {
   /** The finalize's copy of `stories`, kept until a story row adds a refresh (the Console merges on its identity). */
   storiesOut: readonly StoryModel[] | null;
   readonly why: Map<string, NarrativeSentence>;
+  /** The finalize's copy of `why`, kept until a decision_why row changes it (the Brief's decision cards read its identity). */
+  whyOut: ReadonlyMap<string, NarrativeSentence> | null;
   highlights: HighlightsModel | null;
   out: ExplainerModel | null;
 }
 
 export function createExplainerFoldState(): ExplainerFoldState {
-  return { story: null, stories: [], storiesOut: null, why: new Map(), highlights: null, out: null };
+  return { story: null, stories: [], storiesOut: null, why: new Map(), whyOut: null, highlights: null, out: null };
 }
 
 function copySentence(sentence: NarrativeSentence): NarrativeSentence {
@@ -48,6 +50,7 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
     }
     case "decision_why":
       state.why.set(record.decisionId, copySentence(record.sentence));
+      state.whyOut = null;
       break;
     case "highlights": {
       const current = state.highlights;
@@ -72,7 +75,8 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
 export function explainerModelOf(state: ExplainerFoldState): ExplainerModel {
   if (state.out === null) {
     state.storiesOut ??= [...state.stories];
-    state.out = { story: state.story, stories: state.storiesOut, decisionWhy: new Map(state.why), highlights: state.highlights };
+    state.whyOut ??= new Map(state.why);
+    state.out = { story: state.story, stories: state.storiesOut, decisionWhy: state.whyOut, highlights: state.highlights };
   }
   return state.out;
 }

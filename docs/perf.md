@@ -375,6 +375,76 @@ runs only when diagnostics are enabled, that is in the dev host's selftest. The 
 frames since the lane 02b fix wave (triage t1) do no layout read in the frame handler, so the scroll result is an upper
 bound for them as well.
 
+### Brief and component Inspector per commit (2026-10-04, follow-up)
+
+The Brief is mounted whenever nothing is selected, so `buildBrief` runs on every Console commit; `componentDetails`
+runs on every commit while a Map component is selected. Before this change both re-derived from the whole session on
+each commit: every step (decision cards, the open decision, the running step), every chapter sorted and every shown
+chapter's steps walked (changes), every entity sorted, and for the Inspector every current chapter's files and every
+step. Each part is now cached on the session parts it reads, which the incremental finalize keeps as the same objects
+while they are unchanged (spec §6.4): steps, chapters, entities, overview, the narrator's whys and the index's
+findings. When the steps list changes, a pointer comparison of the two lists finds the changed positions; only those
+steps and the shown chapters that list them are read again. `brief.incremental.property.test.ts` checks that every
+result deep-equals a fresh build.
+
+Bench: `pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/brief.bench.ts`. It uses a synthetic live
+session shaped after PL-3's long soak (2,937 units, 68,321 steps). Each unit has 21 steps, and there is a test run every
+4 units, a decision every 25 units (answered, with a why) and highlights every 100 units. The repo has 50 components of
+20 files and 1,000 edited files. There is no story, so Now is the rule-based one. Nothing runs at the base, so the old
+scans walked every step. Each sample is the next commit of a chain of real commits (fold, incremental finalize,
+incremental index), built after its predecessor:
+
+- (a) adds one message step;
+- (b) adds one explainer row (highlights or a decision's why);
+- (c) adds no rows (a new session object with the same parts);
+- (d) adds no rows while a command runs, so the clock changes that step's duration and the steps list.
+
+The Inspector shows the component of the latest decision's unit (10 or 60 decisions, 20 edited files).
+
+Mean ms per commit, 40 samples per cell, two interleaved rounds (round 1 / round 2). Before is f3cfaea's
+`layout/brief*.ts`, `map-details.ts`, `map-layout.ts` and `model/fold-explainer.ts`; after is this change. The machine
+is Mac15,11 (Apple M3 Max, 36 GiB, macOS 27.0.1, Node v22.23.1), shared with other sessions; one-minute load was
+5.12–5.40 (`uptime` before each run, 2026-10-04 03:01).
+
+| Builder, commit | 10,647 steps, 500 chapters: before | after | 63,872 steps, 3,000 chapters: before | after |
+|---|---|---|---|---|
+| `buildBrief`, (a) one step | 0.752 / 0.789 | 0.071 / 0.074 | 5.73 / 6.89 | 0.360 / 0.342 |
+| `buildBrief`, (b) explainer row | 0.644 / 0.644 | 0.0032 / 0.0034 | 5.17 / 4.89 | 0.0045 / 0.0053 |
+| `buildBrief`, (c) no change | 0.632 / 0.615 | 0.0009 / 0.0011 | 4.68 / 5.60 | 0.0026 / 0.0039 |
+| `buildBrief`, (d) clock, command running | 0.565 / 0.550 | 0.070 / 0.073 | 3.73 / 3.69 | 0.224 / 0.263 |
+| `componentDetails`, (a) one step | 0.282 / 0.279 | 0.0049 / 0.0055 | 0.646 / 0.649 | 0.019 / 0.020 |
+| `componentDetails`, (b) explainer row | 0.177 / 0.177 | 0.0006 / 0.0003 | 0.521 / 0.524 | 0.0004 / 0.0005 |
+| `componentDetails`, (c) no change | 0.180 / 0.184 | 0.0002 / 0.0003 | 0.531 / 0.511 | 0.0004 / 0.0005 |
+| `componentDetails`, (d) clock, command running | 0.190 / 0.178 | 0.0035 / 0.0035 | 0.523 / 0.524 | 0.012 / 0.012 |
+| `editedFilesOf`, ungrouped files, (a) to (d) | 0.0022–0.0213 | 0.0001–0.0005 | 0.0023–0.0045 | 0.0002–0.0013 |
+| `editedFilesOf`, all files, (a) to (d) | 0.037–0.077 | 0.0002–0.0007 | 0.037–0.050 | 0.0002–0.0005 |
+
+The `editedFilesOf` rows are ranges over the four cases and both rounds. They come from a later pair of runs at
+03:20, at one-minute load 3.2–3.5. The Brief calls it for the files no unit holds yet beside its changes ("ungrouped";
+here every file has a unit) and for all files before any unit exists. Its before is f3cfaea's function from
+`ui/inspector/Brief.tsx`, copied verbatim into a scratch bench that was not committed. It sorted the entities on every
+commit and read each file's latest step through the index. It now lives in `layout/brief.ts`, is cached per entities
+list, and reads the first seq from the step id (`step:<firstSeq>`). In the same runs, after the review's session-slot
+change, `buildBrief` read 0.27–0.28 ms for (a), 0.23–0.28 ms for (d) and 2.5–4.9 µs for (b) and (c) at 63,872 steps,
+and `componentDetails` read 12–20 µs and under 1 µs.
+
+Earlier runs used chains with stories, so Now was the story and the old running-step and open-decision scans did not
+run. At 63,872 steps, `buildBrief` read 3.0–5.3 ms before. After, it read 0.29–0.44 ms for (a) and 1.5–4.3 µs for (b)
+and (c), at load 4.1–5.5.
+
+What still grows with the session:
+
+- A commit that changes steps, such as (a) or (d), compares the two steps lists by pointer. That costs 10–20 µs at
+  63,872 steps, which is nearly all of the Inspector's (a) and (d). The Brief then checks each shown chapter against
+  the changed ids, about 0.2–0.3 ms at 3,000 chapters. While a step runs, every live commit changes the steps list,
+  because finalize moves the running step's `durationMs` with the clock.
+- A commit that changes the chapter list (a `change_unit` row) re-sorts the shown chapters and rebuilds the decision
+  joins over the current chapters. The changes of chapters that are the same objects are kept.
+- A commit that changes the entities (an edit) re-sorts them twice: once for the Brief's touched components and once
+  for `editedFilesOf`. Each entity's first seq and each path's component are cached, per entity and per overview.
+- The slots hold the lists of one session: the first build for another session id clears them all
+  (`layout/session-slots.ts`).
+
 ## Pipeline write volume (2026-10-03, PL-1)
 
 Every pipeline store write appends an `events` row. Before PL-1 two things made the trace grow quadratically in a
