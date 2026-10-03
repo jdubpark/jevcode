@@ -444,6 +444,15 @@ function nav(state: ViewState, target: "chapter" | "turn" | "finding", dir: 1 | 
   return chosen === undefined ? state : selectId(state, chosen.id, "shell", "keys", index);
 }
 
+/**
+ * Whether B (the title bar's Brief toggle, Shift+B) has something to pin the Brief over: a selection, or on the Map a
+ * selected component (lane 06 fix, minor 3). With neither, the Brief already fills the panel and the toggle is a no-op.
+ * RightPanel.tsx re-exports it next to showsBrief.
+ */
+export function canToggleBrief(state: ViewState): boolean {
+  return state.selection !== null || (state.view === "map" && state.mapSelection !== null);
+}
+
 // ------------------------------------------------------------ reduce
 
 /** Pure. Returns the same object when nothing changes. */
@@ -568,9 +577,7 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
       return selectId(state, null, "shell", "keys", index);
     }
     case "brief/toggle":
-      // With nothing selected the Brief already fills the panel. On the Map a selected component is a selection too, so
-      // B pins the Brief over its Inspector (lane 06 fix, minor 3).
-      return state.selection === null && !(state.view === "map" && state.mapSelection !== null) ? state : { ...state, brief: !state.brief };
+      return canToggleBrief(state) ? { ...state, brief: !state.brief } : state;
     case "map/select":
       // A new or cleared component selection unpins the Brief, as a step selection does.
       return action.componentId === state.mapSelection ? state : { ...state, mapSelection: action.componentId, brief: false };

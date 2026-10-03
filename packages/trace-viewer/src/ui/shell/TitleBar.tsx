@@ -4,7 +4,7 @@ import type { AgentState, TraceSessionSummary } from "@jevcode/contracts";
 
 import { agentStateLabel, displayUntrusted, formatDuration, type GapKind, type TraceSession } from "../../model/index.js";
 import { Icon } from "../icons/Icon.js";
-import { showsBrief } from "../inspector/RightPanel.js";
+import { canToggleBrief, showsBrief } from "../inspector/RightPanel.js";
 import { useDispatch, useView } from "../state/store.js";
 import { selectNewCount } from "../state/view-state.js";
 import { useActiveViewPort } from "../views/view-port.js";
@@ -78,7 +78,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   // Pressed whenever the panel shows the Brief; enabled whenever something holds the panel that the Brief can pin over: a
   // selection, or on the Map a selected component (final review E I-1).
   const briefShown = useView(showsBrief);
-  const canToggleBrief = useView((state) => state.selection !== null || (state.view === "map" && state.mapSelection !== null));
+  const briefToggles = useView(canToggleBrief);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
   const stepCount = useView((state) => selectNewCount(state, index));
   const port = useActiveViewPort();
@@ -328,7 +328,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
         type="button"
         className={styles.toggle}
         aria-pressed={briefShown}
-        disabled={!canToggleBrief}
+        disabled={!briefToggles}
         title="Brief (Shift+B)"
         onClick={() => dispatch({ type: "brief/toggle" })}
       >
