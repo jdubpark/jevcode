@@ -72,8 +72,9 @@ describe("PromptDock (spec §3.1, §3.7)", () => {
   it("the timing toggle queues instead of steering", async () => {
     const bridge = fakeBridge();
     render(<Harness bridge={bridge} state="running" />);
-    fireEvent.click(screen.getByRole("button", { name: "Instruction timing" }));
-    expect(screen.getByRole("button", { name: "Instruction timing" }).textContent).toContain("Queue");
+    // The toggle's accessible name carries the current mode (final review C M-2).
+    fireEvent.click(screen.getByRole("button", { name: "Instruction timing: Steer" }));
+    expect(screen.getByRole("button", { name: "Instruction timing: Queue" }).textContent).toContain("Queue");
     fireEvent.change(input(), { target: { value: "then update the docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
     await waitFor(() => expect(bridge.agent.sendInstruction).toHaveBeenCalledWith("s1", "then update the docs", "queue"));

@@ -106,7 +106,8 @@ export function AgentSettings(props: AgentSettingsProps) {
         type="button"
         className={`side-row${open ? " on" : ""}`}
         aria-expanded={open}
-        aria-controls="agent-settings-body"
+        // Only while the body is rendered: collapsed, it is not in the DOM (final review C M-2).
+        aria-controls={open ? "agent-settings-body" : undefined}
         onClick={() => setOpen((value) => !value)}
       >
         <Glyph name="settings" />
