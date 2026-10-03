@@ -145,10 +145,8 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
                 data-component-change=""
                 title={displayUntrusted(change.path)}
                 aria-label={`${displayUntrusted(change.path)}, ${change.added.toLocaleString("en-US")} lines added, ${change.removed.toLocaleString("en-US")} removed`}
-                onClick={() => {
-                  store.dispatch({ type: "map/select", componentId: null });
-                  store.dispatch({ type: "select", id: change.stepId, by: "shell" });
-                }}
+                // Selecting the step also drops the component selection (the reducer's selectId), so its Inspector shows.
+                onClick={() => store.dispatch({ type: "select", id: change.stepId, by: "shell" })}
               >
                 <span className={styles.rowName}>{truncateMiddle(change.path, 36)}</span>
                 <DiffBar size="xs" added={change.added} removed={change.removed} />
