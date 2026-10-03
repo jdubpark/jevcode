@@ -14,6 +14,8 @@ const PATHS = {
   pause: "M6 4.5v7M10 4.5v7",
   fork: "M3 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M10 3.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M6.5 12.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M4.5 5v.75A2.25 2.25 0 0 0 6.75 8h2.5a2.25 2.25 0 0 0 2.25-2.25V5M8 8v3",
   chev: "M4.75 6.5 8 9.75l3.25-3.25",
+  /** Two slider tracks with knobs: settings, distinct from the list rows above it. */
+  settings: "M2.5 5h4.25M9.75 5h3.75M2.5 11h1.25M6.75 11h6.75M6.75 5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M3.75 11a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0",
 } as const;
 
 export type GlyphName = keyof typeof PATHS;

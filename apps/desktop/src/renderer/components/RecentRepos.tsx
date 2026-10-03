@@ -37,7 +37,7 @@ export function RecentRepos(props: RecentReposProps) {
               <button
                 type="button"
                 className={`side-row${repo.repoId === props.selectedRepoId ? " on" : ""}`}
-                title={repo.path}
+                title={displayUntrusted(repo.path)}
                 aria-current={repo.repoId === props.selectedRepoId ? "true" : undefined}
                 onClick={() => props.onSelect(repo.path)}
               >

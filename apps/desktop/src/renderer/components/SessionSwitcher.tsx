@@ -13,6 +13,9 @@ interface SessionSwitcherProps {
   sessionState: SessionStatePayload | null;
 }
 
+/** Ages have minute resolution; a 30 s refresh keeps them within half a minute of the truth. */
+export const AGE_REFRESH_MS = 30_000;
+
 const STATE_GLYPH: Record<SessionSummary["state"], GlyphName> = {
   starting: "live",
   running: "live",
@@ -25,6 +28,12 @@ const STATE_GLYPH: Record<SessionSummary["state"], GlyphName> = {
 export function SessionSwitcher(props: SessionSwitcherProps) {
   const bridge = getBridge();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), AGE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!props.repo) {
@@ -33,7 +42,10 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
     }
     void bridge.repo
       .listSessions(props.repo.repoId)
-      .then(setSessions)
+      .then((list) => {
+        setSessions(list);
+        setNow(Date.now());
+      })
       .catch((error: unknown) => {
         console.error("failed to list sessions", error);
       });
@@ -41,7 +53,6 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 
   if (!props.repo) return null;
 
-  const now = Date.now();
   return (
     <section className="panel">
       <h2>Sessions</h2>

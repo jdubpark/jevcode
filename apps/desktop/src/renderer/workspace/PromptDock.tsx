@@ -123,7 +123,7 @@ export function PromptDock(props: PromptDockProps) {
           {pending.map((item) => (
             <li key={item.id}>
               <Glyph name="clock" />
-              <span className="dock-queue-text" title={item.text}>
+              <span className="dock-queue-text" title={displayUntrusted(item.text, { multiline: true })}>
                 Queued · {displayUntrusted(item.text)}
               </span>
               <button
