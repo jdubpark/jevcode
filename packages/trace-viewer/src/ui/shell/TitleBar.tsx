@@ -22,6 +22,9 @@ export interface TitleBarProps {
   showSwitch?: boolean;
 }
 
+/** Chapters joined to steps by time window (D11); the compact embedded chip keeps it as name and tooltip. */
+const APPROX_TEXT = "Approximate joins";
+
 const GAP_LABEL: Record<GapKind, string> = {
   invalid_row: "row could not be read",
   unknown_row_type: "unknown row type",
@@ -147,16 +150,26 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           <button
             type="button"
             ref={approxPopover.triggerRef}
-            className={styles.chip}
+            className={embedded ? `${styles.chip} ${styles.chipCompact}` : styles.chip}
             data-tone="neutral"
             aria-expanded={approxOpen}
             aria-haspopup="dialog"
+            // Embedded (the main window, from 880 px): an icon and a short word, the full text as name and tooltip.
+            aria-label={embedded ? APPROX_TEXT : undefined}
+            title={embedded ? APPROX_TEXT : undefined}
             onClick={() => setApproxOpen((open) => !open)}
           >
-            ≈ Approximate joins
+            {embedded ? (
+              <>
+                <Icon name="clock" size={12} />
+                Approx.
+              </>
+            ) : (
+              `≈ ${APPROX_TEXT}`
+            )}
           </button>
           {approxOpen ? (
-            <div role="dialog" aria-label="Approximate joins" className={styles.note}>
+            <div role="dialog" aria-label={APPROX_TEXT} className={styles.note}>
               Some chapters were joined to steps by time window, because this session was recorded before the
               exact step links existed. The window is an edit to one of the unit's files within 5 s of the unit's
               createdAt–updatedAt span, else that file's latest earlier edit. Their step lists can be slightly off.

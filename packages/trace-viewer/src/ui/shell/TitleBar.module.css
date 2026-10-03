@@ -47,7 +47,7 @@ button.chip {
   cursor: pointer;
 }
 
-/* Embedded bar: the gaps chip is its icon and count (TitleBar). */
+/* Embedded bar: the gaps chip is its icon and count, the approximate-joins chip its icon and a short word (TitleBar). */
 .chipCompact {
   display: inline-flex;
   align-items: center;
@@ -248,9 +248,10 @@ button.chip {
 }
 
 /*
- * A narrow embedded bar (the main window from its 880 px minimum, with a gaps chip) shows the Follow segment and the
- * Brief toggle as icons. The words stay in the accessibility tree (the buttons' names) and in their tooltips. 760 px
- * leaves room for the compact gaps chip and an "N new" pill at a 680 px bar (lane 03 D-6, measured in Electron).
+ * A narrow embedded bar (the main window from its 880 px minimum, where the bar is 680 px beside the 200 px sidebar)
+ * shows the Follow segment and the Brief toggle as icons. The words stay in the accessibility tree (the buttons' names)
+ * and in their tooltips. Below 760 px there is room for the compact gaps and approximate-joins chips together (lane 03
+ * D-6, measured in Electron; the dev-host smoke checks a 680 px bar with both chips).
  */
 @container tv-embedded-bar (max-width: 759px) {
   .label {
