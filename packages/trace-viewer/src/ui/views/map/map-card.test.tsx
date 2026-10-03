@@ -76,6 +76,23 @@ describe("MapCard content by level (revised Map mockup)", () => {
     expect(q("[data-map-hub]")?.getAttribute("title")).toBe("Imported by 13 components");
   });
 
+  it("names the detail card's packages in full in its tooltip and accessible name, since the row is ellipsized (lane 06 fix, minor 5)", () => {
+    renderCard("detail", MAIN);
+    expect(q("button")?.getAttribute("aria-label")).toContain("packages electron · node-pty");
+    expect(q("button")?.getAttribute("title")).toBe("desktop main: Electron main process: IPC handlers and the event pipeline.\nPackages: electron · node-pty");
+    cleanup();
+    renderCard("detail", "packages/evil");
+    for (const value of [q("button")?.getAttribute("aria-label"), q("button")?.getAttribute("title")]) {
+      expect(value).toContain("pkg⟨U+202E⟩x");
+      expect(value).not.toContain("\u202E");
+    }
+    cleanup();
+    // Levels that show no packages name none.
+    renderCard("card", MAIN);
+    expect(q("button")?.getAttribute("aria-label")).not.toContain("packages");
+    expect(q("button")?.getAttribute("title")).not.toContain("Packages");
+  });
+
   it("shows the hub glyph on the detail level only, but names the hub in the accessible name at every level", () => {
     renderCard("card", MAIN, { hubImporters: 13 });
     expect(q("[data-map-hub]")).toBeNull();

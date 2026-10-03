@@ -45,17 +45,21 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
   const count = component.fileCount.toLocaleString("en-US");
   const files = `${count} ${component.fileCount === 1 ? "file" : "files"}`;
   const importers = hubImporters === null ? null : hubImporters.toLocaleString("en-US");
+  const packages = level === "detail" ? topPackages(component, 2) : [];
+  // The packages row is cut with an ellipsis, so the shown packages' full names go in the accessible name and the tooltip.
+  const packageNames = packages.length === 0 ? null : packages.map((ext) => displayUntrusted(ext.name)).join(" · ");
   const label = [
     name,
     ROLE_LABEL[component.role],
     purpose ?? root,
     files,
+    packageNames === null ? null : `packages ${packageNames}`,
     importers === null ? null : `imported by ${importers} components`,
     state === null ? null : STATE_WORD[state],
   ]
     .filter((part): part is string => part !== null)
     .join(", ");
-  const packages = level === "detail" ? topPackages(component, 2) : [];
+  const title = `${name}: ${purpose ?? root}${packageNames === null ? "" : `\nPackages: ${packageNames}`}`;
   return (
     <button
       type="button"
@@ -65,7 +69,7 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
       data-selected={selected ? "" : undefined}
       aria-current={selected ? "true" : undefined}
       aria-label={label}
-      title={purpose === null ? `${name}: ${root}` : `${name}: ${purpose}`}
+      title={title}
       tabIndex={tabStop ? 0 : -1}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       onClick={(event) => {
@@ -99,7 +103,7 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
             {packages.length === 0 ? null : (
               <span className={styles.packages} data-map-packages="">
                 <Icon name="pkg" size={12} />
-                <span>{packages.map((ext) => displayUntrusted(ext.name)).join(" · ")}</span>
+                <span>{packageNames}</span>
               </span>
             )}
           </>
