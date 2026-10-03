@@ -182,6 +182,18 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(document.querySelector("[data-brief-architecture]")).not.toBeNull();
   });
 
+  it("a session change in the component Inspector opens its step and keeps focus in the panel (lane 06 fix, minor 2)", async () => {
+    const user = userEvent.setup();
+    const { store } = renderPanel(RULE_ONLY, { view: "map", mapSelection: componentId("packages/db") });
+    const change = document.querySelector<HTMLElement>("[data-component-change]");
+    if (change === null) throw new Error("no session change row");
+    await user.click(change);
+    expect(store.get().selection).not.toBeNull();
+    expect(document.querySelector("[data-component-inspector]")).toBeNull();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.getAttribute("role")).toBe("tabpanel");
+  });
+
   it("on the Map with a card selected, n and an Outline step show that step's Inspector (lane 06 fix I-1)", async () => {
     const layout = stubLayout({ height: 2_000, rowHeight: 28 });
     try {
