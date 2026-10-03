@@ -866,3 +866,27 @@ describe("Console Live without a selection (lane fix I-1, I-2)", () => {
     expect(m.h.store.get().follow).toBe(true);
   });
 });
+
+describe("Console frame cost (lane triage t1)", () => {
+  async function scrollFrameReads(diagnostics: DiagnosticsSink | undefined): Promise<number> {
+    const m = mountConsole(live(messages(60)), { diagnostics, state: { follow: false, loaded: true } });
+    await frames();
+    const scroller = m.scroller();
+    const reads = vi.spyOn(scroller, "getBoundingClientRect");
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: 400 });
+      scroller.scrollTop = 400;
+      fireEvent.scroll(scroller);
+    });
+    await frames();
+    const count = reads.mock.calls.length;
+    cleanup();
+    return count;
+  }
+
+  it("reads no layout in the scroll frame handler unless the selftest's drift diagnostics are on", async () => {
+    expect(await scrollFrameReads(undefined)).toBe(0);
+    const sink: DiagnosticsSink = { enabled: true, reportDrift: () => undefined, reportError: () => undefined, flush: () => undefined };
+    expect(await scrollFrameReads(sink)).toBeGreaterThan(0);
+  });
+});

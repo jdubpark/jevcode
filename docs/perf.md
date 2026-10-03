@@ -350,3 +350,8 @@ machine fell to a 30 Hz compositor under load), so its frame-based and paint-bas
 
 Runs on 2026-10-03, a shared development Mac under multi-lane load, load average 9.5–17.4 (`uptime` before each run:
 9.94, 9.52, 17.39 for the one-minute figure). The numbers are upper bounds for a quiet machine.
+
+The Console's per-frame drift anchor (a `getBoundingClientRect` of the top row and the scroller on every scroll frame)
+runs only when diagnostics are enabled, that is in the dev host's selftest. The runs above measured it; production
+frames since the lane 02b fix wave (triage t1) do no layout read in the frame handler, so the scroll result is an upper
+bound for them as well.
