@@ -1220,6 +1220,37 @@ describe("session explainer: sessions and restarts", () => {
     expect(w.rows("story")).toHaveLength(2);
   });
 
+  it("writes a trailing story that came due while away when the kept sync it comes back to has no new trigger (re-review)", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    w.tests(0);
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    // A second test run within the interval: its story waits for the trailing call.
+    await w.advance(5_000, explainer);
+    w.tests(0);
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+    // Switched away: the trailing call's timer fires while the session is not open.
+    w.sessionId = OTHER;
+    explainer.onSessionSwitched();
+    await w.advance(STORY_MIN_INTERVAL_MS, explainer);
+    // A sync that carries only a message arrives meanwhile and is kept.
+    w.agent({ type: "agent_message", role: "assistant", text: "Still checking the limiter." });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+
+    w.sessionId = SESSION;
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(2);
+    expect(w.rows("story")).toHaveLength(2);
+  });
+
   it("drops a narration that finishes after a session switch", async () => {
     const w = new World();
     const narrator = new ScriptedNarrator(w);
@@ -1339,6 +1370,41 @@ describe("session explainer: sessions and restarts", () => {
     second.onPipelineSync(w.sync([unit, added], [decision]));
     await second.idle();
     expect(again.storyCalls).toHaveLength(1);
+  });
+});
+
+describe("session explainer: re-seed after a restart (re-review minor)", () => {
+  /** A story, then `after` (rows the next sync would have narrated), then a restart that processes that sync. */
+  const restartAfter = async (after: (w: World) => { units: ChangeUnit[]; decisions: Decision[] }): Promise<ScriptedNarrator> => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure here." });
+    const open = w.unit("u1", ["src/server/app.ts"]);
+    w.tests(0);
+    const first = createSessionExplainer(w.deps(narrator));
+    first.onPipelineSync(w.sync([open], []));
+    await first.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+    // These rows land after the story; the app quits before a sync carrying them is narrated.
+    const { units, decisions } = after(w);
+    first.dispose();
+    const again = new ScriptedNarrator(w);
+    const second = createSessionExplainer(w.deps(again));
+    second.onPipelineSync(w.sync(units, decisions));
+    await second.idle();
+    return again;
+  };
+
+  it("narrates a unit closure that came after the latest story", async () => {
+    const again = await restartAfter((w) => ({ units: [w.unit("u1", ["src/server/app.ts"], "validated")], decisions: [] }));
+    expect(again.storyCalls).toHaveLength(1);
+  });
+
+  it("narrates an answer that came after the latest story, and explains it once", async () => {
+    const again = await restartAfter((w) => ({ units: [w.unit("u1", ["src/server/app.ts"])], decisions: [w.decision("d1", "answered", [], "fail_open")] }));
+    expect(again.storyCalls).toHaveLength(1);
+    expect(again.whyCalls.map((call) => call.input.decisionId)).toEqual(["d1"]);
   });
 });
 
