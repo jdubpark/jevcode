@@ -7,6 +7,7 @@ import {
   MAP_LEVEL_SPECS,
   MAP_MARGIN,
   componentForPath,
+  createMapLayoutCache,
   layoutMap,
   mapEdgeWidth,
   mapHubIds,
@@ -329,6 +330,51 @@ describe("layoutMap stickiness (spec §8.3)", () => {
     const layout = layoutMap(model({ components: domain(["d1", "d2", "d3"]) }), { level: "card" }, prev);
     expect(order(layout, "domain")).toEqual(["pkg/d1", "pkg/d2", "pkg/d3"].map(componentId));
     expect(layout.state.repoRoot).toBe("/repo");
+  });
+
+  // Two crossing links. The fresh order uncrosses them by moving a2 above a1 (ui [a2, a1], domain [x, y]); inserting the
+  // cards one by one in name order into an empty order places a1 and a2 first and uncrosses them the other way.
+  const crossing: OverviewSeed = {
+    components: [{ rootPath: "apps/a1", role: "ui" }, { rootPath: "apps/a2", role: "ui" }, ...domain(["x", "y"])],
+    edges: [{ from: "apps/a1", to: "pkg/y", count: 2 }, { from: "apps/a2", to: "pkg/x", count: 2 }],
+  };
+  const progress: OverviewSeed = { components: [], status: { scan: { state: "running", scanned: 10, total: 900 }, narrator: "pending" } };
+
+  it("treats a previous layout with no cards as none: an empty progress row, then the real snapshot, lays out as the real one alone (lane 06 fix I-2)", () => {
+    const real = model(crossing);
+    const fresh = layoutMap(real, { level: "card" });
+    // A previous layout whose cards are all gone inserts every card, which here differs from the fresh order.
+    const inserted = layoutMap(real, { level: "card" }, prevOf("/repo", { domain: ["pkg/gone"] }));
+    expect(inserted.state.orderByBand).not.toEqual(fresh.state.orderByBand);
+    const afterProgress = layoutMap(real, { level: "card" }, layoutMap(model(progress), { level: "card" }).state);
+    expect(afterProgress).toEqual(fresh);
+  });
+
+  describe("createMapLayoutCache (lane 06 fix I-2: one sticky layout per viewer)", () => {
+    it("makes one layout per overview object and chains a repo's layouts", () => {
+      const cache = createMapLayoutCache();
+      const first = model(crossing);
+      const firstLayout = cache.layoutFor(first);
+      expect(firstLayout).toEqual(layoutMap(first, { level: "card" }));
+      expect(cache.layoutFor(first)).toBe(firstLayout);
+      const grown = model({ ...crossing, components: [...crossing.components, ...domain(["a"])] });
+      const grownLayout = cache.layoutFor(grown);
+      expect(grownLayout).toEqual(layoutMap(grown, { level: "card" }, firstLayout.state));
+      // The fresh order of the grown snapshot differs, so the chain is what keeps the arrangement.
+      expect(grownLayout.state.orderByBand).not.toEqual(layoutMap(grown, { level: "card" }).state.orderByBand);
+      // Another repo starts fresh, and the first repo's chain is untouched by it.
+      const other = buildOverviewModel(overviewSnapshot({ ...crossing, repoRoot: "/other" }), 1);
+      expect(cache.layoutFor(other)).toEqual(layoutMap(other, { level: "card" }));
+      const again = model({ ...crossing, components: [...crossing.components, ...domain(["a"])] });
+      expect(cache.layoutFor(again).state.orderByBand).toEqual(grownLayout.state.orderByBand);
+    });
+
+    it("an empty progress overview, then the real snapshot, lays out as the real snapshot alone", () => {
+      const cache = createMapLayoutCache();
+      cache.layoutFor(model(progress));
+      const real = model(crossing);
+      expect(cache.layoutFor(real)).toEqual(layoutMap(real, { level: "card" }));
+    });
   });
 });
 
