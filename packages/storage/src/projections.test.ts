@@ -392,3 +392,23 @@ describe("per-table upserts", () => {
     db.close();
   });
 });
+
+describe("projectionVersion (lane 07 PL-3)", () => {
+  it("moves for each row of its type that reaches the projections, by an append or a rebuild, and for no other type", () => {
+    const db = openSessionDb();
+    expect(db.projectionVersion("change_unit")).toBe(0);
+    db.upsertChangeUnit(makeChangeUnit());
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    db.appendAgentEvent(SESSION, makeAgentEvent());
+    db.upsertDecision(makeDecision());
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    expect(db.projectionVersion("agent_event")).toBe(1);
+    expect(db.projectionVersion("decision")).toBe(1);
+    // A rejected payload never reaches the projections.
+    expect(() => db.upsertChangeUnit({ ...makeChangeUnit(), status: "nope" } as never)).toThrow();
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    db.rebuildSession(SESSION);
+    expect(db.projectionVersion("change_unit")).toBe(2);
+    db.close();
+  });
+});
