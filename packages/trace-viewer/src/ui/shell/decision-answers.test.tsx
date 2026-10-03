@@ -137,4 +137,20 @@ describe("focus when a card moves from open to decided (lane 07 S-4 fix I-2)", (
     expect(answerDecision).toHaveBeenCalledTimes(1);
     source.dispose();
   });
+  it("pointer Choose, then a click on empty space outside the Brief: a later Brief commit leaves focus alone", async () => {
+    const user = userEvent.setup();
+    const answerDecision = vi.fn(async () => undefined);
+    const all = rows(true);
+    const source = createStaticBundleSource(bundle(all), { drip: { rowsPerTick: 1, intervalMs: 1_000, manual: true, startAtSeq: all.length - 2 } });
+    render(<TraceViewer source={source} host={{ answerDecision }} initialView="console" pollMs={50} />);
+    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await user.click(card().getByRole("button", { name: "Choose Fail open" }));
+    await waitFor(() => expect(card().getByText("Answer sent")).toBeTruthy());
+    await user.click(document.body);
+    expect(document.activeElement === document.body || document.activeElement === null).toBe(true);
+    act(() => source.tick());
+    await waitFor(() => expect(card().getByText("Fail open · chosen by you")).toBeTruthy());
+    expect(document.querySelector<HTMLElement>("[data-brief]")?.contains(document.activeElement)).toBe(false);
+    source.dispose();
+  });
 });
