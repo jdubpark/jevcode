@@ -120,6 +120,19 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(text).not.toContain("Descriptions pending");
     expect(part().querySelectorAll("strong, em, a")).toHaveLength(0);
     expect(part().querySelector("[data-map-thumbnail]")).not.toBeNull();
+    // Clamped to four lines on screen, so the full sanitized text is the tooltip.
+    expect(part().querySelector("p[title]")?.getAttribute("title")).toBe("A web ⟨U+202E⟩app **with** [a link](https://evil.example).");
+  });
+
+  it("a scan that found no components draws no thumbnail but keeps the counts and Retry", () => {
+    renderPanel(
+      overviewSnapshot({ components: [], status: { scan: { state: "failed", scanned: 0, total: 0, error: "git ls-files failed" }, narrator: "off" } }),
+      {},
+      { rescanOverview: vi.fn() },
+    );
+    expect(part().querySelector("[data-map-thumbnail]")).toBeNull();
+    expect(part().textContent ?? "").toContain("0 components");
+    expect(within(part()).getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   it("opens the Map", async () => {
