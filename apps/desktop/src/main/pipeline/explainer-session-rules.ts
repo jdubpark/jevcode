@@ -1,4 +1,12 @@
-import type { ChangeUnit, Citation, Decision, ExplainerRecord, NarrativeSentence } from "@jevcode/contracts";
+import type {
+  ChangeUnit,
+  Citation,
+  Component,
+  Decision,
+  ExplainerRecord,
+  NarrativeSentence,
+  NormalizedAgentEvent,
+} from "@jevcode/contracts";
 import {
   NarratorUnavailableError,
   SESSION_LIMITS,
@@ -7,11 +15,14 @@ import {
   type SessionStoryInput,
 } from "@jevcode/jev-router";
 import {
+  agentEventLabel,
+  clampMeta,
   componentIdForPath,
   stepHeadline,
   truncateMiddle,
   type OverviewModel,
   type Step,
+  type StepKind,
   type TraceSession,
 } from "@jevcode/trace-viewer/model";
 
@@ -204,35 +215,96 @@ function redact(text: string): string {
   return redactText(text).text;
 }
 
-/**
- * A step's headline with secrets redacted. The viewer's headline cuts a long command or message, and a cut secret no
- * longer matches the redactor's patterns, so a step whose full command, path, text or decision title holds a secret
- * gets its headline made again by the viewer's rule (stepHeadline) from the redacted text.
- */
-function redactedHeadline(step: Step): string {
-  const target = step.target === undefined ? undefined : redactText(step.target);
-  const text = step.text === undefined ? undefined : redactText(step.text);
-  const title = step.decision === undefined ? undefined : redactText(step.decision.title);
-  if ((target?.count ?? 0) + (text?.count ?? 0) + (title?.count ?? 0) === 0) return redact(step.headline);
-  const tests = step.tests;
-  return redact(
-    stepHeadline({
-      kind: step.kind,
-      ...(target !== undefined ? { target: target.text } : {}),
-      ...(text !== undefined ? { text: text.text } : {}),
-      ...(tests !== undefined ? { tests: { passed: tests.passed, failed: tests.failed, skipped: tests.skipped } } : {}),
-      ...(step.command !== undefined ? { exitCode: step.command.exitCode } : {}),
-      ...(title !== undefined ? { decisionTitle: title.text } : {}),
-      ...(step.guardrail !== undefined ? { clampIds: step.guardrail.clampIds } : {}),
-    }),
-  );
+/** A redacted source text is kept up to this length; the headline cuts it at 80 graphemes anyway. */
+const SOURCE_TEXT_MAX = 1_000;
+/** Lifecycle steps the fold labels with agentEventLabel (fold-agent.ts). */
+const LIFECYCLE_EVENTS: ReadonlySet<string> = new Set(["agent_waiting", "agent_completed", "agent_failed", "agent_interrupted"]);
+/** Kinds whose headline the fold builds from a row's label, which the public Step does not carry. */
+const ROW_LABELLED: ReadonlySet<StepKind> = new Set<StepKind>(["lifecycle", "dependency", "revert"]);
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-/** The story's narrator input, every free-text field redacted (lane fix I-1). */
+function names(value: unknown, sign: string): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => `${sign}${String(record(entry)?.["name"] ?? "")}`);
+}
+
+/**
+ * Leftover 1 of the fix wave: the full text the fold labels a lifecycle, dependency or revert step with, read from the
+ * row that starts the step (an agent_waiting, agent_completed, agent_failed or agent_interrupted event; a
+ * dependency_change or revert_detected fact), redacted before it is clipped. Null for any other row. It builds the
+ * label as the fold does (fold-agent agentEventLabel, fold-evidence); a test checks that the headlines narratorHeadline
+ * makes from it equal the viewer's when nothing is redacted. The explainer keeps it by the row's seq, which is the
+ * step's firstSeq.
+ */
+export function stepSourceText(type: string, payload: unknown): string | null {
+  const row = record(payload);
+  if (row === null) return null;
+  let label: string | null = null;
+  if (type === "agent_event" && typeof row["type"] === "string" && LIFECYCLE_EVENTS.has(row["type"])) {
+    label = agentEventLabel(row as unknown as NormalizedAgentEvent);
+  } else if (type === "evidence_fact" && row["type"] === "dependency_change") {
+    label = [...names(row["added"], "+"), ...names(row["removed"], "\u2212")].join(" ");
+  } else if (type === "evidence_fact" && row["type"] === "revert_detected") {
+    const files = Array.isArray(row["files"]) ? row["files"].map(String) : [];
+    label = files.length === 1 ? `Reverted ${files[0] ?? ""}` : `Reverted ${files.length} files`;
+  }
+  return label === null ? null : redact(label).slice(0, SOURCE_TEXT_MAX);
+}
+
+/**
+ * A step's headline for the narrator (leftover 1 of the fix wave). Never the viewer's headline, which is already cut:
+ * a secret the cut splits no longer matches the redactor's patterns. It is made by the viewer's rule (stepHeadline)
+ * from full sources, each redacted before stepHeadline cuts it: the step's command, path or tool name, its text, its
+ * decision title, its clamp labels, and for lifecycle, dependency and revert steps the label text the explainer kept
+ * from the step's first row (stepSourceText). Without that text such a step gets its kind's plain headline.
+ */
+export function narratorHeadline(step: Step, sources: ReadonlyMap<number, string> | undefined): string {
+  let text: string | undefined;
+  if (ROW_LABELLED.has(step.kind)) text = sources?.get(step.firstSeq);
+  else if (step.kind === "guardrail" && step.guardrail !== undefined) {
+    text = redact(step.guardrail.clampIds.map((id) => clampMeta(id).label).join(", "));
+  } else if (step.text !== undefined) text = redact(step.text);
+  const tests = step.tests;
+  return stepHeadline({
+    kind: step.kind,
+    ...(step.target !== undefined ? { target: redact(step.target) } : {}),
+    ...(text !== undefined ? { text } : {}),
+    ...(tests !== undefined ? { tests: { passed: tests.passed, failed: tests.failed, skipped: tests.skipped } } : {}),
+    ...(step.command !== undefined ? { exitCode: step.command.exitCode } : {}),
+    ...(step.decision !== undefined ? { decisionTitle: redact(step.decision.title) } : {}),
+    ...(step.guardrail !== undefined ? { clampIds: step.guardrail.clampIds } : {}),
+  });
+}
+
+/**
+ * codebase-map's snapshot writer (clipText, MAX_NAME 120) cuts a longer component name to 119 characters plus "…",
+ * or 118 plus "…" when the cut would split a surrogate pair: a cut name is at least this long and ends with "…".
+ */
+const NAME_CLIPPED_LENGTH = 119;
+
+/**
+ * A component's name for the narrator (leftover 1 of the fix wave), redacted. The snapshot writer cuts a name over
+ * 120 characters, and the full name is not stored, so a cut name is replaced by the component's root path, its full
+ * source on the row, redacted before the narrator's own clip.
+ */
+function narratorComponentName(component: Component | undefined, id: string): string {
+  if (component === undefined) return id;
+  const clipped = component.name.endsWith("\u2026") && component.name.length >= NAME_CLIPPED_LENGTH;
+  return redact(clipped ? component.rootPath : component.name);
+}
+
+/**
+ * The story's narrator input, every free-text field redacted from its full source before any cut (lane fix I-1).
+ * `sources` is the explainer's stepSourceText by row seq, for lifecycle, dependency and revert headlines.
+ */
 export function sessionStoryInput(
   session: TraceSession,
   decisions: readonly Decision[],
   highlights: readonly HighlightEntry[],
+  sources?: ReadonlyMap<number, string>,
 ): SessionStoryInput {
   const recent: Step[] = [];
   for (let i = session.steps.length - 1; i >= 0 && recent.length < STORY_RECENT_STEPS; i -= 1) {
@@ -259,13 +331,13 @@ export function sessionStoryInput(
     .slice(0, SESSION_LIMITS.components);
   return {
     prompt: redact(session.meta.prompt),
-    recentSteps: recent.map((step) => ({ id: step.id, headline: redactedHeadline(step) })),
+    recentSteps: recent.map((step) => ({ id: step.id, headline: narratorHeadline(step, sources) })),
     decisions: storyDecisions(session, decisions).map((decision) => {
       const answer = decision.status === "open" ? null : chosenLabel(decision);
       return { id: decision.id, title: redact(decision.title), status: decision.status, answer: answer === null ? null : redact(answer) };
     }),
     tests,
-    touchedComponents: touched.map((entry) => ({ id: entry.id, name: redact(names?.get(entry.id)?.name ?? entry.id) })),
+    touchedComponents: touched.map((entry) => ({ id: entry.id, name: narratorComponentName(names?.get(entry.id), entry.id) })),
   };
 }
 

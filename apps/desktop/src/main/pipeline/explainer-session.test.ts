@@ -20,7 +20,7 @@ import type {
   SessionStoryInput,
 } from "@jevcode/jev-router";
 import { openDb, type JevcodeDb } from "@jevcode/storage";
-import { foldRows, type TraceSession } from "@jevcode/trace-viewer/model";
+import { foldRows, type Step, type TraceSession } from "@jevcode/trace-viewer/model";
 import { describe, expect, it, vi } from "vitest";
 
 import { NARRATOR_RECORD_TEXT_MAX, type NarratorCallRecord } from "../../shared/narrator-log.js";
@@ -32,9 +32,11 @@ import {
   backoffMs,
   computeHighlights,
   decisionWhyInput,
+  narratorHeadline,
   repoRelative,
   ruleStory,
   sessionStoryInput,
+  stepSourceText,
 } from "./explainer-session-rules.js";
 import type { ExplainerLogEvent } from "./explainer-stage.js";
 import type { PipelineSyncSnapshot } from "./types.js";
@@ -275,6 +277,13 @@ function resolves(session: TraceSession, citation: Citation): boolean {
     default:
       return false;
   }
+}
+
+/** Every substring of `secret` that is `length` characters long. */
+function fragments(secret: string, length: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i + length <= secret.length; i += 1) out.push(secret.slice(i, i + length));
+  return out;
 }
 
 /** Lets the sync chain run (no narrator call settles here). */
@@ -824,6 +833,88 @@ describe("session explainer: redaction (lane fix I-1)", () => {
     // The guards ran against the redacted inputs that were sent: both answers were accepted.
     expect(storyOf(w.rows("story")[0]).provenance).toBe("model");
     expect(w.rows("decision_why")).toHaveLength(1);
+  });
+
+  it("sends no fragment of a secret the viewer's 80-character cut splits in an agent_failed error (leftover 1)", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Calling the billing API." });
+    // "Stopped: " plus this error puts the key across the headline's 80-grapheme cut.
+    const error = `The billing API rejected the request with HTTP 401; key ${KEY} was revoked at 10:02.`;
+    w.agent({ type: "agent_failed", error });
+    const failed = w.fold().steps.at(-1);
+    expect(failed?.kind).toBe("lifecycle");
+    expect(failed?.headline).toContain(KEY.slice(0, 12));
+    expect(failed?.headline).not.toContain(KEY);
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+
+    expect(narrator.storyCalls).toHaveLength(1);
+    const sent = JSON.stringify(narrator.storyCalls[0]?.input);
+    for (const piece of fragments(KEY, 6)) expect(sent).not.toContain(piece);
+    expect(narrator.storyCalls[0]?.input.recentSteps.at(-1)?.headline.startsWith("Stopped: The billing API rejected")).toBe(true);
+  });
+
+  it("sends a component name the snapshot writer cut at 120 characters as its redacted root path (leftover 1)", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    // codebase-map's clipText: 119 characters and "…"; the key straddles the cut.
+    const name = `${`pkg-${"x".repeat(96)}${KEY}`.slice(0, 119)}…`;
+    expect(name).toContain(KEY.slice(0, 12));
+    w.overview([component("cmp_000000000009", "packages/limiter", name)]);
+    const unit = w.unit("u1", ["packages/limiter/index.ts"], "validated");
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([unit], []));
+    await explainer.idle();
+
+    expect(narrator.storyCalls).toHaveLength(1);
+    expect(narrator.storyCalls[0]?.input.touchedComponents).toEqual([{ id: "cmp_000000000009", name: "packages/limiter" }]);
+    const sent = JSON.stringify(narrator.storyCalls[0]?.input);
+    for (const piece of fragments(KEY, 6)) expect(sent).not.toContain(piece);
+  });
+
+  it("rebuilds every step's headline from its full source exactly as the viewer writes it when nothing is redacted", () => {
+    const w = new World();
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: `A long plan: ${"read the server, ".repeat(8)}then add the limiter.` });
+    w.agent({ type: "agent_reasoning", text: "Thinking about Redis." });
+    w.agent({ type: "file_read", path: "src/server/app.ts" });
+    w.agent({ type: "tool_started", tool: "web_search", callId: "c1", input: "redis outage" });
+    w.agent({ type: "tool_completed", tool: "web_search", callId: "c1", output: "" });
+    const command = `node scripts/build-limits.mjs ${"--input config/limits.json ".repeat(3)}--output dist/limits.json`;
+    w.agent({ type: "command_started", command, callId: "c2" });
+    w.agent({ type: "command_completed", command, callId: "c2", exitCode: 1, stdout: "", stderr: "" });
+    w.agent({ type: "approval_requested", command: "rm -rf dist", rationale: "Clean the build output." });
+    w.agent({ type: "file_changed", path: "src/middleware/rate-limiter.ts" });
+    w.tests(1);
+    w.db.appendEvidenceFact(SESSION, {
+      type: "dependency_change", repoId: REPO, sessionId: SESSION, manifest: "package.json",
+      added: [{ name: "ioredis", version: "5.4.1" }],
+      removed: [{ name: "node-cache", version: "5.1.2" }, { name: `@scope/${"very-long-package-name-".repeat(3)}`, version: "1.0.0" }], ts: w.ts(),
+    });
+    w.db.appendEvidenceFact(SESSION, { type: "revert_detected", repoId: REPO, sessionId: SESSION, files: ["src/a.ts", "src/b.ts"], ts: w.ts() });
+    w.db.appendEvidenceFact(SESSION, { type: "revert_detected", repoId: REPO, sessionId: SESSION, files: ["src/only.ts"], ts: w.ts() });
+    w.db.upsertJevDecision({
+      id: "jev_1", sessionId: SESSION, inputHash: "h1", output: {}, confidence: 0.5, latencyMs: 1, clientKind: "degrade",
+      clamps: ["guardrail.security", "unknown.clamp.id"], ts: w.ts(),
+    });
+    w.decision("d1", "answered", [], "fail_open", { title: `What should the API do ${"when Redis is unavailable ".repeat(4)}?` });
+    w.agent({ type: "agent_waiting" });
+    w.agent({ type: "agent_interrupted", reason: "steer" });
+    w.agent({ type: "agent_failed", error: `Upstream ${"timeout ".repeat(15)}after retries.` });
+    w.agent({ type: "agent_completed" });
+    const session = w.fold();
+    const sources = new Map<number, string>();
+    for (const event of w.db.listEvents(SESSION, { limit: 10_000 })) {
+      const text = stepSourceText(event.type, JSON.parse(event.payloadJson) as unknown);
+      if (text !== null) sources.set(event.seq, text);
+    }
+    const kinds: Step["kind"][] = ["instruction", "message", "reasoning", "read", "tool", "command", "test", "approval", "edit", "dependency", "revert", "guardrail", "decision", "lifecycle"];
+    expect([...new Set(session.steps.map((step) => step.kind))]).toEqual(expect.arrayContaining(kinds));
+    expect(session.steps.map((step) => narratorHeadline(step, sources))).toEqual(session.steps.map((step) => step.headline));
   });
 
   it("leaves every id the guards check untouched, even one shaped like a token", async () => {

@@ -32,6 +32,7 @@ import {
   failureReason,
   ruleStory,
   sessionStoryInput,
+  stepSourceText,
   type HighlightEntry,
 } from "./explainer-session-rules.js";
 import type { ExplainerLogEvent } from "./explainer-stage.js";
@@ -116,6 +117,8 @@ interface Tracked {
   readonly seenUnits: Set<string>;
   readonly closedUnits: Set<string>;
   readonly answered: Set<string>;
+  /** Redacted label text of lifecycle, dependency and revert steps, by their first row's seq (stepSourceText). */
+  readonly sources: Map<number, string>;
   testRuns: number;
   terminalTurn: number;
   unitsAtStory: number;
@@ -283,7 +286,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     tracked = {
       sessionId, fold: createTraceState(meta), cursor: 0, session: null, sync: null, seeded: false,
       initialComponentIds: null, highlights: [], highlightsKey: null, seenUnits: new Set(), closedUnits: new Set(),
-      answered: new Set(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
+      answered: new Set(), sources: new Map(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
       storyText: null, storyPending: false, storyRunning: false, lastStoryAt: storyTimes.get(sessionId) ?? null, storyTimer: null, whyQueue: [],
       whyDone: new Set(), whyRunning: false, whyTimer: null,
     };
@@ -339,6 +342,9 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
             const parsed = OverviewSnapshotSchema.safeParse(payload);
             if (parsed.success) t.initialComponentIds = componentIdsOf(parsed.data);
           }
+          // The full text a cut headline came from, kept before the fold cuts it (leftover 1 of the fix wave).
+          const source = stepSourceText(event.type, payload);
+          if (source !== null) t.sources.set(event.seq, source);
           accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
           unsettled = true;
         }
@@ -616,7 +622,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     const session = t.session;
     const sync = t.sync;
     if (session === null || sync === null || !current(t)) return;
-    const input = deepFreeze(sessionStoryInput(session, sync.decisions, t.highlights));
+    const input = deepFreeze(sessionStoryInput(session, sync.decisions, t.highlights, t.sources));
     const key = JSON.stringify(input);
     const client = narrator;
     const canCall = client !== null && deps.now() >= retryAt;
