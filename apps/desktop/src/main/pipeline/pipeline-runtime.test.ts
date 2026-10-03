@@ -1991,6 +1991,64 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     }
   }, 60_000);
 
+  it("after shutdown, a pass parked at a slicer yield when the database closes wakes and writes nothing (will-quit)", async () => {
+    // PL-3 review: will-quit closed the database without stopping the runtime's sessions, so a pass waiting at a
+    // slicer yield woke against the closed database.
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-quit");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-quit";
+    db.upsertRepository({ id: "repo-pq", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-pq", prompt: "demo" });
+    const { emit } = collectEmit();
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: (message) => logs.push(message) });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-pq", repoPath: dir, prompt: "demo" });
+    let closed = false;
+    try {
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-pq",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6,
+        15_000,
+        "records",
+      );
+      // Slow Jev writes make the pass yield; the app quits in that yield: the runtime shuts down, the database closes.
+      let quit = false;
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (!quit) {
+          quit = true;
+          setImmediate(() => {
+            runtime.shutdown();
+            db.close();
+            closed = true;
+          });
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+      await runtime.syncAll();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(closed).toBe(true);
+      expect(logs.filter((message) => message.includes("sync failed") || message.includes("not open"))).toEqual([]);
+    } finally {
+      if (!closed) {
+        await runtime.stopSession(sessionId);
+        db.close();
+      }
+    }
+  }, 60_000);
+
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
     rmSync(dir, { recursive: true, force: true });
