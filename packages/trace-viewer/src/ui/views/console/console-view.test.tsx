@@ -57,7 +57,8 @@ async function frames(): Promise<void> {
 
 interface Mounted {
   h: Harness;
-  update(next: TraceSession): void;
+  /** `during` runs inside the same act, so its store writes land in the same render pass as the new session. */
+  update(next: TraceSession, during?: () => void): void;
   /** Only with `activity`: shows or hides the Console under <Activity>, the way the Shell's ViewSlot does. */
   setMode(mode: "visible" | "hidden"): void;
   scroller(): HTMLElement;
@@ -134,10 +135,11 @@ function mountConsole(
   const result = render(tree(view));
   return {
     h,
-    update(next) {
+    update(next, during) {
       const index = buildTraceIndex(next, view.index);
       view = { ...view, session: next, index, summary: next.meta };
       act(() => {
+        during?.();
         result.rerender(tree(view));
       });
     },
@@ -905,5 +907,25 @@ describe("test harness host (lane fix I-3a)", () => {
     cleanup();
     renderHarness(<Probe />, null);
     expect(seen.at(-1)).toEqual({});
+  });
+});
+
+describe("title bar count timing (lane fix round 2, minor c)", () => {
+  it("follows a render pass that brings rows and moves lastSeenSeq together, without waiting for a tick", async () => {
+    const b = messages(60);
+    const first = live(b);
+    // Steps 58–60 start after seq 57: three rows are new for the reader.
+    const m = mountConsole(first, { titleBar: true, state: { view: "console", follow: false, loaded: true, lastSeenSeq: 57 } });
+    await frames();
+    const pills = (): string[] => screen.getAllByRole("button", { name: /new/ }).map((pill) => pill.textContent ?? "");
+    expect(pills()).toHaveLength(2);
+    for (const text of pills()) expect(text).toContain("3 new");
+
+    // The reader reached the old tail as three more rows arrived: still three new rows, now different ones.
+    for (let i = 0; i < 3; i += 1) b.agent({ type: "agent_message", role: "assistant", text: `late ${i}` });
+    m.update(live(b), () => m.h.store.dispatch({ type: "seen", seq: first.loadedThroughSeq }));
+    await frames();
+    expect(pills()).toHaveLength(2);
+    for (const text of pills()) expect(text).toContain("3 new");
   });
 });
