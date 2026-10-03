@@ -345,6 +345,8 @@ export function createDataController(options: DataControllerOptions): DataContro
       await page(gen, first);
     } catch (error) {
       if (gen !== generation) return;
+      // A hint-started poll that rejects must not leave its fast commit gap to the retry.
+      hintCommit = false;
       if (latest.session === null) {
         emit({ ...latest, status: statusFromError(error, "trace:rows") });
         return;
