@@ -367,10 +367,16 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   const batchCap = new Map<string, number>();
   /** Per narrative structure hash: schema-invalid answers so far. */
   const narrativeSchemaFails = new Map<string, number>();
-  /** Whether any schema-valid answer arrived in this instance, and schema-invalid answers since the last one. */
-  let validSeen = false;
+  /** Schema-valid answers so far in this instance, and schema-invalid answers since the last valid one. */
+  let validAnswers = 0;
   let invalidStreak = 0;
-  /** Keys negative-cached in memory only, before any valid answer; asked again once one arrives. */
+  /**
+   * Per key and per narrative structure hash: `validAnswers` at the first schema failure. A schema
+   * failure is persisted only if a valid answer arrived after it (spec §6.6); this survives resets.
+   */
+  const firstSchemaFailure = new Map<string, number>();
+  const narrativeFirstSchemaFailure = new Map<string, number>();
+  /** Keys negative-cached in memory only (no valid answer since their first failure); asked again after the next one. */
   const provisional = new Set<string>();
   const failingReads = new Set<ReadTarget>();
   const idleWaiters: (() => void)[] = [];
@@ -723,19 +729,33 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       schemaFails.delete(key);
       batchCap.delete(key);
       provisional.delete(key);
+      if (persist) firstSchemaFailure.delete(key);
     }
     if (persist) writeTexts(entries);
     if (shownChanged) refreshStage();
   }
 
+  /** Records a schema failure's position among the valid answers, once per key or structure hash. */
+  function noteSchemaFailure(firsts: Map<string, number>, key: string): void {
+    if (!firsts.has(key)) firsts.set(key, validAnswers);
+  }
+
+  /** Persist a schema failure's outcome only if the provider answered validly after that failure began. */
+  const confirmedSince = (firsts: ReadonlyMap<string, number>, key: string): boolean =>
+    validAnswers > (firsts.get(key) ?? validAnswers);
+
   /**
-   * A schema-valid answer shows the provider works. The first one undoes the no-purpose rows kept
-   * in memory before it, since those refusals may have been the provider's, not the content's.
+   * A schema-valid answer shows the provider works. The first one resets every schema count and
+   * split (counts from before it, braked ones included, may be the provider's). Every one asks again
+   * for the no-purpose rows kept in memory, whose refusals were never confirmed by a valid answer.
    */
   function onValidAnswer(): void {
     invalidStreak = 0;
-    if (validSeen) return;
-    validSeen = true;
+    validAnswers += 1;
+    if (validAnswers === 1) {
+      schemaFails.clear();
+      batchCap.clear();
+    }
     for (const key of provisional) {
       textMemo.delete(key);
       schemaFails.delete(key);
@@ -750,11 +770,12 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
    */
   function schemaBrake(batch: readonly Component[]): boolean {
     invalidStreak += 1;
-    if (validSeen || invalidStreak < SCHEMA_BRAKE_STREAK) return false;
+    if (validAnswers > 0 || invalidStreak < SCHEMA_BRAKE_STREAK) return false;
     // Still counted, so the next probe tries the components that failed least (no split, no settle).
     for (const component of batch) {
       const key = keyOf(component);
       schemaFails.set(key, (schemaFails.get(key) ?? 0) + 1);
+      noteSchemaFailure(firstSchemaFailure, key);
     }
     return true;
   }
@@ -772,14 +793,17 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       const key = keyOf(component);
       const failures = (schemaFails.get(key) ?? 0) + 1;
       schemaFails.set(key, failures);
+      noteSchemaFailure(firstSchemaFailure, key);
       if (failures >= SCHEMA_FAILURES_TO_SPLIT) split = true;
     }
     if (!split) return;
     const [only] = batch;
     if (batch.length === 1 && only !== undefined) {
-      // Stored only once the provider is known to work; until then it stays in memory (spec §6.6).
-      storeAnswers([[only, { purpose: null, role: only.roleGuess, model }]], validSeen);
-      if (!validSeen) provisional.add(keyOf(only));
+      // Stored only if a valid answer arrived since this component first failed; else kept in memory (spec §6.6).
+      const key = keyOf(only);
+      const persist = confirmedSince(firstSchemaFailure, key);
+      storeAnswers([[only, { purpose: null, role: only.roleGuess, model }]], persist);
+      if (!persist) provisional.add(key);
       return;
     }
     halve(batch);
@@ -931,7 +955,10 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     baseline = contentHashes;
     stored = { hash, narrative: next };
     narrativeSchemaFails.delete(hash);
-    if (persist) writeNarrative(snapshot, hash, next);
+    if (persist) {
+      narrativeFirstSchemaFailure.delete(hash);
+      writeNarrative(snapshot, hash, next);
+    }
     if (JSON.stringify(next) !== JSON.stringify(servedBefore)) refreshStage();
   }
 
@@ -986,10 +1013,12 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         record("overviewNarrative", 1, started, schemaOutcome(1), result);
         const failures = (narrativeSchemaFails.get(hash) ?? 0) + 1;
         narrativeSchemaFails.set(hash, failures);
+        noteSchemaFailure(narrativeFirstSchemaFailure, hash);
         // A second schema-invalid answer for the same structure settles it; the narrative shown so far
-        // stays. It is stored only once the provider is known to work (spec §6.6).
+        // stays. It is stored only if a valid answer arrived since the first failure (spec §6.6).
         if (failures >= SCHEMA_FAILURES_TO_SPLIT) {
-          settleNarrative(snapshot, hash, contentHashes, servedBefore, servedBefore, validSeen);
+          const persist = confirmedSince(narrativeFirstSchemaFailure, hash);
+          settleNarrative(snapshot, hash, contentHashes, servedBefore, servedBefore, persist);
         }
         return;
       }
@@ -1038,7 +1067,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     }
     // Before any valid answer, after an invalid one, it is unclear whether the provider works: probe with
     // one call at a time, so a provider-wide fault costs at most SCHEMA_BRAKE_STREAK calls (spec §6.6).
-    const probing = !validSeen && invalidStreak > 0;
+    const probing = validAnswers === 0 && invalidStreak > 0;
     const callsInFlight = (): number => describeCalls + (narrativeInFlight ? 1 : 0);
     for (const batch of planBatches(due)) {
       if (describeCalls >= DESCRIBE_MAX_IN_FLIGHT || (probing && callsInFlight() > 0)) break;
