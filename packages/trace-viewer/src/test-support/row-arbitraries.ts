@@ -168,6 +168,21 @@ const unitOp: fc.Arbitrary<Op> = fc
     }),
   );
 
+const TRADEOFF_CHOICES = ["absent", "empty", "one", "two"] as const;
+
+function tradeoffField(choice: (typeof TRADEOFF_CHOICES)[number]): { tradeoffs?: { dimension: string; consequence: string }[] } {
+  switch (choice) {
+    case "absent":
+      return {};
+    case "empty":
+      return { tradeoffs: [] };
+    case "one":
+      return { tradeoffs: [{ dimension: "availability", consequence: "Stays up." }] };
+    case "two":
+      return { tradeoffs: [{ dimension: "abuse", consequence: "Limits hold." }, { dimension: "cost", consequence: "One more call." }] };
+  }
+}
+
 const otherOp: fc.Arbitrary<Op> = fc.oneof(
   fc
     .record({ id: pick(VALIDATION_IDS), command: pick(COMMANDS), kind: pick(["test", "lint"] as const), ts: optional(fc.nat(40)) })
@@ -175,12 +190,22 @@ const otherOp: fc.Arbitrary<Op> = fc.oneof(
       b.validation({ id, kind, command, status: "passed", passed: 1, failed: 0, skipped: 0, ...(ts !== undefined ? { ts: at(ts) } : {}) }),
     ),
   fc
-    .record({ id: pick(DECISION_IDS), status: pick(["open", "answered", "delegated", "expired"] as const), affected: subset(UNIT_IDS) })
-    .map(({ id, status, affected }): Op => (b) =>
+    .record({
+      id: pick(DECISION_IDS),
+      status: pick(["open", "answered", "delegated", "expired"] as const),
+      affected: subset(UNIT_IDS),
+      // Per option: no tradeoffs field (keeps an earlier row's), an explicit empty list (drops them), or some.
+      tradeoffs: fc.tuple(pick(TRADEOFF_CHOICES), pick(TRADEOFF_CHOICES)),
+    })
+    .map(({ id, status, affected, tradeoffs }): Op => (b) =>
       b.decision({
         id,
         status,
         affectedChangeUnits: affected,
+        options: [
+          { id: "a", label: "Option A", description: "", ...tradeoffField(tradeoffs[0]) },
+          { id: "b", label: "Option B", description: "", ...tradeoffField(tradeoffs[1]) },
+        ],
         ...(status === "answered" ? { answer: { decisionId: id, decision: { q: "a" }, evidence: [] } } : {}),
       }),
     ),
