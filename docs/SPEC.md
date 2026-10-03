@@ -22,6 +22,7 @@ In scope:
 - terminal + raw diff escape hatches
 - local-only telemetry
 - read-only trace viewer (`docs/superpowers/specs/2026-09-28-trace-viewer-design.md`)
+- Console-first workspace (Console, Brief and Map views), the Brief, and the codebase explainer (rule-based component map plus optional Claude Haiku descriptions, narrative and session story); details in `docs/superpowers/specs/2026-10-02-console-and-explainer-design.md`
 
 Out of scope:
 - Claude adapter (interface only)
@@ -83,6 +84,7 @@ jevcode/
 │   ├── ui-catalog/               json-render catalog + React registry + 11 components
 │   ├── storage/                  SQLite schema, event store, projections, queries
 │   ├── telemetry/                local event schema + export
+│   ├── codebase-map/             repo scan, import extraction, componentize, layoutMap, overview snapshot (core is React-free; node/ holds scan and worker)
 │   └── trace-viewer/             read-only trace model (src/model, React-free) + viewer UI (src/ui)
 ├── evals/                        labeled fixtures + jev eval runner
 ├── fixtures/                     replay scenarios (oauth, rate-limit, schema, api-break, dep)
@@ -192,7 +194,7 @@ Precedence at session start: explicit session input → env override → auto po
 | Agent process permissions | Runs as the user's own account, cwd pinned to the opened repo root. No sandboxing in v0 (explicit non-goal). |
 | Shell approval model | Agent-initiated destructive commands (see §8.3.1) trigger a required Decision before execution is confirmed to the agent, only when the agent asks for approval. Jevcode does not intercept arbitrary PTY commands in v0. |
 | Renderer sandboxing | `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. Preload exposes only `window.jevcode` with the allowlisted API. |
-| Secrets handling | Redaction pipeline before any repo content reaches Jev/System-2 context (pattern set + .env exclusion). Terminal output is never sent to model context unless explicitly invoked by an action. |
+| Secrets handling | Redaction pipeline before any repo content reaches Jev/System-2 context (pattern set + .env exclusion). Terminal output is never sent to model context unless explicitly invoked by an action. The explainer adds an outbound path to Claude Haiku 4.5 (repo metadata and redacted session text, only with a key and the "Explain with a model" setting on); see §12. |
 | Model-context redaction | Same pipeline. Redacted spans replaced with `[REDACTED:<kind>]`, counts logged to telemetry. |
 | Stored diffs | `git_hunk.diff.text` is redacted before it is stored. Files named `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*` or `id_dsa*` (except `*.pub`), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `.npmrc`, `.netrc`, `.pgpass`, `.pypirc` or `credentials` are withheld (`withheld: "secret_path"`, no text). In every other file, lines are classified first: `---`/`+++` are headers only between `diff --git` and the first `@@`, and inside a hunk each line is classified by its first character and counted against the `@@` header's line counts, so a removed `-- password=…` line is content. Header lines, the `@@ … @@` part of hunk headers, `Binary files … differ` and `\ No newline at end of file` are kept verbatim; the function heading git appends after `@@ … @@` is file text and is redacted. Each PEM private-key block (from a `-----BEGIN … PRIVATE KEY-----` line through its `-----END … PRIVATE KEY-----` line, or to the end of its hunk) becomes one `[REDACTED:private_key]` line behind the BEGIN line's diff prefix; certificates and public keys are kept. Every other hunk line is redacted after its diff prefix (`+`, `-` or space). The text is capped at 32 KiB, cut before the `@@` header of the first hunk that would overflow (`truncated: true`). `hash` and `bytes` describe the raw diff; `redactions` counts the replacements in the stored text, one per key block. The store itself is owner-only (§11). |
 
@@ -224,6 +226,8 @@ type NormalizedAgentEvent =
 
 // callId?: string   // optional; `${turnId}:${item.id}` for Codex, shared by a call's start and completion
 ```
+
+Two more row types are written by the explainer stage into the event store (not by an agent adapter) and read by the trace viewer: `overview_snapshot` (the codebase map snapshot, at most 512 KB per row) and `explainer` (narrator output: session story, whys, highlights). Their schemas are in `packages/contracts/src/overview.ts`; see the console spec §5.
 
 ### 4.2 Evidence facts
 
@@ -346,12 +350,14 @@ interface UIIntent {
         agent:cancelInstruction, action:invoke (whitelisted action payloads),
         terminal:input, terminal:resize, surface:pin, surface:dismiss,
         telemetry:flush,
-        trace:listSessions, trace:rows, trace:payloads (read-only; query_only reader; see the trace viewer design spec)
+        trace:listSessions, trace:rows, trace:payloads (read-only; query_only reader; see the trace viewer design spec),
+        overview:rescan (rebuild the codebase map for the open repo; console spec §6)
 ← renderer: repo:opened, session:state, agent:event, agent:state,
         agent:instructionState, semantic:update, changeunit:upsert,
         decision:open, decision:resolved, validation:update, ui:spec (full),
         ui:specPatch (streamed), terminal:data, terminal:scrollback,
-        jev:debug, telemetry:ack
+        jev:debug, telemetry:ack,
+        trace:rowsAvailable (push hint that new trace rows are stored; the viewer then polls `trace:rows`)
 ```
 
 Every payload is zod-validated in both directions. Unknown channels are rejected.
@@ -599,7 +605,9 @@ Each Codex process (`exec` or `exec resume`) is one turn: the adapter mints a `t
 
 SQLite, WAL mode, single file under `~/.jevcode/jevcode.db` (dev: repo-local `./.jevcode/`). better-sqlite3, synchronous for simplicity in main. The worker never writes. The store holds prompts, agent output and diffs, so `openDb` creates `~/.jevcode` with mode 0700 (and tightens an existing one) and `jevcode.db`, `-wal` and `-shm` with mode 0600. A directory chosen through `dbPath` or `JEVCODE_DB` is created 0700 when missing but never chmodded.
 
-Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`). Projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`.
+Tables: `repositories`, `sessions`, `events` (event store: `id, sessionId, seq, type, payloadJson, ts`). Projections: `agent_events`, `evidence_facts`, `change_units`, `change_unit_files`, `change_unit_symbols`, `decisions`, `decision_options`, `validations`, `failures`, `semantic_events`, `jev_decisions`, `ui_intents`, `ui_snapshots`, `graph_nodes`, `graph_edges`, `commands`, `telemetry_events`, `preferences`, `component_text_cache` (narrator purposes and roles by repo, component and content hash; migration v5), `overview_state` (last snapshot and narrative per repo; migration v5).
+
+Migration v6 adds the `jev_decisions (sessionId, seq)` index that serves the Jev debug panel's latest-decisions query.
 
 `semantic_event` is an event-store type: semantic events are appended to `events` and projected into `semantic_events`, so they survive rebuilds without re-derivation (replayed by `rebuildOnBoot`).
 
@@ -613,6 +621,7 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 4. Model context redaction: `Redactor` (pattern set: AWS access keys, JWT, private keys, GitHub and Slack tokens, provider API keys (`sk-…`, `sk_live_…`, `AIza…`), `Bearer` values, URL passwords, `aws_secret_access_key`, `password=`, `token=`, and `.env` values, also indented or after `export `) runs on any repo content and agent transcript before Jev/System-2 calls. A value that an earlier rule already replaced is not counted again, so a second pass is a no-op. Redaction events are counted in telemetry.
 5. Command logging: every PTY command line stored in `commands` (already a PRD §31 requirement) with `isDestructive` flag.
 6. `json-render` specs validated against the catalog zod before render. The catalog is closed (no dynamic component registration from model output).
+7. Explainer outbound path: when an Anthropic key is present and the "Explain with a model" setting is on, the app sends repo metadata (component names, paths, import edges, README text and earlier descriptions of components) and session text (the task prompt, step headlines, decision titles, options and answers, and short agent messages) to Anthropic Claude Haiku 4.5. Secrets are redacted first, and no whole files are sent. With no key, or with the setting off, nothing is sent. Details in the console spec §6.2.
 
 ## 13. Performance SLOs
 
@@ -639,6 +648,8 @@ Rebuild-on-boot: projections are derived from `events`. Boot replays incremental
 | Trace viewer: view switch | restored in the toggle's frame |
 | Trace viewer: live tick (poll apply + selectors + commit) | ≤16ms p95 (target; soak-scale miss accepted for v1, see docs/perf.md M5) |
 | Trace window: soak open, first paint / full load | ≤500ms / ≤3s |
+
+The console and explainer budgets (Console append and scroll, rule-based map, 20k scan, `layoutMap`, Map pan and zoom, snapshot size, narrator first purposes, ingest ratio, model cost) are in `docs/superpowers/specs/2026-10-02-console-and-explainer-design.md` §11.
 
 Measured values and their methods live in `docs/perf.md`.
 
