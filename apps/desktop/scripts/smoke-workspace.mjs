@@ -90,9 +90,10 @@ child.on("error", (error) => {
   process.exit(1);
 });
 child.on("exit", (code) => {
-  exited = true;
   clearTimeout(killer);
-  killGroup("SIGKILL"); // helpers that outlived the main process
+  // Before exited is set: killGroup is a no-op once it is, and helpers can outlive the main process.
+  killGroup("SIGKILL");
+  exited = true;
   rmSync(tmp, { recursive: true, force: true });
   const ok = signalled === null && code === 0 && /^SMOKE_OK$/m.test(out);
   console.log(ok ? "WORKSPACE_SMOKE_PASS" : `WORKSPACE_SMOKE_FAIL exit=${code}${signalled === null ? "" : ` signal=${signalled}`}`);
