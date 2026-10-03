@@ -13,6 +13,7 @@ import {
   type Step,
   type TraceSession,
 } from "../../../model/index.js";
+import { SummaryBlock } from "../../explainer/SummaryBlock.js";
 import { DiffBar } from "../../graphics/DiffBar.js";
 import { DurationBar } from "../../graphics/DurationBar.js";
 import { testDotsMode } from "../../graphics/scales.js";
@@ -85,7 +86,7 @@ export function estimateConsoleRow(row: ConsoleRow | undefined, expanded: Readon
     case "lifecycle":
       return 28;
     case "summary":
-      return 32 + 18 * row.sentences.length;
+      return 50 + 21 * row.sentences.length;
   }
 }
 
@@ -530,16 +531,8 @@ function ConsoleRowViewImpl(props: ConsoleRowViewProps): JSX.Element {
         </div>
       );
     case "summary":
-      // Lane 07 (S-4) restyles this row against the approved Phase C mockup.
-      return (
-        <div className={styles.row}>
-          <span className={styles.glyph} aria-hidden="true">◆</span>
-          <p id={lineId} className={styles.prose}>
-            <span className={styles.summaryLabel}>Summary</span>
-            {row.sentences.map((sentence) => displayUntrusted(sentence.text)).join(" ")}
-          </p>
-        </div>
-      );
+      // Spec §3.2 phase C: the story refresh as a ◆ Summary block (lane 07 S-4, the approved H3 mockup).
+      return <SummaryBlock id={lineId} sentences={row.sentences} {...(row.provenance !== undefined ? { provenance: row.provenance } : {})} />;
   }
 }
 

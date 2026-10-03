@@ -118,7 +118,6 @@
 
 .item:focus-visible,
 .change:focus-visible,
-.decision:focus-visible,
 .link:focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 1px;
@@ -205,40 +204,6 @@
   color: var(--tv-ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.decision {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--tv-accent-soft);
-  color: var(--tv-ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.question {
-  display: flex;
-  gap: 8px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-
-.question > svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-.ask {
-  margin-left: 22px;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--tv-accent-ink);
 }
 
 .changes {

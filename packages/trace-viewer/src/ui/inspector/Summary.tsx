@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 
+import { decisionComponents } from "../../layout/brief-decisions.js";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
   clampMeta,
@@ -15,6 +16,7 @@ import {
   shortenTitle,
   signalMeta,
   type Chapter,
+  type DecisionDetail,
   type Finding,
   type GraphicSpec,
   type SignalId,
@@ -24,6 +26,7 @@ import {
   type TraceSession,
   type UnitStableId,
 } from "../../model/index.js";
+import { CitationChips } from "../explainer/CitationChips.js";
 import { DiffBar } from "../graphics/DiffBar.js";
 import { DurationBar } from "../graphics/DurationBar.js";
 import { ForkGlyph } from "../graphics/ForkGlyph.js";
@@ -31,8 +34,9 @@ import { Graphic } from "../graphics/Graphic.js";
 import { TestDots } from "../graphics/TestDots.js";
 import type { IconName } from "../icons/icon-names.js";
 import { Icon } from "../icons/Icon.js";
-import { CATEGORY_ICON, KIND_ICON, SIGNAL_ICON } from "../icons/kind-icons.js";
+import { CATEGORY_ICON, KIND_ICON, ROLE_ICON, SIGNAL_ICON } from "../icons/kind-icons.js";
 import { useDispatch } from "../state/store.js";
+import { narratorNote } from "../views/map/map-text.js";
 import { citingFindingsOf, FINDING_TITLE, findingsOf } from "./finding-copy.js";
 import styles from "./Inspector.module.css";
 
@@ -75,6 +79,75 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h3 className={styles.sectionTitle}>{title}</h3>
       {children}
     </section>
+  );
+}
+
+/** An option's tradeoffs (spec §3.5), one row each: a mark, the dimension, its consequence (the H3 Inspector mockup). */
+function Tradeoffs({ tradeoffs }: { tradeoffs: readonly { dimension: string; consequence: string }[] }) {
+  return (
+    <ul className={styles.tradeoffs}>
+      {tradeoffs.map((tradeoff, position) => {
+        const dimension = displayUntrusted(tradeoff.dimension);
+        const consequence = displayUntrusted(tradeoff.consequence);
+        return (
+          <li key={`${position}:${tradeoff.dimension}`} className={styles.tradeoff} title={`${dimension}: ${consequence}`}>
+            <i aria-hidden="true" />
+            <span>
+              <b>{dimension}</b> {consequence}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The narrator's why for a decided decision with its citations; without one, the narrator state in quiet words (ruling R3). */
+function DecisionWhySection({ session, decisionId, status }: { session: TraceSession; decisionId: string; status: DecisionDetail["status"] }) {
+  if (status !== "answered" && status !== "delegated") return null;
+  const why = session.explainer.decisionWhy.get(decisionId);
+  const text = why === undefined ? null : displayUntrusted(why.text);
+  const quietWhy = (session.overview === null ? null : narratorNote(session.overview)) ?? "No explanation yet";
+  return (
+    <Section title="Why">
+      {why === undefined || text === null ? (
+        <p className={styles.muted}>{quietWhy}</p>
+      ) : (
+        <p className={styles.why}>
+          <span title={text}>{text}</span>
+          <CitationChips citations={why.citations} />
+        </p>
+      )}
+    </Section>
+  );
+}
+
+/** The components the decision's change units touch (spec §3.5), each opening on the Map. */
+function DecisionComponentsSection({ session, decisionId }: { session: TraceSession; decisionId: string }) {
+  const dispatch = useDispatch();
+  const components = decisionComponents(session, decisionId);
+  if (components.length === 0) return null;
+  return (
+    <Section title="Components">
+      {components.map((component) => {
+        const name = displayUntrusted(component.name);
+        const role = session.overview?.componentById.get(component.id)?.role;
+        return (
+          <Row
+            key={component.id}
+            icon={role === undefined ? "stack" : ROLE_ICON[role]}
+            label={name}
+            title={name}
+            name={`Open ${name} on the Map`}
+            {...(role === undefined ? {} : { metric: role })}
+            onClick={() => {
+              dispatch({ type: "view/switch", view: "map" });
+              dispatch({ type: "map/select", componentId: component.id });
+            }}
+          />
+        );
+      })}
+    </Section>
   );
 }
 
@@ -344,8 +417,14 @@ function StepDetails({ step, session, onSelect }: { step: Step; session: TraceSe
           <ul className={styles.list}>
             {options.map((option) => (
               <li key={option.id} className={styles.option} data-chosen={option.chosen ? "" : undefined}>
-                <Icon name={option.chosen ? "check" : "chev-r"} size={14} className={styles.icon} />
-                <span>{option.label}</span>
+                <span className={styles.optionHead}>
+                  <Icon name={option.chosen ? "check" : "chev-r"} size={14} className={styles.icon} />
+                  <span>{option.label}</span>
+                  {option.chosen && decision.decidedBy !== undefined ? (
+                    <span className={styles.optionBy}>{decision.decidedBy === "delegated" ? "chosen by the agent" : "chosen by you"}</span>
+                  ) : null}
+                </span>
+                {option.tradeoffs === undefined ? null : <Tradeoffs tradeoffs={option.tradeoffs} />}
               </li>
             ))}
           </ul>
@@ -354,6 +433,8 @@ function StepDetails({ step, session, onSelect }: { step: Step; session: TraceSe
             {step.durationMs === null ? "" : ` · waited ${formatDuration(step.durationMs)}`}
           </p>
         </Section>
+        <DecisionWhySection session={session} decisionId={decision.decisionId} status={decision.status} />
+        <DecisionComponentsSection session={session} decisionId={decision.decisionId} />
         {affected.length > 0 ? (
           <Section title="Affects">
             {affected.slice(0, RELATED_COLLAPSED).map((chapter) => (

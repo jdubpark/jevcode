@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useMemo, useReducer, type JSX } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, type JSX } from "react";
 
 import { buildBrief, type BriefArchitecture, type BriefChange, type BriefModel } from "../../layout/brief.js";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
@@ -14,6 +14,8 @@ import {
   type StepKind,
   type TraceSession,
 } from "../../model/index.js";
+import { DecisionCard } from "../explainer/DecisionCard.js";
+import { StoryBlock } from "../explainer/StoryBlock.js";
 import { DiffBar } from "../graphics/DiffBar.js";
 import { DurationBar } from "../graphics/DurationBar.js";
 import { TestDots } from "../graphics/TestDots.js";
@@ -21,9 +23,11 @@ import type { IconName } from "../icons/icon-names.js";
 import { Icon } from "../icons/Icon.js";
 import { CATEGORY_ICON, KIND_ICON } from "../icons/kind-icons.js";
 import { useViewerHost } from "../shell/host-context.js";
+import { useAnnounce } from "../shell/LiveRegion.js";
 import { displaySpanMs } from "../shell/TitleBar.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch, useView } from "../state/store.js";
+import type { AnswerState } from "../views/console/ConsoleRowView.js";
 import { narratorNote } from "../views/map/map-text.js";
 import { ViewDefinitionsContext } from "../views/view-port.js";
 import styles from "./Brief.module.css";
@@ -54,6 +58,10 @@ export interface BriefViewProps {
   onOpenMap(): void;
   /** A Map view is registered and is not the one shown (the "Open the map" button hides otherwise). */
   mapAvailable: boolean;
+  /** Present only where the host can answer (the main window). */
+  onAnswer?(decisionId: string, optionId: string): void;
+  /** Where each decision's answer stands, by decision id (absent: "idle"). */
+  answers?: ReadonlyMap<string, AnswerState>;
 }
 
 function stepOf(session: TraceSession, index: TraceIndex, id: string | null): Step | undefined {
@@ -90,7 +98,9 @@ function stateWord(session: TraceSession): string {
   return `${agentStateLabel(session.meta.state)} · ${formatDuration(displaySpanMs(session))}`;
 }
 
-function nowIcon(session: TraceSession): IconName {
+function nowIcon(session: TraceSession, model: BriefModel): IconName {
+  // The narrator's story reads as Jev's (the H3 mockup's Now icon).
+  if (model.now.kind === "story") return "jev";
   if (session.live) return "live";
   return session.meta.state === "completed" ? "check" : "clock";
 }
@@ -109,20 +119,12 @@ function StepRow({ step, onSelect, children }: { step: Step; onSelect(id: Select
 function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Element {
   const now = model.now;
   if (now.kind === "story") {
-    // Lane 07 (S-4) renders the story with citation chips against the Phase C mockup.
-    return <p className={styles.prose}>{now.sentences.map((sentence) => displayUntrusted(sentence.text)).join(" ")}</p>;
+    return <StoryBlock sentences={now.sentences} label="Now" {...(now.provenance !== undefined ? { provenance: now.provenance } : {})} />;
   }
+  // An open decision is its card under Now (phase C, lane 07 deviation 4), so Now no longer links to it.
   const running = stepOf(session, index, now.runningStepId);
   const latest = chapterOf(session, index, now.latestUnitId);
   const latestChange = model.changes.find((change) => change.unitId === now.latestUnitId);
-  let decisionStep: Step | undefined;
-  for (let i = session.steps.length - 1; i >= 0 && now.pendingDecisionId !== null; i -= 1) {
-    const step = session.steps[i];
-    if (step?.decision?.decisionId === now.pendingDecisionId && step.decision.status === "open") {
-      decisionStep = step;
-      break;
-    }
-  }
   // With nothing running: while live, the wait for the first event or the latest step (what the agent is on); once
   // the session is over, its final state (also for a session that ended before any event).
   const tail = running === undefined && session.live ? tailStepOf(session) : undefined;
@@ -147,7 +149,7 @@ function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Ele
   } else if (!session.live) {
     lead = (
       <p className={styles.state}>
-        <Icon name={nowIcon(session)} size={14} />
+        <Icon name={nowIcon(session, model)} size={14} />
         <span className={styles.title}>{agentStateLabel(session.meta.state)}</span>
         {session.steps.length === 0 ? null : <span className={styles.meta}>{formatDuration(displaySpanMs(session))}</span>}
       </p>
@@ -167,15 +169,6 @@ function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Ele
           <Icon name={CATEGORY_ICON[latest.category]} size={14} className={styles.icon} />
           <span className={styles.title}>{displayUntrusted(latest.shortTitle ?? latest.title)}</span>
           {latestChange === undefined ? null : <DiffBar size="xs" added={latestChange.added} removed={latestChange.removed} />}
-        </button>
-      )}
-      {decisionStep === undefined || decisionStep.decision === undefined ? null : (
-        <button type="button" className={styles.decision} onClick={() => onSelect(decisionStep.id)}>
-          <span className={styles.question}>
-            <Icon name="fork" size={14} />
-            <span>{displayUntrusted(decisionStep.decision.title)}</span>
-          </span>
-          <span className={styles.ask}>Needs your decision</span>
         </button>
       )}
     </div>
@@ -381,9 +374,27 @@ function Architecture({
   );
 }
 
-/** Presentational Brief (spec §3.3): Now, Changes so far, Architecture. Every agent or narrator string goes through displayUntrusted. */
+/** One decision card, answering through the Brief's handler when the host can answer. */
+function BriefDecision({ card, props }: { card: BriefModel["decisions"][number]; props: BriefViewProps }) {
+  const onAnswer = props.onAnswer;
+  return (
+    <DecisionCard
+      card={card}
+      answer={props.answers?.get(card.decisionId) ?? "idle"}
+      {...(onAnswer !== undefined ? { onAnswer: (optionId: string) => onAnswer(card.decisionId, optionId) } : {})}
+    />
+  );
+}
+
+/**
+ * Presentational Brief (spec §3.3): Now, Decisions (phase C), Changes so far, Architecture. A pending decision's card
+ * sits under Now (spec §3.5); the latest decided one has its own part, as the H3 mockup shows. Every agent or narrator
+ * string goes through displayUntrusted.
+ */
 export function BriefView(props: BriefViewProps): JSX.Element {
   const { model, session, index, onSelect } = props;
+  const pending = model.decisions.filter((card) => card.status === "open");
+  const decided = model.decisions.filter((card) => card.status !== "open");
   // Lanes 06 and 07 render BriefView directly (tests, the Map), so two Briefs can share a document.
   const id = useId();
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
@@ -398,11 +409,28 @@ export function BriefView(props: BriefViewProps): JSX.Element {
       </div>
       <section className={styles.part} aria-labelledby={`${id}-now`}>
         <h3 id={`${id}-now`} className={styles.partTitle}>
-          <Icon name={nowIcon(session)} size={14} />
+          <Icon name={nowIcon(session, model)} size={14} />
           Now
         </h3>
         <Now {...props} />
+        {pending.map((card) => (
+          <BriefDecision key={card.decisionId} card={card} props={props} />
+        ))}
       </section>
+      {decided.length === 0 ? null : (
+        <section className={styles.part} aria-labelledby={`${id}-decisions`}>
+          <h3 id={`${id}-decisions`} className={styles.partTitle}>
+            <Icon name="fork" size={14} />
+            <span>
+              Decisions
+              <span aria-hidden="true">{` · ${decided.length}`}</span>
+            </span>
+          </h3>
+          {decided.map((card) => (
+            <BriefDecision key={card.decisionId} card={card} props={props} />
+          ))}
+        </section>
+      )}
       <section className={styles.part} aria-labelledby={`${id}-changes`}>
         <h3 id={`${id}-changes`} className={styles.partTitle}>
           <Icon name="list" size={14} />
@@ -446,6 +474,43 @@ export function Brief(): JSX.Element {
   const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
   const running = model !== null && model.now.kind === "rule" && model.now.runningStepId !== null;
+  const host = useViewerHost();
+  const announce = useAnnounce();
+  // Answer state by decision id, as the Console keeps it (V-4 fix round 1): an answer on its way or sent takes no
+  // second one until the trace shows the decision answered, and a failure is announced and offers the options again.
+  const [answers, setAnswers] = useState<ReadonlyMap<string, AnswerState>>(() => new Map());
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
+  const inFlight = useRef(new Set<string>());
+  const answer = useCallback((decisionId: string, optionId: string): void => {
+    const send = hostRef.current.answerDecision;
+    if (send === undefined || optionId.trim() === "") return;
+    if (inFlight.current.has(decisionId) || answersRef.current.get(decisionId) === "sent") return;
+    inFlight.current.add(decisionId);
+    const mark = (state: AnswerState): void => setAnswers((current) => new Map(current).set(decisionId, state));
+    mark("sending");
+    let sent: Promise<void>;
+    try {
+      sent = Promise.resolve(send.call(hostRef.current, { decisionId, optionId }));
+    } catch (error) {
+      sent = Promise.reject(error);
+    }
+    sent.then(
+      () => {
+        inFlight.current.delete(decisionId);
+        mark("sent");
+      },
+      () => {
+        inFlight.current.delete(decisionId);
+        mark("failed");
+        announceRef.current("Could not send the answer");
+      },
+    );
+  }, []);
   // The running row's bar and seconds advance once a second (the display clock; src/layout stays clock-free).
   useEffect(() => {
     if (!running || terminal) return undefined;
@@ -472,6 +537,8 @@ export function Brief(): JSX.Element {
       onSelect={(id) => dispatch({ type: "select", id, by: "shell" })}
       onOpenMap={() => dispatch({ type: "view/switch", view: "map" })}
       mapAvailable={!onMap && views.some((view) => view.kind === "map")}
+      answers={answers}
+      {...(host.answerDecision !== undefined ? { onAnswer: answer } : {})}
     />
   );
 }
