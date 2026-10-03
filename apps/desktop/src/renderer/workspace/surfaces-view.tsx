@@ -40,7 +40,7 @@ function MessageText({ text }: { text: string }) {
   const full = displayUntrusted(text, { multiline: true });
   return (
     <>
-      <p title={full} aria-label={full}>
+      <p title={full}>
         {displayUntrusted(visible, { multiline: true })}
       </p>
       {collapsible ? (
@@ -95,6 +95,8 @@ export function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
   if (event.type === "agent_completed") kind = "success";
   if (event.type === "agent_failed" || event.type === "approval_requested") kind = "warning";
 
+  // Commands, paths and an agent's error text are untrusted (agent_failed reads "Stopped: <error>").
+  const label = displayUntrusted(agentEventLabel(event));
   const detail =
     event.type === "tool_started"
       ? event.input
@@ -109,7 +111,7 @@ export function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
       </span>
       <div className="activity-operation-copy">
         <div>
-          <span>{agentEventLabel(event)}</span>
+          <span title={label}>{label}</span>
           <time>{formatClock(event.ts)}</time>
         </div>
         {detail.length > 0 ? (

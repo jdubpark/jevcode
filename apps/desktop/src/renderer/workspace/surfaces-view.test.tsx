@@ -83,7 +83,8 @@ describe("Surfaces host view (spec E3)", () => {
     expect(short.textContent).toBe(displayUntrusted("short \u202Eflip"));
     expect(short.textContent).not.toContain("\u202E");
     expect(short.getAttribute("title")).toBe(displayUntrusted("short \u202Eflip", { multiline: true }));
-    expect(short.getAttribute("aria-label")).toBe(short.getAttribute("title"));
+    // A paragraph takes no name (aria-label is prohibited on it); the full text is its tooltip and "Read full update".
+    expect(short.hasAttribute("aria-label")).toBe(false);
     const clipped = screen.getByText(/ok /);
     expect(clipped.textContent).not.toContain("\u202E");
     // Lane 02b I-4: displayUntrusted shows zero-width characters as visible tokens.
@@ -129,5 +130,15 @@ describe("Surfaces host view (spec E3)", () => {
     expect(pre.textContent).not.toContain("\u202E");
     expect(pre.textContent).toContain("\n");
     expect(pre.getAttribute("title")).toBe(displayUntrusted([stdout, "err\u0007"].join("\n"), { multiline: true }));
+  });
+
+  it("renders an operation's label, agent text included, through displayUntrusted with the full text as its tooltip (fix wave minor 4)", () => {
+    const error = `quota \u202Eexceeded ${"y".repeat(300)}`;
+    render(<ActivityEvent event={{ type: "agent_failed", sessionId: "s1", error, ts: "2026-10-02T10:00:01.000Z" }} />);
+    const label = document.querySelector(".activity-operation-copy span") as HTMLElement;
+    expect(label.textContent).toBe(displayUntrusted(`Stopped: ${error}`));
+    expect(label.textContent).not.toContain("\u202E");
+    expect(label.getAttribute("title")).toBe(displayUntrusted(`Stopped: ${error}`));
+    expect(label.getAttribute("title")).toContain("y".repeat(300));
   });
 });
