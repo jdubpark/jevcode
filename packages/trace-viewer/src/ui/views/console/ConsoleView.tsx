@@ -73,6 +73,11 @@ export function consoleReadingOrder(rows: readonly ConsoleRow[]): SelectionId[] 
   return order;
 }
 
+/** A form control that lost focus by being disabled (focus fixup) left it without the reader's doing. */
+function isDisabled(element: Element): boolean {
+  return element.matches(":disabled");
+}
+
 function rowMatches(row: ConsoleRow, matches: ReadonlySet<string>): boolean {
   return matches.size > 0 && consoleRowStepIds(row).some((id) => matches.has(id));
 }
@@ -117,6 +122,8 @@ export function ConsoleView({ active }: ViewProps) {
   const focusKey = useRef<string | null>(null);
   /** Set by a focus request (port.focusSelected); consumed once its row is mounted, so a rebuild never moves focus. */
   const pendingFocus = useRef<string | null>(null);
+  /** The element inside a row that last took focus, with its row's key; the focus repair below reads it (E M-2). */
+  const lastFocus = useRef<{ key: string; element: Element } | null>(null);
   const focusIndex = focusKey.current === null ? -1 : rows.findIndex((row) => row.key === focusKey.current);
   const mounted = useRef<number[]>([]);
   mounted.current = [selectedIndex, focusIndex];
@@ -251,6 +258,23 @@ export function ConsoleView({ active }: ViewProps) {
 
   const findNode = (key: string): HTMLElement | undefined =>
     Array.from(scrollRef.current?.querySelectorAll<HTMLElement>("article[data-key]") ?? []).find((item) => item.dataset.key === key);
+
+  // E M-2: focus that dropped to <body> because a commit removed or disabled the element that held it inside a row (a
+  // decision's option once its answered row arrives) goes back to that row's article, through the pending focus below.
+  // Focus the reader moved elsewhere, or sent nowhere from an element still in place, clears `lastFocus` first.
+  useLayoutEffect(() => {
+    const last = lastFocus.current;
+    const doc = scrollRef.current?.ownerDocument;
+    if (last === null || doc === undefined || pendingFocus.current !== null) return;
+    const active = doc.activeElement;
+    if (active !== null && active !== doc.body && active !== doc.documentElement) return;
+    if (last.element.isConnected && !isDisabled(last.element)) return;
+    lastFocus.current = null;
+    focusKey.current = last.key;
+    pendingFocus.current = last.key;
+    // focusKey keeps the row in the virtual range; a row already out of it mounts on the next render.
+    if (findNode(last.key) === undefined) rerender();
+  });
 
   // Consumes a pending focus request once its row is mounted (focusKey keeps the row in the range meanwhile).
   useLayoutEffect(() => {
@@ -521,10 +545,22 @@ export function ConsoleView({ active }: ViewProps) {
                 style={{ transform: `translateY(${item.start}px)` }}
                 onFocus={(event) => {
                   if (event.target === event.currentTarget) focusKey.current = row.key;
+                  lastFocus.current = { key: row.key, element: event.target };
                 }}
                 onBlur={(event) => {
                   const next = event.relatedTarget as Node | null;
                   if (focusKey.current === row.key && next !== null && !event.currentTarget.contains(next)) focusKey.current = null;
+                  const left = event.target;
+                  if (lastFocus.current?.element !== left) return;
+                  if (next !== null) {
+                    lastFocus.current = null;
+                    return;
+                  }
+                  // Focus sent nowhere from an element still in place (a click on empty space) was the reader's; one the
+                  // commit removed or disabled (a browser may fire focusout for it) is the loss the repair restores.
+                  queueMicrotask(() => {
+                    if (lastFocus.current?.element === left && left.isConnected && !isDisabled(left)) lastFocus.current = null;
+                  });
                 }}
                 onClick={(event) => {
                   if (event.target instanceof Element && event.target.closest("button, a, input") !== null) return;

@@ -499,6 +499,54 @@ describe("ConsoleView fix round 1", () => {
     expect(screen.getByRole("feed", { name: "Console" }).textContent).toContain("→ Option A");
   });
 
+  describe("focus when the answered row removes the focused option (E M-2)", () => {
+    const decisionArticle = (): HTMLElement => {
+      const node = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[data-kind="decision"]');
+      if (node === null) throw new Error("no decision row");
+      return node;
+    };
+    const answered = (b: TraceBuilder): void => {
+      b.decision({ id: "d1", title: "Keep email login?", status: "answered", answer: { decisionId: "d1", decision: { choice: "a" }, evidence: [] } });
+    };
+
+    it.each([
+      ["from the row's tab stop (keyboard)", true],
+      ["straight on the option (pointer or screen reader)", false],
+    ])("moves focus to the decision's row, not <body>: %s", async (_name, viaRow) => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      if (viaRow) act(() => decisionArticle().focus());
+      act(() => option("Option A").focus());
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+      expect(document.activeElement).toBe(decisionArticle());
+      expect(decisionArticle().tabIndex).toBe(0);
+    });
+
+    it("leaves focus alone when the reader had already left the option for nowhere", async () => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      act(() => decisionArticle().focus());
+      act(() => option("Option A").focus());
+      // A click on empty space: no focusin anywhere, and the option is still in the document and enabled.
+      act(() => option("Option A").blur());
+      await frames();
+      expect(document.activeElement).toBe(document.body);
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+
   it("a failed answer shows a quiet note in the block and lets the reader answer again", async () => {
     const answerDecision = vi.fn(async () => {
       throw new Error("rejected");
