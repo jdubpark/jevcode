@@ -6,7 +6,7 @@ import { ForkGlyph } from "../graphics/ForkGlyph.js";
 import { Icon } from "../icons/Icon.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch } from "../state/store.js";
-import type { AnswerState } from "../views/console/ConsoleRowView.js";
+import type { AnswerState } from "../shell/decision-answers.js";
 import { narratorNote } from "../views/map/map-text.js";
 import { CitationChips } from "./CitationChips.js";
 import styles from "./explainer.module.css";
@@ -54,7 +54,8 @@ export function DecisionCard({ card, onAnswer, answer = "idle" }: DecisionCardPr
   const why = card.why;
   const whyText = why === null ? null : displayUntrusted(why.text);
   return (
-    <section className={styles.card} aria-label={`Decision card: ${title}`} data-status={card.status}>
+    // tabIndex -1: the Brief moves focus here when the card that held it was replaced (fix I-2).
+    <section className={styles.card} aria-label={`Decision card: ${title}`} data-status={card.status} data-decision-id={card.decisionId} tabIndex={-1}>
       <div className={styles.cardHead}>
         <Icon name="fork" size={14} className={styles.icon} />
         <button

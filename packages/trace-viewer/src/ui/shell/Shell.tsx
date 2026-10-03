@@ -34,6 +34,7 @@ import {
 } from "../views/view-port.js";
 import { isLiveState, LIVE_TICK_START, type DataController, type DataSnapshot } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
+import { createDecisionAnswerStore, DecisionAnswersContext } from "./decision-answers.js";
 import { ViewerHostContext } from "./host-context.js";
 import { LiveRegion } from "./LiveRegion.js";
 import { Outline } from "./Outline/Outline.js";
@@ -137,6 +138,8 @@ export function Shell({
   showSwitch = true,
 }: ShellProps) {
   const store = useViewStore();
+  // One answer store per session: the Console's decision blocks and the Brief's cards share it (lane 07 S-4 fix I-1).
+  const answers = useMemo(createDecisionAnswerStore, [sessionId]);
   // The right panel is named after what it shows (lane fix m3).
   const showBrief = useView(showsBrief);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -315,6 +318,7 @@ export function Shell({
       <IconSprite />
       <SessionContext.Provider value={sessionView}>
         <ViewerHostContext.Provider value={host}>
+          <DecisionAnswersContext.Provider value={answers}>
           <DiagnosticsContext.Provider value={diagnostics}>
             <ViewPortRegistryContext.Provider value={registry}>
               <ViewDefinitionsContext.Provider value={views}>
@@ -341,6 +345,7 @@ export function Shell({
               </ViewDefinitionsContext.Provider>
             </ViewPortRegistryContext.Provider>
           </DiagnosticsContext.Provider>
+          </DecisionAnswersContext.Provider>
         </ViewerHostContext.Provider>
       </SessionContext.Provider>
     </div>

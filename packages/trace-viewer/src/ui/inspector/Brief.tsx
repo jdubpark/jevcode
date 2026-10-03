@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, type JSX } from "react";
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, type JSX, type RefObject } from "react";
 
 import { buildBrief, type BriefArchitecture, type BriefChange, type BriefModel } from "../../layout/brief.js";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
@@ -23,11 +23,10 @@ import type { IconName } from "../icons/icon-names.js";
 import { Icon } from "../icons/Icon.js";
 import { CATEGORY_ICON, KIND_ICON } from "../icons/kind-icons.js";
 import { useViewerHost } from "../shell/host-context.js";
-import { useAnnounce } from "../shell/LiveRegion.js";
+import { useDecisionAnswers, type AnswerState } from "../shell/decision-answers.js";
 import { displaySpanMs } from "../shell/TitleBar.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch, useView } from "../state/store.js";
-import type { AnswerState } from "../views/console/ConsoleRowView.js";
 import { narratorNote } from "../views/map/map-text.js";
 import { ViewDefinitionsContext } from "../views/view-port.js";
 import styles from "./Brief.module.css";
@@ -389,6 +388,55 @@ function BriefDecision({ card, props }: { card: BriefModel["decisions"][number];
   );
 }
 
+function focusIsLost(doc: Document, root: HTMLElement): boolean {
+  const active = doc.activeElement;
+  if (active === null || active === doc.body || active === doc.documentElement) return true;
+  // A Choose button disabled while its answer is on its way keeps focus in jsdom; a browser drops it to <body>.
+  return active instanceof HTMLButtonElement && active.disabled && root.contains(active);
+}
+
+/**
+ * A decision card that held focus can disappear under it: its Choose button is disabled while the answer is on its way,
+ * and once the trace shows the decision answered the card moves from Now to Decisions (a new element). Remember which
+ * card held focus and, when focus is lost after a commit, move it to that decision's card (a tabIndex -1 region), else
+ * to the Decisions heading (lane 07 S-4 fix I-2). Focus that left on purpose (a click elsewhere) is forgotten.
+ */
+function useDecisionFocusRepair(root: RefObject<HTMLElement | null>, headingId: string): void {
+  const held = useRef<string | null>(null);
+  useEffect(() => {
+    const node = root.current;
+    const doc = node?.ownerDocument;
+    if (node === null || node === undefined || doc === undefined) return undefined;
+    const onFocusIn = (event: FocusEvent): void => {
+      const target = event.target;
+      held.current = target instanceof Element && node.contains(target) ? (target.closest<HTMLElement>("[data-decision-id]")?.dataset.decisionId ?? null) : null;
+    };
+    const onFocusOut = (event: FocusEvent): void => {
+      const target = event.target;
+      if (held.current === null || !(target instanceof Element) || !node.contains(target) || event.relatedTarget instanceof Node) return;
+      // Still in the document and still focusable a moment later: the reader moved focus away, not the commit.
+      queueMicrotask(() => {
+        if (target.isConnected && !(target instanceof HTMLButtonElement && target.disabled)) held.current = null;
+      });
+    };
+    doc.addEventListener("focusin", onFocusIn);
+    doc.addEventListener("focusout", onFocusOut);
+    return () => {
+      doc.removeEventListener("focusin", onFocusIn);
+      doc.removeEventListener("focusout", onFocusOut);
+    };
+  }, [root]);
+  useLayoutEffect(() => {
+    const id = held.current;
+    const node = root.current;
+    const doc = node?.ownerDocument;
+    if (id === null || node === null || doc === undefined || !focusIsLost(doc, node)) return;
+    const card = Array.from(node.querySelectorAll<HTMLElement>("[data-decision-id]")).find((element) => element.dataset.decisionId === id);
+    const heading = doc.getElementById(headingId);
+    (card ?? (heading !== null && node.contains(heading) ? heading : node)).focus({ preventScroll: true });
+  });
+}
+
 /**
  * Presentational Brief (spec §3.3): Now, Decisions (phase C), Changes so far, Architecture. A pending decision's card
  * sits under Now (spec §3.5); the latest decided one has its own part, as the H3 mockup shows. Every agent or narrator
@@ -403,8 +451,10 @@ export function BriefView(props: BriefViewProps): JSX.Element {
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
   const more = model.changes.length - shown.length;
   const edited = useMemo(() => editedFilesOf(session, index, model.changes.length > 0), [model.changes.length, session, index]);
+  const root = useRef<HTMLElement>(null);
+  useDecisionFocusRepair(root, `${id}-decisions`);
   return (
-    <section className={styles.brief} aria-labelledby={`${id}-title`} tabIndex={-1} data-brief="">
+    <section ref={root} className={styles.brief} aria-labelledby={`${id}-title`} tabIndex={-1} data-brief="">
       <div className={styles.header}>
         <Icon name="brief" size={16} />
         <h2 id={`${id}-title`} className={styles.heading}>Brief</h2>
@@ -422,7 +472,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
       </section>
       {decided.length === 0 ? null : (
         <section className={styles.part} aria-labelledby={`${id}-decisions`}>
-          <h3 id={`${id}-decisions`} className={styles.partTitle}>
+          <h3 id={`${id}-decisions`} className={styles.partTitle} tabIndex={-1}>
             <Icon name="fork" size={14} />
             <span>
               Decisions
@@ -474,43 +524,9 @@ export function Brief(): JSX.Element {
   const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
   const running = model !== null && model.now.kind === "rule" && model.now.runningStepId !== null;
-  const host = useViewerHost();
-  const announce = useAnnounce();
-  // Answer state by decision id, as the Console keeps it (V-4 fix round 1): an answer on its way or sent takes no
-  // second one until the trace shows the decision answered, and a failure is announced and offers the options again.
-  const [answers, setAnswers] = useState<ReadonlyMap<string, AnswerState>>(() => new Map());
-  const answersRef = useRef(answers);
-  answersRef.current = answers;
-  const hostRef = useRef(host);
-  hostRef.current = host;
-  const announceRef = useRef(announce);
-  announceRef.current = announce;
-  const inFlight = useRef(new Set<string>());
-  const answer = useCallback((decisionId: string, optionId: string): void => {
-    const send = hostRef.current.answerDecision;
-    if (send === undefined || optionId.trim() === "") return;
-    if (inFlight.current.has(decisionId) || answersRef.current.get(decisionId) === "sent") return;
-    inFlight.current.add(decisionId);
-    const mark = (state: AnswerState): void => setAnswers((current) => new Map(current).set(decisionId, state));
-    mark("sending");
-    let sent: Promise<void>;
-    try {
-      sent = Promise.resolve(send.call(hostRef.current, { decisionId, optionId }));
-    } catch (error) {
-      sent = Promise.reject(error);
-    }
-    sent.then(
-      () => {
-        inFlight.current.delete(decisionId);
-        mark("sent");
-      },
-      () => {
-        inFlight.current.delete(decisionId);
-        mark("failed");
-        announceRef.current("Could not send the answer");
-      },
-    );
-  }, []);
+  // The viewer's answers (shell/decision-answers.ts), shared with the Console's decision block and kept while the Brief
+  // is unmounted: an answer on its way or sent takes no second one, and a failure offers the options again.
+  const { states: answers, canAnswer, answer } = useDecisionAnswers();
   // The running row's bar and seconds advance once a second (the display clock; src/layout stays clock-free).
   useEffect(() => {
     if (!running || terminal) return undefined;
@@ -539,7 +555,7 @@ export function Brief(): JSX.Element {
       mapAvailable={!onMap && views.some((view) => view.kind === "map")}
       answers={answers}
       {...(onMap ? { mapSession: { selectedId: mapSelection, onSelectComponent: (componentId: string) => dispatch({ type: "map/select", componentId }) } } : {})}
-      {...(host.answerDecision !== undefined ? { onAnswer: answer } : {})}
+      {...(canAnswer ? { onAnswer: answer } : {})}
     />
   );
 }

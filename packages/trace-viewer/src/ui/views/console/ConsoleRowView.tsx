@@ -14,6 +14,7 @@ import {
   type TraceSession,
 } from "../../../model/index.js";
 import { SummaryBlock } from "../../explainer/SummaryBlock.js";
+import type { AnswerState } from "../../shell/decision-answers.js";
 import { DiffBar } from "../../graphics/DiffBar.js";
 import { DurationBar } from "../../graphics/DurationBar.js";
 import { testDotsMode } from "../../graphics/scales.js";
@@ -122,8 +123,6 @@ function finishedMeta(exitCode: number | null, ms: number | null): string {
   return [shown, formatDuration(ms)].filter((part) => part !== "").join(" · ");
 }
 
-/** Where the reader's answer to a pending decision stands; the Console keeps it by decision id, outside the row. */
-export type AnswerState = "idle" | "sending" | "sent" | "failed";
 
 export interface ConsoleRowViewProps {
   row: ConsoleRow;

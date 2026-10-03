@@ -7,7 +7,7 @@ import { sentence } from "../test-support/explainer-fixtures.js";
 import { componentOf, overviewSnapshot, type ComponentSeed } from "../test-support/overview-builder.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { buildBrief } from "./brief.js";
-import { BRIEF_DECISIONS_MAX, buildBriefDecisions, decisionComponents } from "./brief-decisions.js";
+import { BRIEF_DECIDED_MAX, BRIEF_DECISIONS_MAX, buildBriefDecisions, decisionComponents } from "./brief-decisions.js";
 import { buildTraceIndex } from "./trace-index.js";
 
 const MIDDLEWARE_SEED: ComponentSeed = { rootPath: "src/middleware", files: ["src/middleware/rate-limiter.ts"], name: "middleware" };
@@ -36,11 +36,11 @@ function scenario(options: { story?: boolean } = {}): TraceSession {
 }
 
 describe("buildBriefDecisions", () => {
-  it("lists open decisions, then the latest answered one with its why, tradeoffs and components", () => {
+  it("lists open decisions, then the two latest decided ones newest first, with the why, tradeoffs and components", () => {
     const cards = buildBriefDecisions(scenario());
-    expect(cards.map((card) => [card.decisionId, card.status])).toEqual([["d2", "open"], ["d1", "answered"]]);
+    expect(cards.map((card) => [card.decisionId, card.status])).toEqual([["d2", "open"], ["d1", "answered"], ["d0", "answered"]]);
     const answered = cards[1];
-    expect(cards.map((card) => card.components.length)).toEqual([0, 1]);
+    expect(cards.map((card) => card.components.length)).toEqual([0, 1, 0]);
     expect(answered?.why).toEqual(WHY);
     expect(answered?.decidedBy).toBe("supervisor");
     expect(answered?.options).toEqual([
@@ -52,11 +52,29 @@ describe("buildBriefDecisions", () => {
     expect(cards[0]?.components).toEqual([]);
   });
 
-  it("shows at most three cards", () => {
+  it("shows at most three open cards, oldest first", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "Go" });
     for (let i = 0; i < 5; i += 1) b.decision({ id: `d${i}`, status: "open" });
-    expect(buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }))).toHaveLength(BRIEF_DECISIONS_MAX);
+    const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
+    expect(BRIEF_DECISIONS_MAX).toBe(3);
+    expect(cards.map((card) => card.decisionId)).toEqual(["d0", "d1", "d2"]);
+  });
+
+  it("keeps the two latest decided cards, newest first, delegated ones included", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Go" });
+    for (let i = 0; i < 4; i += 1) {
+      b.decision({ id: `d${i}`, status: "open" });
+      b.decision({
+        id: `d${i}`,
+        status: i === 3 ? "delegated" : "answered",
+        ...(i === 3 ? {} : { answer: { decisionId: `d${i}`, decision: { q: "a" }, evidence: [] } }),
+      });
+    }
+    const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
+    expect(BRIEF_DECIDED_MAX).toBe(2);
+    expect(cards.map((card) => [card.decisionId, card.decidedBy])).toEqual([["d3", "delegated"], ["d2", "supervisor"]]);
   });
 
   it("finds no components without an overview", () => {

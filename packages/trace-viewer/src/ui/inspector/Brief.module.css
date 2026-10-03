@@ -66,6 +66,11 @@
   flex: none;
 }
 
+/* The Decisions heading takes focus when a decided card that should hold it is gone (lane 07 S-4 fix I-2). */
+.partTitle:focus {
+  outline: none;
+}
+
 /* Rows are 26 px hit targets around 18 px text; the negative margins keep the mockup's text rhythm. */
 .now {
   display: flex;
