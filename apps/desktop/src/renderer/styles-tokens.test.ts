@@ -10,9 +10,9 @@ import { XTERM_LIGHT_THEME } from "./theme.js";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const CSS = readFileSync(path.join(dirname, "styles.css"), "utf8");
 // Read as text: the renderer project does not compile main-process files.
-const MAIN_WINDOW_BACKGROUND = /MAIN_WINDOW_BACKGROUND = "(#[0-9A-Fa-f]{6})"/.exec(
-  readFileSync(path.join(dirname, "../main/trace-window.ts"), "utf8"),
-)?.[1];
+const TRACE_WINDOW_TS = readFileSync(path.join(dirname, "../main/trace-window.ts"), "utf8");
+const MAIN_WINDOW_BACKGROUND = /MAIN_WINDOW_BACKGROUND = "(#[0-9A-Fa-f]{6})"/.exec(TRACE_WINDOW_TS)?.[1];
+const MAIN_WINDOW_MIN_WIDTH = /MAIN_WINDOW_MIN_WIDTH = (\d+)/.exec(TRACE_WINDOW_TS)?.[1];
 const UI_CATALOG_SRC = path.resolve(dirname, "../../../../packages/ui-catalog/src");
 
 function withoutComments(css: string): string {
@@ -96,5 +96,11 @@ describe("main window styles use the viewer's light tokens (spec E6, §3.6, §9)
     expect(MAIN_WINDOW_BACKGROUND).toBe(LIGHT_TOKENS.canvas);
     expect(XTERM_LIGHT_THEME.background).toBe(LIGHT_TOKENS.panel);
     expect(XTERM_LIGHT_THEME.foreground).toBe(LIGHT_TOKENS.ink);
+  });
+
+  it("holds the page to the main window's minimum width, where the embedded viewer bar still fits (D-6 ruling: 880 px)", () => {
+    expect(MAIN_WINDOW_MIN_WIDTH).toBe("880");
+    const app = /(?:^|\n)\.app\s*\{([^}]*)\}/.exec(withoutComments(CSS))?.[1] ?? "";
+    expect(/min-width:\s*(\d+)px/.exec(app)?.[1]).toBe(MAIN_WINDOW_MIN_WIDTH);
   });
 });
