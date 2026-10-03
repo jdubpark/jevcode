@@ -14,6 +14,8 @@ export interface ErrorBoundaryProps {
   /** For a boundary outside the Shell root, whose tokens the fallback must bring itself. */
   fallbackClassName?: string;
   fallbackStyle?: CSSProperties;
+  /** Marks the fallback as the viewer's root, so a host's `:where(:not([data-trace-viewer] *))` rules skip it. */
+  fallbackIsViewerRoot?: boolean;
 }
 
 interface ErrorBoundaryState {
@@ -44,6 +46,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         role="alert"
         className={`${styles.boundary} ${this.props.fallbackClassName ?? ""}`}
         style={this.props.fallbackStyle}
+        data-trace-viewer={this.props.fallbackIsViewerRoot === true ? "" : undefined}
       >
         <p className={styles.boundaryText}>{`${region} failed to render`}</p>
         <div className={styles.boundaryActions}>
