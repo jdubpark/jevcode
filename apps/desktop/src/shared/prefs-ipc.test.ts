@@ -69,6 +69,10 @@ describe("preference IPC channels", () => {
     expect(() =>
       parseToMain("preferences:set", { narratorAvailability: "on" }),
     ).toThrowError();
+    // The renderer cannot set the read-only availability: preferences:set strips it (the schema stays non-strict).
+    expect(
+      parseToMain("preferences:set", { explainWithModel: true, narratorAvailability: "on" }),
+    ).toEqual({ explainWithModel: true });
   });
 
   it("roundtrips preferences through the preload api", async () => {
