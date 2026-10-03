@@ -65,6 +65,10 @@ describe("sessionStory", () => {
     expect(requests[0]?.schema).toBe(SENTENCES_OUTPUT_JSON_SCHEMA);
   });
 
+  it("tells the model that a delegated decision is one the agent chose", () => {
+    expect(SESSION_STORY_SYSTEM_PROMPT).toMatch(/"delegated"[^\n]*the agent chose/);
+  });
+
   it("sends keys and clipped metadata only, never the ids", async () => {
     const long: SessionStoryInput = {
       prompt: "p".repeat(5_000),
@@ -166,6 +170,8 @@ describe("decisionWhy", () => {
   it("drops a sentence that cites only the decision", () => {
     const only = { text: "Failing open keeps the API available.", citations: [{ kind: "decision", id: "dec_redis_policy" }] };
     expect(guardDecisionWhy(only, why.input)).toMatchObject({ accepted: [], dropped: 1, discarded: true });
+    // Lane 05's reason vocabulary: every discarded batch says so.
+    expect(guardDecisionWhy(only, why.input).reasons).toEqual(["0:ungrounded", "batch_discarded"]);
     const grounded = { ...only, citations: [...only.citations, { kind: "step", id: "step:14" }] };
     expect(guardDecisionWhy(grounded, why.input).accepted).toHaveLength(1);
   });
