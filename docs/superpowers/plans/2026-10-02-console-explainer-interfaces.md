@@ -390,7 +390,7 @@ The lane files were drafted against the real code, and some names above had to c
 ### 8.4 Viewer (lanes 02, 06, 07)
 
 - **Location and keys.** `ViewerLocation.view` is optional and accepts any lower-case kind; `InitialViewStateInput.view?` is added. R5: key `0` is Console, and zoom to preset moves to Shift+0.
-- **View state.** `ViewState.brief` with action `brief/toggle`. `ViewState.mapSelection` with action `map/select`; Esc on the Map clears the selection first.
+- **View state.** `ViewState.brief` with action `brief/toggle`. `ViewState.mapSelection` with action `map/select`; Esc on the Map clears the selection first. Lane 06 fix wave: selecting a step or unit (any `select`, `nav`, search or `nav/first`/`nav/last`) clears `mapSelection` (I-1); on the Map, `brief/toggle` pins the Brief over a selected component and `map/select` unpins it (minor 3).
 - **Exports and icons.** The viewer exports `useView`, `useDispatch`, `useSessionView`, `ViewDefinition`, `ViewProps`, `ViewKind` and `IconName`. New icons: `view-console`, `view-map`, `view-surfaces` and `brief`.
 - **Host and chrome.** `ViewPort.toggle?` and `ViewerHostContext` / `useViewerHost` are added. Embedded chrome also hides the Outline.
 - **Push hints.** `HINT_COMMIT_GAP_MS = 50`, and hints are ignored while reconnecting. `StaticBundleSource.onRowsAvailable` is added.
