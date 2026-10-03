@@ -5,7 +5,7 @@
 // shape). A few rows are invalid, out of order or of an unknown type.
 import fc from "fast-check";
 
-import type { TraceRow, TraceSessionSummary } from "@jevcode/contracts";
+import type { NarrativeSentence, TraceRow, TraceSessionSummary } from "@jevcode/contracts";
 
 import { overviewSnapshot } from "./overview-builder.js";
 import { TraceBuilder, testMeta } from "./trace-builder.js";
@@ -344,6 +344,41 @@ const overviewOp: fc.Arbitrary<Op> = fc.oneof(
   { weight: 1, arbitrary: fc.constant<Op>((b) => b.raw("overview_snapshot", { sessionId: "sess-test", repoRoot: "" })) },
 );
 
+const EXPLAINER_SENTENCES: readonly NarrativeSentence[] = [
+  { text: "The agent added the limiter.", citations: [{ kind: "step", id: "step:1" }] },
+  { text: "Tests fail in the redis client.", citations: [{ kind: "component", id: "cmp_000000000001" }] },
+];
+
+function explainerSentence(index: number): NarrativeSentence {
+  return EXPLAINER_SENTENCES[index % EXPLAINER_SENTENCES.length] ?? { text: "The agent added the limiter.", citations: [{ kind: "step", id: "step:1" }] };
+}
+
+/** Explainer rows (phase C): append-local, so any split must still finalize to the fresh fold. Some rows are invalid on purpose. */
+const explainerOp: fc.Arbitrary<Op> = fc.oneof(
+  fc
+    .record({ back: fc.nat(6), which: fc.nat(1) })
+    .map(({ back, which }): Op => (b) =>
+      void b.explainer({ kind: "story", sentences: [explainerSentence(which)], basisSeq: Math.max(0, b.rows.length - back) }),
+    ),
+  fc
+    .record({ id: pick(DECISION_IDS), which: fc.nat(1) })
+    .map(({ id, which }): Op => (b) => void b.explainer({ kind: "decision_why", decisionId: id, sentence: explainerSentence(which) })),
+  fc
+    .record({ back: fc.nat(6), state: pick(["new", "changed", "decision", "failing"] as const), units: subset(UNIT_IDS) })
+    .map(({ back, state, units }): Op => (b) =>
+      void b.explainer({
+        kind: "highlights",
+        basisSeq: Math.max(0, b.rows.length - back),
+        components: [{ id: "cmp_000000000001", state, unitIds: units }],
+      }),
+    ),
+  // Invalid explainer rows must become invalid_row gaps in both folds.
+  fc.constantFrom<Op>(
+    (b) => void b.raw("explainer", { sessionId: "sess-test", kind: "story", sentences: [], basisSeq: 1 }),
+    (b) => void b.raw("explainer", { sessionId: "sess-other", kind: "decision_why", decisionId: "d1", sentence: explainerSentence(0) }),
+  ),
+);
+
 const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 5, arbitrary: agentOp },
   { weight: 4, arbitrary: factOp },
@@ -351,6 +386,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 2, arbitrary: otherOp },
   { weight: 3, arbitrary: flowOp },
   { weight: 1, arbitrary: overviewOp },
+  { weight: 2, arbitrary: explainerOp },
 );
 
 export interface RowSession {

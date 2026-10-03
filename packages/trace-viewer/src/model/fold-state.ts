@@ -8,6 +8,7 @@ import type {
   TraceSessionSummary,
 } from "@jevcode/contracts";
 
+import { createExplainerFoldState, type ExplainerFoldState } from "./fold-explainer.js";
 import { KIND_META } from "./registry.js";
 import {
   stepStableId,
@@ -270,6 +271,8 @@ export class FoldState {
   readonly touchedSteps: StepDraft[] = [];
   /** The latest valid overview_snapshot row and its seq (spec §8.1, replace semantics); null until one arrives. */
   overview: { snapshot: OverviewSnapshot; seq: number } | null = null;
+  /** Explainer rows (phase C); append-local, see fold-explainer.ts. */
+  readonly explainer: ExplainerFoldState = createExplainerFoldState();
   /** The incremental finalize's derived state (fold-finalize.ts); null until the first finalize. */
   derived: unknown = null;
 

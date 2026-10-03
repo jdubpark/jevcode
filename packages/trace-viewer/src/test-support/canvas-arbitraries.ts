@@ -23,6 +23,7 @@ import {
   findingStableId,
   stepStableId,
   unitStableId,
+  emptyExplainer,
   type Chapter,
   type Finding,
   type Lane,
@@ -348,6 +349,7 @@ export function buildCanvasSession(
     coverage: { capabilities: [], signals: [], approximateJoins: false, inferredSteps: 0 },
     hidden: { byType: {}, unreceived: 0 },
     overview: null,
+    explainer: emptyExplainer(),
   };
 }
 
