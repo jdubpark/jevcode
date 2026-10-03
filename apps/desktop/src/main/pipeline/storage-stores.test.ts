@@ -362,3 +362,66 @@ describe("storage stores: a write that throws", () => {
     expect(rowsOf(db, type)).toBe(1);
   });
 });
+
+// PL-2 fix round 1. A label write rebuilds its unit from the database row, whose key order differs from the
+// projection's; the same payload must not be written again for that. A semantic event whose write threw is retried
+// by the next rebuild and must then be listed once.
+describe("storage stores: payloads that are already written", () => {
+  it("does not write a change unit again when only its key order differs", () => {
+    const { db, stores } = open();
+    const unit: ChangeUnit = {
+      id: "cu_order",
+      sessionId: SESSION,
+      title: "Changed 1 file: src/a.ts",
+      category: "implementation",
+      status: "validated",
+      files: ["src/a.ts"],
+      symbols: [],
+      interfacesChanged: [],
+      schemaChanges: [],
+      dependencyChanges: [],
+      relatedDecisions: [],
+      validationResults: ["val_1"],
+      evidence: ["fact_1"],
+      createdAt: TS,
+      updatedAt: TS,
+      importance: 0.2,
+    };
+    stores.units.upsert(unit);
+    const { importance, ...rest } = unit;
+    stores.units.upsert({ importance, ...rest });
+    expect(rowsOf(db, "change_unit")).toBe(1);
+
+    stores.units.upsert({ ...unit, importance: 0.3 });
+    expect(rowsOf(db, "change_unit")).toBe(2);
+  });
+
+  it("lists a semantic event once after its write threw and the next rebuild wrote it", () => {
+    const { db } = open();
+    const stores = createStorageStores(db, SESSION, { persistSemanticEvents: true });
+    const event = {
+      id: "sev_1",
+      sessionId: SESSION,
+      kind: "behavior_change" as const,
+      summary: "Changed src/a.ts",
+      changeUnitId: "cu_1",
+      evidence: [],
+      files: ["src/a.ts"],
+      symbols: [],
+      createdAt: TS,
+    };
+    const appendSemanticEvent = db.appendSemanticEvent.bind(db);
+    let calls = 0;
+    db.appendSemanticEvent = ((sessionId, value) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      return appendSemanticEvent(sessionId, value);
+    }) as typeof db.appendSemanticEvent;
+
+    expect(() => stores.events.emit(event)).toThrow("disk full");
+    stores.events.emit(event);
+    stores.events.emit(event);
+    expect(rowsOf(db, "semantic_event")).toBe(1);
+    expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_1"]);
+  });
+});
