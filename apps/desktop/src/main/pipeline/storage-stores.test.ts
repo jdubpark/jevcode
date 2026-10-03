@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
+import type { ChangeUnit, Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
 import { PipelineCoordinator } from "@jevcode/semantic-core";
 import type { FailureRecord, PipelineStores } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
@@ -211,5 +211,93 @@ describe("storage stores under the coordinator: one long bucket", () => {
     // adds a unit for its failing test file, and the next pass reaches the unit it failed.
     // Attaching runs bucket-wide rewrote every unit on every rebuild (steps * (steps + 1) / 2).
     expect(rowsOf(db, "change_unit")).toBeLessThanOrEqual(3 * steps);
+  });
+});
+
+// PL-2: every rebuild, the coordinator removes each stored unit that its projection no longer has,
+// and a removed unit stays stored as superseded, so later rebuilds remove it again. The store wrote
+// it on every remove, past the dedupe: one identical change_unit row per later rebuild (80-82 per
+// evidence smoke run).
+describe("storage stores: a change unit that leaves the projection", () => {
+  const hunk = (file: string, ms: number): EvidenceFact => ({
+    type: "git_hunk",
+    repoId: "repo_stores",
+    sessionId: SESSION,
+    ts: new Date(ms).toISOString(),
+    file,
+    added: 4,
+    removed: 1,
+    isFormattingOnly: false,
+    isConfigOnly: false,
+    isLockfile: false,
+  });
+
+  function changeUnitRows(db: JevcodeDb): { id: string; status: string; payloadJson: string }[] {
+    return db
+      .listEvents(SESSION, { limit: 10_000 })
+      .filter((event) => event.type === "change_unit")
+      .map((event) => {
+        const unit = JSON.parse(event.payloadJson) as ChangeUnit;
+        return { id: unit.id, status: unit.status, payloadJson: event.payloadJson };
+      });
+  }
+
+  it("is written superseded once while its payload is unchanged, however many rebuilds follow", () => {
+    const { db, stores } = open();
+    const base = Date.parse(TS);
+    let now = base;
+    const coordinator = new PipelineCoordinator({ stores, clock: () => now });
+    const ingest = (fact: EvidenceFact): void => {
+      now += 5_000;
+      coordinator.ingest(fact);
+      coordinator.flush();
+    };
+    // Hunks more than the 2 min idle gap apart fall in separate buckets, and a unit's id names its
+    // bucket. A late hunk that sorts between two buckets shifts the later bucket's index, so that
+    // bucket's unit leaves the projection under its old id.
+    ingest(hunk("src/a.ts", base));
+    ingest(hunk("src/b.ts", base + 10 * 60_000));
+    const before = new Set(stores.units.all().map((unit) => unit.id));
+    ingest(hunk("src/c.ts", base + 5 * 60_000));
+    for (let step = 0; step < 5; step += 1) ingest(hunk(`src/d${step}.ts`, base + 11 * 60_000 + step * 1_000));
+
+    const rows = changeUnitRows(db);
+    const left = [...before].filter((id) => stores.units.get(id)?.status === "superseded");
+    expect(left).toHaveLength(1);
+    expect(rows.filter((row) => row.id === left[0]).map((row) => row.status)).toEqual(["detected", "superseded"]);
+    // No unit is ever written twice in a row with the same payload.
+    const last = new Map<string, string>();
+    for (const row of rows) {
+      expect(last.get(row.id)).not.toBe(row.payloadJson);
+      last.set(row.id, row.payloadJson);
+    }
+  });
+
+  it("is written again when the projection brings it back with its earlier payload", () => {
+    const { db, stores } = open();
+    const unit: ChangeUnit = {
+      id: "cu_back",
+      sessionId: SESSION,
+      title: "Changed 1 file: src/a.ts",
+      category: "implementation",
+      status: "detected",
+      files: ["src/a.ts"],
+      symbols: [],
+      interfacesChanged: [],
+      schemaChanges: [],
+      dependencyChanges: [],
+      relatedDecisions: [],
+      validationResults: [],
+      evidence: ["fact_1"],
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    stores.units.upsert(unit);
+    stores.units.remove(unit.id);
+    stores.units.remove(unit.id);
+    stores.units.upsert(unit);
+
+    expect(changeUnitRows(db).map((row) => row.status)).toEqual(["detected", "superseded", "detected"]);
+    expect(stores.units.get(unit.id)?.status).toBe("detected");
   });
 });
