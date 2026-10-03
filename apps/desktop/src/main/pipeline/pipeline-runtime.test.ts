@@ -1599,35 +1599,56 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
   function rowSummary(db: JevcodeDb, sessionId: string): {
     jevDecisions: string[];
     labeledUnits: string[];
+    units: string[];
     unitSurfaces: string[];
     completionSnapshots: number;
+    counts: Record<string, number>;
   } {
     const units = db.listChangeUnits(sessionId);
     const fileOf = new Map(units.map((unit) => [unit.id, unit.files.join(",")]));
     const jevDecisions = new Set<string>();
     const unitSurfaces = new Set<string>();
     let completionSnapshots = 0;
+    const counts: Record<string, number> = {};
     for (const event of db.listEvents(sessionId, { limit: 10_000 })) {
+      counts[event.type] = (counts[event.type] ?? 0) + 1;
       const payload = JSON.parse(event.payloadJson) as { changeUnitId?: string; pass?: string; surfaceId?: string };
       if (event.type === "jev_decision") jevDecisions.add(`${fileOf.get(payload.changeUnitId ?? "") ?? "?"} ${payload.pass ?? "?"}`);
       if (event.type === "ui_snapshot" && payload.surfaceId === "completion") completionSnapshots += 1;
       else if (event.type === "ui_snapshot") unitSurfaces.add(fileOf.get(payload.changeUnitId ?? "") ?? "?");
     }
-    const labeledUnits = units
-      .filter((unit) => unit.status !== "superseded")
-      .map((unit) => `${unit.files.join(",")} ${unit.category} ${String(unit.importance)} ${String(unit.relevance)}`);
+    const live = units.filter((unit) => unit.status !== "superseded");
+    const labeledUnits = live.map(
+      (unit) => `${unit.files.join(",")} ${unit.category} ${String(unit.importance)} ${String(unit.relevance)}`,
+    );
+    const unitStates = live.map(
+      (unit) => `${unit.files.join(",")} ${unit.status} runs=${unit.validationResults.length} facts=${unit.evidence.length}`,
+    );
     return {
       jevDecisions: [...jevDecisions].sort(),
       labeledUnits: labeledUnits.sort(),
+      units: unitStates.sort(),
       unitSurfaces: [...unitSurfaces].sort(),
       completionSnapshots,
+      counts,
     };
+  }
+
+  interface TurnEndOptions {
+    /** Installs write spies before the session starts. */
+    arm?: (db: JevcodeDb) => void;
+    /** Reads the run before the session stops. */
+    inspect?: (db: JevcodeDb, collected: Collected, sessionId: string) => void;
+    /**
+     * The test ingests the last test result and agent_completed itself, in one tick. The coordinator's 25 ms rebuild
+     * debounce then leaves the rebuild that projects that result to the turn-end pass's flush.
+     */
+    endByHand?: boolean;
   }
 
   async function runTurnEnd(
     name: string,
-    arm: (db: JevcodeDb) => void = () => {},
-    inspect: (db: JevcodeDb, collected: Collected, sessionId: string) => void = () => {},
+    { arm = () => {}, inspect = () => {}, endByHand = false }: TurnEndOptions = {},
   ): Promise<ReturnType<typeof rowSummary>> {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
     rmSync(dir, { recursive: true, force: true });
@@ -1643,10 +1664,29 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       evidence: false,
       jevClient: new DegradeClient(),
       log: () => {},
-      mockScriptFor: quickSmokeScript,
     });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-pr", repoPath: dir, prompt: "demo" });
+    const held = endByHand ? script.entries.slice(-2) : [];
     try {
-      await runtime.startSession({ sessionId, repoId: "repo-pr", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-pr",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: endByHand ? { ...script, entries: script.entries.slice(0, -2) } : script,
+      });
+      if (endByHand) {
+        await waitFor(
+          () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 5,
+          15_000,
+          "records before the turn end",
+        );
+        for (const entry of held) {
+          if (entry.kind === "agent") runtime.ingestRecord(sessionId, entry.event);
+          if (entry.kind === "record") runtime.ingestRecord(sessionId, entry.record);
+        }
+      }
       await waitFor(() => db.getSession(sessionId)?.state === "completed", 15_000, "turn end");
       await waitFor(
         () => db.listEvents(sessionId, { limit: 10_000 }).some((event) => event.type === "ui_snapshot" && event.payloadJson.includes('"surfaceId":"completion"')),
@@ -1666,15 +1706,17 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
   it("loses no row when a write throws once in a turn-end pass: the next pass writes what it did not", async () => {
     const clean = await runTurnEnd("pass-rows-clean");
     let thrown = 0;
-    const failing = await runTurnEnd("pass-rows-throw", (db) => {
-      const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
-      db.upsertUiSnapshot = ((id, snapshot) => {
-        if (thrown === 0) {
-          thrown += 1;
-          throw new Error("disk full");
-        }
-        return upsertUiSnapshot(id, snapshot);
-      }) as typeof db.upsertUiSnapshot;
+    const failing = await runTurnEnd("pass-rows-throw", {
+      arm: (db) => {
+        const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+        db.upsertUiSnapshot = ((id, snapshot) => {
+          if (thrown === 0) {
+            thrown += 1;
+            throw new Error("disk full");
+          }
+          return upsertUiSnapshot(id, snapshot);
+        }) as typeof db.upsertUiSnapshot;
+      },
     });
 
     expect(thrown).toBe(1);
@@ -1688,12 +1730,46 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(failing.completionSnapshots).toBe(1);
   }, 60_000);
 
+  it("retries a coordinator rebuild that threw in the turn-end pass: the next pass writes its units, no new record needed", async () => {
+    const clean = await runTurnEnd("rebuild-retry-clean", { endByHand: true });
+    let armed = false;
+    let thrown = 0;
+    const failing = await runTurnEnd("rebuild-retry-throw", {
+      endByHand: true,
+      arm: (db) => {
+        // Armed when the turn ends, so the throw lands in the turn-end pass's flush.
+        const setSessionState = db.setSessionState.bind(db);
+        db.setSessionState = ((id, state) => {
+          if (state === "completed") armed = true;
+          setSessionState(id, state);
+        }) as typeof db.setSessionState;
+        const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+        db.upsertChangeUnit = ((unit) => {
+          if (armed && thrown === 0) {
+            thrown += 1;
+            throw new Error("disk full");
+          }
+          return upsertChangeUnit(unit);
+        }) as typeof db.upsertChangeUnit;
+      },
+    });
+
+    expect(thrown).toBe(1);
+    // The last step's unit carries its test run only once the rebuild that projects it has run.
+    expect(clean.units).toContain("src/module-3.ts validated runs=1 facts=3");
+    expect(failing.units).toEqual(clean.units);
+    expect(failing.labeledUnits).toEqual(clean.labeledUnits);
+    expect(failing.counts["change_unit"]).toBeLessThanOrEqual(clean.counts["change_unit"] ?? 0);
+  }, 60_000);
+
   it("sends the Jev debug panel the latest decisions once per pass, not once per decision", async () => {
     let debug: unknown[] = [];
     let latest: unknown[] = [];
-    const rows = await runTurnEnd("pass-jev-debug", () => {}, (db, collected, sessionId) => {
-      debug = collected.channels.get(MainToRendererChannels.jevDebug) ?? [];
-      latest = db.latestJevDecisions(sessionId, 50);
+    const rows = await runTurnEnd("pass-jev-debug", {
+      inspect: (db, collected, sessionId) => {
+        debug = collected.channels.get(MainToRendererChannels.jevDebug) ?? [];
+        latest = db.latestJevDecisions(sessionId, 50);
+      },
     });
 
     // One pass ran the Jev stage (the pass after it found no changed unit) and wrote six decisions.
@@ -1704,7 +1780,8 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
 
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
     const order: string[] = [];
-    await runTurnEnd("pass-slices", (db) => {
+    await runTurnEnd("pass-slices", {
+      arm: (db) => {
       // Six Jev decision writes of 8 ms each: a 48 ms stretch without slices.
       const upsertJevDecision = db.upsertJevDecision.bind(db);
       db.upsertJevDecision = ((log) => {
@@ -1723,6 +1800,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
         if (snapshot.surfaceId === "completion") order.push("completion");
         return upsertUiSnapshot(id, snapshot);
       }) as typeof db.upsertUiSnapshot;
+      },
     });
 
     expect(order).toEqual(["first decision", "waiting task", "completion"]);

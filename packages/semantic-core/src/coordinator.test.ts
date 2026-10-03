@@ -328,3 +328,26 @@ describe("applyPatch", () => {
     expect(patched.category).toBe("implementation");
   });
 });
+
+describe("PipelineCoordinator rebuild retry (lane 03 PL-2)", () => {
+  it("rebuilds on the next flush after a rebuild threw, with no new record", () => {
+    const stores = createInMemoryStores();
+    const upsert = stores.units.upsert.bind(stores.units);
+    let throwNext = false;
+    stores.units.upsert = (unit) => {
+      if (throwNext) {
+        throwNext = false;
+        throw new Error("disk full");
+      }
+      upsert(unit);
+    };
+    const coordinator = new PipelineCoordinator({ stores });
+    coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+    throwNext = true;
+    expect(() => coordinator.flush()).toThrow("disk full");
+    expect(stores.units.all()).toHaveLength(0);
+
+    coordinator.flush();
+    expect(stores.units.all().map((unit) => unit.files)).toEqual([["src/a.ts"]]);
+  });
+});
