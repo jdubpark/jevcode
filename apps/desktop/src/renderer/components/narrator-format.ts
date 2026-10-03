@@ -1,9 +1,17 @@
 import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narrator-log.js";
 
-export function narratorSettingNote(enabled: boolean): string {
-  return enabled
-    ? "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent."
-    : "Rule-based labels only. Nothing leaves this machine.";
+/** What leaves the machine: only an "on" narrator sends anything (spec §6.2, E15). */
+export function narratorSettingNote(availability: NarratorAvailability): string {
+  switch (availability) {
+    case "on":
+      return "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent.";
+    case "off_setting":
+      return "Rule-based labels only. Nothing leaves this machine.";
+    case "off_no_key":
+      return "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine.";
+    case "off_env":
+      return "JEVCODE_NARRATOR=off, so labels stay rule-based. Nothing leaves this machine.";
+  }
 }
 
 export function narratorAvailabilityLabel(availability: NarratorAvailability): string {

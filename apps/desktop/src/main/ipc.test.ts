@@ -10,8 +10,10 @@ import { registerIpcHandlers } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
+import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
@@ -375,6 +377,26 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
     const { runtime } = stubRuntime();
     const handlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), narratorCalls: createNarratorCallLog() });
     await expect(handlers.get("debug:listNarratorCalls")!(TRUSTED_EVENT, {})).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    db.close();
+  });
+
+  it("debug:listNarratorCalls answers only what DebugNarratorCallsPayloadSchema allows (N-4 review)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const record = {
+      id: "narr_a", ts: "2026-10-02T09:00:00.000Z", repoRoot: "/a", question: "describeComponents" as const, model: "claude-haiku-4-5-20251001",
+      ms: 5, batchSize: 1, accepted: 1, dropped: 0, discarded: false, inputTokens: null, outputTokens: null, costUsd: null, error: null, reasons: [],
+    };
+    const listing = (calls: unknown[]): NarratorCallLog => ({ record: () => undefined, list: () => calls as NarratorCallRecord[] });
+    const list = (narratorCalls: NarratorCallLog) =>
+      registerAndCapture({ ...makeDeps(db, runtime, state), narrator: narratorStub().narrator, narratorCalls }).get("debug:listNarratorCalls")!(
+        TRUSTED_EVENT,
+        {},
+      );
+
+    await expect(list(listing([{ ...record, prompt: "model text never crosses IPC" }]))).resolves.toEqual({ availability: "on", calls: [record] });
+    await expect(list(listing([{ ...record, model: "m".repeat(65) }]))).rejects.toThrow();
+    await expect(list(listing([{ ...record, error: "e".repeat(65) }]))).rejects.toThrow();
     db.close();
   });
 });
