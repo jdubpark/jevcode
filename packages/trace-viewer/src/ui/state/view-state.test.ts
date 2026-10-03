@@ -352,3 +352,35 @@ describe("map selection (spec §3.4, lane 06 deviation 4)", () => {
     expect(reduce(elsewhere, { type: "esc" }, index).mapSelection).toBe("cmp_0123456789ab");
   });
 });
+
+describe("a step selection takes the panel back from a Map component (lane 06 fix I-1)", () => {
+  const component = "cmp_0123456789ab";
+  const onMap = (state: ViewState): ViewState => ({ ...state, view: "map", mapSelection: component });
+
+  it("every way of selecting a step or unit drops the component selection", () => {
+    const base = onMap(initialViewState({ live: false }));
+    const paths: ViewAction[][] = [
+      [{ type: "select", id: test.id, by: "shell" }], // Outline, j/k
+      [{ type: "select", id: "unit:u-linking-test", by: "shell" }],
+      [{ type: "nav", target: "finding", dir: 1 }], // n
+      [{ type: "nav", target: "chapter", dir: 1 }], // ]
+      [{ type: "nav/first" }], // g
+      [{ type: "nav/last" }], // G
+      [{ type: "search/set", query: "test", matchIds: [test.id] }, { type: "search/next", dir: 1 }],
+    ];
+    for (const actions of paths) {
+      const next = run(base, actions);
+      expect(next.selection).not.toBeNull();
+      expect(next.mapSelection).toBeNull();
+    }
+  });
+
+  it("re-picking the already-selected step drops it too; clearing the step selection keeps it", () => {
+    const selected = onMap(run(initialViewState({ live: false }), [{ type: "select", id: test.id, by: "shell" }]));
+    expect(reduce(selected, { type: "select", id: test.id, by: "shell" }, index)).toMatchObject({ selection: test.id, mapSelection: null });
+    expect(reduce(selected, { type: "select", id: test.id, by: "canvas" }, index)).toMatchObject({ selection: test.id, mapSelection: null });
+    expect(reduce(selected, { type: "select", id: null, by: "shell" }, index).mapSelection).toBe(component);
+    // A select of an unknown id changes nothing.
+    expect(reduce(selected, { type: "select", id: "step:999999", by: "shell" }, index)).toBe(selected);
+  });
+});

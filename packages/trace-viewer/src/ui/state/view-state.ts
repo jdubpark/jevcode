@@ -234,11 +234,17 @@ function isTail(id: SelectionId, index: TraceIndex): boolean {
   return index.session?.chapters.some((c) => c.id === id && c.stepIds.includes(tail)) ?? false;
 }
 
+/**
+ * Selecting a step or unit also drops the Map's component selection (lane 06 fix I-1): the right panel shows the
+ * component while one is selected, so a step picked from the Outline, the keys or a search must take the panel.
+ */
 function selectId(state: ViewState, id: SelectionId | null, by: FocusBy, origin: PlayheadOrigin, index: TraceIndex): ViewState {
   if (id !== null && index.entry(id) === undefined) return state;
   const same = id !== null && id === state.selection && by === "shell";
+  const mapSelection = id === null ? state.mapSelection : null;
   if (id === state.selection && (id === null || state.playhead.kind === "selection")) {
-    return same ? { ...state, revealRev: state.revealRev + 1 } : state;
+    if (same) return { ...state, revealRev: state.revealRev + 1, mapSelection };
+    return mapSelection === state.mapSelection ? state : { ...state, mapSelection };
   }
   const prevP = effectivePlayheadSeq(state.playhead, state.selection, index);
   const follow = state.follow && (id === null || isTail(id, index));
@@ -259,6 +265,7 @@ function selectId(state: ViewState, id: SelectionId | null, by: FocusBy, origin:
     brief: false,
     follow,
     unitAnchors: rememberAnchors(state.unitAnchors, [id], index),
+    mapSelection,
   };
   return ensureInvariants(next, index);
 }

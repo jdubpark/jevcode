@@ -1,17 +1,23 @@
 // @vitest-environment jsdom
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OverviewSnapshot } from "@jevcode/contracts";
 
+import { buildTraceIndex, type SelectionId } from "../../layout/trace-index.js";
+import { buildOverviewModel, type TraceSession } from "../../model/index.js";
 import { componentId, overviewSnapshot } from "../../test-support/overview-builder.js";
 import { buildSession, type StepSeed } from "../../test-support/session-builder.js";
-import { renderHarness } from "../../test-support/ui-harness.js";
+import { foldFixture, renderHarness, stubLayout } from "../../test-support/ui-harness.js";
 import type { ViewerHost } from "../shell/host.js";
+import { KeyboardLayer } from "../shell/KeyboardLayer.js";
+import { Outline } from "../shell/Outline/Outline.js";
 import type { ViewState } from "../state/view-state.js";
 import { MapView } from "../views/map/MapView.js";
 import type { ViewDefinition } from "../views/view-port.js";
+import { selectionTitle } from "./finding-copy.js";
 import { RightPanel } from "./RightPanel.js";
 
 afterEach(() => cleanup());
@@ -148,5 +154,50 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     act(() => store.dispatch({ type: "esc" }));
     expect(document.querySelector("[data-component-inspector]")).toBeNull();
     expect(document.querySelector("[data-brief-architecture]")).not.toBeNull();
+  });
+
+  it("on the Map with a card selected, n and an Outline step show that step's Inspector (lane 06 fix I-1)", async () => {
+    const layout = stubLayout({ height: 2_000, rowHeight: 28 });
+    try {
+      const session: TraceSession = { ...foldFixture("oauth"), overview: buildOverviewModel(RULE_ONLY, 1) };
+      const index = buildTraceIndex(session);
+      function Viewer() {
+        const [root, setRoot] = useState<HTMLDivElement | null>(null);
+        return (
+          <div ref={setRoot}>
+            <nav data-region="outline">
+              <Outline hiddenRows={0} />
+            </nav>
+            <aside data-region="inspector">
+              <RightPanel host={{}} />
+            </aside>
+            <KeyboardLayer root={root} />
+          </div>
+        );
+      }
+      const card = componentId("packages/api");
+      const { store } = renderHarness(<Viewer />, session, { views: [MAP_VIEW], state: { view: "map", selection: null, mapSelection: card } });
+      await act(async () => undefined);
+      const shownTitle = (): string | null | undefined => document.querySelector("aside [data-slot='title']")?.textContent;
+      expect(document.querySelector(`[data-component-inspector="${card}"]`)).not.toBeNull();
+
+      fireEvent.keyDown(document.body, { code: "KeyN", key: "n" });
+      const finding = store.get().selection;
+      expect(finding).not.toBeNull();
+      expect(document.querySelector("[data-component-inspector]")).toBeNull();
+      expect(shownTitle()).toBe(selectionTitle(session, index, finding as SelectionId));
+
+      act(() => store.dispatch({ type: "map/select", componentId: card }));
+      expect(document.querySelector(`[data-component-inspector="${card}"]`)).not.toBeNull();
+      const entity = session.entities.find((item) => item.stepIds.at(-1) !== finding);
+      const step = entity?.stepIds.at(-1);
+      if (entity === undefined || step === undefined) throw new Error("the oauth fixture has no second edited file");
+      fireEvent.click(document.querySelector<HTMLElement>(`[data-key="${entity.id}"]`) as HTMLElement);
+      expect(store.get().selection).toBe(step);
+      expect(document.querySelector("[data-component-inspector]")).toBeNull();
+      expect(shownTitle()).toBe(selectionTitle(session, index, step));
+    } finally {
+      layout.restore();
+    }
   });
 });
