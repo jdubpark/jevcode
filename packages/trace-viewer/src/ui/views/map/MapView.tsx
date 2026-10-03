@@ -31,7 +31,7 @@ import { MapCard } from "./MapCard.js";
 import { MapEdges } from "./MapEdges.js";
 import { MapHeader } from "./MapHeader.js";
 import styles from "./MapView.module.css";
-import { mapOverlayOf } from "./overlay.js";
+import { mapOverlayOf, overlayCounts } from "./overlay.js";
 
 const BAND_LABEL: { readonly [K in MapBand]: string } = {
   ui: "UI",
@@ -105,7 +105,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const relayoutCountRef = useRef(0);
   /** The card the reader last focused or selected: Esc from the Inspector returns focus there (not to the first card). */
   const lastCardRef = useRef<string | null>(null);
-  const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session]);
+  const [sessionOn, setSessionOn] = useState(true);
+  const sessionOverlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session]);
+  const overlay = sessionOn ? sessionOverlay : null;
+  const sessionCounts = useMemo(() => (sessionOverlay === null ? null : overlayCounts(sessionOverlay)), [sessionOverlay]);
+  const onToggleSession = useCallback(() => setSessionOn((on) => !on), []);
   const hubs = useMemo(() => (layout === null ? NO_HUBS : mapHubIds(layout.edges, layout.cards.length)), [layout]);
   const importers = useMemo(() => (layout === null ? NO_COUNTS : mapImporterCounts(layout.edges)), [layout]);
   const host = useViewerHost();
@@ -508,7 +512,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const laneHeight = layout.bounds.h - 2 * MAP_MARGIN + 10; // down to bounds.h − MAP_MARGIN + 6
   return (
     <section className={styles.root} aria-label="Codebase map">
-      <MapHeader overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId} onRetry={onRetry} />
+      <MapHeader
+        overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId}
+        onRetry={onRetry}
+        session={sessionCounts === null ? null : { counts: sessionCounts, on: sessionOn, onToggle: onToggleSession }}
+      />
       <div className={styles.stage}>
         {layout.cards.length === 0 ? (
           <p className={styles.stageNote} data-map-empty="">
@@ -534,6 +542,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             className={styles.world}
             data-tv-world=""
             data-level={level}
+            data-session={overlay !== null ? "" : undefined}
             role="group"
             aria-label={`Codebase map, ${layout.cards.length.toLocaleString("en-US")} ${layout.cards.length === 1 ? "component" : "components"}`}
             onKeyDown={onKeyDown}
