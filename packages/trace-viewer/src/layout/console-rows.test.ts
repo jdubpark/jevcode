@@ -214,4 +214,23 @@ describe("buildConsoleRows (spec §3.2, §8.2)", () => {
     expect(consoleNewRowCount(out, index, b.rows.length)).toBe(0);
     expect(consoleNewRowCount(out, index, 0)).toBe(out.rows.length);
   });
+
+  it("keys a warning guardrail flag line guardrails:<finding id> from the start, so the fold that absorbs it keeps its key", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.jev({ id: "j1", clamps: ["security_path"] });
+    const one = build(b, "running");
+    const lone = one.out.rows.at(-1);
+    expect(lone).toMatchObject({ kind: "finding" });
+    expect(lone?.key).toBe(`guardrails:${lone?.kind === "finding" ? lone.findingId : ""}`);
+
+    b.jev({ id: "j2", clamps: ["security_path"] });
+    const two = build(b, "running");
+    expect(two.out.rows.at(-1)).toMatchObject({ kind: "guardrails", key: lone?.key });
+    // A critical guardrail finding never folds and keeps its finding id as its key.
+    b.jev({ id: "j3", clamps: ["destructive_command"] });
+    const three = build(b, "running");
+    const critical = three.out.rows.at(-1);
+    expect(critical?.kind === "finding" ? critical.key : "").toBe(critical?.kind === "finding" ? critical.findingId : "x");
+  });
 });

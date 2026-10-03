@@ -197,11 +197,23 @@ function ownRow(step: Step, turnByStart: ReadonlyMap<number, Turn>): ConsoleRow 
   }
 }
 
+/** Warning guardrail-clamp findings fold into one "Jev review" line when consecutive; critical ones never do. */
+function foldableFinding(finding: Finding): boolean {
+  return finding.ruleId === "guardrail_clamp" && finding.severity !== "critical";
+}
+
 function pieceOf(step: Step, turnByStart: ReadonlyMap<number, Turn>, findingsById: ReadonlyMap<FindingId, Finding>): StepPiece {
   const anchored = step.findingIds.length === 0 ? [] : anchoredFindings(step, findingsById);
   const findings: readonly ConsoleRow[] = anchored.length === 0
     ? NO_FINDINGS
-    : anchored.map((finding): ConsoleRow => ({ kind: "finding", key: finding.id, stepId: step.id, findingId: finding.id }));
+    : anchored.map((finding): ConsoleRow => ({
+        kind: "finding",
+        // A warning guardrail line may later fold with the next one; keyed like the fold from the start, the row keeps
+        // its key (and so its mounted node and measured size) when a second warning arrives.
+        key: foldableFinding(finding) ? `guardrails:${finding.id}` : finding.id,
+        stepId: step.id,
+        findingId: finding.id,
+      }));
   if (step.kind === "read") return { own: null, readPath: step.target ?? step.headline, findings };
   return { own: ownRow(step, turnByStart), readPath: null, findings };
 }
@@ -248,7 +260,7 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
   const foldable = (row: ConsoleRow): row is Extract<ConsoleRow, { kind: "finding" }> => {
     if (row.kind !== "finding") return false;
     const finding = findingsById.get(row.findingId as FindingId);
-    return finding?.ruleId === "guardrail_clamp" && finding.severity !== "critical";
+    return finding !== undefined && foldableFinding(finding);
   };
   const runs: { at: number; stepIds: string[]; findingIds: string[]; findingStepIds: string[] }[] = [];
   const pushFindings = (stepId: string, findings: readonly ConsoleRow[]): void => {
