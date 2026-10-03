@@ -641,7 +641,10 @@ The numbers above are per task. IPC waits on event-loop turns, and two producers
   `setImmediate` per turn under a 20 ms budget. The sync pass, the session explainer's fold and the overview rebuild
   all check its shared clock and yield through it; `index.ts` passes them one instance.
 - Migration v6 indexes `jev_decisions (sessionId, seq)`. `latestJevDecisions(50)` took 52.6 ms over 65,340 rows on the
-  2,937-unit database, a sort of every row (`USE TEMP B-TREE FOR ORDER BY`); with the index it takes 0.07 ms.
+  2,937-unit database, a sort of every row (`USE TEMP B-TREE FOR ORDER BY`); with the index it takes 0.07 ms. The
+  index is built once, when `openDb` upgrades a v5 database at app start: on a copy of that 129 MB database,
+  `openDb` took 24.5–27.6 ms (median 25.7 ms over 3 copies) and the `CREATE INDEX` alone 21.9–25.9 ms (median 24.0, 5
+  runs). With the table at eight times the rows (522,720), the build took 251–276 ms (median 265 ms, 3 runs).
 - With those, the longest turn without a coordinator rebuild at 2,937 units was a snapshot: 58–81 ms, from rereading
   every graph row and every unit after a rebuild or the pass's label writes. The graph store now puts the rows it
   writes into its lists itself, and the unit store rereads only the units whose rows moved (`listChangeUnitVersions`).
