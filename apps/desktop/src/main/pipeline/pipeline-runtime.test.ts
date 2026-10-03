@@ -23,6 +23,9 @@ import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
 import { PlaybackClient, PlaybackLabels, loadPlaybackFixture } from "./playback.js";
 import { PipelineRuntime } from "./pipeline-runtime.js";
+import { notifyCommitted, observeTraceAppends } from "../rows-available.js";
+import type { ObservedAppend } from "../rows-available.js";
+import { smokeMockScript } from "./smoke-script.js";
 import type { EmitFn, SurfaceRecord } from "./types.js";
 
 const repoRoot = path.resolve(
@@ -1525,4 +1528,84 @@ describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {
       db.close();
     }
   });
+});
+
+describe("PipelineRuntime turn-end batch (lane 03 D-6)", () => {
+  it("writes the turn-end sync in one transaction and hints its last seq once, after commit", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/turn-end-batch");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-turn-end";
+    db.upsertRepository({ id: "repo-te", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-te", prompt: "demo" });
+
+    // What index.ts wires: committed trace rows → one hint per batch.
+    const batches: Array<{ events: readonly ObservedAppend[]; inTransaction: boolean }> = [];
+    const hints: Array<{ seq: number; inTransaction: boolean }> = [];
+    observeTraceAppends(db, (events) => {
+      batches.push({ events, inTransaction: db.inTransaction });
+      notifyCommitted({ notify: (_sessionId, seq) => hints.push({ seq, inTransaction: db.inTransaction }) }, events);
+    });
+    // Which transaction each write ran in (0 = none).
+    let nextTx = 0;
+    let currentTx = 0;
+    const transaction = db.transaction.bind(db);
+    db.transaction = (<T>(fn: () => T): T => {
+      const outer = currentTx;
+      nextTx += 1;
+      currentTx = outer === 0 ? nextTx : outer;
+      try {
+        return transaction(fn);
+      } finally {
+        currentTx = outer;
+      }
+    }) as typeof db.transaction;
+    const jevTx: number[] = [];
+    const completionTx: number[] = [];
+    const upsertJevDecision = db.upsertJevDecision.bind(db);
+    db.upsertJevDecision = ((log) => {
+      jevTx.push(currentTx);
+      return upsertJevDecision(log);
+    }) as typeof db.upsertJevDecision;
+    const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+    db.upsertUiSnapshot = ((id, snapshot) => {
+      if (snapshot.surfaceId === "completion") completionTx.push(currentTx);
+      return upsertUiSnapshot(id, snapshot);
+    }) as typeof db.upsertUiSnapshot;
+
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      mockScriptFor: (input) => smokeMockScript(input, { steps: 3, spacingMs: 1 }),
+    });
+    try {
+      await runtime.startSession({ sessionId, repoId: "repo-te", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await waitFor(() => completionTx.length > 0, 15_000, "completion surface written");
+      await runtime.syncAll();
+
+      // The Jev decisions and the completion surface were written inside one transaction.
+      expect(jevTx.length).toBeGreaterThan(0);
+      expect(new Set(jevTx).size).toBe(1);
+      expect(jevTx[0]).not.toBe(0);
+      expect(completionTx).toEqual([jevTx[0]]);
+
+      // That transaction's trace rows arrived as one batch after commit, with one hint carrying its last seq.
+      const jevSeqs = db.listEvents(sessionId).filter((event) => event.type === "jev_decision").map((event) => event.seq);
+      const batchIndex = batches.findIndex((batch) => batch.events.some((event) => event.seq === jevSeqs[0]));
+      const batch = batches[batchIndex];
+      expect(batch).toBeDefined();
+      expect(jevSeqs.every((seq) => batch?.events.some((event) => event.seq === seq))).toBe(true);
+      expect(batch?.inTransaction).toBe(false);
+      const lastSeq = Math.max(...(batch?.events.map((event) => event.seq) ?? []));
+      const hintsBefore = batches.slice(0, batchIndex).reduce((count, earlier) => count + new Set(earlier.events.map((event) => event.sessionId)).size, 0);
+      expect(hints[hintsBefore]).toEqual({ seq: lastSeq, inTransaction: false });
+      await runtime.stopSession(sessionId);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
 });

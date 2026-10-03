@@ -37,6 +37,12 @@ export interface JevStageDeps {
   resolveSlug?: (files: readonly string[], symbols: readonly string[]) => string | undefined;
   onJevLog?: (log: JevDecisionLog) => void;
   onRedaction?: (count: number) => void;
+  /**
+   * Receives each write (a Jev decision row with its log callback, or a label result) in order instead of running it.
+   * The turn-end sync defers them past the client's awaits and runs them in one transaction (lane 03 D-6). Absent:
+   * each write runs at once.
+   */
+  defer?: (write: () => void) => void;
 }
 
 export interface JevUnitOutcome {
@@ -75,6 +81,13 @@ function titlePatchForUnit(
 
 export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
   const { db, coordinator, client } = deps;
+  const write = deps.defer ?? ((op: () => void) => op());
+  const record = (log: JevDecisionLog): void => {
+    write(() => {
+      db.upsertJevDecision(log);
+      deps.onJevLog?.(log);
+    });
+  };
   const snapshot = coordinator.snapshot();
   const outcomes: JevUnitOutcome[] = [];
   const logs: JevDecisionLog[] = [];
@@ -165,9 +178,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
           }),
           pass: "A",
         };
-        db.upsertJevDecision(log);
+        record(log);
         logs.push(log);
-        deps.onJevLog?.(log);
         outcomes.push({
           unitId: unit.id,
           version,
@@ -194,9 +206,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         }),
         pass: "A",
       };
-      db.upsertJevDecision(attentionLog);
+      record(attentionLog);
       logs.push(attentionLog);
-      deps.onJevLog?.(attentionLog);
 
       if (!attention.shouldSurface) {
         outcomes.push({
@@ -235,9 +246,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         }),
         pass: "B",
       };
-      db.upsertJevDecision(projectionLog);
+      record(projectionLog);
       logs.push(projectionLog);
-      deps.onJevLog?.(projectionLog);
 
       if (intent.renderMode === "suppressed") {
         outcomes.push({
@@ -254,19 +264,21 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
       const titlePatch = titlePatchForUnit(unit.id, deps.semanticEvents);
       const safeTitlePatch =
         titlePatch !== undefined ? redactText(titlePatch).text : titlePatch;
-      coordinator.applyLabelResult({
-        changeUnitId: unit.id,
-        decisionVersion: version,
-        patch: {
-          title: safeTitlePatch ?? unit.title,
-          category: categoryForEventKind(attention.semanticCategory),
-          importance: attention.importance,
-          relevance: attention.relevance,
-          interruption: attention.interruption,
-          uncertainty: undefined,
-          mentalModelChange: attention.mentalModelChange,
-        },
-      });
+      write(() =>
+        coordinator.applyLabelResult({
+          changeUnitId: unit.id,
+          decisionVersion: version,
+          patch: {
+            title: safeTitlePatch ?? unit.title,
+            category: categoryForEventKind(attention.semanticCategory),
+            importance: attention.importance,
+            relevance: attention.relevance,
+            interruption: attention.interruption,
+            uncertainty: undefined,
+            mentalModelChange: attention.mentalModelChange,
+          },
+        }),
+      );
 
       outcomes.push({
         unitId: unit.id,
