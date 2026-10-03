@@ -13,7 +13,7 @@ import {
   DecisionSchema,
   TRACE_ROWS_PAGE_DEFAULT,
 } from "../packages/contracts/dist/index.js";
-import { DegradeClient } from "../packages/jev-router/dist/index.js";
+import { DegradeClient, NARRATOR_MODEL } from "../packages/jev-router/dist/index.js";
 import { parseReplayLine } from "../packages/semantic-core/dist/index.js";
 import { SurfaceManager } from "../packages/ui-catalog/dist/surface/SurfaceManager.js";
 import { compileSkeleton } from "../packages/ui-compiler/dist/index.js";
@@ -21,6 +21,7 @@ import { PipelineRuntime } from "../apps/desktop/dist/main/pipeline/pipeline-run
 import { buildTraceBundle, writeTraceBundle } from "../apps/desktop/dist/main/trace-bundle.js";
 import { createTraceService, readAllRows } from "../apps/desktop/dist/main/trace-service.js";
 import { FILES_SETTLE_MS, createExplainerStage } from "../apps/desktop/dist/main/pipeline/explainer-stage.js";
+import { createMainSlicer } from "../apps/desktop/dist/main/pipeline/main-slicer.js";
 import { scanPaths, scanRepo } from "../packages/codebase-map/dist/node/index.js";
 import { createImportExtractor } from "../packages/evidence-engine/dist/index.js";
 
@@ -66,6 +67,15 @@ const PAUSE_EVERY = Number(process.env["JEVCODE_SOAK_PAUSE_EVERY"] ?? 0);
 const PAUSE_FROM = Number(process.env["JEVCODE_SOAK_PAUSE_FROM"] ?? 0);
 const PAUSE_MS = FILES_SETTLE_MS + 100;
 const EXPLAINER_REBUILD_TARGETS = 200;
+// Lane 07 S-6: with the explainer on, the runtime hands every completed sync pass to the session explainer
+// (onPipelineSync). JEVCODE_SOAK_SESSION_HOOK=0 leaves the hook out, so the session explainer never runs: the base
+// side of the phase C ingest ratio. JEVCODE_SOAK_NARRATOR=stub gives the session explainer a stub narrator that
+// answers at once and cites the ids it was shown, so narrator calls, guards, model stories and decision whys run;
+// "off", the default, leaves it without a narrator (rule-based stories, no calls).
+const SESSION_HOOK = process.env["JEVCODE_SOAK_SESSION_HOOK"] ?? "1";
+const NARRATOR = process.env["JEVCODE_SOAK_NARRATOR"] ?? "off";
+assert(SESSION_HOOK === "0" || SESSION_HOOK === "1", `JEVCODE_SOAK_SESSION_HOOK must be 0 or 1, got ${SESSION_HOOK}`);
+assert(NARRATOR === "off" || NARRATOR === "stub", `JEVCODE_SOAK_NARRATOR must be off or stub, got ${NARRATOR}`);
 for (const [name, value, min] of [
   ["JEVCODE_SOAK_EXPLAINER_FILES", EXPLAINER_FILES, 1],
   ["JEVCODE_SOAK_YIELD_EVERY", YIELD_EVERY, 0],
@@ -96,6 +106,33 @@ function makeExplainerRepo(fileCount) {
   }
   execFileSync("git", ["init", "-q"], { cwd: root });
   return root;
+}
+
+/** JEVCODE_SOAK_NARRATOR=stub: answers every call at once, citing the last step and first component it was shown. */
+function createStubNarrator(calls) {
+  const answer = (value) =>
+    Promise.resolve({ value, confidence: 1, model: NARRATOR_MODEL, ms: 0, usage: null, schemaValid: true });
+  return {
+    describeComponents: () => answer([]),
+    overviewNarrative: () => answer([]),
+    sessionStory(input) {
+      calls.sessionStory += 1;
+      const step = input.recentSteps.at(-1);
+      const component = input.touchedComponents[0];
+      const value = [];
+      if (step !== undefined) value.push({ text: "The agent made progress on the task.", citations: [{ kind: "step", id: step.id }] });
+      if (component !== undefined) {
+        value.push({ text: "The work touches one part of the codebase.", citations: [{ kind: "component", id: component.id }] });
+      }
+      return answer(value);
+    },
+    decisionWhy(input) {
+      calls.decisionWhy += 1;
+      const near = input.nearby[0];
+      const citation = near !== undefined ? { kind: "step", id: near.id } : { kind: "decision", id: input.decisionId };
+      return answer({ text: "The answer follows the agent's note just before it.", citations: [citation] });
+    },
+  };
 }
 
 function nowIso(offsetMs) {
@@ -494,7 +531,14 @@ async function main() {
   let ingesting = false;
   let scansDone = 0;
   let pipelineSyncs = 0;
-  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0, pipelineSyncs: 0 };
+  // Narrator calls by question, and recorded calls whose answer the guard discarded or that wrote nothing.
+  const narratorCalls = { sessionStory: 0, decisionWhy: 0, recorded: 0, discarded: 0 };
+  const duringIngest = {
+    changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0, pipelineSyncs: 0, narratorCalls: 0,
+  };
+  // As in the app (index.ts): one main-thread slicer for the sync passes, the session explainer's fold and the
+  // overview rebuild (lane 07 PL-3).
+  const slicer = createMainSlicer();
   if (EXPLAINER) {
     explainerRepo = makeExplainerRepo(EXPLAINER_FILES);
     extractor = createImportExtractor();
@@ -549,8 +593,9 @@ async function main() {
     evidence: false,
     log: () => {},
     onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => paths.forEach(forwardFileChange) : undefined,
-    // Lane 07 S-6: the session explainer folds the session after every completed sync pass (narrator off: rule stories).
-    onPipelineSync: EXPLAINER
+    slicer,
+    // Lane 07 S-6: the session explainer reads every completed sync pass (JEVCODE_SOAK_SESSION_HOOK, above).
+    onPipelineSync: EXPLAINER && SESSION_HOOK === "1"
       ? (_repoPath, sync) => {
           pipelineSyncs += 1;
           if (ingesting) duringIngest.pipelineSyncs += 1;
@@ -588,6 +633,17 @@ async function main() {
         if (event.kind === "snapshot") duringIngest.snapshots += 1;
       },
       explainWithModel: () => false,
+      slicer,
+      ...(NARRATOR === "stub"
+        ? {
+            initialNarrator: createStubNarrator(narratorCalls),
+            recordNarratorCall: (record) => {
+              narratorCalls.recorded += 1;
+              if (record.discarded || record.accepted === 0) narratorCalls.discarded += 1;
+              if (ingesting) duringIngest.narratorCalls += 1;
+            },
+          }
+        : {}),
     });
     explainer.onRepoOpened();
     explainer.onSessionStarted(SESSION_ID);
@@ -778,7 +834,17 @@ async function main() {
         firstPauseAt,
         pausedMs,
         eventLoopDelayMs,
-        explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, pipelineSyncs, yieldEvery: YIELD_EVERY, duringIngest } : null,
+        explainer: EXPLAINER
+          ? {
+              files: EXPLAINER_FILES,
+              rows: explainerRows,
+              sessionHook: SESSION_HOOK === "1",
+              pipelineSyncs,
+              narrator: NARRATOR === "stub" ? { mode: NARRATOR, ...narratorCalls } : { mode: NARRATOR },
+              yieldEvery: YIELD_EVERY,
+              duringIngest,
+            }
+          : null,
         traceReadMs,
         traceReadRunsMs,
         traceRows: trace.rows.length,

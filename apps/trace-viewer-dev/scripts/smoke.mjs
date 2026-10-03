@@ -21,6 +21,8 @@ const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
  * is 200 px below a 1120 px window (apps/desktop styles.css). Measured in Electron (lane 03 fix wave minor 1).
  */
 const MAIN_COLUMN_AT_MIN = 680;
+/** --console-perf drips the last CONSOLE_DRIP_BACK rows of console-10k (docs/perf.md, Console). */
+const CONSOLE_DRIP_BACK = 600;
 
 function parseArgs(argv) {
   const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false, explainer: false };
@@ -451,10 +453,16 @@ async function main() {
       }
     }
     if (options.consolePerf) {
-      const consoleSession = JSON.parse(readFileSync(path.join(bundles, "console-10k.json"), "utf8")).session.sessionId;
+      const consoleBundle = JSON.parse(readFileSync(path.join(bundles, "console-10k.json"), "utf8"));
+      const consoleSession = consoleBundle.session.sessionId;
+      // Story rows (CONSOLE_STORY_EVERY, one ◆ Summary row each) in the whole bundle and among the rows the drip
+      // releases while append latency is measured: those after lastSeq − CONSOLE_DRIP_BACK (static-bundle.ts).
+      const dripFrom = Math.max(0, consoleBundle.session.lastEventSeq - CONSOLE_DRIP_BACK);
+      const storyRows = consoleBundle.rows.filter((row) => row.type === "explainer" && row.payload?.kind === "story");
+      const dripStoryRows = storyRows.filter((row) => row.seq > dripFrom).length;
       const result = await chromeSelftest(
         path.join(tmp, "chrome-console-perf"),
-        `${ORIGIN}/?bundle=console-10k&perf=1&perfrun=console&chrome=embedded&drip=1,120,-600${locationHash(consoleSession, "console")}`,
+        `${ORIGIN}/?bundle=console-10k&perf=1&perfrun=console&chrome=embedded&drip=1,120,-${CONSOLE_DRIP_BACK}${locationHash(consoleSession, "console")}`,
         240_000,
         "pre#perf-result",
       );
@@ -467,6 +475,8 @@ async function main() {
         `scroll_dropped=${result.scroll.droppedPct.toFixed(2)}%`,
         `scroll_p95_frames=${result.scroll.p95Rounded}`,
         `refresh_ms=${result.scroll.refreshMs.toFixed(1)}`,
+        `story_rows=${storyRows.length}`,
+        `story_rows_in_drip=${dripStoryRows}`,
       ].join(" ");
       console.log(`CONSOLE_PERF ${line}`);
       const misses = [];

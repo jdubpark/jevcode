@@ -461,56 +461,85 @@ guard is `storage-stores.test.ts` ("a change unit that leaves the projection").
 ## Phase C (session explainer), lane 07 S-6, 2026-10-03
 
 Spec §11 and the §13 phase C exit, measured on `ce/07-session` (05d29b9 plus S-6) on the reference machine while other
-lanes ran (one-minute load average given per measure). The Console and pipeline sections above keep their own numbers;
-this section adds only what the session explainer changes.
+lanes ran (one-minute load average given per measure). Fix round 1 (same day, after PL-3 at a65d164) ran the live smoke
+3 more times, the soak pair once with a stub-narrator run, and one Console run; where its numbers replace S-6's, the
+table says so. The Console and pipeline sections above keep their own numbers; this section adds only what the session
+explainer changes.
 
 | Measure (spec §11, §13) | Budget | Measured | Status |
 |---|---|---|---|
-| Story row after a trigger, live mock session (story interval shortened to 1.5 s) | ≤ interval + 600 ms sync debounce + 1 s = 3.1 s | 4 and 4 ms after the answered decision, 7 and 18 ms after `agent_completed` (2 runs) | PASS |
-| Highlights row after the first change unit | ≤ 600 ms + 1 s | 914 and 915 ms; 2–3 ms after the sync pass that first carried a unit | PASS |
-| Story calls per interval | ≤ 1 per 1.5 s | 5 calls per run, closest pair 1,616 and 1,631 ms apart | PASS |
-| Decision why with resolvable citations | every answered decision | 1 of 1; every story citation resolves as well | PASS |
+| Story row after a trigger, live mock session (story interval shortened to 2.5 s) | ≤ interval + 600 ms sync debounce + 1 s = 4.1 s | fix round, 3 runs after PL-3 (load 10.2, 8.9, 6.9): 870, 919 and 885 ms after the answered decision, which the throttle held back; 4, 5 and 13 ms after `agent_completed` | PASS |
+| Highlights row after the first change unit | ≤ 600 ms + 1 s | 914, 938 and 915 ms; 3–5 ms after the sync pass that first carried a unit | PASS |
+| Story calls per interval | ≤ 1 per 2.5 s | 5 calls per run; gaps 2,502 ms (the call the throttle deferred, one per run) and 3,054–4,021 ms | PASS |
+| Decision why with resolvable citations | every answered decision | 1 of 1 in each run; every story citation resolves as well | PASS |
 | `mergeSummaryRows`, 10,000 rows and 500 stories | small part of a Console rebuild | mean 0.33 ms, p99 0.52 ms (load 6.3) | PASS |
-| Console append p95 with summary rows (`console-10k` plus 420 story rows, V-6 harness) | ≤ 150 ms, ≥ 300 samples | p95 28.8 ms, median of 3 runs (29.2, 28.8, 21.7 ms; append median 21.7, 20.1, 16.9 ms), 300 samples each; scroll 0.55, 0.00, 0.00% dropped | PASS |
-| Ingest soak ratio, stage on, narrator off (rule-based stories), sync passes during ingestion | ≤ 1.10 | 1.04: median `ingestMs` 16,014 ms against 15,422 ms | PASS |
+| Console append p95 with summary rows (`console-10k` plus 420 story rows, 16 of them in the drip window, V-6 harness) | ≤ 150 ms, ≥ 300 samples | p95 28.8 ms, median of 3 runs (29.2, 28.8, 21.7 ms; append median 21.7, 20.1, 16.9 ms), 300 samples each; scroll 0.55, 0.00, 0.00% dropped. Fix round: 28.6 ms (load 6.3) | PASS |
+| Ingest soak ratio, stage on, sync passes during ingestion | ≤ 1.10 | S-6, narrator off: 1.04 (median `ingestMs` 16,014 against 15,422 ms). Fix round after PL-3, one pair: 0.99 narrator off (10,742 against 10,821 ms) and 0.99 with the stub narrator (10,686 ms, 2 story calls). It does not see per-pass work under about 70 ms: below | PASS |
 | Console append in the Electron main window with the session explainer hook (80-step evidence smoke) | p95 ≤ 150 ms | p95 73 and 89 ms, max 89 and 104 ms (load 4.25 and 3.42 before the runs); interleaved hook off / on at load 4.0–5.5: p95 89, 86 / 90, 79 ms | PASS |
 | Longest main-process block at a turn end, long session (spec §6.1) | ≤ 50 ms | 116–125 ms at 1,459 units (default and trace profiles); 441 ms at 2,937 units | MISS at S-6. The orchestrator's PL-3 ruling fixed it except for the coordinator's rebuild, the one v1 known limit: below |
 
 **Live smoke.** `explainer-live.e2e.test.ts` runs the PRD §58 rate-limit demo through the real `PipelineRuntime`, the
-mock adapter and the real explainer stage (`storyIntervalMs` 1,500) on a 9-file git repository, with a stub narrator
-that cites the step and component ids it was shown. The script keeps the fixture's own gaps between records, each
-capped at 1 s, so the session pauses where the recorded agent paused: the runtime's 600 ms sync debounce is trailing,
-and a fixed 150 ms spacing gave only 4 sync passes and 2 story calls in the whole session. With the fixture's gaps
-the session has 20 passes and 5 story calls, so the interval limit is exercised. The test prints one
-`EXPLAINER_LIVE` line with the gaps above. RED: with `storyIntervalMs` 20,000 the story-window assertion fails
-(`expected 18402 to be less than or equal to 3100`).
+mock adapter and the real explainer stage on a 9-file git repository, with a stub narrator that cites the step and
+component ids it was shown. As in `index.ts`, the runtime and the stage share one main-thread slicer. The script keeps
+the fixture's own gaps between records, each capped at 1 s, so the session pauses where the recorded agent paused: the
+runtime's 600 ms sync debounce is trailing, and a fixed 150 ms spacing gave only 4 sync passes and 2 story calls in the
+whole session. With the fixture's gaps the session has 20 passes and 5 story calls. `storyIntervalMs` is 2,500 (S-6
+used 1,500): the answer arrives about 1.6 s after the story before it, so it lands inside an interval and the throttle
+must hold its story back until the interval ends. The test records every timer the stage arms and asserts at least 3
+gaps between story calls, each at least one interval, and at least one call made by the throttle's timer rather than
+at once. It prints one `EXPLAINER_LIVE` line with the gaps above. RED, S-6: with `storyIntervalMs` 20,000 the
+story-window assertion fails (`expected 18402 to be less than or equal to 3100`, at a 1.5 s interval). RED, fix round:
+with the throttle removed from `explainer-session.ts` (the wait set to 0, then restored), the answer's story goes out
+at once and the test fails with `expected 1596 to be greater than or equal to 2498`; no call was deferred.
 
 **Console perf with summary rows.** `CONSOLE_STORY_EVERY=5` (S-4's switch in `console-bundle.mjs`) writes a story
-row after every fifth unit: 420 stories, about 13 of them in the 600-row drip window, so the commits merge summary
-rows while they are measured. Load 5.3, 7.6 and 6.1 before the three runs. One earlier run stopped at the drip
+row after every fifth unit: 420 stories, 16 of them in the 600-row drip window, so the commits merge summary rows
+while they are measured. The harness prints both counts on its `CONSOLE_PERF` line (`story_rows=420
+story_rows_in_drip=16`). Load 5.3, 7.6 and 6.1 before the three runs. One earlier run stopped at the drip
 selftest with a 37 px drift on the `oauth` bundle, which has no story rows: the transient described in the Console
 section. The next three runs read 0 px.
 
 **Ingest soak.** Guard A's ingest loop never yields, so no sync pass runs while it ingests, and the session explainer,
 which starts from a completed pass, adds nothing to its `ingestMs` (checked: 0 hook calls during ingestion at 1,000
-events, 2 after it). The ratio therefore uses guard B's shape with a repository whose scan finishes early:
-`JEVCODE_SOAK_EVENTS=3000 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=200 JEVCODE_SOAK_YIELD_EVERY=10
-JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=300 node scripts/soak.mjs` (2,978 records, 1,459 units, about
-45,500 stored rows, 25 pauses from record 500). The head runs 24 sync passes through the session explainer during
-ingestion (`explainer.duringIngest.pipelineSyncs`). The base is the same soak without its `onPipelineSync` option:
-the stage then runs as on the merge base, and lane 07's other code is idle without the hook.
+events, 2 after it). The ratio therefore uses guard B's shape with a repository whose scan finishes early (2,978
+records, 1,459 units, about 45,500 stored rows, 25 pauses from record 500); the commands are under Reproduce. The head
+runs 24 sync passes through the session explainer during ingestion (`explainer.duringIngest.pipelineSyncs`). The base
+sets `JEVCODE_SOAK_SESSION_HOOK=0`: the runtime gets no `onPipelineSync`, so the stage runs as on the merge base and the
+session explainer never runs. `JEVCODE_SOAK_NARRATOR=stub` gives the session explainer a narrator that answers at once
+and cites the ids it was shown, and the JSON counts its calls (`explainer.narrator`). Since fix round 1 the soak's
+runtime and stage share one main-thread slicer, as `index.ts` does.
 
-| Run (alternating, `uptime` before) | Base `ingestMs` | Head `ingestMs` |
+What `ingestMs` sees of the session explainer. A pass's 600 ms debounce starts with the last record before a pause,
+and the pause lasts 600 ms too, so every pass starts inside a pause (24 of 24), in its last tens of milliseconds. Only
+4–9 of the 24 passes end inside it; the rest end, and hand their sync to the session explainer, after ingestion has
+resumed, so most of the explainer's work is counted. A probe (scratch copy, not committed) added a synchronous 100 ms
+wait to every hook call: `ingestMs` rose by 1.6 s for the 2.4 s added (medians of 3 runs, 12,799 against 11,212 ms;
+load 5.5–11.1), so about two thirds of per-pass work shows. Runs of one configuration differ by up to 8% (11,002 to
+11,841 ms). The gate allows 10%, 1.1 s here, spread over 24 passes of which two thirds count: the ratio cannot see
+per-pass explainer work under about 70 ms, and a few tens of milliseconds per pass disappear in the noise. Per-pass cost
+and main-thread blocks come from the turn-end and long-session probes (below, and PL-3's section after this one).
+
+What 1.04 and 0.99 prove: running the session explainer on every completed pass, 24 of them during ingestion of a
+1,459-unit stream, does not slow ingestion by 10% or more, with the narrator off or with a narrator that answers at
+once (2 story calls, none discarded). What they do not prove: that any pass or any explainer task stays under spec
+§6.1's 50 ms block (a 100 ms task per pass would still pass); a real narrator's latency or cost (the stub answers at
+once, and a real call waits off the main thread); decision whys (the soak answers no decision, so the stub got 0
+`decisionWhy` calls); longer sessions, more frequent passes or guard A's shape, where no pass runs during ingestion.
+
+| Run (`uptime` before) | Base `ingestMs` | Head `ingestMs` |
 |---|---|---|
-| 1 (load 6.4 / 7.3) | 15,512 | 16,174 |
-| 2 (load 8.4 / 14.3) | 21,719, not matched: its scan finished only at record 700, so it paused 23 times instead of 25 | 15,765 |
-| 3 (load 11.3 / 9.0) | 15,338 | 16,014 |
-| 4 (load 7.1), replaces base run 2 | 15,422 | |
-| Median | 15,422 | 16,014 |
+| S-6, before PL-3, alternating 1 (load 6.4 / 7.3) | 15,512 | 16,174 |
+| S-6, 2 (load 8.4 / 14.3) | 21,719, not matched: its scan finished only at record 700, so it paused 23 times instead of 25 | 15,765 |
+| S-6, 3 (load 11.3 / 9.0) | 15,338 | 16,014 |
+| S-6, 4 (load 7.1), replaces base run 2 | 15,422 | |
+| S-6 median | 15,422 | 16,014 |
+| Fix round, after PL-3 (load 8.7 / 8.6) | 10,821 | 10,742 |
+| Fix round, stub narrator (load 6.8) | | 10,686 (2 `sessionStory` calls, 0 `decisionWhy`) |
 
-Event loop delay over ingestion, head against base medians: p99 126.6 against 123.9 ms (1.02), max 656.9 against
-660.1 ms (1.00); the max is the pipeline's own rebuild in both. `syncMs` after ingestion: 1,561 against 1,292 ms
-(median), the explainer folding the last passes while `syncAll` runs.
+Event loop delay over ingestion, head against base: S-6 medians p99 126.6 against 123.9 ms (1.02), max 656.9 against
+660.1 ms (1.00); fix round p99 86.6 against 90.9 ms, max 447.0 against 410.3 ms. The max is the pipeline's own rebuild
+in both. `syncMs` after ingestion: S-6 1,561 against 1,292 ms (median), fix round 661 against 564 ms (stub 679), the
+explainer folding the last passes while `syncAll` runs.
 
 **Electron.** `ANTHROPIC_API_KEY="" JEVCODE_NARRATOR=off node apps/desktop/scripts/smoke-workspace.mjs`, started once
 the one-minute load fell under 4 (it read 4.25 when the first run started). Both runs are above lane 03 PL-2's runs in
@@ -537,10 +566,20 @@ far more than the few new rows (0.8–1.8 ms on the next pass); why was not trac
 `finalize` was 117 ms (default profile, 5,990 records) and 83 ms (trace profile). `listAgentEvents` stayed under 1 ms (its 1,000-row cap; the soak
 has under 60 agent events). Not fixed in S-6; PL-3 below traces and fixes the explainer's part.
 
-Reproduce: `pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts`,
-`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`,
-`CONSOLE_STORY_EVERY=5 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf`, the soak
-command above with and without its `onPipelineSync` option, and `node apps/desktop/scripts/smoke-workspace.mjs`.
+Reproduce:
+
+```sh
+pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts
+pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts
+CONSOLE_STORY_EVERY=5 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf
+# ingest soak (after pnpm -r build): base, head, head with the stub narrator
+export JEVCODE_SOAK_EVENTS=3000 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=200 \
+  JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=300
+JEVCODE_SOAK_SESSION_HOOK=0 node scripts/soak.mjs   # base: no onPipelineSync, the session explainer never runs
+node scripts/soak.mjs                               # head
+JEVCODE_SOAK_NARRATOR=stub node scripts/soak.mjs    # head, stub narrator
+ANTHROPIC_API_KEY="" JEVCODE_NARRATOR=off node apps/desktop/scripts/smoke-workspace.mjs   # Electron ABI
+```
 
 ## Long-session main-process blocks, lane 07 PL-3, 2026-10-03
 
