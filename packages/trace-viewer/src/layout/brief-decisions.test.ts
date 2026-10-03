@@ -102,6 +102,11 @@ describe("buildBriefDecisions", () => {
     b.decision({ id: "d1", status: "answered", affectedChangeUnits: ["u9"], answer: { decisionId: "d1", decision: { q: "a" }, evidence: [] } });
     const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
     expect(cards.map((card) => card.decisionId)).toEqual(["d3", "d2"]);
+
+    // A steer before the re-emit is not an answer to the closed d1, so it cannot move d1 ahead either.
+    b.agent({ type: "agent_message", role: "user", text: "Also add tests." });
+    b.decision({ id: "d1", status: "answered", answer: { decisionId: "d1", decision: { q: "a" }, evidence: [] } });
+    expect(buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true })).map((card) => card.decisionId)).toEqual(["d3", "d2"]);
   });
 
   it("finds no components without an overview", () => {

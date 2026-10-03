@@ -111,7 +111,9 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     // The first closing row decides; a re-emit of the closed decision keeps that seq (final review D I-1).
     if (closes) existing.decision.decidedSeq = decidedSeq ?? ctx.seq;
     let end: { t: number; sourceTs: string } = ctx;
-    if (closes && answer !== null) {
+    // R25: the message answers only a decision this row closes. A re-emit of an already answered decision after a
+    // steer leaves the steer an instruction and the decision's answerSeq as it was.
+    if (closing && closes && answer !== null) {
       removeStep(state, answer.step);
       existing.seqs.push(...answer.step.seqs);
       existing.seqs.sort((a, b) => a - b);
