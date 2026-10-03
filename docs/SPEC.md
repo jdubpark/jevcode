@@ -417,7 +417,11 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
 ### 6.3 Validation / Failure extraction
 
 - `test_result` facts → `Validation` rows keyed by `runner+command+ts`, plus `Failure` rows per failing test.
-- A passing run attaches to the ChangeUnits changed since the previous run in its idle bucket: units with a file whose fact falls in a 500ms batch window after the previous run's window, up to and including the run's own window. A change in the run's own window counts whatever its order inside the window. A unit untouched since the previous run keeps its earlier runs and does not receive the new one. The rule compares batch windows, not sequence numbers, so reordering facts within a bucket changes nothing (§6.1). A failing run attaches to every unit with a file in its bucket.
+- Run attachment works per idle bucket and compares 500ms batch windows, not sequence numbers, so reordering facts within a bucket changes nothing (§6.1). Runs are taken in window order, and every run in a window is decided from earlier windows only.
+  - A failing run attaches to every unit with a file in its bucket.
+  - A passing run attaches to the units changed since the previous run of the same command (the trimmed command string) in its bucket: units with a file whose fact falls in a window after that run's window, up to and including the run's own window. A change in the run's own window counts whatever its order inside the window. When the command has not run yet in the bucket, the window range starts at the bucket start, so a second command run right after the first is not left without units.
+  - A passing run also attaches to every unit whose latest attached run of the bucket failed. "Latest" is by window, and a failure in that window wins. A failing run's failure hosts (below) count as attached to it. This covers red to green (the test unit that failed gets the passing run, though only the source file changed) and a flaky rerun with no edit (the pass reaches the units the failure reached, once).
+  - A unit untouched since the previous run of the same command, and not left failed, keeps its earlier runs and does not receive the new one.
 - Failing tests attach to ChangeUnits via: (a) failing test file in the unit's file set, and (b) test name mentioning a unit symbol.
 - Build/lint output parsed with the same pattern (`build_result` facts) for typecheck/lint rows in `TestMatrix`.
 
