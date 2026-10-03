@@ -106,6 +106,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
       : session.findings.filter((finding) => finding.severity === "critical" && finding.anchorSeq > lastSeenSeq).length;
   const gaps = session?.gaps ?? [];
   const gapsText = gaps.length === 1 ? "1 gap" : `${gaps.length} gaps`;
+  const liveLabel = terminal && state !== undefined ? agentStateLabel(state) : "Live";
   const approximate = session?.coverage.approximateJoins ?? false;
 
   const jumpToSeq = (seq: number): void => {
@@ -209,25 +210,28 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
 
       {!embedded && showSwitch ? <ViewSwitch /> : null}
 
-      <div role="group" aria-label="Follow" className={styles.segmented}>
+      <div role="group" aria-label="Follow" className={`${styles.segmented} ${styles.follow}`}>
         <button
           type="button"
           aria-pressed={!follow}
           className={styles.segment}
+          // A narrow embedded bar shows the icon only (TitleBar.module.css); the tooltip keeps the word.
+          title={embedded ? "Review" : undefined}
           onClick={() => dispatch({ type: "follow/set", follow: false })}
         >
           <Icon name="clock" size={14} />
-          <span>Review</span>
+          <span className={styles.label}>Review</span>
         </button>
         <button
           type="button"
           aria-pressed={follow}
           className={styles.segment}
           disabled={!running}
+          title={embedded ? liveLabel : undefined}
           onClick={goLive}
         >
           <Icon name="live" size={14} />
-          <span>{terminal && state !== undefined ? agentStateLabel(state) : "Live"}</span>
+          <span className={styles.label}>{liveLabel}</span>
         </button>
       </div>
 
@@ -313,7 +317,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
         onClick={() => dispatch({ type: "brief/toggle" })}
       >
         <Icon name="brief" size={14} />
-        <span>Brief</span>
+        <span className={styles.label}>Brief</span>
       </button>
     </div>
   );
