@@ -142,22 +142,6 @@ describe("openDb", () => {
         ts TEXT NOT NULL,
         payloadJson TEXT NOT NULL
       );
-      -- v1's table, which v6 indexes (lane 07 PL-3).
-      CREATE TABLE jev_decisions (
-        id TEXT PRIMARY KEY,
-        sessionId TEXT NOT NULL,
-        seq INTEGER NOT NULL DEFAULT 0,
-        changeUnitId TEXT,
-        inputHash TEXT NOT NULL,
-        outputJson TEXT NOT NULL,
-        confidence REAL NOT NULL,
-        probabilitiesJson TEXT,
-        latencyMs INTEGER NOT NULL,
-        clientKind TEXT NOT NULL,
-        clampsJson TEXT NOT NULL,
-        ts TEXT NOT NULL,
-        payloadJson TEXT NOT NULL
-      );
     `);
     raw.close();
 
