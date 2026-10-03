@@ -20,6 +20,7 @@ import {
   type Chapter,
   type DecisionDetail,
   type DecisionStableId,
+  type DecisionTradeoff,
   type Step,
   type StepId,
   type StepStatus,
@@ -41,10 +42,18 @@ export function foldChangeUnit(state: FoldState, unit: ChangeUnit, ctx: RowConte
 }
 
 /**
- * `previous` is the detail the decision's earlier rows built: an option this row lists without tradeoffs keeps the ones
- * an earlier row gave it, because the runtime's answered row repeats the options without them (spec §3.5 shows a
- * decided decision with its tradeoffs; lane 07 S-4).
+ * `previous` is the detail the decision's earlier rows built. An option this row lists with no `tradeoffs` field keeps
+ * the ones an earlier row gave it, because the runtime's answered row repeats the options without them (spec §3.5 shows
+ * a decided decision with its tradeoffs; lane 07 S-4); an explicit empty list removes them.
  */
+function tradeoffsOf(
+  given: readonly DecisionTradeoff[] | undefined,
+  earlier: DecisionTradeoff[] | undefined,
+): { tradeoffs?: DecisionTradeoff[] } {
+  if (given === undefined) return earlier === undefined ? {} : { tradeoffs: earlier };
+  return given.length === 0 ? {} : { tradeoffs: given.map((tradeoff) => ({ dimension: tradeoff.dimension, consequence: tradeoff.consequence })) };
+}
+
 function decisionDetail(decision: Decision, previous?: DecisionDetail): DecisionDetail {
   const chosen = new Set(Object.values(decision.answer?.decision ?? {}));
   const earlier = new Map(previous?.options.map((option) => [option.id, option.tradeoffs]) ?? []);
@@ -59,11 +68,7 @@ function decisionDetail(decision: Decision, previous?: DecisionDetail): Decision
       id: option.id,
       label: option.label,
       chosen: chosen.has(option.id),
-      ...(option.tradeoffs !== undefined && option.tradeoffs.length > 0
-        ? { tradeoffs: option.tradeoffs.map((tradeoff) => ({ dimension: tradeoff.dimension, consequence: tradeoff.consequence })) }
-        : earlier.get(option.id) !== undefined
-          ? { tradeoffs: earlier.get(option.id) }
-          : {}),
+      ...tradeoffsOf(option.tradeoffs, earlier.get(option.id)),
     })),
     ...(decidedBy !== undefined ? { decidedBy } : {}),
   };

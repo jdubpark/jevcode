@@ -139,6 +139,14 @@ describe("decision tradeoffs", () => {
     ]);
   });
 
+  it("drops an option's tradeoffs when a later row gives an explicit empty list", () => {
+    const b = started();
+    b.decision({ id: "d1", options: [{ id: "open", label: "Fail open", description: "", tradeoffs: [{ dimension: "availability", consequence: "Up." }] }] });
+    b.decision({ id: "d1", options: [{ id: "open", label: "Fail open", description: "", tradeoffs: [] }] });
+    const step = fold(b).steps.find((candidate) => candidate.decision !== undefined);
+    expect(step?.decision?.options).toEqual([{ id: "open", label: "Fail open", chosen: false }]);
+  });
+
   it("keeps an option's tradeoffs when a later row of the decision omits them, as the runtime's answered row does", () => {
     const b = started();
     const withTradeoffs = [
