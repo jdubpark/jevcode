@@ -245,7 +245,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
         </button>
       ) : null}
 
-      {port === undefined ? null : (
+      {port === undefined || port.zoom.label() === "" ? null : (
         <span className={styles.anchor} ref={zoomPopover.anchorRef}>
           <button
             type="button"

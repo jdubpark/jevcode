@@ -34,6 +34,7 @@ import {
 } from "../views/view-port.js";
 import { isLiveState, LIVE_TICK_START, type DataController, type DataSnapshot } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
+import { ViewerHostContext } from "./host-context.js";
 import { LiveRegion } from "./LiveRegion.js";
 import { Outline } from "./Outline/Outline.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
@@ -310,31 +311,33 @@ export function Shell({
     >
       <IconSprite />
       <SessionContext.Provider value={sessionView}>
-        <DiagnosticsContext.Provider value={diagnostics}>
-          <ViewPortRegistryContext.Provider value={registry}>
-            <ViewDefinitionsContext.Provider value={views}>
-              <LiveRegion>
-                <div className={styles.grid} data-chrome={chrome}>
-                  <header className={styles.title} data-region="title">
-                    <TitleBar onRetry={() => controller.retry()} chrome={chrome} showSwitch={showSwitch} />
-                  </header>
-                  {chrome === "full" ? (
-                    <nav className={styles.outline} aria-label="Outline" data-region="outline">
-                      <Outline hiddenRows={hiddenRows} />
-                    </nav>
-                  ) : null}
-                  <main className={styles.main} data-region="main" tabIndex={-1}>
-                    <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
-                  </main>
-                  <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
-                    <Inspector host={host} />
-                  </aside>
-                </div>
-                <KeyboardLayer root={root} />
-              </LiveRegion>
-            </ViewDefinitionsContext.Provider>
-          </ViewPortRegistryContext.Provider>
-        </DiagnosticsContext.Provider>
+        <ViewerHostContext.Provider value={host}>
+          <DiagnosticsContext.Provider value={diagnostics}>
+            <ViewPortRegistryContext.Provider value={registry}>
+              <ViewDefinitionsContext.Provider value={views}>
+                <LiveRegion>
+                  <div className={styles.grid} data-chrome={chrome}>
+                    <header className={styles.title} data-region="title">
+                      <TitleBar onRetry={() => controller.retry()} chrome={chrome} showSwitch={showSwitch} />
+                    </header>
+                    {chrome === "full" ? (
+                      <nav className={styles.outline} aria-label="Outline" data-region="outline">
+                        <Outline hiddenRows={hiddenRows} />
+                      </nav>
+                    ) : null}
+                    <main className={styles.main} data-region="main" tabIndex={-1}>
+                      <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
+                    </main>
+                    <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
+                      <Inspector host={host} />
+                    </aside>
+                  </div>
+                  <KeyboardLayer root={root} />
+                </LiveRegion>
+              </ViewDefinitionsContext.Provider>
+            </ViewPortRegistryContext.Provider>
+          </DiagnosticsContext.Provider>
+        </ViewerHostContext.Provider>
       </SessionContext.Provider>
     </div>
   );
