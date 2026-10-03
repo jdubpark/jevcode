@@ -1307,6 +1307,64 @@ describe("session explainer: fold slices (PL-3)", () => {
     expect(Math.max(...(lastStory?.recentSteps ?? []).map((step) => seqOf(step.id)))).toBeGreaterThan(stored + appendedDuringFold);
   });
 
+  it("starts the final settle and the writes after it in a turn of their own once the fold spent the turn (lane minor 4)", async () => {
+    const w = new World();
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.tests(0);
+    // A clock that only the fold's page read moves, by more than the 20 ms budget: the fold's turn ends spent.
+    let clock = 0;
+    let beforeTurn: (() => void) | null = null;
+    const slicer = createMainSlicer({
+      now: () => clock,
+      schedule: (fn) =>
+        void setImmediate(() => {
+          const run = beforeTurn;
+          beforeTurn = null;
+          run?.();
+          fn();
+        }),
+    });
+    const foldTurns: number[] = [];
+    const appendTurns: number[] = [];
+    let switchAway = true;
+    const db = new Proxy(w.db, {
+      get(target, property) {
+        if (property === "listEvents") {
+          return (...args: Parameters<JevcodeDb["listEvents"]>) => {
+            clock += 25;
+            foldTurns.push(slicer.turns);
+            // The first time, the session switches before the next turn: the tail must check it again.
+            if (switchAway) beforeTurn = () => void (w.sessionId = OTHER);
+            switchAway = false;
+            return target.listEvents(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const explainer = createSessionExplainer({
+      ...w.deps(null),
+      db,
+      slicer,
+      // The fold itself never pauses: only the tail's own check can give it a new turn.
+      foldSliceMs: Number.POSITIVE_INFINITY,
+      emitRowsAvailable: () => void appendTurns.push(slicer.turns),
+    });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    // Switched away during the tail's yield: nothing was written, and the sync was kept (I-2).
+    expect(w.rows()).toEqual([]);
+
+    w.sessionId = SESSION;
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    expect(w.rows().map((row) => row.record.kind)).toEqual(["story"]);
+    expect(appendTurns).toHaveLength(1);
+    expect(appendTurns[0]).toBeGreaterThan(foldTurns.at(-1) ?? Number.POSITIVE_INFINITY);
+    expect(w.logs.filter((event) => event.kind === "error")).toEqual([]);
+  });
+
   it("settles and yields between slices of one sync's rows, and writes the rows one unsliced fold writes", async () => {
     const run = async (foldSliceMs: number): Promise<{ rows: ExplainerRecord[]; turns: number; slicerTurns: number }> => {
       const w = new World();

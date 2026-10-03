@@ -347,6 +347,12 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       if (reached || events.length < FOLD_PAGE || t.cursor >= until) break;
       if (!(await pause())) return null;
     }
+    // The tail (this settle, then the highlights and triggers in process()) starts a turn of its own once this one is
+    // spent, so it never extends a spent turn (lane review minor 4). The session may have switched meanwhile.
+    if (slicer.spent()) {
+      await slicer.yield();
+      if (!current(t)) return null;
+    }
     const state = deps.db.getSession(t.sessionId)?.state;
     t.session = finalize(t.fold, { live: true, throughSeq: t.cursor, ...(state !== undefined ? { state } : {}) });
     return t.session;
