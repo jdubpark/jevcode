@@ -11,10 +11,12 @@ import type {
   TraceSession,
 } from "../model/index.js";
 import { componentForPath } from "./map-layout.js";
+import { stepDigest } from "./step-digest.js";
 
 // Spec §3.5: a decision is a card in the Brief's Now while it is pending; the latest decided ones stay, with
-// their narrator "why" and the components they affected (two, as the approved H3 mockup shows). Pure; cached per
-// session object.
+// their narrator "why" and the components they affected (two, as the approved H3 mockup shows). Pure. The cards are
+// cached per session object and rebuilt only when what they read changed: the picked decision steps, the chapters, the
+// overview or the narrator's whys (a live commit that adds an ordinary step or a story keeps them).
 
 /** Open decisions the Brief shows as cards, oldest first. */
 export const BRIEF_DECISIONS_MAX = 3;
@@ -53,16 +55,47 @@ function chapterComponentIds(overview: OverviewModel, chapter: Chapter): Set<str
   return ids;
 }
 
+/** That rule over the current chapters that list a decision, both ways. */
+interface DecisionJoins {
+  /** Decision stable id -> the components of the current chapters listing it. */
+  readonly componentsOf: ReadonlyMap<DecisionStableId, ReadonlySet<string>>;
+  /** Component id -> the decisions of the current chapters whose files fall in it, in chapter order, then list order. */
+  readonly decisionsOf: ReadonlyMap<string, ReadonlySet<DecisionStableId>>;
+}
+
+const joinsByOverview = new WeakMap<OverviewModel, WeakMap<readonly Chapter[], DecisionJoins>>();
+
+function addAll<K, V>(map: Map<K, Set<V>>, key: K, values: Iterable<V>): void {
+  let set = map.get(key);
+  if (set === undefined) map.set(key, (set = new Set()));
+  for (const value of values) set.add(value);
+}
+
+/** Per chapter list and overview; finalize keeps both the same objects until a unit or a snapshot changes them. */
+function decisionJoins(overview: OverviewModel, chapters: readonly Chapter[]): DecisionJoins {
+  let byChapters = joinsByOverview.get(overview);
+  if (byChapters === undefined) joinsByOverview.set(overview, (byChapters = new WeakMap()));
+  const cached = byChapters.get(chapters);
+  if (cached !== undefined) return cached;
+  const componentsOf = new Map<DecisionStableId, Set<string>>();
+  const decisionsOf = new Map<string, Set<DecisionStableId>>();
+  for (const chapter of chapters) {
+    if (!chapter.current || chapter.decisionIds.length === 0) continue;
+    const components = chapterComponentIds(overview, chapter);
+    for (const decisionId of chapter.decisionIds) addAll(componentsOf, decisionId, components);
+    for (const id of components) addAll(decisionsOf, id, chapter.decisionIds);
+  }
+  const joins: DecisionJoins = { componentsOf, decisionsOf };
+  byChapters.set(chapters, joins);
+  return joins;
+}
+
 /** The components of the current change units a decision affects (by componentForPath), by name, at most six. */
 export function decisionComponents(session: TraceSession, decisionId: string): { id: string; name: string }[] {
   const overview = session.overview;
   if (overview === null) return [];
-  const stableId = `decision:${decisionId}` as DecisionStableId;
-  const ids = new Set<string>();
-  for (const chapter of session.chapters) {
-    if (!chapter.current || !chapter.decisionIds.includes(stableId)) continue;
-    for (const id of chapterComponentIds(overview, chapter)) ids.add(id);
-  }
+  const ids = decisionJoins(overview, session.chapters).componentsOf.get(`decision:${decisionId}`);
+  if (ids === undefined) return [];
   return [...ids]
     .map((id) => ({ id, name: overview.componentById.get(id)?.name ?? id }))
     .sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id))
@@ -75,13 +108,23 @@ export function decisionComponents(session: TraceSession, decisionId: string): {
  */
 export function componentDecisionIds(session: TraceSession, componentId: string): ReadonlySet<DecisionStableId> {
   const overview = session.overview;
-  const ids = new Set<DecisionStableId>();
-  if (overview === null) return ids;
-  for (const chapter of session.chapters) {
-    if (!chapter.current || chapter.decisionIds.length === 0 || !chapterComponentIds(overview, chapter).has(componentId)) continue;
-    for (const id of chapter.decisionIds) ids.add(id);
+  if (overview === null) return new Set();
+  return decisionJoins(overview, session.chapters).decisionsOf.get(componentId) ?? new Set();
+}
+
+const decisionStepsBySteps = new WeakMap<readonly Step[], readonly Step[]>();
+
+/** The steps with a decision, in list order (stepDigest: a commit reads only the steps it changed). */
+export function decisionSteps(steps: readonly Step[]): readonly Step[] {
+  const cached = decisionStepsBySteps.get(steps);
+  if (cached !== undefined) return cached;
+  const out: Step[] = [];
+  for (const at of stepDigest(steps).decisions) {
+    const step = steps[at];
+    if (step !== undefined) out.push(step);
   }
-  return ids;
+  decisionStepsBySteps.set(steps, out);
+  return out;
 }
 
 function cardOf(session: TraceSession, step: Step, decision: DecisionDetail): BriefDecisionCard {
@@ -97,16 +140,15 @@ function cardOf(session: TraceSession, step: Step, decision: DecisionDetail): Br
   };
 }
 
-/**
- * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones, the most recently
- * answered first (at most BRIEF_DECIDED_MAX).
- */
-export function buildBriefDecisions(session: TraceSession): readonly BriefDecisionCard[] {
-  const cached = cache.get(session);
+const pickedBySteps = new WeakMap<readonly Step[], readonly Step[]>();
+
+/** The decision steps the cards show, in card order (buildBriefDecisions), per steps list. */
+function pickedSteps(steps: readonly Step[]): readonly Step[] {
+  const cached = pickedBySteps.get(steps);
   if (cached !== undefined) return cached;
   const open: Step[] = [];
   const closed: Step[] = [];
-  for (const step of session.steps) {
+  for (const step of decisionSteps(steps)) {
     const status = step.decision?.status;
     if (status === "open") open.push(step);
     else if (status === "answered" || status === "delegated") closed.push(step);
@@ -118,7 +160,39 @@ export function buildBriefDecisions(session: TraceSession): readonly BriefDecisi
   const answeredAt = (step: Step): number => step.decision?.answerSeq ?? step.decision?.decidedSeq ?? step.lastSeq;
   const newestAnswered = closed.sort((a, b) => answeredAt(b) - answeredAt(a));
   const picked = [...open.slice(0, BRIEF_DECISIONS_MAX), ...newestAnswered.slice(0, BRIEF_DECIDED_MAX)];
-  const cards = picked.flatMap((step) => (step.decision === undefined ? [] : [cardOf(session, step, step.decision)]));
+  pickedBySteps.set(steps, picked);
+  return picked;
+}
+
+/** The inputs of the last cards built: a card reads its step, the chapters and overview (components) and the whys. */
+let lastCards: {
+  picked: readonly Step[];
+  chapters: readonly Chapter[];
+  overview: OverviewModel | null;
+  why: TraceSession["explainer"]["decisionWhy"];
+  cards: readonly BriefDecisionCard[];
+} | null = null;
+
+/**
+ * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones, the most recently
+ * answered first (at most BRIEF_DECIDED_MAX).
+ */
+export function buildBriefDecisions(session: TraceSession): readonly BriefDecisionCard[] {
+  const cached = cache.get(session);
+  if (cached !== undefined) return cached;
+  const picked = pickedSteps(session.steps);
+  const why = session.explainer.decisionWhy;
+  const last = lastCards;
+  let cards: readonly BriefDecisionCard[];
+  if (
+    last !== null && last.chapters === session.chapters && last.overview === session.overview && last.why === why &&
+    last.picked.length === picked.length && last.picked.every((step, at) => step === picked[at])
+  ) {
+    cards = last.cards;
+  } else {
+    cards = picked.flatMap((step) => (step.decision === undefined ? [] : [cardOf(session, step, step.decision)]));
+    lastCards = { picked, chapters: session.chapters, overview: session.overview, why, cards };
+  }
   cache.set(session, cards);
   return cards;
 }
