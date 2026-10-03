@@ -257,6 +257,8 @@ app.whenReady().then(() => {
     mockScriptFor: SMOKE_WORKSPACE
       ? (input) => smokeMockScript(input, { steps: SMOKE_STEPS, spacingMs: SMOKE_SCRIPT_DEFAULTS.spacingMs })
       : undefined,
+    // Lane 07 (S-2): story, decision why and highlight triggers for the open repo's stage.
+    onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
   });
 
   const instructionRouter = new InstructionRouter({

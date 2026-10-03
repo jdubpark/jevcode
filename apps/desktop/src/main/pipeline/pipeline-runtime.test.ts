@@ -27,7 +27,7 @@ import { PipelineRuntime } from "./pipeline-runtime.js";
 import { observeTraceAppends } from "../rows-available.js";
 import type { ObservedAppend } from "../rows-available.js";
 import { smokeMockScript } from "./smoke-script.js";
-import type { EmitFn, SurfaceRecord } from "./types.js";
+import type { EmitFn, PipelineSyncSnapshot, SurfaceRecord } from "./types.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -2031,4 +2031,53 @@ describe("PipelineRuntime when a coordinator rebuild throws inside an ingest (la
       db.close();
     }
   }, 30_000);
+});
+
+describe("PipelineRuntime onPipelineSync", () => {
+  it("hands every finished sync to the hook with the session's units, decisions and lastSeq", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const syncs: (PipelineSyncSnapshot & { repoPath: string })[] = [];
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: (repoPath, sync) => void syncs.push({ repoPath, ...sync }), log: () => undefined,
+    });
+    await runtime.startSession({
+      sessionId: "sess_sync", repoId: "repo_sync", repoPath: "/work/sync", prompt: "p", agentMode: "mock",
+      mockScript: { sessionId: "sess_sync", repoPath: "/work/sync", cwd: "/work/sync", prompt: "p", entries: [] },
+    });
+    runtime.ingestRecord("sess_sync", { type: "agent_message", sessionId: "sess_sync", role: "assistant", text: "hello", ts: "2026-10-02T10:00:00.000Z" });
+    await runtime.syncAll();
+    const last = syncs.at(-1);
+    expect(last?.sessionId).toBe("sess_sync");
+    expect(last?.repoPath).toBe("/work/sync");
+    expect(last?.lastSeq).toBe(db.getSession("sess_sync")?.lastEventSeq);
+    expect(last?.changeUnits).toEqual([]);
+    expect(last?.decisions).toEqual([]);
+    await runtime.stopSession("sess_sync");
+    db.close();
+  });
+
+  it("keeps syncing when the hook throws", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const logs: string[] = [];
+    let calls = 0;
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: () => {
+        calls += 1;
+        throw new Error("explainer broke");
+      },
+      log: (message) => void logs.push(message),
+    });
+    await runtime.startSession({
+      sessionId: "sess_throw", repoId: "repo_throw", repoPath: "/work/throw", prompt: "p", agentMode: "mock",
+      mockScript: { sessionId: "sess_throw", repoPath: "/work/throw", cwd: "/work/throw", prompt: "p", entries: [] },
+    });
+    await expect(runtime.syncAll()).resolves.toBeUndefined();
+    await expect(runtime.syncAll()).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(logs.some((message) => message.includes("explainer hook failed"))).toBe(true);
+    await runtime.stopSession("sess_throw");
+    db.close();
+  });
 });
