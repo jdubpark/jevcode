@@ -14,6 +14,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The panel takes focus when it replaces the Inspector under it (lane fix I-5); a ring only for keyboard focus. */
+.brief:focus {
+  outline: none;
+}
+
+.brief:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--tv-accent-soft);
+}
+
 .header {
   display: flex;
   align-items: center;

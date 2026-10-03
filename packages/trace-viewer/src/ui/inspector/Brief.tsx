@@ -336,7 +336,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
   const more = model.changes.length - shown.length;
   const edited = useMemo(() => (model.changes.length === 0 ? editedFilesOf(session, index) : []), [model.changes.length, session, index]);
   return (
-    <section className={styles.brief} aria-labelledby={`${id}-title`}>
+    <section className={styles.brief} aria-labelledby={`${id}-title`} tabIndex={-1} data-brief="">
       <div className={styles.header}>
         <Icon name="brief" size={16} />
         <h2 id={`${id}-title`} className={styles.heading}>Brief</h2>
@@ -398,7 +398,7 @@ export function Brief(): JSX.Element {
   }, [running, terminal]);
   if (session === null || model === null) {
     return (
-      <section className={styles.brief} aria-labelledby={loadingId}>
+      <section className={styles.brief} aria-labelledby={loadingId} tabIndex={-1} data-brief="">
         <div className={styles.header}>
           <Icon name="brief" size={16} />
           <h2 id={loadingId} className={styles.heading}>Brief</h2>
