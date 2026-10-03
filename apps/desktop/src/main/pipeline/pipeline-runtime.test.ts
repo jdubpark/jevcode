@@ -1979,3 +1979,56 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     }
   }, 60_000);
 });
+
+describe("PipelineRuntime when a coordinator rebuild throws inside an ingest (lane 03 fix wave I-2)", () => {
+  it("still ends the turn on agent_completed, and the next sync writes both records' units", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/ingest-rebuild-throw");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-ingest-throw";
+    const repoId = "repo-it";
+    db.upsertRepository({ id: repoId, path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId, prompt: "demo" });
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({
+      db,
+      emit: collectEmit().emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: (line) => logs.push(line),
+    });
+    let armed = false;
+    let thrown = 0;
+    const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+    db.upsertChangeUnit = ((unit) => {
+      if (armed && thrown === 0) {
+        thrown += 1;
+        throw new Error("disk full");
+      }
+      return upsertChangeUnit(unit);
+    }) as typeof db.upsertChangeUnit;
+    const at = (ms: number): string => new Date(Date.parse("2026-10-02T10:00:00.000Z") + ms).toISOString();
+    try {
+      await runtime.startSession({ sessionId, repoId, repoPath: dir, prompt: "demo", agentMode: "replay" });
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: "src/a.ts", kind: "modified", ts: at(0) });
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: "src/b.ts", kind: "modified", ts: at(100) });
+      armed = true;
+      // Past the coordinator's 500 ms window: this ingest flushes both facts, and that rebuild's unit write throws.
+      runtime.ingestRecord(sessionId, { type: "agent_completed", sessionId, ts: at(2_000) });
+
+      expect(thrown).toBe(1);
+      expect(logs.some((line) => line.includes("disk full") && !line.includes("record dropped"))).toBe(true);
+      expect(db.getSession(sessionId)?.state).toBe("completed");
+      await runtime.syncAll();
+      const files = db
+        .listChangeUnits(sessionId)
+        .filter((unit) => unit.status !== "superseded")
+        .flatMap((unit) => unit.files)
+        .sort();
+      expect(files).toEqual(["src/a.ts", "src/b.ts"]);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
+});

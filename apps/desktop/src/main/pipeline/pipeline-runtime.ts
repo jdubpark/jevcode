@@ -383,7 +383,7 @@ export class PipelineRuntime {
       }
       this.recordTelemetry(session, "fact_count", {});
       session.facts.push(fact);
-      session.coordinator.ingest(fact);
+      this.ingestIntoCoordinator(session, fact);
       if (fact.type === "file_changed") this.notifyRepoFilesChanged(session, fact.path);
       this.scheduleSync(session);
       return;
@@ -393,7 +393,7 @@ export class PipelineRuntime {
       this.opts.db.appendAgentEvent(sessionId, event);
       this.recordTelemetry(session, "agent_event_count", {});
       this.opts.emit(MainToRendererChannels.agentEvent, event);
-      session.coordinator.ingest(event);
+      this.ingestIntoCoordinator(session, event);
       this.observeAgentEventForEvidence(session, event);
       this.applyTerminalAgentState(session, event);
       this.scheduleSync(session);
@@ -403,7 +403,7 @@ export class PipelineRuntime {
       const decision = record as Decision;
       const wasOpen = session.openDecisions.has(decision.id);
       this.opts.db.upsertDecision(decision);
-      session.coordinator.ingest(decision);
+      this.ingestIntoCoordinator(session, decision);
       if (decision.status === "open" && !wasOpen) {
         session.openDecisions.add(decision.id);
         this.opts.emit(MainToRendererChannels.decisionOpen, {
@@ -439,11 +439,28 @@ export class PipelineRuntime {
       return;
     }
     if (SemanticEventSchema.safeParse(record).success) {
-      session.coordinator.ingest(record);
+      this.ingestIntoCoordinator(session, record);
       this.scheduleSync(session);
       return;
     }
     this.log(`session ${sessionId}: dropped unrecognized record`);
+  }
+
+  /**
+   * The coordinator keeps a record whose ingest flushed a window and threw in that window's rebuild, and runs the
+   * rebuild again at the next flush (scheduleSync). So the failure is logged here and the record's other steps still
+   * run: agent_completed still ends the turn, a decision still opens, an answered decision still resumes the agent
+   * (lane 03 fix wave I-2).
+   */
+  private ingestIntoCoordinator(session: ActiveSession, record: PipelineRecord): void {
+    try {
+      session.coordinator.ingest(record);
+    } catch (error) {
+      session.ingestFailures += 1;
+      this.log(
+        `session ${session.sessionId}: rebuild failed while ingesting ${recordType(record as IngestibleRecord)}; the record is kept and the next sync retries: ${String(error)}`,
+      );
+    }
   }
 
   ingestPipelineRecord(sessionId: string, record: PipelineRecord): void {
@@ -627,7 +644,7 @@ export class PipelineRuntime {
       ts: this.nowIso(),
     };
     this.opts.db.upsertDecision(answered);
-    session.coordinator.ingest(answered);
+    this.ingestIntoCoordinator(session, answered);
     session.openDecisions.delete(decision.id);
     this.recordTelemetry(session, "decision_answered", {});
     this.opts.emit(MainToRendererChannels.decisionResolved, {
@@ -668,7 +685,7 @@ export class PipelineRuntime {
       ts: this.nowIso(),
     };
     this.opts.db.upsertDecision(delegated);
-    session.coordinator.ingest(delegated);
+    this.ingestIntoCoordinator(session, delegated);
     session.openDecisions.delete(decision.id);
     this.recordTelemetry(session, "decision_delegated", {});
     this.opts.emit(MainToRendererChannels.decisionResolved, {
