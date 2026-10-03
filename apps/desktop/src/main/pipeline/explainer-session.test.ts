@@ -359,6 +359,49 @@ describe("session explainer: highlights", () => {
     ]);
   });
 
+  it("marks a non-new component that is changed and failing as [changed, failing]", () => {
+    const w = new World();
+    w.overview([SERVER]);
+    const entries = computeHighlights({
+      units: [w.unit("u1", ["src/server/app.ts"])],
+      decisions: [],
+      overview: w.fold().overview,
+      initialComponentIds: new Set([SERVER.id]),
+      failingFiles: new Set(["src/server/app.test.ts"]),
+    });
+    expect(entries).toEqual([{ id: SERVER.id, state: "failing", states: ["changed", "failing"], unitIds: ["u1"] }]);
+  });
+
+  it("marks a non-new component with a decision and a failing test as [decision, failing]", () => {
+    const w = new World();
+    w.overview([SERVER]);
+    const entries = computeHighlights({
+      units: [w.unit("u1", ["src/server/app.ts"])],
+      decisions: [w.decision("d1", "open", ["u1"])],
+      overview: w.fold().overview,
+      initialComponentIds: new Set([SERVER.id]),
+      failingFiles: new Set(["src/server/app.test.ts"]),
+    });
+    expect(entries).toEqual([{ id: SERVER.id, state: "failing", states: ["decision", "failing"], unitIds: ["u1"] }]);
+  });
+
+  it("treats nothing as new without an initial component set, and leaves states off single-state entries", () => {
+    const w = new World();
+    w.overview([SERVER, REDIS]);
+    const entries = computeHighlights({
+      units: [w.unit("u1", ["src/server/app.ts"])],
+      decisions: [],
+      overview: w.fold().overview,
+      initialComponentIds: null,
+      failingFiles: new Set(["src/redis/client.test.ts"]),
+    });
+    expect(entries).toEqual([
+      { id: SERVER.id, state: "changed", unitIds: ["u1"] },
+      { id: REDIS.id, state: "failing", unitIds: [] },
+    ]);
+    expect(entries.every((entry) => entry.states === undefined)).toBe(true);
+  });
+
   it("maps absolute and ./-prefixed paths to their component instead of the root", () => {
     const w = new World();
     w.overview([SERVER, REDIS]);

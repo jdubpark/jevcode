@@ -92,6 +92,18 @@ describe("explainer fold", () => {
     expect(byComponent?.get("cmp_000000000002")?.states).toEqual(["changed"]);
   });
 
+  it("always includes the entry's own state, so a row whose states omit it still shows it", () => {
+    const b = started();
+    b.explainer({
+      kind: "highlights",
+      basisSeq: 4,
+      components: [{ id: "cmp_000000000001", state: "failing", states: ["new"], unitIds: [] }],
+    });
+    const entry = fold(b).explainer.highlights?.byComponent.get("cmp_000000000001");
+    expect(entry?.state).toBe("failing");
+    expect(entry?.states).toEqual(["new", "failing"]);
+  });
+
   it("records an invalid explainer row and a row of another session as gaps and folds neither", () => {
     const b = started();
     const bad = b.raw("explainer", { sessionId: SESSION_ID, kind: "story", sentences: [], basisSeq: 1 });

@@ -53,11 +53,14 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
       const current = state.highlights;
       if (current !== null && record.basisSeq < current.basisSeq) return;
       const byComponent = new Map<string, HighlightEntryModel>();
-      for (const entry of record.components) byComponent.set(entry.id, {
+      for (const entry of record.components) {
+        byComponent.set(entry.id, {
           state: entry.state,
-          states: entry.states === undefined ? [entry.state] : HIGHLIGHT_STATES.filter((state) => entry.states?.includes(state)),
+          // The entry's own state is always one of its states, whatever a corrupt row's `states` says.
+          states: HIGHLIGHT_STATES.filter((state) => state === entry.state || entry.states?.includes(state)),
           unitIds: [...entry.unitIds],
         });
+      }
       state.highlights = { basisSeq: record.basisSeq, seq, byComponent };
       break;
     }
