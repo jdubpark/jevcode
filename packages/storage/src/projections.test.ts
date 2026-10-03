@@ -430,3 +430,28 @@ describe("listChangeUnitVersions (lane 07 PL-3)", () => {
     db.close();
   });
 });
+
+describe("graph lists (lane 07 PL-3 review)", () => {
+  it("lists graph nodes and edges in rowid order: an upsert keeps its place, a new row comes last, the index serves it", () => {
+    const db = openSessionDb();
+    // Ids that do not ascend in write order, so an id order would show.
+    for (const id of ["node_c", "node_a", "node_b"]) db.upsertGraphNode(SESSION, { id, nodeType: "File", payload: { label: id } });
+    db.upsertGraphNode(SESSION, { id: "node_a", nodeType: "File", payload: { label: "node_a again" } });
+    db.upsertGraphNode(SESSION, { id: "node_0", nodeType: "File", payload: { label: "node_0" } });
+    expect(db.listGraphNodes(SESSION).map((node) => node.id)).toEqual(["node_c", "node_a", "node_b", "node_0"]);
+    expect(db.listGraphNodes(SESSION)[1]?.payload).toEqual({ label: "node_a again" });
+    for (const id of ["edge_z", "edge_m", "edge_a"]) db.upsertGraphEdge(SESSION, { id, fromId: "node_c", toId: "node_a", edgeType: "DEPENDS_ON" });
+    db.upsertGraphEdge(SESSION, { id: "edge_z", fromId: "node_b", toId: "node_a", edgeType: "DEPENDS_ON" });
+    expect(db.listGraphEdges(SESSION).map((edge) => edge.id)).toEqual(["edge_z", "edge_m", "edge_a"]);
+    const raw = new Database(db.dbPath);
+    for (const table of ["graph_nodes", "graph_edges"]) {
+      const plan = (raw.prepare(`EXPLAIN QUERY PLAN SELECT payloadJson FROM ${table} WHERE sessionId = ? ORDER BY rowid`).all(SESSION) as {
+        detail: string;
+      }[]).map((row) => row.detail);
+      expect(plan.join(" | ")).toContain(`USING INDEX idx_${table}_session`);
+      expect(plan.some((detail) => detail.includes("TEMP B-TREE"))).toBe(false);
+    }
+    raw.close();
+    db.close();
+  });
+});

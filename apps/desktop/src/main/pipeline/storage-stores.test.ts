@@ -555,40 +555,42 @@ describe("storage stores: projection lists (lane 07 PL-3)", () => {
   it("keeps the graph lists equal to a fresh read: its own writes go in place, any other writer's make it read", () => {
     const { db, stores } = open();
     const reads = countReads(db);
+    // Ids that do not ascend in write order, so an id-ordered read would not match the store's in-place lists.
     const node = (id: string, label: string): GraphNode => ({ id, sessionId: SESSION, type: "File", label, data: { path: label } });
-    const edge = (id: string, to: string): GraphEdge => ({ id, sessionId: SESSION, from: "node_1", to, type: "DEPENDS_ON" });
+    const edge = (id: string, to: string): GraphEdge => ({ id, sessionId: SESSION, from: "node_k", to, type: "DEPENDS_ON" });
     const fresh = () => ({
       nodes: db.listGraphNodes(SESSION).map((record) => record.id),
       edges: db.listGraphEdges(SESSION).map((record) => record.id),
     });
-    stores.graph.upsertNodes([node("node_1", "src/a.ts"), node("node_2", "src/b.ts")]);
-    stores.graph.upsertEdges([edge("edge_1", "node_2")]);
+    stores.graph.upsertNodes([node("node_k", "src/a.ts"), node("node_c", "src/b.ts")]);
+    stores.graph.upsertEdges([edge("edge_q", "node_c")]);
     stores.graph.nodes();
     stores.graph.edges();
     expect([reads.nodes, reads.edges]).toEqual([1, 1]);
     // An unchanged node is not written; rows of other kinds leave the lists as they are.
-    stores.graph.upsertNodes([node("node_1", "src/a.ts")]);
+    stores.graph.upsertNodes([node("node_k", "src/a.ts")]);
     stores.units.upsert(unit("cu_1"));
     // The store's own writes, an update and new rows, are taken without a read, where a fresh read puts them.
-    stores.graph.upsertNodes([node("node_3", "src/c.ts"), node("node_1", "src/a2.ts")]);
-    stores.graph.upsertEdges([edge("edge_2", "node_3"), edge("edge_1", "node_3")]);
+    stores.graph.upsertNodes([node("node_x", "src/c.ts"), node("node_k", "src/a2.ts")]);
+    stores.graph.upsertEdges([edge("edge_b", "node_x"), edge("edge_q", "node_x")]);
     const nodes = stores.graph.nodes();
     const edges = stores.graph.edges();
     expect([reads.nodes, reads.edges]).toEqual([1, 1]);
     const listed = { nodes: nodes.map((entry) => entry.id), edges: edges.map((entry) => entry.id) };
+    expect(listed).toEqual({ nodes: ["node_k", "node_c", "node_x"], edges: ["edge_q", "edge_b"] });
     expect(listed).toEqual(fresh());
-    expect(nodes.find((entry) => entry.id === "node_1")).toEqual({
-      id: "node_1",
+    expect(nodes.find((entry) => entry.id === "node_k")).toEqual({
+      id: "node_k",
       sessionId: SESSION,
       type: "File",
       label: "src/a2.ts",
       data: { label: "src/a2.ts", path: "src/a2.ts" },
     });
-    expect(edges.find((entry) => entry.id === "edge_1")?.to).toBe("node_3");
+    expect(edges.find((entry) => entry.id === "edge_q")?.to).toBe("node_x");
     reads.nodes = 0;
     reads.edges = 0;
     // A row written past the store (another writer) is read.
-    db.upsertGraphNode(SESSION, { id: "node_4", nodeType: "File", payload: { label: "src/d.ts" } });
+    db.upsertGraphNode(SESSION, { id: "node_a", nodeType: "File", payload: { label: "src/d.ts" } });
     const afterForeign = stores.graph.nodes().map((entry) => entry.id);
     stores.graph.edges();
     expect([reads.nodes, reads.edges]).toEqual([1, 0]);

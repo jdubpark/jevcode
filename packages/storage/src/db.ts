@@ -952,18 +952,20 @@ export class JevcodeDb {
     );
   }
 
+  /** In rowid order: an upsert keeps a row's place and a new row comes last (the pipeline's graph store relies on it). */
   listGraphNodes(sessionId: string): GraphNodeRecord[] {
     const rows = this.statements
-      .prepare("SELECT payloadJson FROM graph_nodes WHERE sessionId = ?")
+      .prepare("SELECT payloadJson FROM graph_nodes WHERE sessionId = ? ORDER BY rowid")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
       parseWith(GraphNodeRecordSchema, row.payloadJson, `graph_nodes[${i}]`),
     );
   }
 
+  /** In rowid order, as listGraphNodes. */
   listGraphEdges(sessionId: string): GraphEdgeRecord[] {
     const rows = this.statements
-      .prepare("SELECT payloadJson FROM graph_edges WHERE sessionId = ?")
+      .prepare("SELECT payloadJson FROM graph_edges WHERE sessionId = ? ORDER BY rowid")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
       parseWith(GraphEdgeRecordSchema, row.payloadJson, `graph_edges[${i}]`),
