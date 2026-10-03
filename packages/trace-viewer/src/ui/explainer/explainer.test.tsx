@@ -209,6 +209,22 @@ describe("SummaryBlock", () => {
     expect(harness.store.get().selection).toBeNull();
   });
 
+  it("keeps its chips and Brief link in the tab order by default, and out of it with tabbable={false} (the Console feed, E M-1)", () => {
+    const { session, edit } = scenario(false, false);
+    const sentences = [sentence("The agent added the limiter.", { kind: "step", id: edit })];
+    renderHarness(<SummaryBlock sentences={sentences} />, session);
+    const stops = (): number[] =>
+      within(screen.getByRole("group", { name: "Session summary" })).getAllByRole("button").map((button) => button.tabIndex);
+    expect(stops()).toEqual([0, 0]);
+    cleanup();
+
+    renderHarness(<SummaryBlock sentences={sentences} tabbable={false} />, session);
+    expect(stops()).toEqual([-1, -1]);
+    // Still buttons with their names: a pointer or a screen reader's virtual cursor reaches them.
+    expect(screen.getByRole("button", { name: "Show the Brief" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Open / })).toBeTruthy();
+  });
+
   it("marks a rule-based summary next to its heading", () => {
     const { session, edit } = scenario(false, false);
     renderHarness(<SummaryBlock sentences={[sentence("Edited 1 file.", { kind: "step", id: edit })]} provenance="rule" />, session);

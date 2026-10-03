@@ -457,10 +457,12 @@ export function BriefView(props: BriefViewProps): JSX.Element {
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
   const more = model.changes.length - shown.length;
   const edited = useMemo(() => editedFilesOf(session, index, model.changes.length > 0), [model.changes.length, session, index]);
-  const root = useRef<HTMLElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   useDecisionFocusRepair(root, `${id}-decisions`);
   return (
-    <section ref={root} className={styles.brief} aria-labelledby={`${id}-title`} tabIndex={-1} data-brief="">
+    // A div, not a named section: the right panel's <aside aria-label="Brief"> is already the Brief landmark (E M-5).
+    // tabIndex -1 keeps it the panel's focus target (RightPanel's [data-brief], the decision focus repair).
+    <div ref={root} className={styles.brief} tabIndex={-1} data-brief="">
       <div className={styles.header}>
         <Icon name="brief" size={16} />
         <h2 id={`${id}-title`} className={styles.heading}>Brief</h2>
@@ -515,7 +517,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
       <BriefArchitectureSection id={id} session={session} mapSession={props.mapSession}>
         <Architecture architecture={model.architecture} overview={session.overview} onOpenMap={props.onOpenMap} mapAvailable={props.mapAvailable} />
       </BriefArchitectureSection>
-    </section>
+    </div>
   );
 }
 
@@ -527,7 +529,6 @@ export function Brief(): JSX.Element {
   const onMap = useView((state) => state.view === "map");
   const mapSelection = useView((state) => state.mapSelection);
   const [, tick] = useReducer((n: number) => n + 1, 0);
-  const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
   const running = model !== null && model.now.kind === "rule" && model.now.runningStepId !== null;
   // The viewer's answers (shell/decision-answers.ts), shared with the Console's decision block and kept while the Brief
@@ -541,13 +542,13 @@ export function Brief(): JSX.Element {
   }, [running, terminal]);
   if (session === null || model === null) {
     return (
-      <section className={styles.brief} aria-labelledby={loadingId} tabIndex={-1} data-brief="">
+      <div className={styles.brief} tabIndex={-1} data-brief="">
         <div className={styles.header}>
           <Icon name="brief" size={16} />
-          <h2 id={loadingId} className={styles.heading}>Brief</h2>
+          <h2 className={styles.heading}>Brief</h2>
         </div>
         <p className={styles.quiet}>Loading</p>
-      </section>
+      </div>
     );
   }
   return (

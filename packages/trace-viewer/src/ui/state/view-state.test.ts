@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { brushSeqRange, buildTraceIndex, emptyTraceIndex, isKeyExpanded, type TraceIndex } from "../../layout/trace-index.js";
 import { buildSession, OAUTH_CLAIM_TEXT, oauthLikeSession, type StepSeed } from "../../test-support/session-builder.js";
-import { initialViewState, locationOf, reduce, selectNewCount, type ViewAction, type ViewState } from "./view-state.js";
+import { canToggleBrief, initialViewState, locationOf, reduce, selectNewCount, type ViewAction, type ViewState } from "./view-state.js";
 
 const oauth = oauthLikeSession();
 const index = buildTraceIndex(oauth);
@@ -364,6 +364,23 @@ describe("map selection (spec §3.4, lane 06 deviation 4)", () => {
     // Off the Map a component selection is not a selection.
     const elsewhere = { ...selected, view: "hybrid" as const };
     expect(reduce(elsewhere, { type: "brief/toggle" }, index)).toBe(elsewhere);
+  });
+
+  it("brief/toggle is a no-op exactly when canToggleBrief is false, the rule the title bar's toggle reads (review minor)", () => {
+    const base = initialViewState({ live: false });
+    const cases: [Partial<ViewState>, boolean][] = [
+      [{}, false],
+      [{ selection: test.id }, true],
+      [{ view: "map" }, false],
+      [{ view: "map", mapSelection: "cmp_0123456789ab" }, true],
+      [{ view: "hybrid", mapSelection: "cmp_0123456789ab" }, false],
+      [{ view: "map", selection: test.id }, true],
+    ];
+    for (const [patch, can] of cases) {
+      const state: ViewState = { ...base, ...patch };
+      expect(canToggleBrief(state), JSON.stringify(patch)).toBe(can);
+      expect(reduce(state, { type: "brief/toggle" }, index) === state, JSON.stringify(patch)).toBe(!can);
+    }
   });
 });
 

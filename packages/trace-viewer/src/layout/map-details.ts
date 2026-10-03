@@ -1,7 +1,8 @@
 // Component Inspector data and the bar scales of the Map (spec §3.4). Pure and React-free.
 import type { Component, NarrativeSentence } from "@jevcode/contracts";
 
-import type { OverviewModel, StepId, TraceSession } from "../model/index.js";
+import { decisionStableId, type DecisionDetail, type OverviewModel, type StepId, type TraceSession } from "../model/index.js";
+import { componentDecisionIds } from "./brief-decisions.js";
 import { componentForPath } from "./map-layout.js";
 
 /** Spec §3.4: files are listed top 20, then "n more". */
@@ -11,6 +12,8 @@ export const DETAIL_LINKS_SHOWN = 5;
 
 export interface MapLink { id: string; name: string; count: number; example: string | null }
 export interface ComponentChange { path: string; added: number; removed: number; stepId: StepId }
+/** A decision touching the component (spec §3.4): its title is agent text, for displayUntrusted. */
+export interface ComponentDecision { decisionId: string; stepId: StepId; title: string; status: DecisionDetail["status"] }
 export interface ComponentDetails {
   files: { shown: readonly string[]; more: number };
   importsOut: readonly MapLink[];
@@ -18,6 +21,8 @@ export interface ComponentDetails {
   externals: readonly { name: string; count: number }[];
   /** This session's edited files inside the component, by path. */
   changes: readonly ComponentChange[];
+  /** The decisions of the current change units touching the component (componentDecisionIds), in session order. */
+  decisions: readonly ComponentDecision[];
   /** Overview sentences citing the component or one of its listed files. */
   citations: readonly NarrativeSentence[];
 }
@@ -44,6 +49,15 @@ export function componentDetails(overview: OverviewModel, componentId: string, s
     changes.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId });
   }
   changes.sort((a, b) => cmp(a.path, b.path));
+  const touching = componentDecisionIds(session, componentId);
+  const decisions: ComponentDecision[] = [];
+  if (touching.size > 0) {
+    for (const step of session.steps) {
+      const decision = step.decision;
+      if (decision === undefined || !touching.has(decisionStableId(decision.decisionId))) continue;
+      decisions.push({ decisionId: decision.decisionId, stepId: step.id, title: decision.title, status: decision.status });
+    }
+  }
   const files = new Set(component.files);
   const citations = (overview.snapshot.narrative?.sentences ?? []).filter((sentence) =>
     sentence.citations.some((citation) => (citation.kind === "component" && citation.id === componentId) || (citation.kind === "file" && files.has(citation.id))),
@@ -57,6 +71,7 @@ export function componentDetails(overview: OverviewModel, componentId: string, s
     importsIn: importsIn.sort(byCount),
     externals: [...component.externalDeps].sort((a, b) => b.count - a.count || cmp(a.name, b.name)),
     changes,
+    decisions,
     citations,
   };
 }

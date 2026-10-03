@@ -288,6 +288,31 @@ const flowOp: fc.Arbitrary<Op> = fc.oneof(
       b.decision({ id, status: "answered", affectedChangeUnits: affected, answer: { decisionId: id, decision: { q: "a" }, evidence: [] } });
       if (relaunch) b.agent({ type: "agent_started", prompt: answer });
     }),
+  // A decision closed, then a steer, then a rebuild that re-emits it: the steer is not its answer (R25, 2ea4cf1) and stays
+  // an instruction, delivered by a later relaunch or not.
+  fc
+    .record({ id: pick(DECISION_IDS), close: pick(["answered", "delegated"] as const), steer: pick(TEXTS), relaunch: fc.boolean() })
+    .map(({ id, close, steer, relaunch }): Op => (b) => {
+      const answer = close === "answered" ? { answer: { decisionId: id, decision: { q: "a" }, evidence: [] } } : {};
+      b.decision({ id, status: "open" });
+      b.decision({ id, status: close, ...answer });
+      b.agent({ type: "agent_message", role: "user", text: steer });
+      b.decision({ id, status: close, ...answer });
+      if (relaunch) b.agent({ type: "agent_started", prompt: steer });
+    }),
+  // Two decisions closed in the viewer (no supervisor message, so no answerSeq), then a rebuild re-emits the older one
+  // with re-linked units: its decidedSeq stays at its first closing row in both folds (final review D I-1).
+  fc
+    .record({ first: pick(DECISION_IDS), close: pick(["answered", "delegated"] as const), affected: subset(UNIT_IDS) })
+    .map(({ first, close, affected }): Op => (b) => {
+      const answer = (id: string) => (close === "answered" ? { answer: { decisionId: id, decision: { q: "a" }, evidence: [] } } : {});
+      const second = first === "d1" ? "d2" : "d1";
+      for (const id of [first, second]) {
+        b.decision({ id, status: "open" });
+        b.decision({ id, status: close, ...answer(id) });
+      }
+      b.decision({ id: first, status: close, affectedChangeUnits: affected, ...answer(first) });
+    }),
   fc
     .record({ file: pick(FILES), hash: pick(HASHES) })
     .map(({ file, hash }): Op => (b) => {

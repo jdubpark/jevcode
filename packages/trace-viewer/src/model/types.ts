@@ -244,8 +244,13 @@ export interface DecisionDetail {
   /** tradeoffs: the option's tradeoffs from the decision row, when it has any (spec §3.5). */
   options: { id: string; label: string; chosen: boolean; tradeoffs?: DecisionTradeoff[] }[];
   decidedBy?: "supervisor" | "delegated";
-  /** seq of the supervisor's answer message, absorbed into this step (R25). */
+  /** seq of the supervisor's answer message, absorbed into this step (R25); set while the decision stays answered or delegated. */
   answerSeq?: number;
+  /**
+   * seq of the row that answered or delegated the decision, set while it stays answered or delegated. Later re-emits
+   * of the closed decision keep it, so it orders decided decisions by when they were decided (spec §3.5).
+   */
+  decidedSeq?: number;
 }
 
 export interface GuardrailDetail {
