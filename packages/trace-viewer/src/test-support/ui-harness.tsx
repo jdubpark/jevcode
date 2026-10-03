@@ -13,6 +13,8 @@ import { buildTimeScale, timeScaleInputOf } from "../layout/time-scale.js";
 import { buildTraceIndex, emptyTraceIndex } from "../layout/trace-index.js";
 import { compareFindings, foldRows, type TraceSession } from "../model/index.js";
 import { isTerminalState, type DataStatus } from "../ui/shell/data-controller.js";
+import type { ViewerHost } from "../ui/shell/host.js";
+import { ViewerHostContext } from "../ui/shell/host-context.js";
 import { LiveRegion } from "../ui/shell/LiveRegion.js";
 import {
   DiagnosticsContext,
@@ -164,12 +166,16 @@ export interface HarnessOptions {
   payloads?(seqs: readonly number[]): Promise<TraceRow[]>;
   views?: readonly ViewDefinition[];
   diagnostics?: DiagnosticsSink;
+  /** The host's actions as views reach them (ViewerHostContext): answerDecision, openTraceWindow, rescanOverview. */
+  host?: ViewerHost;
 }
 
 export interface Harness {
   store: ViewStore;
   registry: ViewPortRegistry;
   view: SessionView;
+  /** options.host, or a read-only host ({}); what ViewerHostContext provides. */
+  host: ViewerHost;
   announcements: string[];
   retries: { count: number };
   wrap(node: ReactNode): ReactElement;
@@ -205,20 +211,23 @@ export function createHarness(session: TraceSession | null, options: HarnessOpti
       retries.count += 1;
     },
   };
+  const host = options.host ?? {};
   const wrap = (node: ReactNode): ReactElement => (
     <ViewStoreContext.Provider value={store}>
       <SessionContext.Provider value={view}>
-        <DiagnosticsContext.Provider value={options.diagnostics ?? NO_DIAGNOSTICS}>
-          <ViewPortRegistryContext.Provider value={registry}>
-            <ViewDefinitionsContext.Provider value={options.views ?? []}>
-              <LiveRegion onAnnounce={(message) => announcements.push(message)}>{node}</LiveRegion>
-            </ViewDefinitionsContext.Provider>
-          </ViewPortRegistryContext.Provider>
-        </DiagnosticsContext.Provider>
+        <ViewerHostContext.Provider value={host}>
+          <DiagnosticsContext.Provider value={options.diagnostics ?? NO_DIAGNOSTICS}>
+            <ViewPortRegistryContext.Provider value={registry}>
+              <ViewDefinitionsContext.Provider value={options.views ?? []}>
+                <LiveRegion onAnnounce={(message) => announcements.push(message)}>{node}</LiveRegion>
+              </ViewDefinitionsContext.Provider>
+            </ViewPortRegistryContext.Provider>
+          </DiagnosticsContext.Provider>
+        </ViewerHostContext.Provider>
       </SessionContext.Provider>
     </ViewStoreContext.Provider>
   );
-  return { store, registry, view, announcements, retries, wrap };
+  return { store, registry, view, host, announcements, retries, wrap };
 }
 
 export function renderHarness(

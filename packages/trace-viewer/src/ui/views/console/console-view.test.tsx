@@ -11,13 +11,14 @@ import { displayUntrusted, foldRows, type TraceSession } from "../../../model/in
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   createHarness,
+  renderHarness,
   stubLayout,
   type Harness,
   type HarnessOptions,
   type LayoutStub,
 } from "../../../test-support/ui-harness.js";
 import type { ViewerHost } from "../../shell/host.js";
-import { ViewerHostContext } from "../../shell/host-context.js";
+import { useViewerHost, ViewerHostContext } from "../../shell/host-context.js";
 import { KeyboardLayer } from "../../shell/KeyboardLayer.js";
 import { LiveRegion } from "../../shell/LiveRegion.js";
 import { TitleBar } from "../../shell/TitleBar.js";
@@ -97,7 +98,7 @@ function Keyed({ children }: { children: ReactNode }) {
 
 function mountConsole(
   session: TraceSession,
-  options: HarnessOptions & { host?: ViewerHost; activity?: boolean; keys?: boolean; titleBar?: boolean } = {},
+  options: HarnessOptions & { activity?: boolean; keys?: boolean; titleBar?: boolean } = {},
 ): Mounted {
   const h = createHarness(session, options);
   let view: SessionView = h.view;
@@ -107,7 +108,7 @@ function mountConsole(
     <ViewStoreContext.Provider value={h.store}>
       <SessionApplier session={current.session} index={current.index} store={h.store}>
         <SessionContext.Provider value={current}>
-          <ViewerHostContext.Provider value={options.host ?? {}}>
+          <ViewerHostContext.Provider value={h.host}>
             <ViewPortRegistryContext.Provider value={h.registry}>
               <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
                 {options.titleBar === true ? <TitleBar onRetry={() => undefined} /> : null}
@@ -888,5 +889,21 @@ describe("Console frame cost (lane triage t1)", () => {
     expect(await scrollFrameReads(undefined)).toBe(0);
     const sink: DiagnosticsSink = { enabled: true, reportDrift: () => undefined, reportError: () => undefined, flush: () => undefined };
     expect(await scrollFrameReads(sink)).toBeGreaterThan(0);
+  });
+});
+
+describe("test harness host (lane fix I-3a)", () => {
+  it("renderHarness gives views options.host through ViewerHostContext, and a read-only host by default", () => {
+    const seen: ViewerHost[] = [];
+    function Probe() {
+      seen.push(useViewerHost());
+      return null;
+    }
+    const answerDecision = vi.fn();
+    renderHarness(<Probe />, null, { host: { answerDecision } });
+    expect(seen.at(-1)?.answerDecision).toBe(answerDecision);
+    cleanup();
+    renderHarness(<Probe />, null);
+    expect(seen.at(-1)).toEqual({});
   });
 });
