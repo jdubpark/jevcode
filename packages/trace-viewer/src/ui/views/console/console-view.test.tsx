@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceRow } from "@jevcode/contracts";
 
+import { ROWS_RELEASED_MARK } from "../../../source.js";
 import { buildTraceIndex, type TraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, foldRows, type TraceSession } from "../../../model/index.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
@@ -646,8 +647,62 @@ describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
     await frames();
     b.agent({ type: "agent_message", role: "assistant", text: "late" });
     b.agent({ type: "agent_message", role: "assistant", text: "late 2" });
+    b.jev({ id: "jc", clamps: ["destructive_command"] });
     m.update(live(b));
     await frames();
-    expect(screen.getByRole("button", { name: /2 new/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /3 new/ })).toBeTruthy();
+    expect(m.h.announcements.some((message) => /^\d+ new rows, 1 problem$/.test(message))).toBe(true);
+    expect(m.h.announcements.some((message) => /new steps/.test(message))).toBe(false);
+  });
+
+  describe("append measure (spec §11)", () => {
+    const appendMeasures = () => performance.getEntriesByName("tv:console-append", "measure");
+    beforeEach(() => {
+      performance.clearMarks();
+      performance.clearMeasures();
+    });
+    afterEach(() => {
+      performance.clearMarks();
+      performance.clearMeasures();
+    });
+
+    it("a commit after a release mark records one tv:console-append sample", async () => {
+      const b = messages(20);
+      const first = live(b);
+      const m = mountConsole(first, { state: { follow: true, loaded: true, lastSeenSeq: first.loadedThroughSeq } });
+      await frames();
+      expect(appendMeasures()).toHaveLength(0);
+      performance.mark(ROWS_RELEASED_MARK);
+      b.agent({ type: "agent_message", role: "assistant", text: "dripped" });
+      m.update(live(b));
+      await frames();
+      expect(appendMeasures()).toHaveLength(1);
+      expect(performance.getEntriesByName(ROWS_RELEASED_MARK, "mark")).toHaveLength(0);
+    });
+
+    it("releases that landed while the Console was hidden never make a sample span the hidden time", async () => {
+      const b = messages(20);
+      const first = live(b);
+      const m = mountConsole(first, { activity: true, state: { follow: true, loaded: true, lastSeenSeq: first.loadedThroughSeq } });
+      await frames();
+      m.setMode("hidden");
+      await frames();
+      performance.mark(ROWS_RELEASED_MARK);
+      b.agent({ type: "agent_message", role: "assistant", text: "while hidden" });
+      m.update(live(b));
+      await frames();
+      await frames();
+      await frames();
+      m.setMode("visible");
+      await frames();
+      expect(performance.getEntriesByName(ROWS_RELEASED_MARK, "mark")).toHaveLength(0);
+      expect(appendMeasures()).toHaveLength(0);
+      performance.mark(ROWS_RELEASED_MARK);
+      b.agent({ type: "agent_message", role: "assistant", text: "after" });
+      m.update(live(b));
+      await frames();
+      expect(appendMeasures()).toHaveLength(1);
+      expect(appendMeasures()[0]?.duration).toBeLessThan(120);
+    });
   });
 });

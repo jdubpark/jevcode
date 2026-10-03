@@ -156,6 +156,26 @@ describe("selection, playhead and brush", () => {
   });
 });
 
+describe("revealRev (a request to reveal the already-selected item)", () => {
+  const selected = run(initialViewState({ live: false }), [applied(index, { terminal: true, initialSelection: claim.id }), { type: "select", id: claim.id, by: "shell" }]);
+
+  it("bumps only for a same-id select by the shell (Outline, Brief)", () => {
+    const again = reduce(selected, { type: "select", id: claim.id, by: "shell" }, index);
+    expect(again.revealRev).toBe(selected.revealRev + 1);
+  });
+
+  it("does not bump for a same-id select by a view, or for a live commit", () => {
+    for (const by of ["hybrid", "console", "canvas"] as const) {
+      expect(reduce(selected, { type: "select", id: claim.id, by }, index).revealRev).toBe(selected.revealRev);
+    }
+    expect(reduce(selected, applied(index), index).revealRev).toBe(selected.revealRev);
+  });
+
+  it("does not bump for a select of a different item", () => {
+    expect(reduce(selected, { type: "select", id: test.id, by: "shell" }, index).revealRev).toBe(selected.revealRev);
+  });
+});
+
 describe("expansion, esc and live bookkeeping", () => {
   it("a collapsed critical finding stays collapsed across session/applied", () => {
     const findingId = claim.findingIds[0] ?? "";

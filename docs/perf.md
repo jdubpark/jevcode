@@ -343,5 +343,10 @@ refresh interval. Electron numbers come from the main-window smoke (lane 03 D-6)
 | Console append latency | p95 ≤ 150 ms | median 15.7 ms, p95 25.0 ms, n 300 per run (runs: p95 18.3, 25.0, 41.8) | PASS | `CONSOLE_PERF` line |
 | Console scroll at 10k steps | ≤ 5% dropped frames | 0.00% dropped at 16.7 ms refresh, p95 1 frame (runs: 0.00%, 0.00%, 0.55% at a 33.3 ms refresh) | PASS | `CONSOLE_PERF` line |
 
+Evidence-fact rows (about 20% of drip ticks in this bundle) release a mark and so count as append samples without adding
+a Console row; the sample then measures a commit that paints no new line. Run 3 ran at a 33.3 ms refresh baseline (the
+machine fell to a 30 Hz compositor under load), so its frame-based and paint-based numbers are inflated by up to one
+33 ms frame against the 16.7 ms of runs 1 and 2.
+
 Runs on 2026-10-03, a shared development Mac under multi-lane load, load average 9.5–17.4 (`uptime` before each run:
 9.94, 9.52, 17.39 for the one-minute figure). The numbers are upper bounds for a quiet machine.
