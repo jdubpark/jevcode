@@ -91,6 +91,56 @@ describe("clustering property tests", () => {
     );
   });
 
+  it("attaches passing runs the same way whatever the fact order within a bucket", () => {
+    // Runs mixed among the file facts. Shuffling moves every fact's ts and seq but keeps
+    // its batch window. Each run has its own command, so it can be recognized after its
+    // ts (and so its validation id) changes.
+    type Spec = FactSpec | { run: number; batch: number };
+    const specArb = fc
+      .tuple(
+        bucketSpecArb,
+        fc.array(fc.integer({ min: 0, max: 3 }), { minLength: 1, maxLength: 4 }),
+      )
+      .chain(([files, runBatches]) => {
+        const specs: Spec[] = [...files, ...runBatches.map((batch, run) => ({ run, batch }))];
+        return fc.record({
+          forward: fc.constant(specs),
+          shuffled: fc.shuffledSubarray(specs, { minLength: specs.length, maxLength: specs.length }),
+        });
+      });
+    const project = (specs: readonly Spec[]): string[] => {
+      const facts: SequencedFact[] = specs.map((spec, index) => ({
+        fact:
+          "run" in spec
+            ? testResult(tsOf(0, index), { passed: 1, command: `pnpm test -- run-${spec.run}` })
+            : factFor(spec, tsOf(0, index)),
+        factId: `f${index}`,
+        seq: index + 1,
+        batchId: spec.batch,
+      }));
+      const result = clusterSession({
+        sessionId: SESSION,
+        facts,
+        agentEvents: [],
+        semanticEvents: [],
+        decisions: [],
+      });
+      const commandById = new Map(result.validations.map((validation) => [validation.id, validation.command]));
+      return result.units
+        .map((unit) => {
+          const runs = unit.validationResults.map((id) => commandById.get(id) ?? id).sort();
+          return `${[...unit.files].sort().join("|")}:${unit.status}:${runs.join(",")}`;
+        })
+        .sort();
+    };
+    fc.assert(
+      fc.property(specArb, ({ forward, shuffled }) => {
+        expect(project(shuffled)).toEqual(project(forward));
+      }),
+      { numRuns: 200 },
+    );
+  });
+
   it("is invariant to bucket-level shuffling for disjoint file sets", () => {
     const twoBucketArb = fc.tuple(
       fc.array(

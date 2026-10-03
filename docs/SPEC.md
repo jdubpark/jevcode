@@ -417,6 +417,7 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
 ### 6.3 Validation / Failure extraction
 
 - `test_result` facts → `Validation` rows keyed by `runner+command+ts`, plus `Failure` rows per failing test.
+- A passing run attaches to the ChangeUnits changed since the previous run in its idle bucket: units with a file whose fact falls in a 500ms batch window after the previous run's window, up to and including the run's own window. A change in the run's own window counts whatever its order inside the window. A unit untouched since the previous run keeps its earlier runs and does not receive the new one. The rule compares batch windows, not sequence numbers, so reordering facts within a bucket changes nothing (§6.1). A failing run attaches to every unit with a file in its bucket.
 - Failing tests attach to ChangeUnits via: (a) failing test file in the unit's file set, and (b) test name mentioning a unit symbol.
 - Build/lint output parsed with the same pattern (`build_result` facts) for typecheck/lint rows in `TestMatrix`.
 

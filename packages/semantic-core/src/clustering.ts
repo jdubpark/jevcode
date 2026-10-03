@@ -842,25 +842,74 @@ export function clusterSession(input: SessionInput): SemanticProjection {
     if (linked.length > 0) decisionChangeUnitIds.set(decision.id, linked);
   }
 
+  // SPEC §6.3 run attachment. A passing run validates the units changed since the
+  // previous run in its bucket: units owning a file with a fact in a batch window after
+  // the previous run's window, up to and including the run's own window. Windows, not
+  // seq, so reordering facts within a bucket changes nothing (§6.1). Attaching every
+  // run to every unit in a long bucket grew each unit by every run (PL-1). A failing
+  // run still attaches to every unit with a file in its bucket.
   const bucketFilesByIndex = new Map<number, Set<string>>();
+  const bucketWindowFiles = new Map<number, Map<number, Set<string>>>();
   for (let index = 0; index < buckets.length; index += 1) {
     const bucket = buckets[index];
     if (bucket === undefined) continue;
     const files = new Set<string>();
+    const windows = new Map<number, Set<string>>();
     for (const entry of bucket.facts) {
-      for (const file of factFiles(entry.fact)) files.add(file);
+      for (const file of factFiles(entry.fact)) {
+        files.add(file);
+        let windowFiles = windows.get(entry.batchId);
+        if (windowFiles === undefined) {
+          windowFiles = new Set();
+          windows.set(entry.batchId, windowFiles);
+        }
+        windowFiles.add(file);
+      }
     }
     bucketFilesByIndex.set(index, files);
+    bucketWindowFiles.set(index, windows);
   }
 
+  const bucketRunWindows = new Map<number, number[]>();
   for (const [validationId, bucketIndex] of validationBuckets) {
-    const bucketFiles = bucketFilesByIndex.get(bucketIndex) ?? new Set<string>();
+    const entry = validationFacts.get(validationId);
+    if (entry === undefined) continue;
+    const runWindows = bucketRunWindows.get(bucketIndex) ?? [];
+    runWindows.push(entry.batchId);
+    bucketRunWindows.set(bucketIndex, runWindows);
+  }
+
+  const changedSincePreviousRun = new Map<string, Set<string>>();
+  const filesChangedSincePreviousRun = (bucketIndex: number, runWindow: number): Set<string> => {
+    const key = `${bucketIndex}\u0000${runWindow}`;
+    const cached = changedSincePreviousRun.get(key);
+    if (cached !== undefined) return cached;
+    let previousRunWindow = Number.NEGATIVE_INFINITY;
+    for (const window of bucketRunWindows.get(bucketIndex) ?? []) {
+      if (window < runWindow && window > previousRunWindow) previousRunWindow = window;
+    }
+    const files = new Set<string>();
+    for (const [window, windowFiles] of bucketWindowFiles.get(bucketIndex) ?? []) {
+      if (window <= previousRunWindow || window > runWindow) continue;
+      for (const file of windowFiles) files.add(file);
+    }
+    changedSincePreviousRun.set(key, files);
+    return files;
+  };
+
+  const validationStatus = new Map(validations.map((validation) => [validation.id, validation.status]));
+  for (const [validationId, bucketIndex] of validationBuckets) {
+    const runEntry = validationFacts.get(validationId);
+    const scopeFiles =
+      runEntry === undefined || validationStatus.get(validationId) === "failed"
+        ? bucketFilesByIndex.get(bucketIndex) ?? new Set<string>()
+        : filesChangedSincePreviousRun(bucketIndex, runEntry.batchId);
     const hosts: string[] = [];
     for (const id of unitsInOrder) {
       const draft = drafts.get(id);
       if (draft === undefined || draft.createdByFailure) continue;
       for (const file of draft.fileSet) {
-        if (bucketFiles.has(file)) {
+        if (scopeFiles.has(file)) {
           hosts.push(id);
           break;
         }
