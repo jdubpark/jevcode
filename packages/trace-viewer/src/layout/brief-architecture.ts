@@ -1,5 +1,5 @@
 // The Brief's architecture part (spec §3.3 item 3, §8.4). Pure and React-free.
-import { overviewStatusOf, type TraceSession } from "../model/index.js";
+import { overviewStatusOf, type OverviewModel, type TraceSession } from "../model/index.js";
 import type { BriefArchitecture } from "./brief.js";
 import { componentForPath } from "./map-layout.js";
 
@@ -10,6 +10,20 @@ function firstSeq(stepIds: readonly string[]): number {
     if (seq < min) min = seq;
   }
   return min;
+}
+
+/** The last `touched` list per overview. */
+const touchedByOverview = new WeakMap<OverviewModel, string[]>();
+
+/**
+ * The previous list when it has the same ids in the same order, so a commit that touches no new component keeps the
+ * array, and the memoized Brief thumbnail skips it (lane 06 fix, minor 7). A new snapshot is a new overview and starts over.
+ */
+function stableTouched(overview: OverviewModel, touched: string[]): string[] {
+  const previous = touchedByOverview.get(overview);
+  if (previous !== undefined && previous.length === touched.length && previous.every((id, at) => id === touched[at])) return previous;
+  touchedByOverview.set(overview, touched);
+  return touched;
 }
 
 /**
@@ -35,7 +49,7 @@ export function briefArchitecture(session: TraceSession): BriefArchitecture | nu
   return {
     overviewSentences: narrative === null ? null : [...narrative.sentences],
     componentCount: overview.snapshot.components.length,
-    touched,
+    touched: stableTouched(overview, touched),
     scanning: scan.state === "running" ? { done: scan.scanned, total: scan.total } : null,
   };
 }

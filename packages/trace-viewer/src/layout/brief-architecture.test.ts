@@ -44,6 +44,19 @@ describe("briefArchitecture (spec §3.3 item 3, §8.4)", () => {
     expect(briefArchitecture(buildSession({ steps, overview: withOther }))?.touched).toEqual([componentId("(other)"), componentId("apps/web")]);
   });
 
+  it("keeps touched the same array while a commit touches no new component (lane 06 fix, minor 7)", () => {
+    const first = buildSession({ steps, overview: snapshot });
+    const touched = briefArchitecture(first)?.touched;
+    // A later commit of the same session edits another file of a touched component; the overview object is unchanged.
+    const sameComponents = { ...buildSession({ steps: [...steps, { kind: "edit", tMs: 5_000, target: "apps/web/src/App.tsx", edit: { added: 2, removed: 0 } }] }), overview: first.overview };
+    expect(briefArchitecture(sameComponents)?.touched).toBe(touched);
+    // An edit in a new component makes a new list.
+    const newComponent = { ...buildSession({ steps: [...steps, { kind: "edit", tMs: 5_000, target: "packages/api/src/routes.ts", edit: { added: 2, removed: 0 } }] }), overview: first.overview };
+    const grown = briefArchitecture(newComponent)?.touched;
+    expect(grown).not.toBe(touched);
+    expect(grown).toEqual([componentId("packages/db"), componentId("apps/web"), componentId("packages/api")]);
+  });
+
   it("carries the narrator's sentences when there are some", () => {
     const narrated = overviewSnapshot({
       components: [{ rootPath: "apps/web", role: "ui" }],
