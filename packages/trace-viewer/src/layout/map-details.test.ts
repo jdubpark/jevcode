@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildOverviewModel } from "../model/index.js";
 import { componentId, overviewSnapshot } from "../test-support/overview-builder.js";
 import { buildSession } from "../test-support/session-builder.js";
+import { decisionComponents } from "./brief-decisions.js";
 import { componentDetails, fileBarPercent, LIST_BAR_MAX_PX, listBarPx, topPackages } from "./map-details.js";
 
 const MAIN = "apps/desktop/src/main";
@@ -59,6 +60,37 @@ describe("componentDetails (spec §3.4 Inspector)", () => {
 
   it("returns null for a component the snapshot does not have", () => {
     expect(componentDetails(overview, "cmp_000000000000", session)).toBeNull();
+  });
+
+  it("lists the decisions touching the component through the current units' files, in session order (spec §3.4)", () => {
+    const decided = buildSession({
+      steps: [
+        { kind: "edit", tMs: 1_000, target: `${MAIN}/pipeline/explainer-stage.ts`, edit: { added: 120, removed: 4 }, chapter: "u1" },
+        { kind: "edit", tMs: 2_000, target: "packages/contracts/src/overview.ts", edit: { added: 40, removed: 0 }, chapter: "u2" },
+        { kind: "edit", tMs: 3_000, target: `${MAIN}/old.ts`, edit: { added: 1, removed: 0 }, chapter: "u3" },
+        { kind: "decision", tMs: 4_000, headline: "Keep IPC strict?", chapter: "u1", decision: { decisionId: "d-ipc", title: "Keep IPC strict?", status: "open" } },
+        { kind: "decision", tMs: 5_000, headline: "Schema version?", chapter: "u2", decision: { decisionId: "d-schema", title: "Schema version?" } },
+        { kind: "decision", tMs: 6_000, headline: "Both?", chapter: "u2", alsoChapters: ["u1"], decision: { decisionId: "d-both", title: "Both?", status: "delegated" } },
+        // A superseded unit no longer stands for the session's change: its decision touches nothing.
+        { kind: "decision", tMs: 7_000, headline: "Old?", chapter: "u3", decision: { decisionId: "d-old", title: "Old?" } },
+      ],
+      chapters: [{ id: "u1", title: "IPC" }, { id: "u2", title: "Schema" }, { id: "u3", title: "Old", status: "superseded" }],
+      overview: snapshot,
+    });
+    const stepOf = (decisionId: string) => decided.steps.find((step) => step.decision?.decisionId === decisionId)?.id;
+    const main = componentDetails(overview, componentId(MAIN), decided);
+    expect(main?.decisions).toEqual([
+      { decisionId: "d-ipc", stepId: stepOf("d-ipc"), title: "Keep IPC strict?", status: "open" },
+      { decisionId: "d-both", stepId: stepOf("d-both"), title: "Both?", status: "delegated" },
+    ]);
+    const contracts = componentDetails(overview, componentId("packages/contracts"), decided);
+    expect(contracts?.decisions.map((decision) => [decision.decisionId, decision.status])).toEqual([["d-schema", "answered"], ["d-both", "delegated"]]);
+    expect(componentDetails(overview, componentId("apps/desktop/src/renderer"), decided)?.decisions).toEqual([]);
+    // The inverse of the Brief card's components (decisionComponents): one rule both ways.
+    for (const id of [componentId(MAIN), componentId("packages/contracts"), componentId("apps/desktop/src/renderer")]) {
+      const touching = ["d-ipc", "d-schema", "d-both", "d-old"].filter((decision) => decisionComponents(decided, decision).some((component) => component.id === id));
+      expect(componentDetails(overview, id, decided)?.decisions.map((decision) => decision.decisionId)).toEqual(touching);
+    }
   });
 });
 

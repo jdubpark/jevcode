@@ -141,6 +141,40 @@ describe("ComponentInspector (spec §3.4)", () => {
     expect(part(panel(componentId(hub)), "[data-imports='in']").textContent).not.toContain("more");
   });
 
+  it("lists the decisions touching the component beside its changes; a row opens the decision and leaves the component (spec §3.4)", async () => {
+    const user = userEvent.setup();
+    const decided = buildSession({
+      steps: [
+        { kind: "instruction", tMs: 0, text: "Add the explainer stage" },
+        { kind: "edit", tMs: 1_000, target: `${MAIN}/pipeline/explainer-stage.ts`, edit: { added: 120, removed: 4 }, chapter: "u1" },
+        {
+          kind: "decision", tMs: 2_000, headline: "Keep IPC \u202Estrict?", chapter: "u1",
+          decision: { decisionId: "d-ipc", title: "Keep IPC \u202Estrict?", status: "open" },
+        },
+        { kind: "decision", tMs: 3_000, headline: "Log level?", chapter: "u1", decision: { decisionId: "d-log", title: "Log level?", status: "delegated" } },
+      ],
+      chapters: [{ id: "u1", title: "IPC" }],
+      overview: snapshot,
+    });
+    const { store } = renderWithViewer(<Inspector host={{}} />, { session: decided, state: { view: "map", mapSelection: componentId(MAIN) } });
+    const root = panel(componentId(MAIN));
+    const rows = [...root.querySelectorAll<HTMLElement>("[data-component-decision]")];
+    expect(rows.map((row) => row.getAttribute("data-component-decision"))).toEqual(["d-ipc", "d-log"]);
+    // Inside "This session", after the changes, with the same quiet rows.
+    const session = within(root).getByRole("region", { name: "This session" });
+    expect(session.querySelectorAll("[data-component-change]")).toHaveLength(1);
+    expect(rows.every((row) => session.contains(row))).toBe(true);
+    // Agent text: tokenized, the full text in the tooltip and the accessible name.
+    expect(rows[0]?.textContent).toContain("Keep IPC ⟨U+202E⟩strict?");
+    expect(rows[0]?.textContent).not.toContain("\u202E");
+    expect(rows[0]?.getAttribute("title")).toBe("Keep IPC ⟨U+202E⟩strict?");
+    expect(rows[0]?.getAttribute("aria-label")).toBe("Decision: Keep IPC ⟨U+202E⟩strict?, open");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("Decision: Log level?, delegated");
+    await user.click(rows[1] as HTMLElement);
+    expect(store.get().mapSelection).toBeNull();
+    expect(store.get().selection).toBe(decided.steps.find((step) => step.decision?.decisionId === "d-log")?.id);
+  });
+
   it("names file rows and session changes by their full path; the visible text may be shortened", () => {
     renderInspector({ view: "map", mapSelection: componentId(MAIN) });
     const root = panel(componentId(MAIN));
