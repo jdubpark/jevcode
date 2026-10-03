@@ -1,6 +1,6 @@
 import type { ExplainerRecord, NarrativeSentence } from "@jevcode/contracts";
 
-import type { ExplainerModel, HighlightEntryModel, HighlightsModel, StoryModel } from "./types.js";
+import { HIGHLIGHT_STATES, type ExplainerModel, type HighlightEntryModel, type HighlightsModel, type StoryModel } from "./types.js";
 
 // Explainer rows are append-local (spec §8.1): they never touch steps, turns or chapters, so the
 // incremental finalize needs no derived state for them. The output object is cached until a row
@@ -48,7 +48,11 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
       const current = state.highlights;
       if (current !== null && record.basisSeq < current.basisSeq) return;
       const byComponent = new Map<string, HighlightEntryModel>();
-      for (const entry of record.components) byComponent.set(entry.id, { state: entry.state, unitIds: [...entry.unitIds] });
+      for (const entry of record.components) byComponent.set(entry.id, {
+          state: entry.state,
+          states: entry.states === undefined ? [entry.state] : HIGHLIGHT_STATES.filter((state) => entry.states?.includes(state)),
+          unitIds: [...entry.unitIds],
+        });
       state.highlights = { basisSeq: record.basisSeq, seq, byComponent };
       break;
     }

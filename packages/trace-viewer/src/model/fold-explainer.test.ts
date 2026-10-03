@@ -74,7 +74,22 @@ describe("explainer fold", () => {
     b.explainer({ kind: "highlights", basisSeq: 5, components: [] });
     const highlights = fold(b).explainer.highlights;
     expect(highlights?.seq).toBe(latest);
-    expect([...(highlights?.byComponent ?? new Map()).entries()]).toEqual([["cmp_000000000002", { state: "failing", unitIds: [] }]]);
+    expect([...(highlights?.byComponent ?? new Map()).entries()]).toEqual([["cmp_000000000002", { state: "failing", states: ["failing"], unitIds: [] }]]);
+  });
+
+  it("carries every state of a component, in canonical order, and reads a row without states as [state]", () => {
+    const b = started();
+    b.explainer({
+      kind: "highlights",
+      basisSeq: 4,
+      components: [
+        { id: "cmp_000000000001", state: "decision", states: ["decision", "new"], unitIds: [] },
+        { id: "cmp_000000000002", state: "changed", unitIds: [] },
+      ],
+    });
+    const byComponent = fold(b).explainer.highlights?.byComponent;
+    expect(byComponent?.get("cmp_000000000001")?.states).toEqual(["new", "decision"]);
+    expect(byComponent?.get("cmp_000000000002")?.states).toEqual(["changed"]);
   });
 
   it("records an invalid explainer row and a row of another session as gaps and folds neither", () => {
@@ -151,7 +166,7 @@ describe("decision tradeoffs", () => {
 type Op =
   | { kind: "story"; back: number; pick: number }
   | { kind: "decision_why"; id: "d1" | "d2"; pick: number }
-  | { kind: "highlights"; back: number; state: "new" | "changed" | "decision" | "failing"; unit: "u1" | "u2" }
+  | { kind: "highlights"; back: number; state: "new" | "changed" | "decision" | "failing"; also: boolean; unit: "u1" | "u2" }
   | { kind: "agent" };
 
 const opArb: fc.Arbitrary<Op> = fc.oneof(
@@ -161,6 +176,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
     kind: fc.constant("highlights" as const),
     back: fc.nat(6),
     state: fc.constantFrom("new" as const, "changed" as const, "decision" as const, "failing" as const),
+    also: fc.boolean(),
     unit: fc.constantFrom("u1" as const, "u2" as const),
   }),
   fc.constant<Op>({ kind: "agent" }),
@@ -173,7 +189,7 @@ function build(ops: readonly Op[]): TraceRow[] {
     if (op.kind === "agent") b.agent({ type: "agent_message", role: "assistant", text: "step" });
     else if (op.kind === "story") b.explainer({ kind: "story", sentences: [SENTENCES[op.pick] ?? S1], basisSeq: basis(op.back) });
     else if (op.kind === "decision_why") b.explainer({ kind: "decision_why", decisionId: op.id, sentence: SENTENCES[op.pick] ?? S1 });
-    else b.explainer({ kind: "highlights", basisSeq: basis(op.back), components: [{ id: "cmp_000000000001", state: op.state, unitIds: [op.unit] }] });
+    else b.explainer({ kind: "highlights", basisSeq: basis(op.back), components: [{ id: "cmp_000000000001", state: op.state, ...(op.also ? { states: [op.state, "new" as const] } : {}), unitIds: [op.unit] }] });
   }
   return b.rows;
 }

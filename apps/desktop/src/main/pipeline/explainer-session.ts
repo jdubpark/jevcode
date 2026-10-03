@@ -355,7 +355,13 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     for (const decisionId of explainer.decisionWhy.keys()) t.whyDone.add(decisionId);
     if (explainer.highlights !== null) {
       const entries = [...explainer.highlights.byComponent.entries()]
-        .map(([id, entry]) => ({ id, state: entry.state, unitIds: [...entry.unitIds] }))
+        .map(([id, entry]) => ({
+          id,
+          state: entry.state,
+          // Same shape computeHighlights writes: `states` only when more than the strongest state applies.
+          ...(entry.states.length > 1 ? { states: [...entry.states] } : {}),
+          unitIds: [...entry.unitIds],
+        }))
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       t.highlightsKey = JSON.stringify(entries);
     }

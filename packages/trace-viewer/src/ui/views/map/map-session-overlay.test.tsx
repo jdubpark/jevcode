@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import type React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { foldRows } from "../../../model/index.js";
@@ -14,6 +15,7 @@ import {
 } from "../../../test-support/canvas-view-harness.js";
 import { componentId, overviewSnapshot } from "../../../test-support/overview-builder.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
+import { Brief } from "../../inspector/Brief.js";
 import { MapView } from "./MapView.js";
 
 let resize: ResizeObserverStub;
@@ -29,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function render(withOther = false) {
+function render(withOther = false, ui: React.ReactElement = <MapView active />, view: "map" | "hybrid" = "map") {
   const b = new TraceBuilder();
   b.agent({ type: "agent_started", prompt: "Add a limiter" });
   b.overview(
@@ -55,15 +57,15 @@ function render(withOther = false) {
     components: [
       { id: componentId("src/server"), state: "changed", unitIds: ["u1"] },
       { id: componentId("src/middleware"), state: "new", unitIds: ["u1"] },
-      { id: componentId("src/redis"), state: "decision", unitIds: ["u2"] },
-      { id: componentId("tests"), state: "failing", unitIds: [] },
+      { id: componentId("src/redis"), state: "decision", states: ["new", "decision"], unitIds: ["u2"] },
+      { id: componentId("tests"), state: "failing", states: ["new", "failing"], unitIds: [] },
       { id: "cmp_000000000bad", state: "failing", unitIds: [] },
       { id: componentId("(other)"), state: "new", unitIds: [] },
     ],
   });
-  const harness = renderWithViewer(<MapView active />, {
+  const harness = renderWithViewer(ui, {
     session: foldRows(testMeta(), b.rows, { live: true }),
-    state: { view: "map" },
+    state: { view },
   });
   act(() => resize.resize(1200, 800));
   return harness;
@@ -71,15 +73,19 @@ function render(withOther = false) {
 
 const marks = (): string[] =>
   [...document.querySelectorAll("[data-map-card] [data-state]")].map((node) => node.getAttribute("data-state") ?? "").sort();
+const marksOf = (rootPath: string): string[] =>
+  [...document.querySelectorAll(`[data-map-card="${componentId(rootPath)}"] [data-state]`)].map((node) => node.getAttribute("data-state") ?? "");
 const legend = (): HTMLElement | null => screen.queryByRole("list", { name: "Session overlay legend" });
 
 describe("Map session overlay (spec §3.4)", () => {
   it("marks touched cards by state, emphasizes touched edges, and hides both with the Session toggle", () => {
     render();
-    expect(marks()).toEqual(["changed", "decision", "failing", "new"]);
+    expect(marks()).toEqual(["changed", "decision", "failing", "new", "new", "new"]);
+    expect(marksOf("src/redis")).toEqual(["new", "decision"]);
+    expect(marksOf("tests")).toEqual(["new", "failing"]);
     expect(document.querySelectorAll("[data-emphasized]")).toHaveLength(2);
     expect(document.querySelector("[data-session]")).not.toBeNull();
-    expect(legend()?.textContent).toBe("1 new1 changed1 decided1 failing");
+    expect(legend()?.textContent).toBe("3 new1 changed1 decided1 failing");
     const toggle = screen.getByRole("button", { name: "Session" });
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(toggle);
@@ -89,12 +95,12 @@ describe("Map session overlay (spec §3.4)", () => {
     expect(document.querySelector("[data-session]")).toBeNull();
     expect(legend()).toBeNull();
     fireEvent.click(toggle);
-    expect(marks()).toHaveLength(4);
+    expect(marks()).toHaveLength(6);
   });
 
   it("does not crash on an unknown id, and draws the (other) component's mark only when the map has it", () => {
     render(true);
-    expect(marks()).toEqual(["changed", "decision", "failing", "new", "new"]);
+    expect(marks()).toEqual(["changed", "decision", "failing", "new", "new", "new", "new"]);
     expect(document.querySelector(`[data-map-card="${componentId("(other)")}"] [data-state="new"]`)).not.toBeNull();
   });
 
@@ -105,5 +111,33 @@ describe("Map session overlay (spec §3.4)", () => {
     await userEvent.tab();
     expect(document.activeElement).not.toBe(toggle);
     expect(toggle.compareDocumentPosition(document.activeElement as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("the Brief on the Map lists this session's components with their marks, and a row selects the component", () => {
+    const harness = render(
+      false,
+      <>
+        <MapView active />
+        <Brief />
+      </>,
+    );
+    expect(screen.getByRole("heading", { name: "This session · 4 components" })).not.toBeNull();
+    expect(document.querySelector("[data-brief-architecture]")).toBeNull();
+    const rows = [...document.querySelectorAll("[data-brief-session-row]")];
+    // Sorted by name: middleware, redis, server, tests.
+    expect(rows.map((row) => row.getAttribute("data-brief-session-row"))).toEqual(
+      ["src/middleware", "src/redis", "src/server", "tests"].map(componentId),
+    );
+    expect(rows.map((row) => row.getAttribute("title"))).toEqual(["middleware", "redis", "server", "tests"]);
+    expect(screen.getByRole("button", { name: "redis, new in this session and touched by a decision" })).not.toBeNull();
+    expect([...(rows[3]?.querySelectorAll("[data-state]") ?? [])].map((node) => node.getAttribute("data-state"))).toEqual(["new", "failing"]);
+    fireEvent.click(rows[2] as Element);
+    expect(harness.store.get().mapSelection).toBe(componentId("src/server"));
+  });
+
+  it("outside the Map the Brief keeps its Architecture part", () => {
+    render(false, <Brief />, "hybrid");
+    expect(screen.getByRole("heading", { name: "Architecture" })).not.toBeNull();
+    expect(document.querySelector("[data-brief-session]")).toBeNull();
   });
 });

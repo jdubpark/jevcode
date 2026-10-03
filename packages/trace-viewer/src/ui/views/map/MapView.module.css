@@ -468,7 +468,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Session state mark (lane 07) in the footer's count slot: 11 px. */
+/* Session marks (lane 07) in the footer's count slot: 11 px each, 7 px apart. */
+.marks {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+}
+
 .stateDot {
   flex: none;
   width: 11px;

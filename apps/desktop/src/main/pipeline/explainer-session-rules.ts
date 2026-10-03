@@ -36,6 +36,7 @@ export type HighlightEntry = Extract<ExplainerRecord, { kind: "highlights" }>["c
 type HighlightState = HighlightEntry["state"];
 
 /** Spec §3.4: a card shows its strongest session state; red only for failures. */
+const HIGHLIGHT_ORDER: readonly HighlightState[] = ["new", "changed", "decision", "failing"];
 const STATE_RANK: Readonly<Record<HighlightState, number>> = { changed: 0, new: 1, decision: 2, failing: 3 };
 
 /** N-3's table (30 s, 2 min, 10 min, then 10 min), shared by every narrator call (spec §6.6). */
@@ -113,10 +114,14 @@ export function computeHighlights(input: HighlightInput): HighlightEntry[] {
   const componentOf = (file: string): string | null => componentIdForPath(components, repoRelative(repoRoot, file));
   const decided = new Set<string>();
   for (const decision of input.decisions) for (const unitId of decision.affectedChangeUnits) decided.add(unitId);
-  const byComponent = new Map<string, { state: HighlightState; unitIds: Set<string> }>();
+  const byComponent = new Map<string, { states: Set<HighlightState>; unitIds: Set<string> }>();
+  // Spec §3.4 (S-5 fix round 1): a card can carry several marks. A new component is also changed, so "new" replaces
+  // "changed"; "decision" and "failing" add their own state beside it.
   const mark = (componentId: string, state: HighlightState, unitId: string | null): void => {
-    const entry = byComponent.get(componentId) ?? { state, unitIds: new Set<string>() };
-    if (STATE_RANK[state] > STATE_RANK[entry.state]) entry.state = state;
+    const entry = byComponent.get(componentId) ?? { states: new Set<HighlightState>(), unitIds: new Set<string>() };
+    const isNew = input.initialComponentIds !== null && !input.initialComponentIds.has(componentId);
+    if (isNew) entry.states.add("new");
+    if (state !== "changed" || !isNew) entry.states.add(state);
     if (unitId !== null && unitId.length <= EXPLAINER_ID_MAX) entry.unitIds.add(unitId);
     byComponent.set(componentId, entry);
   };
@@ -127,8 +132,7 @@ export function computeHighlights(input: HighlightInput): HighlightEntry[] {
     for (const file of unit.files) {
       const componentId = componentOf(file);
       if (componentId === null) continue;
-      const isNew = input.initialComponentIds !== null && !input.initialComponentIds.has(componentId);
-      mark(componentId, unitState === "changed" && isNew ? "new" : unitState, unit.id);
+      mark(componentId, unitState, unit.id);
     }
   }
   for (const file of input.failingFiles) {
@@ -138,7 +142,17 @@ export function computeHighlights(input: HighlightInput): HighlightEntry[] {
   return [...byComponent.entries()]
     .sort(([a], [b]) => compareText(a, b))
     .slice(0, MAX_HIGHLIGHTS)
-    .map(([id, entry]) => ({ id, state: entry.state, unitIds: [...entry.unitIds].sort(compareText).slice(0, MAX_UNIT_IDS) }));
+    .map(([id, entry]) => {
+      const states = HIGHLIGHT_ORDER.filter((state) => entry.states.has(state));
+      const strongest = states.reduce((best, state) => (STATE_RANK[state] > STATE_RANK[best] ? state : best), states[0] ?? "changed");
+      return {
+        id,
+        state: strongest,
+        // Absent when the only state is the strongest one, as rows written before the field read.
+        ...(states.length > 1 ? { states } : {}),
+        unitIds: [...entry.unitIds].sort(compareText).slice(0, MAX_UNIT_IDS),
+      };
+    });
 }
 
 /** The chosen option's label (never its id), by the viewer's rule (fold-chapters decisionDetail); null when none. */

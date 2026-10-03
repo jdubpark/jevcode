@@ -509,7 +509,10 @@ export interface StoryModel {
 }
 
 export interface HighlightEntryModel {
+  /** The strongest state. */
   state: HighlightState;
+  /** Every state that applies, in HIGHLIGHT_STATES order; a row without the field reads as [state]. */
+  states: readonly HighlightState[];
   unitIds: readonly string[];
 }
 

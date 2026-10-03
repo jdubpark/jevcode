@@ -339,6 +339,26 @@ describe("session explainer: highlights", () => {
     expect(entries[0]?.state).toBe("changed");
   });
 
+  it("gives a card every state that applies: new replaces changed, decision and failing add their own", () => {
+    const w = new World();
+    w.overview([SERVER, REDIS, MIDDLEWARE]);
+    const decided = w.unit("u1", ["src/middleware/rate-limiter.ts"]);
+    const failed = w.unit("u2", ["src/redis/client.ts"], "failed");
+    const plain = w.unit("u3", ["src/server/app.ts"]);
+    const entries = computeHighlights({
+      units: [decided, failed, plain],
+      decisions: [w.decision("d1", "open", ["u1"])],
+      overview: w.fold().overview,
+      initialComponentIds: new Set([SERVER.id, REDIS.id]),
+      failingFiles: new Set(["src/middleware/rate-limiter.test.ts"]),
+    });
+    expect(entries).toEqual([
+      { id: SERVER.id, state: "changed", unitIds: ["u3"] },
+      { id: REDIS.id, state: "failing", unitIds: ["u2"] },
+      { id: MIDDLEWARE.id, state: "failing", states: ["new", "decision", "failing"], unitIds: ["u1"] },
+    ]);
+  });
+
   it("maps absolute and ./-prefixed paths to their component instead of the root", () => {
     const w = new World();
     w.overview([SERVER, REDIS]);
@@ -982,7 +1002,8 @@ describe("session explainer: sessions and restarts", () => {
     w.overview([SERVER]);
     w.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure here." });
     const unit = w.unit("u1", ["src/server/app.ts"], "validated");
-    const decision = w.decision("d1", "answered", ["u1"], "fail_open");
+    // It also covers u2, so middleware is new and decided: two marks, which the restart seed must key the same way.
+    const decision = w.decision("d1", "answered", ["u1", "u2"], "fail_open");
     const first = createSessionExplainer(w.deps(narrator));
     first.onPipelineSync(w.sync([unit], [decision]));
     await first.idle();
@@ -995,7 +1016,7 @@ describe("session explainer: sessions and restarts", () => {
     first.dispose();
     const written = w.rows().length;
     expect(written).toBe(4);
-    expect(w.rows("highlights").at(-1)?.record).toMatchObject({ components: [{ id: SERVER.id, state: "decision" }, { id: MIDDLEWARE.id, state: "new" }] });
+    expect(w.rows("highlights").at(-1)?.record).toMatchObject({ components: [{ id: SERVER.id, state: "decision" }, { id: MIDDLEWARE.id, state: "decision", states: ["new", "decision"] }] });
 
     const again = new ScriptedNarrator(w);
     const second = createSessionExplainer(w.deps(again));

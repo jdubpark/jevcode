@@ -364,12 +364,18 @@ const explainerOp: fc.Arbitrary<Op> = fc.oneof(
     .record({ id: pick(DECISION_IDS), which: fc.nat(1) })
     .map(({ id, which }): Op => (b) => void b.explainer({ kind: "decision_why", decisionId: id, sentence: explainerSentence(which) })),
   fc
-    .record({ back: fc.nat(6), state: pick(["new", "changed", "decision", "failing"] as const), units: subset(UNIT_IDS) })
-    .map(({ back, state, units }): Op => (b) =>
+    .record({
+      back: fc.nat(6),
+      state: pick(["new", "changed", "decision", "failing"] as const),
+      // Absent, one state or several: the fold must read all three the same in both folds.
+      states: fc.option(fc.subarray(["new", "changed", "decision", "failing"] as const, { minLength: 1 }), { nil: undefined }),
+      units: subset(UNIT_IDS),
+    })
+    .map(({ back, state, states, units }): Op => (b) =>
       void b.explainer({
         kind: "highlights",
         basisSeq: Math.max(0, b.rows.length - back),
-        components: [{ id: "cmp_000000000001", state, unitIds: units }],
+        components: [{ id: "cmp_000000000001", state, ...(states === undefined ? {} : { states }), unitIds: units }],
       }),
     ),
   // Invalid explainer rows must become invalid_row gaps in both folds.

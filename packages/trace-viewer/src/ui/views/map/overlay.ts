@@ -1,10 +1,11 @@
-import type { OverviewModel, TraceSession } from "../../../model/index.js";
+import { HIGHLIGHT_STATES, type OverviewModel, type TraceSession } from "../../../model/index.js";
 
 /** Phase C session state of a card (spec §3.4); red only for "failing". */
 export type MapCardState = "new" | "changed" | "decision" | "failing";
 
 export interface MapOverlay {
-  cardState: ReadonlyMap<string, MapCardState>;
+  /** Every state of a highlighted card in drawing order (new or changed, decided, failing); the arrays are stable per overlay. */
+  cardState: ReadonlyMap<string, readonly MapCardState[]>;
   /** Edge keys "<from>><to>" the session touched. */
   emphasizedEdges: ReadonlySet<string>;
 }
@@ -22,8 +23,8 @@ export function mapOverlayOf(session: TraceSession): MapOverlay | null {
   if (overview === null || highlights === null) return null;
   const hit = cache.get(session.explainer);
   if (hit !== undefined && hit.overview === overview) return hit.overlay;
-  const cardState = new Map<string, MapCardState>();
-  for (const [id, entry] of highlights.byComponent) if (overview.componentById.has(id)) cardState.set(id, entry.state);
+  const cardState = new Map<string, readonly MapCardState[]>();
+  for (const [id, entry] of highlights.byComponent) if (overview.componentById.has(id)) cardState.set(id, HIGHLIGHT_STATES.filter((state) => entry.states.includes(state)));
   const emphasizedEdges = new Set<string>();
   for (const edge of overview.snapshot.edges) {
     if (cardState.has(edge.from) && cardState.has(edge.to)) emphasizedEdges.add(`${edge.from}>${edge.to}`);
@@ -35,6 +36,14 @@ export function mapOverlayOf(session: TraceSession): MapOverlay | null {
 
 export function overlayCounts(overlay: MapOverlay): Readonly<Record<MapCardState, number>> {
   const counts: Record<MapCardState, number> = { new: 0, changed: 0, decision: 0, failing: 0 };
-  for (const state of overlay.cardState.values()) counts[state] += 1;
+  for (const states of overlay.cardState.values()) for (const state of states) counts[state] += 1;
   return counts;
 }
+
+/** What a mark means, for accessible names (the dots themselves are decoration). */
+export const MARK_WORD: { readonly [K in MapCardState]: string } = {
+  new: "new in this session",
+  changed: "changed in this session",
+  decision: "touched by a decision",
+  failing: "failing test",
+};
