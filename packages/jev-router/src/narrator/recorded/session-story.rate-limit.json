@@ -1,0 +1,25 @@
+{
+  "input": {
+    "prompt": "Add a Redis-backed rate limiter to the API server and make it fail open when Redis is unavailable.",
+    "recentSteps": [
+      { "id": "step:3", "headline": "Read src/server/app.ts" },
+      { "id": "step:9", "headline": "Edited src/middleware/rate-limiter.ts" },
+      { "id": "step:12", "headline": "Edited src/server/app.ts" },
+      { "id": "step:15", "headline": "Decision: Redis unavailable policy" },
+      { "id": "step:19", "headline": "pnpm test · 14 passed, 1 failed" }
+    ],
+    "decisions": [{ "id": "dec_redis_policy", "title": "What should the API do when Redis is unavailable?", "status": "answered" }],
+    "tests": { "passed": 14, "failed": 1 },
+    "touchedComponents": [
+      { "id": "cmp_3f1a2b4c5d6e", "name": "middleware" },
+      { "id": "cmp_9a8b7c6d5e4f", "name": "server" }
+    ]
+  },
+  "output": {
+    "sentences": [
+      { "text": "The agent added a Redis-backed rate limiter as new middleware and wired it into the server app.", "cite": ["c1", "s3"] },
+      { "text": "You chose to fail open, so requests keep flowing when Redis is down.", "cite": ["d1"] },
+      { "text": "The latest test run has 14 passing tests and 1 failing test.", "cite": ["s5"] }
+    ]
+  }
+}
