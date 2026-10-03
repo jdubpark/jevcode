@@ -32,6 +32,11 @@ export const NARRATOR_BACKOFF_MS = [30_000, 120_000, 600_000] as const;
 export const DESCRIBE_STABLE_MS = 60_000;
 /** From a key's second schema-invalid answer on, its batch is halved; a lone component is negative-cached (spec §6.3). */
 export const SCHEMA_FAILURES_TO_SPLIT = 2;
+/**
+ * Until the first schema-valid answer of this instance, this many schema-invalid answers in a row
+ * read as a provider fault, not a content refusal: they start the backoff (spec §6.6).
+ */
+export const SCHEMA_BRAKE_STREAK = 3;
 /** The narrative is asked again when at least max(NARRATIVE_MIN_CHANGED, 10%) of components changed (spec §6.1). */
 export const NARRATIVE_CHANGE_FRACTION = 0.1;
 export const NARRATIVE_MIN_CHANGED = 3;
@@ -362,6 +367,11 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   const batchCap = new Map<string, number>();
   /** Per narrative structure hash: schema-invalid answers so far. */
   const narrativeSchemaFails = new Map<string, number>();
+  /** Whether any schema-valid answer arrived in this instance, and schema-invalid answers since the last one. */
+  let validSeen = false;
+  let invalidStreak = 0;
+  /** Keys negative-cached in memory only, before any valid answer; asked again once one arrives. */
+  const provisional = new Set<string>();
   const failingReads = new Set<ReadTarget>();
   const idleWaiters: (() => void)[] = [];
 
@@ -703,7 +713,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   }
 
   /** Memo first (a failed DB write never re-asks the model), then the DB, then one refresh if what is shown changed. */
-  function storeAnswers(entries: readonly (readonly [Component, CachedText])[]): void {
+  function storeAnswers(entries: readonly (readonly [Component, CachedText])[], persist = true): void {
     let shownChanged = false;
     for (const [component, text] of entries) {
       const key = keyOf(component);
@@ -712,16 +722,49 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       settle(component, text);
       schemaFails.delete(key);
       batchCap.delete(key);
+      provisional.delete(key);
     }
-    writeTexts(entries);
+    if (persist) writeTexts(entries);
     if (shownChanged) refreshStage();
   }
 
   /**
-   * Spec §6.3: a schema-invalid answer (a refusal, a cut-off answer) keeps the rule-based value. It
-   * says nothing about the provider being down, so it never raises the backoff. Each key counts its
-   * failures instead: from the second one on, its batch is halved, and a component that fails on
-   * its own is negative-cached. Every key is sent at most twice per batch size.
+   * A schema-valid answer shows the provider works. The first one undoes the no-purpose rows kept
+   * in memory before it, since those refusals may have been the provider's, not the content's.
+   */
+  function onValidAnswer(): void {
+    invalidStreak = 0;
+    if (validSeen) return;
+    validSeen = true;
+    for (const key of provisional) {
+      textMemo.delete(key);
+      schemaFails.delete(key);
+      batchCap.delete(key);
+    }
+    provisional.clear();
+  }
+
+  /**
+   * Counts a schema-invalid answer. True means "brake": no valid answer has arrived yet and this is
+   * the third invalid one in a row, so it is handled as a provider fault (backoff) instead.
+   */
+  function schemaBrake(batch: readonly Component[]): boolean {
+    invalidStreak += 1;
+    if (validSeen || invalidStreak < SCHEMA_BRAKE_STREAK) return false;
+    // Still counted, so the next probe tries the components that failed least (no split, no settle).
+    for (const component of batch) {
+      const key = keyOf(component);
+      schemaFails.set(key, (schemaFails.get(key) ?? 0) + 1);
+    }
+    return true;
+  }
+
+  /**
+   * Spec §6.3: a schema-invalid answer (a refusal, a cut-off answer) keeps the rule-based value. On a
+   * provider that has answered validly it says nothing about the provider being down, so it does not
+   * raise the backoff (before that, schemaBrake decides). Each key counts its failures instead: from
+   * the second one on, its batch is halved, and a component that fails on its own is negative-cached.
+   * Every key is sent at most twice per batch size.
    */
   function onSchemaFailure(batch: readonly Component[], model: string): void {
     let split = false;
@@ -734,28 +777,33 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     if (!split) return;
     const [only] = batch;
     if (batch.length === 1 && only !== undefined) {
-      storeAnswers([[only, { purpose: null, role: only.roleGuess, model }]]);
+      // Stored only once the provider is known to work; until then it stays in memory (spec §6.6).
+      storeAnswers([[only, { purpose: null, role: only.roleGuess, model }]], validSeen);
+      if (!validSeen) provisional.add(keyOf(only));
       return;
     }
     halve(batch);
   }
 
-  /** Failed keys never share a batch with fresh ones, so one refusing batch cannot hold up the rest. */
+  /**
+   * Keys are batched only with keys that failed schema as often, fewest failures first: fresh keys
+   * never share a batch with failed ones, and one refusing component cannot hold up the rest.
+   */
   function planBatches(due: readonly Component[]): Component[][] {
-    const groups = new Map<string, { cap: number; failed: boolean; members: Component[] }>();
+    const groups = new Map<string, { cap: number; failures: number; members: Component[] }>();
     for (const component of due) {
       const key = keyOf(component);
       const cap = batchCap.get(key) ?? DESCRIBE_BATCH_SIZE;
-      const failed = schemaFails.has(key);
-      const groupKey = `${failed ? 1 : 0}:${cap}`;
+      const failures = schemaFails.get(key) ?? 0;
+      const groupKey = `${failures}:${cap}`;
       let group = groups.get(groupKey);
       if (group === undefined) {
-        group = { cap, failed, members: [] };
+        group = { cap, failures, members: [] };
         groups.set(groupKey, group);
       }
       group.members.push(component);
     }
-    const ordered = [...groups.values()].sort((a, b) => Number(a.failed) - Number(b.failed) || b.cap - a.cap);
+    const ordered = [...groups.values()].sort((a, b) => a.failures - b.failures || b.cap - a.cap);
     const batches: Component[][] = [];
     for (const group of ordered) {
       for (let start = 0; start < group.members.length; start += group.cap) {
@@ -809,10 +857,15 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         return;
       }
       if (!result.schemaValid) {
+        if (schemaBrake(batch)) {
+          onFailure("describeComponents", batch.length, started, "schema", result);
+          return;
+        }
         record("describeComponents", batch.length, started, schemaOutcome(batch.length), result);
         onSchemaFailure(batch, result.model);
         return;
       }
+      onValidAnswer();
       const guarded = guardComponents(result.value, buildCitationUniverse(snapshot), batch.map((component) => component.id));
       const byId = new Map(guarded.accepted.map((entry) => [entry.id, entry] as const));
       record(
@@ -872,12 +925,13 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     contentHashes: ReadonlyMap<string, string>,
     next: OverviewSnapshot["narrative"],
     servedBefore: OverviewSnapshot["narrative"],
+    persist = true,
   ): void {
     // Memo first: a failed DB write must never send the same structure to the model again.
     baseline = contentHashes;
     stored = { hash, narrative: next };
     narrativeSchemaFails.delete(hash);
-    writeNarrative(snapshot, hash, next);
+    if (persist) writeNarrative(snapshot, hash, next);
     if (JSON.stringify(next) !== JSON.stringify(servedBefore)) refreshStage();
   }
 
@@ -925,13 +979,21 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         return;
       }
       if (!result.schemaValid) {
+        if (schemaBrake([])) {
+          onFailure("overviewNarrative", 1, started, "schema", result);
+          return;
+        }
         record("overviewNarrative", 1, started, schemaOutcome(1), result);
         const failures = (narrativeSchemaFails.get(hash) ?? 0) + 1;
         narrativeSchemaFails.set(hash, failures);
-        // A second schema-invalid answer for the same structure settles it; the narrative shown so far stays.
-        if (failures >= SCHEMA_FAILURES_TO_SPLIT) settleNarrative(snapshot, hash, contentHashes, servedBefore, servedBefore);
+        // A second schema-invalid answer for the same structure settles it; the narrative shown so far
+        // stays. It is stored only once the provider is known to work (spec §6.6).
+        if (failures >= SCHEMA_FAILURES_TO_SPLIT) {
+          settleNarrative(snapshot, hash, contentHashes, servedBefore, servedBefore, validSeen);
+        }
         return;
       }
+      onValidAnswer();
       const guarded = guardSentences(result.value, universe, { max: NARRATIVE_MAX_SENTENCES });
       const next: OverviewSnapshot["narrative"] =
         guarded.discarded || guarded.accepted.length === 0 ? null : { sentences: guarded.accepted, provenance: "model" };
@@ -974,13 +1036,18 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       if (at <= now) due.push(component);
       else wake = Math.min(wake, at);
     }
+    // Before any valid answer, after an invalid one, it is unclear whether the provider works: probe with
+    // one call at a time, so a provider-wide fault costs at most SCHEMA_BRAKE_STREAK calls (spec §6.6).
+    const probing = !validSeen && invalidStreak > 0;
+    const callsInFlight = (): number => describeCalls + (narrativeInFlight ? 1 : 0);
     for (const batch of planBatches(due)) {
-      if (describeCalls >= DESCRIBE_MAX_IN_FLIGHT) break;
+      if (describeCalls >= DESCRIBE_MAX_IN_FLIGHT || (probing && callsInFlight() > 0)) break;
       spawn(describe(snapshot, batch));
     }
     if (wake !== Number.POSITIVE_INFINITY) wakeAt(wake);
     // The narrative waits for every pending component, except those that already failed schema.
-    if (pending.every((component) => schemaFails.has(keyOf(component)))) spawn(narrate(snapshot));
+    const narrativeAllowed = !probing || callsInFlight() === 0;
+    if (narrativeAllowed && pending.every((component) => schemaFails.has(keyOf(component)))) spawn(narrate(snapshot));
   }
 
   function pump(): void {
