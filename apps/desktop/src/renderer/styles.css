@@ -671,7 +671,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 .overview-step > div span {
   overflow: hidden;
   color: var(--tv-ink-3);
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -868,7 +868,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 .work-products-heading .jev-view-label {
   margin-left: auto;
   color: var(--tv-accent-ink);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -920,7 +920,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
   border-radius: 999px;
   background: var(--tv-accent-soft);
   color: var(--tv-accent-ink);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1021,7 +1021,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
   border-radius: 999px;
   background: var(--tv-fill);
   color: var(--tv-ink-3);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
   text-transform: capitalize;
 }
@@ -1110,7 +1110,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 .jevcode-dep-section-heading {
   padding: 7px 10px;
   color: var(--tv-ink-3);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1214,7 +1214,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 .jevcode-matrix th,
 .jevcode-tradeoffs th {
   color: var(--tv-ink-3);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1344,7 +1344,8 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 
 .jevcode-timeline li {
   display: grid;
-  grid-template-columns: 72px 60px minmax(0, 1fr);
+  /* The kind column fits "DECISION" in the 11 px uppercase label. */
+  grid-template-columns: 72px 68px minmax(0, 1fr);
   gap: 8px;
   padding: 7px 0;
   border-bottom: 1px solid var(--tv-hair);
@@ -1353,7 +1354,7 @@ button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view],
 .jevcode-timeline-ts,
 .jevcode-timeline-kind {
   color: var(--tv-ink-3);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .jevcode-timeline-kind {

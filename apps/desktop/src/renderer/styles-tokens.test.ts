@@ -88,6 +88,12 @@ describe("main window styles use the viewer's light tokens (spec E6, §3.6, §9)
     expect(offenders).toEqual([]);
   });
 
+  it("sets no text below 10 px: the 9 px labels moved to 11 px (final review C M-3, D-4 minor)", () => {
+    const sizes = [...withoutComments(CSS).matchAll(/font-size:\s*([\d.]+)px/g)].map((match) => Number(match[1]));
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sizes.filter((size) => size < 10)).toEqual([]);
+  });
+
   it("paints the terminal container with the same panel color as xterm", () => {
     expect(/\.terminal-container\s*\{[^}]*background:\s*var\(--tv-panel\)/.test(CSS)).toBe(true);
   });
