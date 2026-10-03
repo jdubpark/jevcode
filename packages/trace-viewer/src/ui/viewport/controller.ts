@@ -30,6 +30,11 @@ export interface ViewportControllerOptions<C extends Camera> {
   clearTimer?(handle: unknown): void;
   /** Internal (C1-7F): false leaves Ctrl/Meta+wheel zoom to another handler; the event is still prevented. */
   wheelZoom?: boolean;
+  /**
+   * The element's client origin when the view keeps it current (lane 06 P-3 fix round 2: the Map measures it at rest),
+   * so a zoom gesture starts with no getBoundingClientRect; null, or no option (the Canvas), measures it as before.
+   */
+  clientOrigin?(): Point | null;
 }
 
 export interface ViewportController<C extends Camera> {
@@ -208,8 +213,12 @@ export function createViewportCore<C extends Camera>(options: ViewportController
 
   function localPoint(clientX: number, clientY: number): Point {
     if (origin === null) {
-      const rect = element.getBoundingClientRect();
-      origin = { x: rect.left, y: rect.top };
+      const known = options.clientOrigin?.() ?? null;
+      if (known !== null) origin = known;
+      else {
+        const rect = element.getBoundingClientRect();
+        origin = { x: rect.left, y: rect.top };
+      }
     }
     return { x: clientX - origin.x, y: clientY - origin.y };
   }

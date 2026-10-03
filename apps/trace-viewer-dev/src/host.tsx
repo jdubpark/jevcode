@@ -76,10 +76,12 @@ async function loadBundle(name: string): Promise<Loaded> {
   }
 }
 
-/** ?overview=<name>: appends one overview_snapshot row to the loaded bundle (dev host only). */
+/** ?overview=<name>: appends its overview_snapshot rows to the loaded bundle (dev host only). */
 async function attachOverview(bundle: TraceBundle, name: string): Promise<Loaded> {
-  const snapshot = await loadOverview(name, bundle.session.sessionId);
-  return snapshot === null ? { kind: "error", message: `Unknown overview "${name}"` } : { kind: "ready", bundle: withOverview(bundle, snapshot) };
+  const snapshots = await loadOverview(name, bundle.session.sessionId);
+  return snapshots === null
+    ? { kind: "error", message: `Unknown overview "${name}"` }
+    : { kind: "ready", bundle: snapshots.reduce(withOverview, bundle) };
 }
 
 /**

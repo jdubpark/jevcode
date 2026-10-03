@@ -588,4 +588,90 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(first.hasAttribute("aria-controls")).toBe(false);
     expect(first.getAttribute("aria-expanded")).toBe("false");
   });
+
+  describe("the first frame of a gesture (fix round 2: zoom performance)", () => {
+    const viewportOf = (): HTMLElement => {
+      const element = document.querySelector<HTMLElement>("[data-tv-viewport='map']");
+      if (element === null) throw new Error("no map viewport");
+      return element;
+    };
+    const world = (): HTMLElement | null => document.querySelector<HTMLElement>("[data-tv-world]");
+    const zoomWheel = (): void => {
+      viewportOf().dispatchEvent(new WheelEvent("wheel", { deltaY: -10, ctrlKey: true, clientX: 600, clientY: 400, bubbles: true, cancelable: true }));
+    };
+    const panWheel = (): void => {
+      viewportOf().dispatchEvent(new WheelEvent("wheel", { deltaX: 30, deltaY: 20, bubbles: true, cancelable: true }));
+    };
+
+    it("starts a zoom gesture with no layout read: the viewport's client origin is kept at rest", () => {
+      const frames = stubAnimationFrames();
+      renderMap(WEB_API_DB);
+      act(() => frames.flush());
+      const measure = vi.mocked(Element.prototype.getBoundingClientRect);
+      measure.mockClear();
+      act(() => zoomWheel());
+      act(() => frames.flush());
+      expect(measure).not.toHaveBeenCalled();
+    });
+
+    it("promotes the world while the pointer is over the map or focus is inside it, so a gesture's first frame changes no will-change", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const frames = stubAnimationFrames();
+        renderMap(WEB_API_DB);
+        await act(async () => frames.flush());
+        expect(world()?.style.willChange).toBe("");
+        fireEvent.pointerEnter(viewportOf());
+        expect(world()?.style.willChange).toBe("transform");
+        const writes: string[] = [];
+        const observer = new MutationObserver(() => writes.push(world()?.style.willChange ?? ""));
+        const target = world();
+        if (target === null) throw new Error("no world");
+        observer.observe(target, { attributes: true, attributeFilter: ["style"] });
+        act(() => zoomWheel());
+        act(() => frames.flush());
+        act(() => vi.advanceTimersByTime(200));
+        await act(async () => undefined);
+        observer.disconnect();
+        // The transform changed; will-change never left "transform".
+        expect(writes.length).toBeGreaterThan(0);
+        expect(new Set(writes)).toEqual(new Set(["transform"]));
+        // Leaving during a gesture keeps it until the gesture settles.
+        act(() => panWheel());
+        act(() => frames.flush());
+        fireEvent.pointerLeave(viewportOf());
+        expect(world()?.style.willChange).toBe("transform");
+        act(() => vi.advanceTimersByTime(200));
+        expect(world()?.style.willChange).toBe("");
+        // Focus inside the map promotes it too; blur away drops it at rest.
+        act(() => cardOf("apps/web").focus());
+        expect(world()?.style.willChange).toBe("transform");
+        act(() => cardOf("apps/web").blur());
+        expect(world()?.style.willChange).toBe("");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("writes --map-inv-k only when k changed", () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const frames = stubAnimationFrames();
+        renderMap(WEB_API_DB);
+        act(() => frames.flush());
+        const setProperty = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty");
+        const invWrites = (): number => setProperty.mock.calls.filter(([name]) => name === "--map-inv-k").length;
+        act(() => panWheel());
+        act(() => frames.flush());
+        act(() => vi.advanceTimersByTime(200));
+        expect(invWrites()).toBe(0);
+        act(() => zoomWheel());
+        act(() => frames.flush());
+        act(() => vi.advanceTimersByTime(200));
+        expect(invWrites()).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

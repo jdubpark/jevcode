@@ -154,9 +154,35 @@ export function withOverview(bundle: TraceBundle, snapshot: OverviewSnapshot): T
   };
 }
 
-/** The overview a `?overview=<name>` asks for; null for an unknown name. */
-export async function loadOverview(name: string, sessionId: string): Promise<OverviewSnapshot | null> {
-  if (name === "sample") return sampleOverview(sessionId);
-  if (name === "synthetic") return syntheticSampleOverview(sessionId);
+/** The sample without one component and its edges (an earlier snapshot of the same repo). */
+function sampleWithout(snapshot: OverviewSnapshot, rootPath: string): OverviewSnapshot {
+  const gone = snapshot.components.find((component) => component.rootPath === rootPath)?.id;
+  const components = snapshot.components.filter((component) => component.id !== gone);
+  const edges = snapshot.edges.filter((edge) => edge.from !== gone && edge.to !== gone);
+  const externals = snapshot.externals
+    .map((ext) => ({ ...ext, usedBy: ext.usedBy.filter((use) => use.componentId !== gone) }))
+    .filter((ext) => ext.usedBy.length > 0);
+  return OverviewSnapshotSchema.parse({
+    ...snapshot,
+    scanId: `${snapshot.scanId}-earlier`,
+    counts: { ...snapshot.counts, files: components.reduce((sum, component) => sum + component.fileCount, 0), components: components.length, edges: edges.length },
+    components,
+    edges,
+    externals,
+  });
+}
+
+/**
+ * The overview rows a `?overview=<name>` appends, oldest first; null for an unknown name. `sample-grow` is the sample
+ * without its worker, then the full sample: with `&drip=1,1500,-1` the second row opens the Agents band 1.5 s later, so
+ * the Map's relayout glide (spec E12) can be watched.
+ */
+export async function loadOverview(name: string, sessionId: string): Promise<readonly OverviewSnapshot[] | null> {
+  if (name === "sample") return [sampleOverview(sessionId)];
+  if (name === "sample-grow") {
+    const full = sampleOverview(sessionId);
+    return [sampleWithout(full, "services/worker"), full];
+  }
+  if (name === "synthetic") return [syntheticSampleOverview(sessionId)];
   return null;
 }
