@@ -340,23 +340,36 @@ export function ConsoleView({ active }: ViewProps) {
     const element = scrollRef.current;
     const view = viewOf();
     if (before === null || element === null || view === null) return undefined;
+    // The baseline is the anchor row's DOM position in this commit, not the virtualizer's model value from an earlier
+    // frame (that one lags a frame under load and read as drift): the sample is what the commit's own layout did.
+    const baseNode = findNode(before.key);
+    if (baseNode === undefined) return undefined;
+    const base = baseNode.getBoundingClientRect().top - element.getBoundingClientRect().top;
     const id = view.requestAnimationFrame(() => {
       const node = findNode(before.key);
       if (node === undefined) return;
       const top = node.getBoundingClientRect().top - element.getBoundingClientRect().top;
       // Only the reader's own input since the last sample re-baselines it; following moves the list on purpose.
       if (readerMoved.current) readerMoved.current = false;
-      else if (!store.get().follow) diagnostics.reportDrift(Math.abs(top - before.top));
+      else if (!store.get().follow) diagnostics.reportDrift(Math.abs(top - base));
       anchor.current = { key: before.key, top };
     });
     return () => view.cancelAnimationFrame(id);
   }, [built, diagnostics, active]);
 
   // Spec §11 append latency: every commit that rebuilt the rows measures from the oldest release to the next paint.
-  // A hidden Console drops pending marks, so a later sample never spans the time it was hidden.
+  // Releases that landed while the Console was hidden are stale: a re-shown Console must not measure from them. Under
+  // <Activity mode="hidden"> only cleanups run (an effect body rendered while hidden never does), so the cleanup drops
+  // the marks at hide, and showing again drops those that arrived during the hidden time.
+  useLayoutEffect(() => {
+    const clear = (): void => {
+      if (typeof performance !== "undefined") performance.clearMarks(ROWS_RELEASED_MARK);
+    };
+    if (active) clear();
+    return clear;
+  }, [active]);
   useLayoutEffect(() => {
     if (active) measureFromFirstAfterPaint(PERF.consoleAppend, ROWS_RELEASED_MARK);
-    else if (typeof performance !== "undefined") performance.clearMarks(ROWS_RELEASED_MARK);
   }, [built, active]);
 
   const [query, setQuery] = useState("");
