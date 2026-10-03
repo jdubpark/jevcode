@@ -53,7 +53,9 @@ class StorageChangeUnitStore implements ChangeUnitStore {
   ) {}
 
   upsert(unit: ChangeUnit): void {
-    const json = JSON.stringify(unit);
+    // Key order ignored: a label write rebuilds the unit from its database row, whose keys come in column order,
+    // while the rebuild writes the projection's order. The stored payload is the same either way (PL-2).
+    const json = canonicalJson(unit);
     if (this.lastJson.get(unit.id) === json) return;
     this.db.upsertChangeUnit(unit);
     this.lastJson.set(unit.id, json);
@@ -159,17 +161,17 @@ class StorageSemanticEventSink implements SemanticEventSink {
     private readonly persist?: (event: SemanticEvent) => void,
   ) {}
 
+  // Written, then listed: an event whose write throws is neither listed nor marked, so the next rebuild writes it
+  // and lists it once (PL-2).
   emit(event: SemanticEvent): void {
-    if (!this.byId.has(event.id)) {
+    const previous = this.byId.get(event.id);
+    if (previous === undefined) {
+      this.persist?.(event);
       this.order.push(event.id);
       this.onEmit?.(event);
+    } else if (previous.changeUnitId !== event.changeUnitId) {
       this.persist?.(event);
-    } else {
-      const previous = this.byId.get(event.id);
-      if (previous !== undefined && previous.changeUnitId !== event.changeUnitId) {
-        this.onEmit?.(event);
-        this.persist?.(event);
-      }
+      this.onEmit?.(event);
     }
     this.byId.set(event.id, event);
   }
