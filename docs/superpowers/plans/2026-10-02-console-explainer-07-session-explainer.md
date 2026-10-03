@@ -120,7 +120,7 @@ Inputs the spec implies and a happy-path test would miss, most likely first. Eac
 | `packages/trace-viewer/src/layout/console-summary.ts` (+ test, + bench in S-6), `console-rows.ts` | Summary rows | S-4 |
 | `packages/trace-viewer/src/ui/explainer/*` | `CitationChips`, `StoryBlock`, `DecisionCard`, `SummaryBlock`, CSS | S-4 |
 | `packages/trace-viewer/src/ui/inspector/Brief.tsx`, `Summary.tsx`, `src/ui/views/console/ConsoleRowView.tsx` | Rendering | S-4 |
-| `apps/trace-viewer-dev/scripts/explainer-shots.mjs` | Phase C bundle and screenshots | S-4 (S-5 adds the Map shot) |
+| `apps/trace-viewer-dev/scripts/explainer-bundle.mjs`, `apps/trace-viewer-dev/scripts/smoke.mjs --explainer` | Phase C bundles and screenshots (`explainer-shots.mjs` was dropped in S-4: Chrome 154 never returns under `spawnSync`, so the shots reuse the smoke's Chrome handling) | S-4 (S-5 adds the Map shot) |
 | `packages/trace-viewer/src/ui/views/map/overlay.ts` (+ test), `MapSessionToggle.tsx`, `MapView.tsx`, `MapHeader.tsx`, `MapView.module.css`, `map-session-overlay.test.tsx` | P-3's overlay seam filled, toggle and legend, state styles | S-5 |
 | `apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts`, `packages/trace-viewer/src/layout/console-summary.bench.ts`, `docs/perf.md` | Live smoke and budgets | S-6 |
 
@@ -3151,7 +3151,7 @@ Blocked by H3 (S-0 Step 7).
 - Create: `packages/trace-viewer/src/layout/console-summary.ts`, test `console-summary.test.ts`
 - Create: `packages/trace-viewer/src/ui/explainer/CitationChips.tsx`, `StoryBlock.tsx`, `DecisionCard.tsx`, `SummaryBlock.tsx`, `explainer.module.css`, test `explainer.test.tsx`
 - Create: `packages/trace-viewer/src/ui/views/console/console-summary-view.test.tsx`
-- Create: `apps/trace-viewer-dev/scripts/explainer-shots.mjs`
+- Create: `apps/trace-viewer-dev/scripts/explainer-bundle.mjs`; Modify: `apps/trace-viewer-dev/scripts/smoke.mjs` (`--explainer`), `apps/trace-viewer-dev/src/host.tsx` (`?answer=1`). As implemented: Step 11's `explainer-shots.mjs` was replaced, see Step 11.
 - Modify: `packages/trace-viewer/src/model/index.ts` (one export line)
 - Modify: `packages/trace-viewer/src/layout/brief.ts` (V-5: `decisions`, story `now`)
 - Modify: `packages/trace-viewer/src/layout/console-rows.ts` (V-3: wrap the builder, two optional state fields)
@@ -4390,204 +4390,16 @@ Expected: all exit 0; `lint-boundaries.test.ts` (part of the suite above) stays 
 
 - [ ] **Step 11: Screenshots against the mockups**
 
-Create `apps/trace-viewer-dev/scripts/explainer-shots.mjs`:
+As implemented (S-4; orchestrator ruling in S-4 fix round 1): the planned `explainer-shots.mjs` called Chrome through `spawnSync`, which never returns under Chrome 154 (the reason for the ce/fix-smoke harness). The shots extend the dev-host smoke instead, which already runs Chrome asynchronously and kills it:
 
-```js
-#!/usr/bin/env node
-// Phase C screenshots (lane 07 S-4, S-5): the rate-limit replay plus overview and explainer rows, served by the
-// dev host and captured headlessly at 1440 and 1000 px. Run after `pnpm -r build`. Needs Chrome (CHROME_PATH).
-import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { foldRows } from "@jevcode/trace-viewer/model";
-
-const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REPO = path.resolve(APP, "../..");
-const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = Number(process.env.SHOTS_PORT ?? 4189);
-const ORIGIN = `http://localhost:${PORT}`;
-const OUT = path.join(APP, ".smoke");
-const WIDTHS = [1440, 1000];
-
-const sha1 = (text) => createHash("sha1").update(text).digest("hex");
-
-function component(rootPath, name, role, files) {
-  return {
-    id: `cmp_${sha1(rootPath).slice(0, 12)}`, rootPath, name, fileCount: files.length, files: [...files].sort(),
-    language: "TypeScript", roleGuess: role, role, purpose: null, provenance: "rule", contentHash: sha1(files.join("\n")),
-    externalDeps: [], entryPoints: [], importsAnalyzed: true,
-  };
-}
-
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: REPO, stdio: "inherit", timeout: 170_000 });
-  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited ${result.status}`);
-}
-
-function waitForServer(url, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const retry = () => (Date.now() > deadline ? reject(new Error(`vite preview did not answer at ${url}`)) : setTimeout(attempt, 250));
-    const attempt = () => {
-      const request = http.get(url, (response) => {
-        response.resume();
-        if (response.statusCode === 200) resolve();
-        else retry();
-      });
-      request.on("error", retry);
-    };
-    attempt();
-  });
-}
-
-function shoot(file, width, url) {
-  const profile = mkdtempSync(path.join(os.tmpdir(), "explainer-shots-chrome-"));
-  try {
-    rmSync(file, { force: true });
-    const result = spawnSync(
-      CHROME,
-      ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run", "--no-default-browser-check",
-        `--user-data-dir=${profile}`, `--window-size=${width},900`, "--virtual-time-budget=4000", `--screenshot=${file}`, url],
-      { encoding: "utf8", timeout: 90_000 },
-    );
-    if (result.status !== 0 || !existsSync(file)) throw new Error(`chrome failed for ${url}: ${result.stderr}`);
-  } finally {
-    rmSync(profile, { recursive: true, force: true });
-  }
-}
-
-function locationHash(sessionId, view, selected) {
-  const location = { v: 1, sessionId, view, level: "chapter", brush: { kind: "session" }, ...(selected ? { selected } : {}) };
-  return `#${encodeURIComponent(JSON.stringify(location))}`;
-}
-
-function buildBundle(file) {
-  const bundle = JSON.parse(readFileSync(file, "utf8"));
-  const sessionId = bundle.session.sessionId;
-  const session = foldRows(bundle.session, bundle.rows, { live: false });
-  const decision = session.steps.find((step) => step.decision !== undefined);
-  const messages = session.steps.filter((step) => step.kind === "message");
-  const edits = session.steps.filter((step) => step.edit !== undefined);
-  const testRun = session.steps.filter((step) => step.tests !== undefined).at(-1);
-  if (decision === undefined || messages.length === 0 || edits.length === 0) throw new Error("the rate-limit replay lacks a decision, messages or edits");
-  const server = component("src/server", "server", "api", ["src/server/app.ts", "src/server/index.ts"]);
-  const middleware = component("src/middleware", "middleware", "domain", ["src/middleware/rate-limiter.ts"]);
-  const redis = component("src/redis", "redis", "storage", ["src/redis/client.ts"]);
-  const tests = component("tests", "tests", "tests", ["tests/rate-limit.test.ts", "tests/redis-unavailable.test.ts"]);
-  const config = component(".", "config", "config", ["package.json", "tsconfig.json", "src/config.ts"]);
-  const components = [server, middleware, redis, tests, config];
-  const edges = [
-    { from: server.id, to: middleware.id, count: 3, examples: ["src/server/app.ts → src/middleware/rate-limiter.ts"] },
-    { from: middleware.id, to: redis.id, count: 2, examples: ["src/middleware/rate-limiter.ts → src/redis/client.ts"] },
-    { from: tests.id, to: middleware.id, count: 2, examples: ["tests/rate-limit.test.ts → src/middleware/rate-limiter.ts"] },
-    { from: server.id, to: config.id, count: 1, examples: ["src/server/index.ts → src/config.ts"] },
-  ];
-  const last = bundle.rows.at(-1);
-  let seq = last.seq;
-  const row = (type, payload) => {
-    seq += 1;
-    return { seq, type, ts: last.ts, payload };
-  };
-  const decisionId = decision.decision.decisionId;
-  const unitIds = session.chapters.map((chapter) => chapter.changeUnitId);
-  const note = messages[Math.min(1, messages.length - 1)];
-  const extra = [
-    row("overview_snapshot", {
-      sessionId, repoRoot: "/work/rate-limit", scanId: "scan_shots", partial: false,
-      counts: { files: 10, components: components.length, edges: edges.length, languages: ["TypeScript"] },
-      components, edges, externals: [], narrative: null, generatedAt: last.ts,
-    }),
-    row("explainer", {
-      sessionId, kind: "story", basisSeq: decision.firstSeq - 1,
-      sentences: [
-        { text: "The agent added a Redis-backed limiter as new middleware and wired it into the server.", citations: [{ kind: "component", id: middleware.id }, { kind: "step", id: edits[0].id }] },
-        { text: "It stopped to ask what the API should do when Redis is down.", citations: [{ kind: "decision", id: decisionId }] },
-      ],
-    }),
-    row("explainer", {
-      sessionId, kind: "decision_why", decisionId,
-      sentence: { text: "Failing open keeps the public API available during a Redis outage, which the agent flagged as a single point of failure.", citations: [{ kind: "step", id: note.id }, { kind: "decision", id: decisionId }] },
-    }),
-    row("explainer", {
-      sessionId, kind: "highlights", basisSeq: last.seq,
-      components: [
-        { id: server.id, state: "changed", unitIds: unitIds.slice(0, 1) },
-        { id: middleware.id, state: "new", unitIds: unitIds.slice(0, 2) },
-        { id: redis.id, state: "decision", unitIds: unitIds.slice(1, 2) },
-        { id: tests.id, state: "failing", unitIds: [] },
-      ],
-    }),
-    row("explainer", {
-      sessionId, kind: "story", basisSeq: last.seq,
-      sentences: [
-        { text: "You chose to fail open, so requests keep flowing when Redis is down.", citations: [{ kind: "decision", id: decisionId }] },
-        ...(testRun === undefined ? [] : [{ text: "The latest test run is in; open it for the outage case.", citations: [{ kind: "step", id: testRun.id }] }]),
-      ],
-    }),
-  ];
-  return {
-    bundle: { ...bundle, session: { ...bundle.session, lastEventSeq: seq }, rows: [...bundle.rows, ...extra] },
-    sessionId,
-    decisionStepId: decision.id,
-  };
-}
-
-async function main() {
-  if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME}; set CHROME_PATH`);
-  const tmp = mkdtempSync(path.join(os.tmpdir(), "explainer-shots-"));
-  let preview;
-  try {
-    run("pnpm", ["--filter", "jevcode-desktop", "replay", path.join(REPO, "fixtures", "rate-limit"), path.join(tmp, "rate-limit")]);
-    const { bundle, sessionId, decisionStepId } = buildBundle(path.join(tmp, "rate-limit", "trace.json"));
-    const bundles = path.join(APP, "public", "bundles");
-    mkdirSync(bundles, { recursive: true });
-    writeFileSync(path.join(bundles, "rate-limit-explainer.json"), JSON.stringify(bundle));
-    run("pnpm", ["--filter", "jevcode-trace-viewer-dev", "build"]);
-    preview = spawn("pnpm", ["--filter", "jevcode-trace-viewer-dev", "exec", "vite", "preview", "--port", String(PORT), "--strictPort"], {
-      cwd: REPO, stdio: "ignore", detached: true,
-    });
-    await waitForServer(`${ORIGIN}/`, 30_000);
-    mkdirSync(OUT, { recursive: true });
-    const shots = [
-      ["explainer-console", locationHash(sessionId, "console")],
-      ["explainer-decision", locationHash(sessionId, "console", decisionStepId)],
-      ["explainer-map", locationHash(sessionId, "map")],
-    ];
-    for (const [name, hash] of shots) {
-      for (const width of WIDTHS) shoot(path.join(OUT, `${name}-${width}.png`), width, `${ORIGIN}/?bundle=rate-limit-explainer${hash}`);
-    }
-    console.log(`EXPLAINER_SHOTS_OK ${shots.length * WIDTHS.length} screenshots in ${OUT}`);
-  } finally {
-    if (preview?.pid !== undefined) {
-      try {
-        process.kill(-preview.pid, "SIGTERM");
-      } catch {
-        // The preview server already exited.
-      }
-    }
-    rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
-main().catch((error) => {
-  console.error(`EXPLAINER_SHOTS_FAIL ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
-```
-
-Run it in the background with a hard limit and wait for the result:
+- `apps/trace-viewer-dev/scripts/explainer-bundle.mjs <replayed trace.json>` writes `public/bundles/rate-limit-explainer.json` (the whole rate-limit replay, live, with an overview snapshot, two narrator stories, the decision's why and highlights) and `rate-limit-pending.json` (cut at the open decision, with a rule-based and a narrator story). Explainer rows take free seqs between the replay's rows, so each ◆ Summary lands where it would arrive live.
+- `node apps/trace-viewer-dev/scripts/smoke.mjs --explainer` replays `fixtures/rate-limit`, runs the bundle script before the dev-host build, and shoots `explainer-console`, `explainer-decision` (Hybrid with the decision selected), `explainer-pending` (`?answer=1`, a stub host that answers, so the Choose buttons show) and, from S-5, `explainer-map`, each at 1440 and 1000 px.
 
 ```bash
-perl -e 'alarm 170; exec @ARGV' pnpm -r build
-perl -e 'alarm 400; exec @ARGV' node apps/trace-viewer-dev/scripts/explainer-shots.mjs > /tmp/explainer-shots.log 2>&1 &
+(perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --explainer --port 4199 > .superpowers/explainer-smoke.log 2>&1; echo "EXIT=$?" >> .superpowers/explainer-smoke.log) &
 ```
 
-Poll `tail -1 /tmp/explainer-shots.log` until it prints `EXPLAINER_SHOTS_OK 6 screenshots …` (or `EXPLAINER_SHOTS_FAIL …`, then fix and rerun). Open `apps/trace-viewer-dev/.smoke/explainer-console-1440.png` beside `c-console-summary-1440.png`, `explainer-decision-1440.png` beside `c-decision-inspector-1440.png`, and the Brief side of `explainer-console-1440.png` beside `c-brief-story-1440.png`; repeat at 1000 px. Check: the `◆ Summary` block sits after the rows it covers, on a tone fill with no border; chips are short, icon-led and quiet; the decision card shows the fork, the options with one tradeoff line each, "Chosen by you" and the why with its chip; the Inspector shows Why and Components; no red except the failing test; nothing overflows at 1000 px. Fix differences in `explainer.module.css` or `Inspector.module.css` and rerun until they match. (`.smoke/` and `public/bundles/` are git-ignored.)
+Poll `tail -3 .superpowers/explainer-smoke.log` until `SMOKE_OK` and `EXIT=0` (or `SMOKE_FAIL …`, then fix and rerun). Open `apps/trace-viewer-dev/.smoke/explainer-console-1440.png` beside `c-console-summary-1440.png`, `explainer-decision-1440.png` beside `c-decision-inspector-1440.png`, and `explainer-pending-1440.png` beside `c-brief-story-1440.png`; repeat at 1000 px. Check: the `◆ Summary` block sits after the rows it covers, on a tone fill with no border; chips are short, icon-led and quiet; the pending card shows the fork, the options with one tradeoff line each and Choose; the decided cards (two at most) show "… · chosen by you" and the why with its chip; the Inspector shows Why and Components; no red except the failing test; nothing overflows at 1000 px. Fix differences in `explainer.module.css` or `Inspector.module.css` and rerun until they match. (`.smoke/` and `public/bundles/` are git-ignored.)
 
 - [ ] **Step 12: Commit**
 
@@ -4599,7 +4411,7 @@ git add packages/trace-viewer/src/model/citations.ts packages/trace-viewer/src/m
   packages/trace-viewer/src/ui/inspector/Inspector.module.css packages/trace-viewer/src/ui/inspector/inspector.test.tsx \
   packages/trace-viewer/src/ui/inspector/brief.test.tsx \
   packages/trace-viewer/src/ui/views/console/ConsoleRowView.tsx packages/trace-viewer/src/ui/views/console/console-summary-view.test.tsx \
-  apps/trace-viewer-dev/scripts/explainer-shots.mjs
+  apps/trace-viewer-dev/scripts/explainer-bundle.mjs apps/trace-viewer-dev/scripts/smoke.mjs apps/trace-viewer-dev/src/host.tsx
 git commit -m "feat(trace-viewer): Brief story and decision cards, Inspector why, Console summary rows"
 ```
 
@@ -4983,10 +4795,10 @@ Expected: the 3 new tests pass with P-3's Map tests (P-3's "no overlay in phase 
 - [ ] **Step 7: Screenshots against the mockup**
 
 ```bash
-perl -e 'alarm 400; exec @ARGV' node apps/trace-viewer-dev/scripts/explainer-shots.mjs > /tmp/explainer-shots.log 2>&1 &
+(perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --explainer --port 4199 > .superpowers/explainer-smoke.log 2>&1; echo "EXIT=$?" >> .superpowers/explainer-smoke.log) &
 ```
 
-Poll `tail -1 /tmp/explainer-shots.log` until `EXPLAINER_SHOTS_OK 6 screenshots …`. Open `apps/trace-viewer-dev/.smoke/explainer-map-1440.png` beside `c-map-overlay-1440.png`, then the 1000 px pair. Check: untouched cards (`config`) read as faded; the four dots read at a glance and only the `tests` dot is red; the two touched edges are visibly stronger than the untouched one; the toggle and legend sit in the header row without crowding P-3's controls; nothing overflows at 1000 px. Adjust the appended CSS and rerun until they match.
+Poll `tail -3 .superpowers/explainer-smoke.log` until `SMOKE_OK` and `EXIT=0` (S-4 replaced `explainer-shots.mjs` with `smoke.mjs --explainer`; S-5 adds the `explainer-map` shot to its list). Open `apps/trace-viewer-dev/.smoke/explainer-map-1440.png` beside `c-map-overlay-1440.png`, then the 1000 px pair. Check: untouched cards (`config`) read as faded; the four dots read at a glance and only the `tests` dot is red; the two touched edges are visibly stronger than the untouched one; the toggle and legend sit in the header row without crowding P-3's controls; nothing overflows at 1000 px. Adjust the appended CSS and rerun until they match.
 
 - [ ] **Step 8: Commit**
 
@@ -5395,7 +5207,7 @@ git commit -m "test(desktop): live mock-session smoke and phase C budgets for th
 ## Lane completion
 
 1. **Whole-lane check** on `ce/07-session` after S-6: `/Users/jwpark/Projects/jevcode/.superpowers/orchestration/root-checks.sh /Users/jwpark/Projects/jevcode-ce-07` prints `ROOT_CHECKS_DONE fail=0` (flake rule of index §7 step 3), and `git log <w1>..HEAD --format=%B | grep -c -E "Claude-Session|Co-Authored-By"` prints `0`.
-2. **Done (index §9, lane 07):** the S-6 smoke shows story and highlights within one debounce window in a mock live session; every answered decision has a `decision_why` whose citations resolve; `explainer-shots.mjs` screenshots match the approved H3 mockups at 1440 and 1000 px.
-3. **Wave check:** after the merge, `wave-verify.sh` (index §7 step 7) on a detached main worktree with the views the W1 lanes added to the dev-host smoke, plus `node apps/trace-viewer-dev/scripts/explainer-shots.mjs` on that worktree.
+2. **Done (index §9, lane 07):** the S-6 smoke shows story and highlights within one debounce window in a mock live session; every answered decision has a `decision_why` whose citations resolve; the `smoke.mjs --explainer` screenshots (`apps/trace-viewer-dev/.smoke/explainer-{console,decision,pending,map}-{1440,1000}.png`) match the approved H3 mockups at 1440 and 1000 px.
+3. **Wave check:** after the merge, `wave-verify.sh` (index §7 step 7) on a detached main worktree with the views the W1 lanes added to the dev-host smoke, plus `perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --explainer --port <free port>` on that worktree (it builds, replays `fixtures/rate-limit`, writes the explainer bundles with `explainer-bundle.mjs`, shoots the 8 explainer screenshots and prints `SMOKE_OK`).
 4. **HUMAN H6 (phase C exit, index §8):** the person reviews the story, decision cards and overlay on a mock live session (`JEVC_AGENT=mock pnpm --filter jevcode-desktop start`, open `fixtures/rate-limit/repo`, enter the demo prompt). Record the outcome under the spec's §13 table as `H6 (phase C exit): <approved | changes requested> <date>`, or `PENDING — deferred by the person on <date>; revisit before the phase C exit` under the deferral ruling.
-5. **Hand-off notes** for the merge: the interface deviations above (new exports `repoRelative`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs`, `BriefModel.decisions`); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.
+5. **Hand-off notes** for the merge: the interface deviations above (new exports `repoRelative`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs` (a later decision row without the field keeps them, an explicit `[]` drops them), `BriefModel.decisions`, `BRIEF_DECIDED_MAX`, `BriefViewProps.onAnswer` and `answers`, the model export `truncateEnd`, and the shell's shared answer store `createDecisionAnswerStore` / `useDecisionAnswers` with `AnswerState` moved to `src/ui/shell/decision-answers.ts`); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.
