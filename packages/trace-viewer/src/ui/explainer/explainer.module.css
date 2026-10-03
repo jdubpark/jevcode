@@ -1,0 +1,305 @@
+/* Phase C explainer pieces (spec §3.2, §3.3, §3.5) against the approved H3 mockups (phase-c.css): story lines with quiet
+   citation chips, decision cards (pending on the accent tint, decided neutral) and the Console's ◆ Summary block. */
+
+/* Story */
+.storyWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.storyLine {
+  color: var(--tv-ink);
+  font-size: 13px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.provenance {
+  color: var(--tv-ink-3);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+/* Citation chips: icon-led, quiet, inline after the sentence. */
+.chips {
+  display: inline;
+}
+
+.chip,
+.chipOff {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 150px;
+  height: 18px;
+  margin: 0 2px 0 4px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.chip {
+  background: var(--tv-fill-2);
+  color: var(--tv-ink-2);
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--tv-ink);
+}
+
+.chip:focus-visible,
+.question:focus-visible,
+.answer:focus-visible,
+.briefLink:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+/* An unresolved or fact citation: plain text, no action. */
+.chipOff {
+  background: transparent;
+  color: var(--tv-ink-3);
+  cursor: default;
+}
+
+.chipLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon {
+  flex: none;
+  color: var(--tv-ink-3);
+}
+
+/* Decision card */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--tv-fill);
+  color: var(--tv-ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.card[data-status="open"] {
+  background: var(--tv-accent-soft);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cardHead > .icon {
+  margin-top: 2px;
+  color: var(--tv-ink-2);
+}
+
+.question {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tv-ink);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.fork {
+  flex: none;
+  margin-top: 1px;
+}
+
+.ask,
+.by {
+  margin: -4px 0 0 22px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.ask {
+  color: var(--tv-accent-ink);
+}
+
+.ask[data-answer="failed"] {
+  color: var(--tv-ink-2);
+}
+
+.by {
+  color: var(--tv-ink-3);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: center;
+}
+
+.optionLabel {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tradeoff {
+  grid-column: 1 / 2;
+  color: var(--tv-ink-3);
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.answer {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.answer:disabled {
+  color: var(--tv-ink-3);
+  cursor: default;
+}
+
+.why {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--tv-ink-2);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.why > .icon {
+  margin-top: 3px;
+}
+
+.quiet {
+  color: var(--tv-ink-3);
+}
+
+.components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 18px;
+}
+
+.components .chip {
+  margin: 0;
+}
+
+/* Console ◆ Summary: the marker in the glyph column over the gutter rule, the block on a tone fill with no border. */
+.summaryRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+  padding: 3px 16px 3px 15px;
+}
+
+.diamond {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  background: var(--tv-panel);
+  color: var(--tv-ink-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.diamond > span {
+  transform: scale(0.84);
+}
+
+.summary {
+  margin: 2px 0 4px;
+  padding: 8px 12px 10px;
+  border-radius: 9px;
+  background: var(--tv-fill);
+}
+
+.summaryHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--tv-ink-3);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.briefLink {
+  margin-left: auto;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tv-ink-3);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.briefLink:hover {
+  color: var(--tv-ink);
+}
+
+.summary .story {
+  gap: 4px;
+}

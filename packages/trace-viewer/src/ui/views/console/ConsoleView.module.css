@@ -418,10 +418,9 @@
   cursor: default;
 }
 
-.summaryLabel {
-  margin-right: 6px;
-  font-weight: 500;
-  color: var(--tv-ink);
+/* A focused ◆ Summary row rings its block (SummaryBlock, src/ui/explainer). */
+.slot:focus-visible [data-summary-box] {
+  box-shadow: inset 0 0 0 2px var(--tv-accent);
 }
 
 .badge {
