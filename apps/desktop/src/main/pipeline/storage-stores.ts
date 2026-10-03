@@ -69,14 +69,22 @@ class StorageChangeUnitStore implements ChangeUnitStore {
 
   remove(id: string): void {
     const unit = this.db.getChangeUnit(id);
-    if (unit === undefined) return;
-    this.db.upsertChangeUnit({ ...unit, status: "superseded" });
+    if (unit !== undefined) this.supersede(unit);
   }
 
   clear(): void {
-    for (const unit of this.db.listChangeUnits(this.sessionId)) {
-      this.db.upsertChangeUnit({ ...unit, status: "superseded" });
-    }
+    for (const unit of this.db.listChangeUnits(this.sessionId)) this.supersede(unit);
+  }
+
+  // Every rebuild, the coordinator removes each stored unit its projection no longer has, and a
+  // removed unit stays stored as superseded, so it is removed again on every later rebuild. A unit
+  // the database already holds as superseded would be written with an identical payload, so it is
+  // skipped (PL-2: one such row per rebuild before). The write replaces the row upsert() last wrote,
+  // so its cached payload is dropped: a unit the projection brings back unchanged is written again.
+  private supersede(unit: ChangeUnit): void {
+    if (unit.status === "superseded") return;
+    this.lastJson.delete(unit.id);
+    this.db.upsertChangeUnit({ ...unit, status: "superseded" });
   }
 }
 
