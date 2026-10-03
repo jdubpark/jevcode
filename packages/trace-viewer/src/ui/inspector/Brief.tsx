@@ -334,6 +334,8 @@ function Architecture({
   const scan = overview === null ? null : overviewStatusOf(overview.snapshot).scan;
   // Ruling R3 narrator words; a Brief built without an overview keeps "Descriptions pending".
   const narrator = overview === null ? "Descriptions pending" : narratorNote(overview);
+  // The paragraph is clamped to four lines, so the full text also goes in its tooltip.
+  const prose = architecture.overviewSentences === null ? null : architecture.overviewSentences.map((sentence) => displayUntrusted(sentence.text)).join(" ");
   return (
     <div className={styles.architecture} data-brief-architecture="">
       {overview === null || architecture.componentCount === 0 ? null : <MapThumbnail overview={overview} touched={architecture.touched} />}
@@ -351,10 +353,12 @@ function Architecture({
           )}
         </p>
       ) : null}
-      {architecture.overviewSentences === null ? (
+      {prose === null ? (
         narrator === null ? null : <p className={styles.quietSmall}>{narrator}</p>
       ) : (
-        <p className={styles.prose}>{architecture.overviewSentences.map((sentence) => displayUntrusted(sentence.text)).join(" ")}</p>
+        <p className={styles.prose} title={prose}>
+          {prose}
+        </p>
       )}
       {mapAvailable ? (
         <button type="button" className={styles.link} onClick={onOpenMap}>
