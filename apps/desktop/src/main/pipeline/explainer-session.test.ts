@@ -445,6 +445,39 @@ describe("session explainer: story schedule", () => {
     expect(w.rows("story")).toHaveLength(1);
   });
 
+  it("narrates when the third new change unit arrives, not before (STORY_UNIT_THRESHOLD)", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    const units: ChangeUnit[] = [];
+    for (const id of ["u1", "u2"]) {
+      units.push(w.unit(id, [`src/server/${id}.ts`]));
+      explainer.onPipelineSync(w.sync([...units], []));
+      await explainer.idle();
+      expect(narrator.storyCalls).toHaveLength(0);
+    }
+    units.push(w.unit("u3", ["src/server/u3.ts"]));
+    explainer.onPipelineSync(w.sync([...units], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+  });
+
+  it("narrates when the agent completes a turn", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Adding the limiter middleware." });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(0);
+    w.agent({ type: "agent_completed" });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+  });
+
   it("orders the story's decisions open first, then newest, caps them at 20 and names the chosen option by label", () => {
     const w = new World();
     w.agent({ type: "agent_started", prompt: PROMPT });
