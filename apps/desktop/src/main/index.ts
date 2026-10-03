@@ -26,7 +26,7 @@ import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
-import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
 import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
@@ -102,7 +102,9 @@ app.whenReady().then(() => {
     enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
     env: process.env,
   });
-  const narratorCalls = createNarratorCallLog();
+  const narratorCalls = createNarratorCallLog(NARRATOR_CALL_LOG_CAPACITY, {
+    log: (message) => console.error(`[narrator] ${message}`),
+  });
   // A second, query_only connection for the trace viewer (R5): trace:*
   // handlers read through it and can never write.
   const reader = openTraceReader(db.dbPath);
