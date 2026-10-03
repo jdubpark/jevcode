@@ -1,4 +1,4 @@
-import { truncateMiddle } from "@jevcode/trace-viewer/model";
+import { displayUntrusted, truncateMiddle } from "@jevcode/trace-viewer/model";
 
 /** A trace window's review note (composer:prefill, spec §8.5). */
 export interface ComposerPrefill {
@@ -15,8 +15,17 @@ const NOTE_TARGET_MAX = 48;
  * session id when the prompt is unknown or blank.
  */
 export function traceNoteTarget(prompt: string | undefined, sessionId: string): string {
+  return truncateMiddle(noteTargetSource(prompt, sessionId), NOTE_TARGET_MAX);
+}
+
+/** The notice's tooltip: the same name uncut, with bidi and control characters shown as tokens. */
+export function traceNoteTargetTitle(prompt: string | undefined, sessionId: string): string {
+  return displayUntrusted(noteTargetSource(prompt, sessionId));
+}
+
+function noteTargetSource(prompt: string | undefined, sessionId: string): string {
   const oneLine = (prompt ?? "").replace(/\s+/g, " ").trim();
-  return truncateMiddle(oneLine.length > 0 ? oneLine : sessionId, NOTE_TARGET_MAX);
+  return oneLine.length > 0 ? oneLine : sessionId;
 }
 
 export type PrefillDecision =
