@@ -50,7 +50,7 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
   return { promise, resolve };
 }
 
-const card = () => within(screen.getByRole("region", { name: "Decision card: Redis down?" }));
+const card = () => within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
 const chooseButtons = () => card().getAllByRole("button", { name: /^Choose/ }) as HTMLButtonElement[];
 
 describe("createDecisionAnswerStore", () => {
@@ -80,7 +80,7 @@ describe("one answer store for the Console and the Brief (lane 07 S-4 fix I-1)",
     const answerDecision = vi.fn(() => sending.promise);
     const source = createStaticBundleSource(bundle(rows(false)));
     render(<TraceViewer source={source} host={{ answerDecision }} initialView="console" pollMs={50} />);
-    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy());
     const feed = screen.getByRole("feed", { name: "Console" });
     fireEvent.click(within(feed).getByRole("button", { name: "Fail open" }));
     expect(answerDecision).toHaveBeenCalledWith({ decisionId: "d1", optionId: "open" });
@@ -97,17 +97,17 @@ describe("one answer store for the Console and the Brief (lane 07 S-4 fix I-1)",
     const answerDecision = vi.fn(async () => undefined);
     const source = createStaticBundleSource(bundle(rows(false)));
     render(<TraceViewer source={source} host={{ answerDecision }} initialView="console" pollMs={50} />);
-    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy());
     fireEvent.click(card().getByRole("button", { name: "Choose Fail open" }));
     await waitFor(() => expect(card().getByText("Answer sent")).toBeTruthy());
     // The question selects the decision's step: the Inspector replaces (unmounts) the Brief.
     fireEvent.click(card().getByRole("button", { name: "Redis down?" }));
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Decision card: Redis down?" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Decision card: Redis down?" })).toBeNull());
     // Esc steps out of the selection until the Brief is back.
-    for (let i = 0; i < 4 && screen.queryByRole("region", { name: "Decision card: Redis down?" }) === null; i += 1) {
+    for (let i = 0; i < 4 && screen.queryByRole("group", { name: "Decision card: Redis down?" }) === null; i += 1) {
       fireEvent.keyDown(document.body, { key: "Escape", code: "Escape" });
     }
-    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy());
     expect(card().getByText("Answer sent")).toBeTruthy();
     expect(chooseButtons().every((button) => button.disabled)).toBe(true);
     fireEvent.click(card().getByRole("button", { name: "Choose Fail closed" }));
@@ -124,7 +124,7 @@ describe("focus when a card moves from open to decided (lane 07 S-4 fix I-2)", (
     const all = rows(true);
     const source = createStaticBundleSource(bundle(all), { drip: { rowsPerTick: 1, intervalMs: 1_000, manual: true, startAtSeq: all.length - 2 } });
     render(<TraceViewer source={source} host={{ answerDecision }} initialView="console" pollMs={50} />);
-    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy());
     const choose = card().getByRole("button", { name: "Choose Fail open" });
     act(() => choose.focus());
     await user.keyboard("{Enter}");
@@ -133,7 +133,7 @@ describe("focus when a card moves from open to decided (lane 07 S-4 fix I-2)", (
     await waitFor(() => expect(card().getByText("Fail open · chosen by you")).toBeTruthy());
     const brief = document.querySelector<HTMLElement>("[data-brief]");
     expect(brief?.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).toBe(screen.getByRole("region", { name: "Decision card: Redis down?" }));
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Decision card: Redis down?" }));
     expect(answerDecision).toHaveBeenCalledTimes(1);
     source.dispose();
   });
@@ -143,7 +143,7 @@ describe("focus when a card moves from open to decided (lane 07 S-4 fix I-2)", (
     const all = rows(true);
     const source = createStaticBundleSource(bundle(all), { drip: { rowsPerTick: 1, intervalMs: 1_000, manual: true, startAtSeq: all.length - 2 } });
     render(<TraceViewer source={source} host={{ answerDecision }} initialView="console" pollMs={50} />);
-    await waitFor(() => expect(screen.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy());
     await user.click(card().getByRole("button", { name: "Choose Fail open" }));
     await waitFor(() => expect(card().getByText("Answer sent")).toBeTruthy());
     await user.click(document.body);
