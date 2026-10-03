@@ -10,8 +10,8 @@ import { Inspector } from "./Inspector.js";
 
 /** Spec §3.3, E4: the panel shows the Brief whenever nothing is selected or Shift+B pinned it. */
 export function showsBrief(state: ViewState): boolean {
-  // On the Map a selected component takes the panel (lane 06 deviation 4).
-  if (state.view === "map" && state.mapSelection !== null) return false;
+  // On the Map a selected component takes the panel (lane 06 deviation 4) unless B pinned the Brief over it.
+  if (state.view === "map" && state.mapSelection !== null) return state.brief;
   return state.selection === null || state.brief;
 }
 

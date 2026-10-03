@@ -182,6 +182,41 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(document.querySelector("[data-brief-architecture]")).not.toBeNull();
   });
 
+  it("Shift+B on the Map toggles a selected component's Inspector and the Brief, and says which (lane 06 fix, minor 3)", () => {
+    function Viewer() {
+      const [root, setRoot] = useState<HTMLDivElement | null>(null);
+      return (
+        <div ref={setRoot}>
+          <aside data-region="inspector">
+            <RightPanel host={{}} />
+          </aside>
+          <KeyboardLayer root={root} />
+        </div>
+      );
+    }
+    const card = componentId("packages/api");
+    const session = buildSession({ steps, overview: RULE_ONLY });
+    const { store, announcements } = renderHarness(<Viewer />, session, { views: [MAP_VIEW], state: { view: "map", selection: null, mapSelection: card } });
+    const shiftB = (): void => {
+      fireEvent.keyDown(document.body, { code: "KeyB", key: "B", shiftKey: true });
+    };
+    const showing = (): string => (document.querySelector("[data-component-inspector]") !== null ? "component" : document.querySelector("[data-brief]") !== null ? "brief" : "other");
+    expect(showing()).toBe("component");
+    act(shiftB);
+    expect([showing(), announcements.at(-1)]).toEqual(["brief", "Brief"]);
+    act(shiftB);
+    expect([showing(), announcements.at(-1)]).toEqual(["component", "Inspector"]);
+    // With a step selected under the component, B still toggles what the panel shows.
+    const step = session.steps.find((item) => item.kind === "edit")?.id;
+    if (step === undefined) throw new Error("no edit step");
+    act(() => store.dispatch({ type: "select", id: step, by: "shell" }));
+    act(() => store.dispatch({ type: "map/select", componentId: card }));
+    act(shiftB);
+    expect([showing(), announcements.at(-1)]).toEqual(["brief", "Brief"]);
+    act(shiftB);
+    expect([showing(), announcements.at(-1)]).toEqual(["component", "Inspector"]);
+  });
+
   it("a session change in the component Inspector opens its step and keeps focus in the panel (lane 06 fix, minor 2)", async () => {
     const user = userEvent.setup();
     const { store } = renderPanel(RULE_ONLY, { view: "map", mapSelection: componentId("packages/db") });
