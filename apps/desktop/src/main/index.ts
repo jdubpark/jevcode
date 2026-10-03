@@ -35,7 +35,7 @@ import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
-import { createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
+import { MAIN_WINDOW_BACKGROUND, createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
 import type { TraceWindowRegistry } from "./trace-window.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
@@ -111,7 +111,7 @@ function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    backgroundColor: "#14161a",
+    backgroundColor: MAIN_WINDOW_BACKGROUND,
     show: false,
     webPreferences: sharedWebPreferences(PRELOAD_PATH),
   });

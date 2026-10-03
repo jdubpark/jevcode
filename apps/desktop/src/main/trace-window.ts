@@ -6,6 +6,8 @@ import type {
 
 export const TRACE_WINDOW_MIN_WIDTH = 1000;
 export const TRACE_WINDOW_BACKGROUND = "#FFFFFF";
+/** The main window's native background: LIGHT_TOKENS.canvas, so no dark flash before the page paints (spec E6). */
+export const MAIN_WINDOW_BACKGROUND = "#F4F5F7";
 
 /**
  * Renderer isolation shared by the main window and every trace window
