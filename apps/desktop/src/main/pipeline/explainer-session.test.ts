@@ -817,6 +817,27 @@ describe("session explainer: sessions and restarts", () => {
     expect(narrator.storyCalls).toHaveLength(0);
   });
 
+  it("keeps the current session's latest sync when another session's sync lands in the same tick", async () => {
+    // Review fix 2: one coalescing slot let the other session's sync overwrite this one, losing agent_completed.
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Adding the limiter middleware." });
+    w.agent({ type: "agent_started", prompt: PROMPT }, OTHER);
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(0);
+
+    w.agent({ type: "agent_completed" });
+    explainer.onPipelineSync(w.sync([], []));
+    explainer.onPipelineSync(w.sync([], [], OTHER));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+    expect(w.rows("story")).toHaveLength(1);
+    expect(w.rows(undefined, OTHER)).toEqual([]);
+  });
+
   it("drops a narration that finishes after a session switch", async () => {
     const w = new World();
     const narrator = new ScriptedNarrator(w);
