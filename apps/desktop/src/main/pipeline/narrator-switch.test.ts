@@ -52,6 +52,20 @@ describe("createNarratorSwitch (spec E15)", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
+  it("without a key, still tells subscribers when the setting flips, so status.narrator moves between unavailable and off (R3)", () => {
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, createClient: () => createFakeNarratorClient({}) });
+    const seen: [unknown, string][] = [];
+    narrator.subscribe((next) => {
+      seen.push([next, narrator.availability()]);
+    });
+    narrator.setEnabled(false);
+    narrator.setEnabled(true);
+    expect(seen).toEqual([
+      [null, "off_setting"],
+      [null, "off_no_key"],
+    ]);
+  });
+
   it("builds the Anthropic-backed client by default without touching the network", () => {
     const narrator = createNarratorSwitch({ enabled: true, env: { ANTHROPIC_API_KEY: "sk-test" } });
     expect(typeof narrator.current()?.describeComponents).toBe("function");

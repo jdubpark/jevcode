@@ -11,6 +11,7 @@ export interface NarratorSwitch {
   current(): NarratorClient | null;
   availability(): NarratorAvailability;
   setEnabled(enabled: boolean): void;
+  /** Called when the client or the availability changes; read `availability()` for the reason. */
   subscribe(listener: (client: NarratorClient | null) => void): () => void;
 }
 
@@ -49,10 +50,11 @@ export function createNarratorSwitch(options: NarratorSwitchOptions): NarratorSw
     availability: () => narratorAvailability(enabled, options.env),
     setEnabled(next) {
       if (next === enabled) return;
-      const before = resolve();
+      const before = { client: resolve(), availability: narratorAvailability(enabled, options.env) };
       enabled = next;
       const after = resolve();
-      if (after === before) return;
+      // Without a key the client stays null, but the reason changes (status.narrator "unavailable" vs "off", R3).
+      if (after === before.client && narratorAvailability(enabled, options.env) === before.availability) return;
       for (const listener of listeners) listener(after);
     },
     subscribe(listener) {
