@@ -17,6 +17,14 @@ import {
   clipChars,
 } from "./prompts.js";
 import type { KeyedState } from "./prompts.js";
+import {
+  DECISION_WHY_MAX_TOKENS,
+  DECISION_WHY_SYSTEM_PROMPT,
+  SESSION_STORY_MAX_TOKENS,
+  SESSION_STORY_SYSTEM_PROMPT,
+  buildDecisionWhyState,
+  buildSessionStoryState,
+} from "./session.js";
 import { NARRATOR_MAX_BATCH, NARRATOR_MODEL, NARRATOR_TIMEOUT_MS } from "./types.js";
 import type {
   DescribedComponent,
@@ -186,11 +194,37 @@ export function createNarratorClient(transport: NarratorTransport, options: Narr
         call,
       );
     },
-    sessionStory() {
-      return Promise.reject(new NarratorUnavailableError("unsupported", "sessionStory is added by lane 07 task S-1"));
+    sessionStory(input, call) {
+      if (input.recentSteps.length === 0 && input.decisions.length === 0 && input.touchedComponents.length === 0) {
+        return Promise.resolve(emptyResult<NarrativeSentence[]>([], model));
+      }
+      const keyed = buildSessionStoryState(input);
+      return ask<NarrativeSentence[]>(
+        {
+          system: SESSION_STORY_SYSTEM_PROMPT,
+          state: keyed.state,
+          schema: SENTENCES_OUTPUT_JSON_SCHEMA,
+          maxTokens: SESSION_STORY_MAX_TOKENS,
+          empty: [],
+          parse: (json) => parseSentences(json, keyed),
+        },
+        call,
+      );
     },
-    decisionWhy() {
-      return Promise.reject(new NarratorUnavailableError("unsupported", "decisionWhy is added by lane 07 task S-1"));
+    decisionWhy(input, call) {
+      const keyed = buildDecisionWhyState(input);
+      return ask<NarrativeSentence | null>(
+        {
+          system: DECISION_WHY_SYSTEM_PROMPT,
+          state: keyed.state,
+          schema: SENTENCES_OUTPUT_JSON_SCHEMA,
+          maxTokens: DECISION_WHY_MAX_TOKENS,
+          empty: null,
+          // An answer without a sentence counts as schema-invalid: value null, schemaValid false.
+          parse: (json) => parseSentences(json, keyed)?.[0] ?? null,
+        },
+        call,
+      );
     },
   };
 }
