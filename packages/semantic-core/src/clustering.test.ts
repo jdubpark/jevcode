@@ -532,7 +532,7 @@ describe("clustering: passing-run attachment (SPEC 6.3)", () => {
     expect(fooUnit?.validationResults).toEqual([green]);
   });
 
-  it("red to green across buckets: a unit reached only through a failure gets the next passing run", () => {
+  it("red to green after the test file changed in an earlier bucket: a unit reached only through a failure gets the next passing run", () => {
     // The test file was written in an earlier bucket, so only the failure ties it to R1.
     const result = run([
       seq({ fact: hunk("tests/foo.test.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
@@ -570,6 +570,20 @@ describe("clustering: passing-run attachment (SPEC 6.3)", () => {
     const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
     expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 30)), validationAt(result, tsOf(0, 40))]);
     expect(unitA?.evidence).not.toContain("again");
+    expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
+  });
+
+  it("a failing rerun with no edit and no failure file reaches the latest batch, so the red run is never orphaned", () => {
+    const result = run([
+      seq({ fact: hunk("src/b.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "pass1", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 3 }), factId: "pass2", seq: 4, batchId: 3 }),
+      seq({ fact: testResult(tsOf(0, 40), { passed: 2, failed: 1 }), factId: "fail", seq: 5, batchId: 4 }),
+    ]);
+    const unitA = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
+    expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 30)), validationAt(result, tsOf(0, 40))]);
     expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
   });
 

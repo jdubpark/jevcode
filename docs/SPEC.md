@@ -422,6 +422,7 @@ Node types: `Task`, `ChangeUnit`, `File`, `Symbol`, `Dependency`, `Decision`, `V
   - If the run's command (the trimmed command string) already ran earlier in the bucket, the range is the windows after the previous run of any command, up to and including the run's own window.
   - On the command's first run in the bucket, the range starts after the last run that came before the most recent change. With edits since the previous run, that is the same range. With no edits since, it is the batch the previous run covered, so a second command run right after the first reaches what the first reached, not nothing and not the whole bucket.
   - A change in the run's own window counts whatever its order inside the window.
+  - A failing run whose range has no change (a rerun with no edit since the previous run) reaches the batch the previous run covered, so a red run always reaches a unit.
   - A passing run also reaches every unit whose latest attached run of the bucket failed. "Latest" is by window, and a failure in that window wins. A failing run's failure hosts (below) count as attached to it. This covers red to green (the failing test unit gets the passing run, though only the source file changed) and a flaky rerun with no edit (the pass reaches the units the failure reached, once).
   - A unit outside the range and not left failed keeps its earlier runs and does not receive the new one.
 - Failing tests attach to ChangeUnits via: (a) failing test file in the unit's file set, and (b) test name mentioning a unit symbol.
