@@ -75,6 +75,57 @@ describe("displayUntrusted", () => {
     const clean = "👩‍👩‍👧 한국어/경로/파일.ts";
     expect(displayUntrusted(clean)).toBe(clean);
   });
+  // Lane fix I-4: every control, format, separator and default-ignorable code point that can hide or reorder text.
+  it.each([
+    ["Arabic letter mark", "a\u061Cb", "a⟨U+061C⟩b"],
+    ["DEL", "a\u007Fb", "a⟨U+007F⟩b"],
+    ["C1 next line", "a\u0085b", "a⟨U+0085⟩b"],
+    ["C1 control sequence introducer", "a\u009B31mb", "a⟨U+009B⟩31mb"],
+    ["line separator", "a\u2028b", "a⟨U+2028⟩b"],
+    ["paragraph separator", "a\u2029b", "a⟨U+2029⟩b"],
+    ["zero width space", "rm\u200B -rf", "rm⟨U+200B⟩ -rf"],
+    ["zero width non-joiner", "a\u200Cb", "a⟨U+200C⟩b"],
+    ["zero width joiner between letters", "a\u200Db", "a⟨U+200D⟩b"],
+    ["word joiner", "a\u2060b", "a⟨U+2060⟩b"],
+    ["invisible plus", "a\u2064b", "a⟨U+2064⟩b"],
+    ["byte order mark", "\uFEFFfile.ts", "⟨U+FEFF⟩file.ts"],
+    ["soft hyphen", "pass\u00ADword", "pass⟨U+00AD⟩word"],
+    ["Hangul filler", "admin\u3164", "admin⟨U+3164⟩"],
+    ["Hangul choseong and jungseong fillers", "x\u115F\u1160y", "x⟨U+115F⟩⟨U+1160⟩y"],
+    ["halfwidth Hangul filler", "a\uFFA0b", "a⟨U+FFA0⟩b"],
+    ["tag characters after a letter", "a\u{E0067}\u{E007F}b", "a⟨U+E0067⟩⟨U+E007F⟩b"],
+    ["a variation selector after a letter", "a\uFE0Fb", "a⟨U+FE0F⟩b"],
+    ["carriage return", "a\rb", "a⟨U+000D⟩b"],
+  ])("shows %s as a visible token", (_name, input, expected) => {
+    expect(displayUntrusted(input)).toBe(expected);
+    expect(displayUntrusted(input, { multiline: true })).toBe(expected);
+  });
+
+  it.each([
+    ["an emoji ZWJ family", "👩‍👩‍👧"],
+    ["a heart with VS16", "❤️ done"],
+    ["a check mark with VS16", "✔️ passed"],
+    ["a digit keycap", "step 1️⃣"],
+    ["a hash keycap", "#️⃣ tag"],
+    ["a subdivision flag", "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Scotland"],
+    ["a combining accent", "cafe\u0301"],
+    ["Hangul syllables", "한국어/경로/파일.ts"],
+  ])("keeps %s as it renders", (_name, input) => {
+    expect(displayUntrusted(input)).toBe(input);
+  });
+
+  it("tokenizes a hidden character beside a kept emoji, and keeps tabs and multi-line breaks on the slow path", () => {
+    expect(displayUntrusted("❤️\u202Eok")).toBe("❤️⟨U+202E⟩ok");
+    expect(displayUntrusted("a\tb\u200B\nc", { multiline: true })).toBe("a\tb⟨U+200B⟩\nc");
+    expect(displayUntrusted("a\tb\u200B\nc")).toBe("a\tb⟨U+200B⟩⟨U+000A⟩c");
+    const plain = "line 1\nline 2\twith tab";
+    expect(displayUntrusted(plain, { multiline: true })).toBe(plain);
+  });
+
+  it("truncateMiddle cuts after tokenizing and never splits a kept emoji", () => {
+    expect(truncateMiddle("src/\u200Bsecret.ts", 48)).toBe("src/⟨U+200B⟩secret.ts");
+    expect(truncateMiddle(`${"👩‍👩‍👧".repeat(30)}.ts`, 10)).toMatch(/^(👩‍👩‍👧)+…(👩‍👩‍👧)*\.ts$/u);
+  });
 });
 
 describe("exitLabel", () => {

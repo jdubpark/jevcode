@@ -56,7 +56,7 @@ export function buildReviewNote(session: TraceSession, index: TraceIndex, select
   const firstLine = `Re: trace ${session.meta.sessionId} ${formatOffset(tMs)} "${title}" (seq ${firstSeq}${
     evidenceSeqs.length > 0 ? `; evidence seq ${evidenceSeqs.join(", ")}` : ""
   })`;
-  const lines = [firstLine, `Session: ${oneLine(displayUntrusted(session.meta.repoName))} / ${displayUntrusted(firstLineOf(session.meta.prompt))}`];
+  const lines = [firstLine, `Session: ${displayUntrusted(oneLine(session.meta.repoName))} / ${displayUntrusted(firstLineOf(session.meta.prompt))}`];
 
   const isClaimStep = step !== undefined && session.turns.some((turn) => turn.claimStepId === step.id);
   const claimText = finding?.claim?.claim.text ?? (isClaimStep ? step?.text : undefined);
