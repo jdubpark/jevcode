@@ -333,7 +333,7 @@ function Architecture({
       </div>
     );
   }
-  const counts = `${architecture.componentCount} components${architecture.touched.length > 0 ? ` · ${architecture.touched.length} touched` : ""}`;
+  const counts = `${architecture.componentCount} ${architecture.componentCount === 1 ? "component" : "components"}${architecture.touched.length > 0 ? ` · ${architecture.touched.length} touched` : ""}`;
   const scan = overview === null ? null : overviewStatusOf(overview.snapshot).scan;
   // Ruling R3 narrator words; a Brief built without an overview keeps "Descriptions pending".
   const narrator = overview === null ? "Descriptions pending" : narratorNote(overview);
