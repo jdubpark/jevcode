@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { ChangeUnit, Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
 import { PipelineCoordinator } from "@jevcode/semantic-core";
-import type { FailureRecord, PipelineStores } from "@jevcode/semantic-core";
+import type { FailureRecord, GraphEdge, GraphNode, PipelineStores } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it } from "vitest";
@@ -528,25 +528,46 @@ describe("storage stores: projection lists (lane 07 PL-3)", () => {
     expect(stores.units.all()).toHaveLength(3);
   });
 
-  it("reads the graph nodes and edges once until a node or an edge is written", () => {
+  it("keeps the graph lists equal to a fresh read: its own writes go in place, any other writer's make it read", () => {
     const { db, stores } = open();
     const reads = countReads(db);
-    stores.graph.upsertNodes([{ id: "node_1", sessionId: SESSION, type: "File", label: "src/a.ts" }]);
-    stores.graph.upsertEdges([{ id: "edge_1", sessionId: SESSION, from: "node_1", to: "node_1", type: "DEPENDS_ON" }]);
-    const nodes = stores.graph.nodes();
-    const edges = stores.graph.edges();
+    const node = (id: string, label: string): GraphNode => ({ id, sessionId: SESSION, type: "File", label, data: { path: label } });
+    const edge = (id: string, to: string): GraphEdge => ({ id, sessionId: SESSION, from: "node_1", to, type: "DEPENDS_ON" });
+    const fresh = () => ({
+      nodes: db.listGraphNodes(SESSION).map((record) => record.id),
+      edges: db.listGraphEdges(SESSION).map((record) => record.id),
+    });
+    stores.graph.upsertNodes([node("node_1", "src/a.ts"), node("node_2", "src/b.ts")]);
+    stores.graph.upsertEdges([edge("edge_1", "node_2")]);
     stores.graph.nodes();
     stores.graph.edges();
     expect([reads.nodes, reads.edges]).toEqual([1, 1]);
-    // An unchanged node is not written, so nothing is read again.
-    stores.graph.upsertNodes([{ id: "node_1", sessionId: SESSION, type: "File", label: "src/a.ts" }]);
+    // An unchanged node is not written; rows of other kinds leave the lists as they are.
+    stores.graph.upsertNodes([node("node_1", "src/a.ts")]);
     stores.units.upsert(unit("cu_1"));
-    expect(stores.graph.nodes()).toEqual(nodes);
-    expect(stores.graph.edges()).toEqual(edges);
+    // The store's own writes, an update and new rows, are taken without a read, where a fresh read puts them.
+    stores.graph.upsertNodes([node("node_3", "src/c.ts"), node("node_1", "src/a2.ts")]);
+    stores.graph.upsertEdges([edge("edge_2", "node_3"), edge("edge_1", "node_3")]);
+    const nodes = stores.graph.nodes();
+    const edges = stores.graph.edges();
     expect([reads.nodes, reads.edges]).toEqual([1, 1]);
-    stores.graph.upsertNodes([{ id: "node_2", sessionId: SESSION, type: "File", label: "src/b.ts" }]);
-    expect(stores.graph.nodes().map((node) => node.id).sort()).toEqual(["node_1", "node_2"]);
-    expect(stores.graph.edges()).toEqual(edges);
-    expect([reads.nodes, reads.edges]).toEqual([2, 1]);
+    const listed = { nodes: nodes.map((entry) => entry.id), edges: edges.map((entry) => entry.id) };
+    expect(listed).toEqual(fresh());
+    expect(nodes.find((entry) => entry.id === "node_1")).toEqual({
+      id: "node_1",
+      sessionId: SESSION,
+      type: "File",
+      label: "src/a2.ts",
+      data: { label: "src/a2.ts", path: "src/a2.ts" },
+    });
+    expect(edges.find((entry) => entry.id === "edge_1")?.to).toBe("node_3");
+    reads.nodes = 0;
+    reads.edges = 0;
+    // A row written past the store (another writer) is read.
+    db.upsertGraphNode(SESSION, { id: "node_4", nodeType: "File", payload: { label: "src/d.ts" } });
+    const afterForeign = stores.graph.nodes().map((entry) => entry.id);
+    stores.graph.edges();
+    expect([reads.nodes, reads.edges]).toEqual([1, 0]);
+    expect(afterForeign).toEqual(fresh().nodes);
   });
 });

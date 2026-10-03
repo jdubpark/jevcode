@@ -5,7 +5,8 @@ import type {
   SemanticEvent,
   ValidationResult,
 } from "@jevcode/contracts";
-import type { EventStoreType, JevcodeDb } from "@jevcode/storage";
+import { GraphEdgeRecordSchema, GraphNodeRecordSchema } from "@jevcode/storage";
+import type { EventStoreType, GraphEdgeRecord, GraphNodeRecord, JevcodeDb } from "@jevcode/storage";
 import type {
   ChangeUnitStore,
   DecisionStore,
@@ -50,9 +51,10 @@ export function createStorageStores(
  * state), 15 ms each at 1,459 units. The list is the database's own read, so it holds what a new read would, in the
  * same order; each caller gets its own array. The objects are shared: no reader changes them.
  */
-class ProjectionCache<T> {
+class ProjectionCache<T extends { id: string }> {
   private version = -1;
-  private items: readonly T[] = [];
+  private items: T[] = [];
+  private readonly at = new Map<string, number>();
 
   constructor(
     private readonly db: JevcodeDb,
@@ -64,10 +66,50 @@ class ProjectionCache<T> {
     const version = this.db.projectionVersion(this.type);
     if (version !== this.version) {
       this.items = this.read();
+      this.at.clear();
+      this.items.forEach((item, index) => this.at.set(item.id, index));
       this.version = version;
     }
     return [...this.items];
   }
+
+  /**
+   * After the store's own write of one row, given as a fresh read returns it: the list takes it in place of a read.
+   * For a list read in rowid order (no ORDER BY; the graph tables), an upsert keeps a row's place and a new row comes
+   * last. Taken only when that write is the one row applied since the list was current; otherwise the next list()
+   * reads, so another writer's rows are never missed.
+   */
+  wrote(item: T): void {
+    if (this.db.projectionVersion(this.type) !== this.version + 1) return;
+    const index = this.at.get(item.id);
+    if (index === undefined) {
+      this.at.set(item.id, this.items.length);
+      this.items.push(item);
+    } else {
+      this.items[index] = item;
+    }
+    this.version += 1;
+  }
+}
+
+function graphNodeOf(record: GraphNodeRecord): GraphNode {
+  return {
+    id: record.id,
+    sessionId: record.sessionId,
+    type: record.nodeType as GraphNode["type"],
+    label: String(record.payload["label"] ?? record.id),
+    data: record.payload,
+  };
+}
+
+function graphEdgeOf(record: GraphEdgeRecord): GraphEdge {
+  return {
+    id: record.id,
+    sessionId: record.sessionId,
+    from: record.fromId,
+    to: record.toId,
+    type: record.edgeType as GraphEdge["type"],
+  };
 }
 
 class StorageChangeUnitStore implements ChangeUnitStore {
@@ -129,35 +171,24 @@ class StorageGraphStore implements GraphStore {
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
   ) {
-    this.nodeList = new ProjectionCache(db, "graph_node", () =>
-      db.listGraphNodes(sessionId).map((record) => ({
-        id: record.id,
-        sessionId: record.sessionId,
-        type: record.nodeType as GraphNode["type"],
-        label: String(record.payload["label"] ?? record.id),
-        data: record.payload,
-      })),
-    );
-    this.edgeList = new ProjectionCache(db, "graph_edge", () =>
-      db.listGraphEdges(sessionId).map((record) => ({
-        id: record.id,
-        sessionId: record.sessionId,
-        from: record.fromId,
-        to: record.toId,
-        type: record.edgeType as GraphEdge["type"],
-      })),
-    );
+    this.nodeList = new ProjectionCache(db, "graph_node", () => db.listGraphNodes(sessionId).map(graphNodeOf));
+    this.edgeList = new ProjectionCache(db, "graph_edge", () => db.listGraphEdges(sessionId).map(graphEdgeOf));
   }
+
+  // A rebuild writes the graph rows that changed, and every snapshot lists the graph: 15,000 edges and 6,000 nodes at
+  // 2,937 units, 40-70 ms to read and parse again. The lists take the rows this store writes, parsed as listGraphNodes
+  // and listGraphEdges parse them, so a snapshot after a rebuild reads nothing (lane 07 PL-3).
 
   upsertNodes(nodes: readonly GraphNode[]): void {
     for (const node of nodes) {
       const json = JSON.stringify(node);
       if (this.lastNodes.get(node.id) === json) continue;
-      this.db.upsertGraphNode(this.sessionId, {
+      const stored = this.db.upsertGraphNode(this.sessionId, {
         id: node.id,
         nodeType: node.type,
         payload: { label: node.label, ...(node.data ?? {}) },
       });
+      this.nodeList.wrote(graphNodeOf(GraphNodeRecordSchema.parse(JSON.parse(stored.payloadJson))));
       this.lastNodes.set(node.id, json);
     }
   }
@@ -166,13 +197,14 @@ class StorageGraphStore implements GraphStore {
     for (const edge of edges) {
       const json = JSON.stringify(edge);
       if (this.lastEdges.get(edge.id) === json) continue;
-      this.db.upsertGraphEdge(this.sessionId, {
+      const stored = this.db.upsertGraphEdge(this.sessionId, {
         id: edge.id,
         fromId: edge.from,
         toId: edge.to,
         edgeType: edge.type,
         payload: {},
       });
+      this.edgeList.wrote(graphEdgeOf(GraphEdgeRecordSchema.parse(JSON.parse(stored.payloadJson))));
       this.lastEdges.set(edge.id, json);
     }
   }
