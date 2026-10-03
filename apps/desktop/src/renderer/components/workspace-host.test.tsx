@@ -198,8 +198,9 @@ describe("WorkspaceHost after the dock move (spec §9)", () => {
   });
 });
 
-// The Electron smoke failed with "useActions must be used within an ActionProvider": the desktop mounted its own
-// @json-render/react provider (zod 3 peer) around ui-catalog components that read ui-catalog's copy (zod 4 peer).
+// Regression: the desktop once mounted its own @json-render/react provider (a second copy, zod 3 peer) around
+// ui-catalog components that read ui-catalog's copy (zod 4 peer), so they threw "useActions must be used within an
+// ActionProvider". The desktop no longer depends on @json-render/react; surfaces render through CatalogSurface.
 describe("WorkspaceHost catalog surfaces answer through action:invoke", () => {
   const decisionSpec = {
     root: "decision",

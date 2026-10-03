@@ -68,9 +68,6 @@ importers:
       '@json-render/core':
         specifier: 0.21.0
         version: 0.21.0(zod@3.25.76)
-      '@json-render/react':
-        specifier: 0.21.0
-        version: 0.21.0(react@19.2.3)(zod@3.25.76)
       '@xterm/xterm':
         specifier: ^5.5.0
         version: 5.5.0
@@ -3134,13 +3131,6 @@ snapshots:
   '@json-render/core@0.21.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
-
-  '@json-render/react@0.21.0(react@19.2.3)(zod@3.25.76)':
-    dependencies:
-      '@json-render/core': 0.21.0(zod@3.25.76)
-      react: 19.2.3
-    transitivePeerDependencies:
-      - zod
 
   '@json-render/react@0.21.0(react@19.2.3)(zod@4.3.6)':
     dependencies:
