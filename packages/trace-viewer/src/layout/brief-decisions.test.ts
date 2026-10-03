@@ -109,6 +109,25 @@ describe("buildBriefDecisions", () => {
     expect(buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true })).map((card) => card.decisionId)).toEqual(["d3", "d2"]);
   });
 
+  it("a decision reopened and answered again in the viewer sorts by its new answer, not its old message (review minor)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Go" });
+    const answer = (id: string) => ({ answer: { decisionId: id, decision: { q: "a" }, evidence: [] } });
+    // d1 answered by a supervisor message (answerSeq), then d2 and d3 answered in the viewer.
+    b.decision({ id: "d1", status: "open" });
+    b.agent({ type: "agent_message", role: "user", text: "Use a." });
+    b.decision({ id: "d1", status: "answered", ...answer("d1") });
+    for (const id of ["d2", "d3"]) {
+      b.decision({ id, status: "open" });
+      b.decision({ id, status: "answered", ...answer(id) });
+    }
+    // d1 reopens and is answered again in the viewer: the old message no longer answers it.
+    b.decision({ id: "d1", status: "open" });
+    b.decision({ id: "d1", status: "answered", ...answer("d1") });
+    const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
+    expect(cards.map((card) => card.decisionId)).toEqual(["d1", "d3"]);
+  });
+
   it("finds no components without an overview", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "Go" });
