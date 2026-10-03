@@ -133,7 +133,7 @@ putOverviewState(repoRoot: string, state: { snapshot: OverviewSnapshot; narrativ
 CREATE INDEX IF NOT EXISTS idx_jev_decisions_session_seq ON jev_decisions (sessionId, seq);
 ```
 
-- `TraceReader` returns the new row types through `trace:rows` and `trace:payloads` (it filters on `TRACE_ROW_TYPES`, so this follows from §1.1). Export redaction covers them.
+- `TraceReader.rows(sessionId, afterSeq, limit, types)` takes the row types as a parameter; the desktop passes `TRACE_ROW_TYPES`, so the new row types come back through `trace:rows` and `trace:payloads` (this follows from §1.1). Export redaction covers them.
 
 ## 3. `packages/codebase-map` (new package `@jevcode/codebase-map`, lane 04)
 
@@ -212,11 +212,12 @@ export function guardComponents(described: unknown, universe: CitationUniverse, 
 export const PLAIN_TEXT_REJECT = /https?:\/\/|```|<\/?[a-z][^>]*>|\*\*|__|^#{1,6}\s/im;
 
 // src/narrator/client.ts
-export function createNarratorClient(transport: TypeSafeTransport, options?: { model?: string; timeoutMs?: number }): NarratorClient;
+export interface NarratorClientOptions { model?: string; timeoutMs?: number; now?: () => number }
+export function createNarratorClient(transport: NarratorTransport, options?: NarratorClientOptions): NarratorClient;
 export function createFakeNarratorClient(script: Partial<Record<keyof NarratorClient, unknown[]>>): NarratorClient; // tests
 ```
 
-`JevResult<T>` and `TypeSafeTransport` are the existing types (`packages/contracts`, `packages/jev-router/src/typesafe-client.ts`).
+`NarratorTransport` (`{ complete(request): Promise<NarratorTransportResponse> }`, `src/narrator/types.ts`) is the narrator's own provider seam; `TypeSafeTransport` is not used by the narrator.
 
 Lane 07 (fix wave I-1): the desktop builds both inputs with every free-text field (prompt, headlines, titles, labels, answers, component names, nearby text) already passed through the Jev stage's `redactText`; ids are never redacted, so the guards check the ids the session holds.
 
@@ -230,6 +231,8 @@ export interface ExplainerStageDeps {
   emitRowsAvailable(sessionId: string, lastSeq: number): void;
   now(): number; schedule: { setTimeout(fn: () => void, ms: number): unknown; clearTimeout(h: unknown): void };
   log(event: ExplainerLogEvent): void;
+  explainWithModel?(): boolean;                          // preference; false writes narrator "off"; absent reads as on
+  storyIntervalMs?: number;                              // min time between story narrations; default 20,000 ms
 }
 export interface ExplainerStage {
   onRepoOpened(): void;                                  // starts or refreshes the scan (lane 04)
@@ -317,7 +320,7 @@ export interface BriefModel {
   architecture: { overviewSentences: NarrativeSentence[] | null; componentCount: number; touched: string[]; scanning: { done: number; total: number } | null } | null; // lane 06
 }
 export function buildBrief(session: TraceSession, index: TraceIndex): BriefModel;
-// src/ui/inspector/Brief.tsx — rendered by the Inspector region when selection is null; B toggles; Esc from a selection returns to it
+// src/ui/inspector/Brief.tsx — rendered by the Inspector region when selection is null; Shift+B toggles; Esc from a selection returns to it
 ```
 
 ### 6.5 Model additions (lanes 06 and 07)
@@ -397,14 +400,14 @@ The lane files were drafted against the real code, and some names above had to c
   - Lane 05 adds `ExplainerStage.setNarrator`, `ExplainerStageDeps.initialNarrator?`, `briefSources?` and `recordNarratorCall?`.
   - Lane 07's session explainer reads `initialNarrator` and follows `setNarrator`.
 - Lane 04 adds the deps `scanPaths` and `onStatus?` and the methods `status()` and `whenIdle()`. `ExplainerLogEvent` gains an `error` variant with a `where` field (lane 07 adds `"session"`).
-- The explainer registry is `createExplainerRegistry`; `IpcDeps.explainer`; `PipelineRuntimeOptions.onRepoFilesChanged`. Lane 07 adds `onPipelineSync(repoPath, sync)` routed through the registry.
+- The explainer registry is `createExplainerRegistry`; `IpcDeps.explainer`; `PipelineRuntimeOptions.onRepoFilesChanged`. Lane 07 adds `onPipelineSync(sync)` on `ExplainerStage`; the registry has no such method, and `index.ts` routes `explainerRegistry.get(repoPath)?.onPipelineSync(sync)` from the pipeline's `onPipelineSync(repoPath, sync)` option.
 - `extractImports` also returns `exports`. `ScanResult` gains `totalFiles` and `tsconfig`. `ComponentDraft.importsAnalyzed` is added.
 - The `overview:rescan` handler (lane 04) rejects any repo root other than the open repo.
 - Lane 07 fix wave I-2: the `session:switch` handler calls `ExplainerRegistry.sessionSwitched(repoRoot)` through `toExplainer`; the registry forwards it to the open repo's `ExplainerStage.onSessionSwitched()`, which forwards it to `SessionExplainer.onSessionSwitched()`. The session explainer keeps the latest unprocessed sync of each session (one entry per session) and processes the open session's entry, so a session that finished while another one was open gets its final story, whys and highlights.
 
 ### 8.4 Viewer (lanes 02, 06, 07)
 
-- **Location and keys.** `ViewerLocation.view` is optional and accepts any lower-case kind; `InitialViewStateInput.view?` is added. R5: key `0` is Console, and zoom to preset moves to Shift+0.
+- **Location and keys.** `ViewerLocation.view` is optional and accepts any lower-case kind; `InitialViewStateInput.view?` is added. R5: key `0` is Console, and zoom to preset moves to Shift+0. Shift+B toggles the Brief (`keymap.ts`; plain B brushes the chapter in Hybrid).
 - **View state.** `ViewState.brief` with action `brief/toggle`. `ViewState.mapSelection` with action `map/select`; Esc on the Map clears the selection first. Lane 06 fix wave: selecting a step or unit (any `select`, `nav`, search or `nav/first`/`nav/last`) clears `mapSelection` (I-1); on the Map, `brief/toggle` pins the Brief over a selected component and `map/select` unpins it (minor 3).
 - **Exports and icons.** The viewer exports `useView`, `useDispatch`, `useSessionView`, `ViewDefinition`, `ViewProps`, `ViewKind` and `IconName`. New icons: `view-console`, `view-map`, `view-surfaces` and `brief`.
 - **Host and chrome.** `ViewPort.toggle?` and `ViewerHostContext` / `useViewerHost` are added. Embedded chrome also hides the Outline.
@@ -441,7 +444,7 @@ The lane files were drafted against the real code, and some names above had to c
 
 ### 8.5 Desktop renderer (lane 03)
 
-- `EmbeddedWorkspace` takes `{ sessionId, repoRoot, onRequestChanges(text) }`.
+- `EmbeddedWorkspace` takes `{ sessionId, repoRoot, onRequestChanges(text) }`, where `repoRoot` is `string | null`.
 - New files: `workspace/main-host.ts` and `workspace/session-surfaces.ts`.
 - `JevcodeApi.overview.rescan(repoRoot)` is added.
 - The main window answers a decision with `answer_decision` and `{decisionId, decision: {decision: optionId}}`, and main checks that `optionId` is one of the decision's options.
