@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createStaticBundleSource } from "../../sources/static-bundle.js";
+import { buildTraceIndex } from "../../layout/trace-index.js";
+import { foldRows, type TraceSession } from "../../model/index.js";
+import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import {
+  createHarness,
   fixtureBundle,
   foldFixture,
   renderHarness,
@@ -12,8 +16,11 @@ import {
 } from "../../test-support/ui-harness.js";
 import type { ViewerLocation } from "../state/location.js";
 import type { ViewDefinition } from "../views/view-port.js";
+import { ViewStoreContext } from "../state/store.js";
+import { DecisionAnnouncer } from "./DecisionAnnouncer.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
-import { useAnnounce } from "./LiveRegion.js";
+import { LiveRegion, useAnnounce } from "./LiveRegion.js";
+import { SessionContext } from "./session-context.js";
 import { INITIAL_SELECTION_PAINTED } from "./perf.js";
 import { appendCapped, MAX_REPORTED_ERRORS } from "./Shell.js";
 import { TraceViewer } from "./TraceViewer.js";
@@ -312,5 +319,40 @@ describe("Shell", () => {
     }
     expect(screen.getByRole("complementary", { name: "Brief" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Inspector" })).toBeNull();
+  });
+});
+
+describe("DecisionAnnouncer (lane fix m6)", () => {
+  it("announces a decision that becomes pending after the load once, as untrusted text, and none pending at load", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "d0", title: "Already open" });
+    const fold = (): TraceSession =>
+      foldRows(testMeta({ state: "running", lastEventSeq: b.rows.length }), b.rows, { live: true, nowMs: Date.parse("2026-09-18T09:30:00.000Z") });
+    const first = fold();
+    const h = createHarness(first, { state: { loaded: true } });
+    const tree = (session: TraceSession) => (
+      <ViewStoreContext.Provider value={h.store}>
+        <SessionContext.Provider value={{ ...h.view, session, index: buildTraceIndex(session) }}>
+          <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+            <DecisionAnnouncer />
+          </LiveRegion>
+        </SessionContext.Provider>
+      </ViewStoreContext.Provider>
+    );
+    const result = render(tree(first));
+    expect(h.announcements).toEqual([]);
+
+    b.decision({ id: "d1", title: "Keep \u202Eemail login?" });
+    result.rerender(tree(fold()));
+    await waitFor(() => expect(h.announcements).toEqual(["Decision needed: Keep ⟨U+202E⟩email login?"]));
+
+    b.agent({ type: "agent_message", role: "assistant", text: "more" });
+    b.decision({ id: "d1", title: "Keep \u202Eemail login?" });
+    result.rerender(tree(fold()));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(h.announcements).toHaveLength(1);
   });
 });
