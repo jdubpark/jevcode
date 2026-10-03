@@ -915,6 +915,37 @@ describe("session explainer: sessions and restarts", () => {
     expect(w.rows("decision_why")).toHaveLength(1);
   });
 
+  it("stops a multi-page catch-up once disposed, so the app quit that closes the database next logs no error", async () => {
+    // Review fix 5: the fold kept paging after dispose and read the closed database.
+    const w = new World();
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    for (let i = 0; i < 2_500; i += 1) w.agent({ type: "agent_message", role: "assistant", text: `Step ${i}.` });
+    let explainer: SessionExplainer | null = null;
+    let pages = 0;
+    const db = new Proxy(w.db, {
+      get(target, property) {
+        if (property === "listEvents") {
+          return (...args: Parameters<JevcodeDb["listEvents"]>) => {
+            pages += 1;
+            // Quit between the first and the second page (index.ts disposes the stage, then closes the database).
+            if (pages === 1) setImmediate(() => {
+              explainer?.dispose();
+              target.close();
+            });
+            return target.listEvents(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    explainer = createSessionExplainer({ ...w.deps(null), db });
+    explainer.onPipelineSync({ sessionId: SESSION, lastSeq: 2_501, changeUnits: [], decisions: [] });
+    await explainer.idle();
+    expect(w.logs.filter((event) => event.kind === "error")).toEqual([]);
+    expect(pages).toBe(1);
+  });
+
   it("after a restart it repeats nothing and triggers only on later events", async () => {
     const w = new World();
     const narrator = new ScriptedNarrator(w);
