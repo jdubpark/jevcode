@@ -2,6 +2,7 @@
 import { overviewStatusOf, type Entity, type OverviewModel, type TraceSession } from "../model/index.js";
 import type { BriefArchitecture } from "./brief.js";
 import { componentForPath } from "./map-layout.js";
+import { enterSession, sessionSlot } from "./session-slots.js";
 
 function firstSeq(stepIds: readonly string[]): number {
   let min = Number.POSITIVE_INFINITY;
@@ -38,12 +39,20 @@ function stableTouched(overview: OverviewModel, touched: string[]): string[] {
 /** The inputs of the last part built: it reads only the overview and the entities. */
 let last: { overview: OverviewModel; entities: readonly Entity[]; architecture: BriefArchitecture } | null = null;
 
+sessionSlot({
+  clear: () => {
+    last = null;
+  },
+  held: () => (last === null ? [] : [last.overview, last.entities]),
+});
+
 /**
  * null until an overview_snapshot row arrives (spec §8.1). `touched` lists the components of this session's edited
  * files in order of first edit; `scanning` is the progress of a running scan (ruling R3), else null. A commit that
  * changes neither the overview nor the entities (finalize keeps both the same objects) gets the previous part.
  */
 export function briefArchitecture(session: TraceSession): BriefArchitecture | null {
+  enterSession(session.meta.sessionId);
   const overview = session.overview;
   if (overview === null) return null;
   if (last !== null && last.overview === overview && last.entities === session.entities) return last.architecture;

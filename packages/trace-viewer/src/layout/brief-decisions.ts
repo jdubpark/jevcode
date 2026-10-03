@@ -11,6 +11,7 @@ import type {
   TraceSession,
 } from "../model/index.js";
 import { componentForPath } from "./map-layout.js";
+import { enterSession, sessionSlot } from "./session-slots.js";
 import { stepDigest } from "./step-digest.js";
 
 // Spec §3.5: a decision is a card in the Brief's Now while it is pending; the latest decided ones stay, with
@@ -173,11 +174,19 @@ let lastCards: {
   cards: readonly BriefDecisionCard[];
 } | null = null;
 
+sessionSlot({
+  clear: () => {
+    lastCards = null;
+  },
+  held: () => (lastCards === null ? [] : [lastCards.picked, lastCards.chapters, lastCards.overview, lastCards.why]),
+});
+
 /**
  * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones, the most recently
  * answered first (at most BRIEF_DECIDED_MAX).
  */
 export function buildBriefDecisions(session: TraceSession): readonly BriefDecisionCard[] {
+  enterSession(session.meta.sessionId);
   const cached = cache.get(session);
   if (cached !== undefined) return cached;
   const picked = pickedSteps(session.steps);

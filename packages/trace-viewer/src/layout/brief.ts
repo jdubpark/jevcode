@@ -1,9 +1,10 @@
 import type { NarrativeSentence } from "@jevcode/contracts";
 
-import type { Chapter, Finding, Step, TraceSession } from "../model/index.js";
+import type { Chapter, Entity, Finding, Step, StepId, TraceSession } from "../model/index.js";
 import type { TraceIndex } from "./trace-index.js";
 import { briefArchitecture } from "./brief-architecture.js";
 import { buildBriefDecisions, decisionSteps, type BriefDecisionCard } from "./brief-decisions.js";
+import { enterSession, sessionSlot } from "./session-slots.js";
 import { changedStepIds, stepDigest } from "./step-digest.js";
 
 export type { BriefDecisionCard } from "./brief-decisions.js";
@@ -108,6 +109,20 @@ let lastChanges: {
   changes: BriefChange[];
 } | null = null;
 
+sessionSlot({
+  clear: () => {
+    lastChanges = null;
+  },
+  held: () => (lastChanges === null ? [] : [lastChanges.shown, lastChanges.steps, lastChanges.findingsById]),
+});
+
+function sameChange(a: BriefChange, b: BriefChange): boolean {
+  return (
+    a.unitId === b.unitId && a.title === b.title && a.added === b.added && a.removed === b.removed && a.attention === b.attention &&
+    (a.tests === null || b.tests === null ? a.tests === b.tests : a.tests.passed === b.tests.passed && a.tests.failed === b.tests.failed)
+  );
+}
+
 /** Whether an entry built for the previous commit still holds: it read no step whose id changed, and the same findings. */
 function stillHolds(entry: ChangeEntry, chapter: Chapter, changedIds: readonly string[], index: TraceIndex, sameFindings: boolean): boolean {
   for (const id of changedIds) if (entry.ids.has(id)) return false;
@@ -125,8 +140,7 @@ function changesOf(session: TraceSession, index: TraceIndex): BriefChange[] {
   const findingsById = index.findingsById;
   const last = lastChanges;
   if (last !== null && last.shown === shown && last.steps === steps && last.findingsById === findingsById) return last.changes;
-  const changedIds = last === null ? null : last.steps === steps ? [] : changedStepIds(last.steps, steps);
-  const changed = changedIds === null ? null : [...changedIds];
+  const changed = last === null ? null : last.steps === steps ? [] : changedStepIds(last.steps, steps);
   const sameFindings = last?.findingsById === findingsById;
   // The previous entry of a chapter: by position while the shown list is the same object, else by chapter object.
   let previousOf: (chapter: Chapter, at: number) => ChangeEntry | undefined = () => undefined;
@@ -141,6 +155,14 @@ function changesOf(session: TraceSession, index: TraceIndex): BriefChange[] {
       previousOf = (chapter) => byChapter.get(chapter);
     }
   }
+  // A rebuilt change equal to the unit's previous one keeps that object (an answered decision re-reads its unit).
+  let lastByUnit: Map<string, BriefChange> | null = null;
+  const reuse = (entry: ChangeEntry): ChangeEntry => {
+    if (last === null) return entry;
+    lastByUnit ??= new Map(last.changes.map((change) => [change.unitId, change]));
+    const was = lastByUnit.get(entry.change.unitId);
+    return was !== undefined && sameChange(was, entry.change) ? { ...entry, change: was } : entry;
+  };
   const entries: ChangeEntry[] = [];
   const changes: BriefChange[] = [];
   let kept = last !== null && last.changes.length === shown.length;
@@ -149,7 +171,7 @@ function changesOf(session: TraceSession, index: TraceIndex): BriefChange[] {
     const entry =
       previous !== undefined && changed !== null && stillHolds(previous, chapter, changed, index, sameFindings)
         ? previous
-        : changeOf(chapter, session, index);
+        : reuse(changeOf(chapter, session, index));
     entries.push(entry);
     changes.push(entry.change);
     if (entry.change !== last?.changes[at]) kept = false;
@@ -167,6 +189,7 @@ function changesOf(session: TraceSession, index: TraceIndex): BriefChange[] {
  * and the chapters that list them.
  */
 export function buildBrief(session: TraceSession, index: TraceIndex): BriefModel {
+  enterSession(session.meta.sessionId);
   const chapters = shownChapters(session.chapters);
   const story = session.explainer.story;
   return {
@@ -183,4 +206,41 @@ export function buildBrief(session: TraceSession, index: TraceIndex): BriefModel
     architecture: briefArchitecture(session),
     decisions: buildBriefDecisions(session),
   };
+}
+
+/** A file this session edited, for the Brief's edited-files list. */
+export interface EditedFile {
+  path: string;
+  added: number;
+  removed: number;
+  /** The file's latest edit step, which a click selects (as a file location does, Shell selectionFromStableId). */
+  stepId: StepId;
+  /** That step's first seq, which its id encodes (`step:<firstSeq>`, stepStableId). */
+  seq: number;
+}
+
+const editedByEntities = new WeakMap<readonly Entity[], { all?: readonly EditedFile[]; ungrouped?: readonly EditedFile[] }>();
+
+/**
+ * The session's edited files, newest edit first: the D-3 rail's "Files in play" before any change unit exists, and
+ * once units exist the files no unit holds yet (`ungroupedOnly`, lane triage t3). Cached per entities list, which
+ * finalize keeps the same object until an edit changes it.
+ */
+export function editedFilesOf(entities: readonly Entity[], ungroupedOnly = false): readonly EditedFile[] {
+  let cached = editedByEntities.get(entities);
+  if (cached === undefined) editedByEntities.set(entities, (cached = {}));
+  const hit = ungroupedOnly ? cached.ungrouped : cached.all;
+  if (hit !== undefined) return hit;
+  const files: EditedFile[] = [];
+  for (const entity of entities) {
+    if (ungroupedOnly && entity.chapterIds.length > 0) continue;
+    const stepId = entity.stepIds.at(-1);
+    if (stepId === undefined) continue;
+    const seq = Number(stepId.slice("step:".length));
+    files.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId, seq: Number.isFinite(seq) ? seq : 0 });
+  }
+  files.sort((a, b) => b.seq - a.seq || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  if (ungroupedOnly) cached.ungrouped = files;
+  else cached.all = files;
+  return files;
 }
