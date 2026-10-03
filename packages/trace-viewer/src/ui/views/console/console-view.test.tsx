@@ -750,6 +750,38 @@ describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
     expect(m.h.store.get().selection).toBe(stepIds[0]);
   });
 
+  it("j/k from a guardrail member picked with the pointer move to the neighbouring rows, not to the ends (review minor)", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "agent_message", role: "assistant", text: "before" });
+    const seqs = [b.jev({ id: "j1", clamps: ["security_path"] }), b.jev({ id: "j2", clamps: ["security_path"] })];
+    b.agent({ type: "agent_message", role: "assistant", text: "after" });
+    b.agent({ type: "agent_message", role: "assistant", text: "last" });
+    const session = live(b);
+    const stepAtSeq = (seq: number): string => session.steps.find((step) => step.firstSeq === seq)?.id ?? "";
+    const [before, after] = ["before", "after"].map((text) => session.steps.find((step) => step.text === text)?.id);
+    const m = mountConsole(session, { state: { view: "console", follow: false, loaded: true }, keys: true });
+    await frames();
+    const feed = within(screen.getByRole("feed", { name: "Console" }));
+    fireEvent.click(feed.getByRole("button", { name: "Expand guardrails" }));
+    await frames();
+    const pickSecond = (): void => {
+      fireEvent.click(feed.getAllByRole("button", { name: /^Flag:/ })[1] as HTMLElement);
+      expect(m.h.store.get().selection).toBe(stepAtSeq(seqs[1] ?? 0));
+    };
+    const press = (code: string, key: string): void => {
+      act(() => {
+        fireEvent.keyDown(document.body, { code, key });
+      });
+    };
+    pickSecond();
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(after);
+    pickSecond();
+    press("KeyK", "k");
+    expect(m.h.store.get().selection).toBe(before);
+  });
+
   it("an Outline or Brief click on the already-selected item reveals it in the Console", async () => {
     const b = messages(120);
     const session = live(b);

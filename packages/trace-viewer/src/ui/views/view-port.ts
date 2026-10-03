@@ -32,6 +32,11 @@ export interface ZoomPort {
 export interface ViewPort {
   /** j/k order; an unknown id falls back to its ancestor (step → unit). */
   readingOrder(): readonly SelectionId[];
+  /**
+   * The readingOrder entry that stands for `id`, or null: j/k map the selection through it before looking it up. The
+   * Console answers with the first step of the row that shows `id` (a folded guardrail member, a later read).
+   */
+  readingEntry?(id: SelectionId): SelectionId | null;
   reveal(id: SelectionId, options: { animate: boolean }): void;
   captureCamera(): CanvasCamera | HybridCamera | null;
   focusSelected(): void;
