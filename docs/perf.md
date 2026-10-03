@@ -355,3 +355,85 @@ The Console's per-frame drift anchor (a `getBoundingClientRect` of the top row a
 runs only when diagnostics are enabled, that is in the dev host's selftest. The runs above measured it; production
 frames since the lane 02b fix wave (triage t1) do no layout read in the frame handler, so the scroll result is an upper
 bound for them as well.
+
+## Pipeline write volume (2026-10-03, PL-1)
+
+Every pipeline store write appends an `events` row. Before PL-1 two things made the trace grow quadratically in a
+working session. The validation, failure and decision stores wrote every record again on every rebuild, with no
+unchanged-payload check (the change-unit and graph stores already had one). And a passing test run attached to every
+unit with a file in its idle bucket; a bucket ends only after 120 s without facts, so an agent that keeps working
+stays in one bucket, every unit collects every run, and each new run or hunk rewrites every unit. The D-6 smoke
+database had 3,256 validation rows, 3,176 of them byte-identical, and 8.8 KB `change_unit` rows carrying 80 validation
+ids each.
+
+Fixes:
+
+- Stores (5dc88c7, 123ee1b). The three stores write only when the payload differs from the row last written for that
+  id (`apps/desktop/src/main/pipeline/storage-stores.ts`). The decision store compares with the database's current
+  row through `getDecision`, in the form the projection keeps, because the runtime also writes decisions directly.
+- Run attachment (SPEC §6.3, `packages/semantic-core/src/clustering.ts`). PL-1 (7482ef0) gave a passing run only the
+  units changed since the previous run, compared by 500 ms batch window, and left failing runs bucket-wide. Fix round
+  1 (102de80) keyed the previous run per command and added "a passing run also reaches units whose latest run
+  failed". That brought the quadratic back for per-file test commands and for failing runs (table below). Fix round 2
+  (3ee6e66) gives every run, passing or failing, only its range: the units changed since the previous run of any
+  command, or, on a command's first run in the bucket, since the last run before the most recent change. It keeps
+  the failed-latest rule for passing runs.
+
+The five replay fixtures project byte-identical units, validations, failures, semantic events and graph rows on
+`main` and on every fix (each has a single run after all its edits).
+
+Probe: `apps/desktop/scripts/pipeline-scale-probe.mjs` (no network). It feeds a synthetic stream through the real
+`PipelineCoordinator` with `createStorageStores` on a temporary SQLite file. Each step is a `git_hunk` on the next of N
+files (round robin); every k-th step adds a `command_executed` and a `test_result` 300 and 450 ms later. Commands and
+failures:
+
+- `--commands per-file` (the default, and the shape of the original measurements) runs `pnpm test -- module-<n>` for
+  the file just edited.
+- `--commands single` runs `pnpm test` every time.
+- `--fail-every 2` makes every second run fail on the edited file's test, which has no facts and so gets a unit of its
+  own.
+
+Traced rows are the session's `change_unit`, `validation`, `failure` and `decision` event rows after `flush()` (no fact
+or agent rows: the probe feeds facts to the coordinator directly). Late ingest is the per-record `ingest()` time over
+the last 10% of records; the record that closes a batch window pays its rebuild.
+
+```
+pnpm --filter @jevcode/semantic-core --filter @jevcode/storage build
+pnpm --filter jevcode-desktop exec tsc -p tsconfig.build.json
+node apps/desktop/scripts/pipeline-scale-probe.mjs scale            # or smoke; add --commands single, --fail-every 2
+```
+
+Scale: 200 files, 1,000 hunks 2 s apart, a run every 5 hunks (200 runs). Each cell gives traced rows / payload, then
+late ingest p50 / max.
+
+| Shape | Before (`main` 6755660) | Store dedupe only | PL-1 (7482ef0) | Fix round 1 (102de80) | Fix round 2 (3ee6e66) |
+|---|---|---|---|---|---|
+| Per-file commands, all pass | 136,600 / 344.9 MB; 236.1 / 400.1 ms | 37,100 / 328.7 MB; 211.6 / 368.9 ms | 2,195 / 1.9 MB; 19.1 / 29.8 ms | 37,100 / 289.4 MB; 200.4 / 355.5 ms | 2,195 / 1.9 MB; 22.2 / 94.8 ms |
+| Single command, all pass | | | 2,195 / 1.9 MB; 19.3 / 26.7 ms | 2,195 / 1.9 MB; 19.5 / 35.0 ms | 2,195 / 1.9 MB; 19.7 / 28.5 ms |
+| Single command, every 2nd run fails | | | 19,895 / 98.2 MB; 127.6 / 257.1 ms | 37,300 / 342.1 MB; 219.2 / 414.9 ms | 2,890 / 2.6 MB; 24.4 / 35.8 ms |
+| Per-file commands, every 2nd run fails | | | 19,895 / 98.2 MB; 128.1 / 362.8 ms | 37,300 / 342.1 MB; 219.1 / 545.9 ms | 2,890 / 2.6 MB; 24.5 / 35.8 ms |
+
+On the original shape (per-file, all pass), `main` wrote 36,900 + 99,700 `change_unit` + `validation` rows and 80,240
+`graph_edge` rows; fix round 2 writes 1,995 + 200 and 2,240. Probe wall time on that shape: 142 s on `main`, 12 s at
+7482ef0, 117 s at 102de80, 15 s at 3ee6e66; the other fix round 2 shapes take 13 to 16 s.
+
+Smoke: 80 files, 80 hunks 0.9 s apart, a run after every hunk. Traced rows / payload.
+
+| Shape | Before (`main` 6755660) | PL-1 (7482ef0) | Fix round 1 (102de80) | Fix round 2 (3ee6e66) |
+|---|---|---|---|---|
+| Per-file commands, all pass | 6,480 / 15.2 MB | 239 / 0.2 MB | 3,320 / 8.6 MB | 239 / 0.2 MB |
+| Single command, all pass | | 239 / 0.2 MB | 239 / 0.2 MB | 239 / 0.2 MB |
+| Single command, every 2nd run fails | | 1,879 / 4.6 MB | 3,400 / 15.1 MB | 358 / 0.2 MB |
+| Per-file commands, every 2nd run fails | | 1,879 / 4.6 MB | 3,400 / 15.1 MB | 358 / 0.2 MB |
+
+The store dedupe alone removes the repeated validation rows, but every unit still carries every run, so the
+`change_unit` rows and the rebuild time stay quadratic. Scoping every run to its range removes that in all four shapes.
+At fix round 2 a unit carries at most 5 runs (scale, all pass) or 10 (scale, failing runs), against 200 at 102de80.
+The 94.8 ms late-ingest maximum on the per-file shape is a single sample in one run; its p50 matches the other shapes.
+
+Runs on 2026-10-03 on a shared development Mac (load average about 4 to 4.6), one run per cell. The 7482ef0 and 102de80
+cells that the earlier rounds did not measure were run from bundles of those commits' `clustering.ts` with the same
+probe. The regression guard is `storage-stores.test.ts` ("one long bucket": 40 steps of a single passing command, a
+per-file passing command, and a single command failing every second run). Each writes 40 validation rows and at most
+120 `change_unit` rows; at 102de80 the second and third shapes wrote 820 and 840. The Console append latency in the
+Electron main window (lane 03 D-6) was not re-measured here, and the soak and trace-read numbers above predate PL-1.
