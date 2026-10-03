@@ -1595,14 +1595,12 @@ describe("PipelineRuntime turn-end batch (lane 03 D-6)", () => {
 
       // That transaction's trace rows arrived as one batch after commit, with one hint carrying its last seq.
       const jevSeqs = db.listEvents(sessionId).filter((event) => event.type === "jev_decision").map((event) => event.seq);
-      const batchIndex = batches.findIndex((batch) => batch.events.some((event) => event.seq === jevSeqs[0]));
-      const batch = batches[batchIndex];
+      const batch = batches.find((candidate) => candidate.events.some((event) => event.seq === jevSeqs[0]));
       expect(batch).toBeDefined();
       expect(jevSeqs.every((seq) => batch?.events.some((event) => event.seq === seq))).toBe(true);
       expect(batch?.inTransaction).toBe(false);
       const lastSeq = Math.max(...(batch?.events.map((event) => event.seq) ?? []));
-      const hintsBefore = batches.slice(0, batchIndex).reduce((count, earlier) => count + new Set(earlier.events.map((event) => event.sessionId)).size, 0);
-      expect(hints[hintsBefore]).toEqual({ seq: lastSeq, inTransaction: false });
+      expect(hints.filter((hint) => hint.seq === lastSeq)).toEqual([{ seq: lastSeq, inTransaction: false }]);
       await runtime.stopSession(sessionId);
     } finally {
       db.close();
