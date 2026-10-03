@@ -6,10 +6,16 @@ import type { IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
 import { deserializeIpcError } from "../shared/api.js";
-import { registerIpcHandlers } from "./ipc.js";
+import { registerIpcHandlers, setMainWindow } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
+import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
+import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
+import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
+import type { NarratorCallRecord } from "../shared/narrator-log.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
 
@@ -233,6 +239,7 @@ describe("explainer wiring (console-explainer M-6)", () => {
       sessionStarted: (repoRoot, sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
       filesChanged: () => {},
       rescan: (repoRoot) => void calls.push(`rescan ${repoRoot}`),
+      setNarrator: () => {},
       get: () => undefined,
       dispose: () => {},
     };
@@ -319,6 +326,124 @@ describe("explainer wiring (console-explainer M-6)", () => {
     await expect(handlers.get(RendererToMainChannels.repoClose)!(TRUSTED_EVENT, { repoId: "repo_a" })).resolves.toBeNull();
     expect(state.repo).toBeNull();
     expect(log).toHaveBeenCalledWith("explainer repoClosed failed: stage exploded");
+    db.close();
+  });
+});
+
+describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
+  function narratorStub(availability: "on" | "off_setting" = "on") {
+    const setEnabled = vi.fn();
+    const narrator: NarratorSwitch = {
+      current: () => null,
+      availability: () => availability,
+      setEnabled,
+      subscribe: () => () => undefined,
+    };
+    return { narrator, setEnabled };
+  }
+
+  it("preferences:set explainWithModel false turns the narrator off and persists the choice", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { narrator, setEnabled } = narratorStub();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator });
+    const result = await handlers.get("preferences:set")!(TRUSTED_EVENT, { explainWithModel: false });
+    expect(result).toMatchObject({ explainWithModel: false });
+    expect(setEnabled).toHaveBeenCalledWith(false);
+    expect(db.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)).toBe(false);
+    db.close();
+  });
+
+  it("preferences:get, the preferences:set reply and the preferences:updated broadcast carry the narrator availability", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    // No key: the switch never builds a client and never reads process.env.
+    const narrator = createNarratorSwitch({ enabled: true, env: {} });
+    const send = vi.fn();
+    setMainWindow({ isDestroyed: () => false, webContents: { send } } as unknown as Parameters<typeof setMainWindow>[0]);
+    try {
+      const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator });
+      await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({
+        explainWithModel: true,
+        narratorAvailability: "off_no_key",
+      });
+      await expect(handlers.get("preferences:set")!(TRUSTED_EVENT, { explainWithModel: false })).resolves.toMatchObject({
+        explainWithModel: false,
+        narratorAvailability: "off_setting",
+      });
+      expect(send).toHaveBeenCalledWith(
+        "preferences:updated",
+        expect.objectContaining({ explainWithModel: false, narratorAvailability: "off_setting" }),
+      );
+    } finally {
+      setMainWindow(null);
+      db.close();
+    }
+  });
+
+  it("debug:listNarratorCalls returns availability and the newest calls first", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const narratorCalls = createNarratorCallLog();
+    for (const id of ["narr_a", "narr_b"]) {
+      narratorCalls.record({
+        id, ts: "2026-10-02T09:00:00.000Z", repoRoot: "/a", question: "describeComponents", model: "claude-haiku-4-5-20251001",
+        ms: 5, batchSize: 1, accepted: 1, dropped: 0, discarded: false, inputTokens: null, outputTokens: null, costUsd: null, error: null, reasons: [],
+      });
+    }
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator: narratorStub("off_setting").narrator, narratorCalls });
+    const result = (await handlers.get("debug:listNarratorCalls")!(TRUSTED_EVENT, { limit: 10 })) as {
+      availability: string;
+      calls: { id: string }[];
+    };
+    expect(result.availability).toBe("off_setting");
+    expect(result.calls.map((call) => call.id)).toEqual(["narr_b", "narr_a"]);
+    db.close();
+  });
+
+  it("denies debug:listNarratorCalls to a trace window", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), narratorCalls: createNarratorCallLog() });
+    await expect(handlers.get("debug:listNarratorCalls")!(TRUSTED_EVENT, {})).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    db.close();
+  });
+
+  it("debug:listNarratorCalls answers only what DebugNarratorCallsPayloadSchema allows and leaves out a bad record (N-4 review, I-3)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const record = {
+      id: "narr_a", ts: "2026-10-02T09:00:00.000Z", repoRoot: "/a", question: "describeComponents" as const, model: "claude-haiku-4-5-20251001",
+      ms: 5, batchSize: 1, accepted: 1, dropped: 0, discarded: false, inputTokens: null, outputTokens: null, costUsd: null, error: null, reasons: [],
+    };
+    const listing = (calls: unknown[]): NarratorCallLog => ({ record: () => undefined, list: () => calls as NarratorCallRecord[] });
+    const list = (narratorCalls: NarratorCallLog) =>
+      registerAndCapture({ ...makeDeps(db, runtime, state), narrator: narratorStub().narrator, narratorCalls }).get("debug:listNarratorCalls")!(
+        TRUSTED_EVENT,
+        {},
+      );
+
+    await expect(list(listing([{ ...record, prompt: "model text never crosses IPC" }]))).resolves.toEqual({ availability: "on", calls: [record] });
+    // One out-of-cap record is left out; the rest of the list still reaches Inspect.
+    await expect(list(listing([{ ...record, id: "narr_bad", model: "m".repeat(65) }, record]))).resolves.toEqual({
+      availability: "on",
+      calls: [record],
+    });
+    await expect(list(listing([{ ...record, error: "e".repeat(65) }]))).resolves.toEqual({ availability: "on", calls: [] });
+
+    // One handler logs the error code once, on the first record it leaves out.
+    const logged: string[] = [];
+    const handler = registerAndCapture({
+      ...makeDeps(db, runtime, state),
+      log: (message: string) => logged.push(message),
+      narrator: narratorStub().narrator,
+      narratorCalls: listing([{ ...record, model: "m".repeat(65) }, { ...record, error: "e".repeat(65) }, record]),
+    }).get("debug:listNarratorCalls")!;
+    await handler(TRUSTED_EVENT, {});
+    await handler(TRUSTED_EVENT, {});
+    expect(logged.filter((line) => line.startsWith("narrator_record_dropped:"))).toEqual([
+      "narrator_record_dropped: debug:listNarratorCalls left out a call record that fails NarratorCallRecordSchema (model: too_big)",
+    ]);
     db.close();
   });
 });

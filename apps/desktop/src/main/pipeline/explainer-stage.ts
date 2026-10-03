@@ -21,8 +21,11 @@ import {
 } from "@jevcode/codebase-map";
 import type { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import type { extractImports } from "@jevcode/evidence-engine";
+import type { NarratorClient } from "@jevcode/jev-router";
 import type { JevcodeDb } from "@jevcode/storage";
 
+import type { NarratorCallRecord } from "../../shared/narrator-log.js";
+import type { BriefSources } from "./explainer-narration.js";
 import {
   OverviewIndex,
   applyFileChanges,
@@ -111,8 +114,8 @@ export interface NarrationSeam {
   narrative(snapshot: OverviewSnapshot, view: OverviewView): OverviewSnapshot["narrative"];
   /** Called after every rebuild; lane 05 schedules describeComponents and overviewNarrative here. */
   onSnapshot(snapshot: OverviewSnapshot, view: OverviewView): void;
-  /** Ruling R4: lane 05's `ExplainerStage.setNarrator` forwards a `NarratorClient | null` here. */
-  setNarrator?(narrator: unknown): void;
+  /** Ruling R4: `ExplainerStage.setNarrator` forwards here; null stops calls and aborts in-flight ones (spec E15). */
+  setNarrator?(narrator: NarratorClient | null): void;
   /** Ruling R4: the narrator state written to `status.narrator`; absent means "unavailable". */
   narratorStatus?(): NarratorState;
   dispose(): void;
@@ -139,6 +142,12 @@ export interface ExplainerStageDeps {
   schedule: { setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void };
   log(event: ExplainerLogEvent): void;
   narration?: (ctx: NarrationContext) => NarrationSeam;
+  /** R4: the narrator the stage starts with (lane 07's session explainer reads it). */
+  initialNarrator?: NarratorClient | null;
+  /** Lane 05: brief sources for tests and fixtures; index.ts passes the same value to the seam factory. */
+  briefSources?: BriefSources;
+  /** Lane 05: Inspect log sink, one record per narrator call (spec §6.3); lane 07 reuses it. */
+  recordNarratorCall?(record: NarratorCallRecord): void;
   /** The explainWithModel preference (spec E15); false writes narrator "off". Absent reads as on. */
   explainWithModel?(): boolean;
   onStatus?(status: ExplainerStatus): void;
@@ -155,6 +164,8 @@ export interface ExplainerStage {
   onPipelineSync(sync: { sessionId: string; lastSeq: number; changeUnits: ChangeUnit[]; decisions: Decision[] }): void;
   /** overview:rescan (spec §6.6 Retry): aborts a running scan and starts a new one. */
   rescan(): void;
+  /** R4: forwards to the narration seam (and, after lane 07 S-2, to the session explainer). */
+  setNarrator(narrator: NarratorClient | null): void;
   status(): ExplainerStatus;
   /** Resolves when no scan, rebuild or queued row write is in flight. Timers are not awaited. */
   whenIdle(): Promise<void>;
@@ -722,6 +733,14 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     rescan() {
       startScan();
     },
+    setNarrator(narrator) {
+      if (disposed) return;
+      try {
+        narration.setNarrator?.(narrator);
+      } catch (error) {
+        seamFailed(error);
+      }
+    },
     status() {
       return { ...status };
     },
@@ -761,6 +780,8 @@ export interface ExplainerRegistry {
   filesChanged(repoRoot: string, paths: readonly string[]): void;
   /** Ignored unless `repoRoot` is the open repo, so a renderer cannot start a scan elsewhere. */
   rescan(repoRoot: string): void;
+  /** R4, spec E15: the narrator switch reaches the active stage, whichever repo it belongs to. */
+  setNarrator(narrator: NarratorClient | null): void;
   get(repoRoot: string): ExplainerStage | undefined;
   dispose(): void;
 }
@@ -802,6 +823,7 @@ export function createExplainerRegistry(
     sessionStarted: (repoRoot, sessionId) => ensure(repoRoot).onSessionStarted(sessionId),
     filesChanged: (repoRoot, paths) => existing(repoRoot)?.onFilesChanged(paths),
     rescan: (repoRoot) => existing(repoRoot)?.rescan(),
+    setNarrator: (narrator) => active?.stage.setNarrator(narrator),
     get: existing,
     dispose: release,
   };

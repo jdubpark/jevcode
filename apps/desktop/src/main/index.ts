@@ -16,7 +16,7 @@ import {
   sendToRenderer,
   setMainWindow,
 } from "./ipc.js";
-import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel } from "../shared/prefs.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
@@ -25,6 +25,10 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
+import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
+import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
+import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
+import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
@@ -93,6 +97,14 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   db = openDb();
+  const openedDb = db;
+  const narratorSwitch = createNarratorSwitch({
+    enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
+    env: process.env,
+  });
+  const narratorCalls = createNarratorCallLog(NARRATOR_CALL_LOG_CAPACITY, {
+    log: (message) => console.error(`[narrator] ${message}`),
+  });
   // A second, query_only connection for the trace viewer (R5): trace:*
   // handlers read through it and can never write.
   const reader = openTraceReader(db.dbPath);
@@ -132,8 +144,15 @@ app.whenReady().then(() => {
   const eventsDb = db;
   const extractor = createImportExtractor();
   importExtractor = extractor;
-  const explainerRegistry = createExplainerRegistry((repoRoot) =>
-    createExplainerStage({
+  const explainerRegistry = createExplainerRegistry((repoRoot) => {
+    // Lane 05 (R4): the narration seam starts from the switch's current client; the subscription
+    // below forwards every later change to the open repo's stage.
+    const narratorOptions = {
+      initialNarrator: narratorSwitch.current(),
+      narratorAvailability: () => narratorSwitch.availability(),
+      recordNarratorCall: (record: NarratorCallRecord) => narratorCalls.record(record),
+    };
+    return createExplainerStage({
       db: eventsDb,
       repoRoot,
       sessionId: () => (state.repo?.gitRoot === repoRoot ? (state.session?.id ?? null) : null),
@@ -150,12 +169,15 @@ app.whenReady().then(() => {
         clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
       },
       log: (event) => console.log(`[explainer] ${JSON.stringify(event)}`),
-      // Ruling R3: narrator status "off" when the setting is off. Lane 05 N-5 adds `narration`.
+      // Ruling R3: narrator status "off" when the setting is off; otherwise the seam's state.
       explainWithModel: () => normalizeExplainWithModel(eventsDb.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)),
-    }),
-    (message) => console.error(`[explainer] ${message}`),
-  );
+      narration: createNarrationSeamFactory(narratorOptions),
+      initialNarrator: narratorOptions.initialNarrator,
+      recordNarratorCall: narratorOptions.recordNarratorCall,
+    });
+  }, (message) => console.error(`[explainer] ${message}`));
   explainer = explainerRegistry;
+  connectNarratorSwitch(narratorSwitch, explainerRegistry);
 
   runtime = new PipelineRuntime({
     db,
@@ -222,6 +244,8 @@ app.whenReady().then(() => {
       },
       sendToRenderer,
     },
+    narrator: narratorSwitch,
+    narratorCalls,
     requestRepoPath: () => openDirectoryDialog(mainWindow),
     explainer: explainerRegistry,
     log: (message) => console.log(`[ipc] ${message}`),
