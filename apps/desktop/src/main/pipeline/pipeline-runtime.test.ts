@@ -7,7 +7,7 @@ import type {
   EvidenceFact,
   NormalizedAgentEvent,
 } from "@jevcode/contracts";
-import { MainToRendererChannels } from "@jevcode/contracts";
+import { MainToRendererChannels, isTraceRowType } from "@jevcode/contracts";
 import { DegradeClient } from "@jevcode/jev-router";
 import type {
   AttentionInput,
@@ -24,7 +24,7 @@ import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
 import { PlaybackClient, PlaybackLabels, loadPlaybackFixture } from "./playback.js";
 import { PipelineRuntime } from "./pipeline-runtime.js";
-import { notifyCommitted, observeTraceAppends } from "../rows-available.js";
+import { observeTraceAppends } from "../rows-available.js";
 import type { ObservedAppend } from "../rows-available.js";
 import { smokeMockScript } from "./smoke-script.js";
 import type { EmitFn, SurfaceRecord } from "./types.js";
@@ -1540,12 +1540,10 @@ describe("PipelineRuntime turn-end batch (lane 03 D-6, PL-2)", () => {
     db.upsertRepository({ id: "repo-te", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
     db.createSession({ id: sessionId, repoId: "repo-te", prompt: "demo" });
 
-    // What index.ts wires: committed trace rows → hints.
-    const batches: Array<{ events: readonly ObservedAppend[]; inTransaction: boolean }> = [];
-    const hints: Array<{ seq: number; inTransaction: boolean }> = [];
-    observeTraceAppends(db, (events) => {
-      batches.push({ events, inTransaction: db.inTransaction });
-      notifyCommitted({ notify: (_sessionId, seq) => hints.push({ seq, inTransaction: db.inTransaction }) }, events);
+    // What index.ts wires: each committed trace row → a hint carrying its seq.
+    const reports: Array<ObservedAppend & { storedSeq: number }> = [];
+    observeTraceAppends(db, (event) => {
+      reports.push({ ...event, storedSeq: db.getLatestSeq(event.sessionId) });
     });
     let completionWritten = false;
     const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
@@ -1569,15 +1567,18 @@ describe("PipelineRuntime turn-end batch (lane 03 D-6, PL-2)", () => {
       await waitFor(() => completionWritten, 15_000, "completion surface written");
       await runtime.syncAll();
 
-      // Every Jev decision row was reported once, after its own commit: no transaction holds a turn end's rows back.
+      // Every Jev decision row was reported once, as soon as it was stored: nothing holds a turn end's rows back.
       const jevSeqs = db.listEvents(sessionId).filter((event) => event.type === "jev_decision").map((event) => event.seq);
-      const reported = batches.flatMap((batch) => batch.events.map((event) => event.seq));
+      const reported = reports.map((report) => report.seq);
       expect(jevSeqs.length).toBeGreaterThan(0);
       expect(jevSeqs.every((seq) => reported.filter((candidate) => candidate === seq).length === 1)).toBe(true);
-      expect(batches.every((batch) => !batch.inTransaction)).toBe(true);
-      // The hint for the last trace row carries its seq.
-      const lastSeq = Math.max(...reported);
-      expect(hints.filter((hint) => hint.seq === lastSeq)).toEqual([{ seq: lastSeq, inTransaction: false }]);
+      expect(reports.every((report) => report.storedSeq === report.seq)).toBe(true);
+      // The last report carries the session's last trace row.
+      const traceSeqs = db
+        .listEvents(sessionId, { limit: 10_000 })
+        .filter((event) => isTraceRowType(event.type))
+        .map((event) => event.seq);
+      expect(reported.at(-1)).toBe(Math.max(...traceSeqs));
       await runtime.stopSession(sessionId);
     } finally {
       db.close();
