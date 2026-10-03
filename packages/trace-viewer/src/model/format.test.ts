@@ -114,6 +114,33 @@ describe("displayUntrusted", () => {
     expect(displayUntrusted(input)).toBe(input);
   });
 
+  // Fix round 2: an emoji cluster is kept whole only when it is exactly one RGI emoji (plus at most one U+FE0F), so text
+  // hidden in tag characters, variation selectors, joiners or CGJ after an emoji is shown, not swallowed by the cluster.
+  const tags = (text: string): string => Array.from(text, (char) => String.fromCodePoint(0xe0000 + (char.codePointAt(0) ?? 0))).join("");
+  const tagTokens = (text: string): string =>
+    Array.from(text, (char) => `⟨U+${(0xe0000 + (char.codePointAt(0) ?? 0)).toString(16).toUpperCase()}⟩`).join("");
+
+  it.each([
+    ["tag characters after a check mark", `✅${tags("rm -rf ~")}`, `✅${tagTokens("rm -rf ~")}`],
+    ["tag characters inside a path", `src/✅${tags("evil")}.ts`, `src/✅${tagTokens("evil")}.ts`],
+    ["a run of variation selectors after a face", "😀\uFE0F\uFE0F\uFE0F", "😀⟨U+FE0F⟩⟨U+FE0F⟩⟨U+FE0F⟩"],
+    ["a joiner trailing a face", "😀\u200Dx", "😀⟨U+200D⟩x"],
+    ["a grapheme joiner after a face", "😀\u034F!", "😀⟨U+034F⟩!"],
+  ])("shows %s instead of hiding it inside the emoji", (_name, input, expected) => {
+    expect(displayUntrusted(input)).toBe(expected);
+  });
+
+  it.each([
+    ["the Scotland flag (a tag sequence)", "🏴󠁧󠁢󠁳󠁣󠁴󠁿"],
+    ["a ZWJ family", "👩‍👩‍👧"],
+    ["a heart with VS16", "❤️"],
+    ["a digit keycap", "1️⃣"],
+    ["a face with one trailing VS16", "😀\uFE0F"],
+    ["a thumbs up with a skin tone", "👍🏽"],
+  ])("keeps %s intact", (_name, input) => {
+    expect(displayUntrusted(input)).toBe(input);
+  });
+
   it("tokenizes a hidden character beside a kept emoji, and keeps tabs and multi-line breaks on the slow path", () => {
     expect(displayUntrusted("❤️\u202Eok")).toBe("❤️⟨U+202E⟩ok");
     expect(displayUntrusted("a\tb\u200B\nc", { multiline: true })).toBe("a\tb⟨U+200B⟩\nc");
