@@ -1,6 +1,15 @@
 import type { NarrativeSentence } from "@jevcode/contracts";
 
-import type { DecisionDetail, DecisionStableId, DecisionTradeoff, Step, StepId, TraceSession } from "../model/index.js";
+import type {
+  Chapter,
+  DecisionDetail,
+  DecisionStableId,
+  DecisionTradeoff,
+  OverviewModel,
+  Step,
+  StepId,
+  TraceSession,
+} from "../model/index.js";
 import { componentForPath } from "./map-layout.js";
 
 // Spec §3.5: a decision is a card in the Brief's Now while it is pending; the latest decided ones stay, with
@@ -30,6 +39,20 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * The one rule both directions read: a decision touches the components its current change units' files fall in (by
+ * componentForPath). decisionComponents reads it per decision (the Brief's cards), componentDecisionIds per component
+ * (the component Inspector, spec §3.4).
+ */
+function chapterComponentIds(overview: OverviewModel, chapter: Chapter): Set<string> {
+  const ids = new Set<string>();
+  for (const file of chapter.files) {
+    const id = componentForPath(overview, file);
+    if (id !== undefined) ids.add(id);
+  }
+  return ids;
+}
+
 /** The components of the current change units a decision affects (by componentForPath), by name, at most six. */
 export function decisionComponents(session: TraceSession, decisionId: string): { id: string; name: string }[] {
   const overview = session.overview;
@@ -38,15 +61,27 @@ export function decisionComponents(session: TraceSession, decisionId: string): {
   const ids = new Set<string>();
   for (const chapter of session.chapters) {
     if (!chapter.current || !chapter.decisionIds.includes(stableId)) continue;
-    for (const file of chapter.files) {
-      const id = componentForPath(overview, file);
-      if (id !== undefined) ids.add(id);
-    }
+    for (const id of chapterComponentIds(overview, chapter)) ids.add(id);
   }
   return [...ids]
     .map((id) => ({ id, name: overview.componentById.get(id)?.name ?? id }))
     .sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id))
     .slice(0, COMPONENTS_MAX);
+}
+
+/**
+ * The inverse of decisionComponents, uncapped: the decisions of the current change units whose files fall in
+ * `componentId`, as stable ids.
+ */
+export function componentDecisionIds(session: TraceSession, componentId: string): ReadonlySet<DecisionStableId> {
+  const overview = session.overview;
+  const ids = new Set<DecisionStableId>();
+  if (overview === null) return ids;
+  for (const chapter of session.chapters) {
+    if (!chapter.current || chapter.decisionIds.length === 0 || !chapterComponentIds(overview, chapter).has(componentId)) continue;
+    for (const id of chapter.decisionIds) ids.add(id);
+  }
+  return ids;
 }
 
 function cardOf(session: TraceSession, step: Step, decision: DecisionDetail): BriefDecisionCard {
