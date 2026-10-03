@@ -77,9 +77,10 @@ export function buildBriefDecisions(session: TraceSession): readonly BriefDecisi
     else if (status === "answered" || status === "delegated") closed.push(step);
   }
   // By when the answer landed, not by when the decision was asked: the card the reader just answered must be one of
-  // those shown. That is the supervisor's answer message (answerSeq), else the step's last row (a delegation or an
-  // answer without a message), so a later-answered card sorts first whatever its step order.
-  const answeredAt = (step: Step): number => step.decision?.answerSeq ?? step.lastSeq;
+  // those shown. That is the supervisor's answer message (answerSeq), else the row that answered or delegated it
+  // (decidedSeq: a delegation or an answer without a message), so a later-answered card sorts first whatever its step
+  // order. Never the step's last row: a later re-emit of an old decision adds rows to its step (final review D I-1).
+  const answeredAt = (step: Step): number => step.decision?.answerSeq ?? step.decision?.decidedSeq ?? step.lastSeq;
   const newestAnswered = closed.sort((a, b) => answeredAt(b) - answeredAt(a));
   const picked = [...open.slice(0, BRIEF_DECISIONS_MAX), ...newestAnswered.slice(0, BRIEF_DECIDED_MAX)];
   const cards = picked.flatMap((step) => (step.decision === undefined ? [] : [cardOf(session, step, step.decision)]));

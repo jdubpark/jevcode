@@ -246,6 +246,11 @@ export interface DecisionDetail {
   decidedBy?: "supervisor" | "delegated";
   /** seq of the supervisor's answer message, absorbed into this step (R25). */
   answerSeq?: number;
+  /**
+   * seq of the row that answered or delegated the decision, set while it stays answered or delegated. Later re-emits
+   * of the closed decision keep it, so it orders decided decisions by when they were decided (spec §3.5).
+   */
+  decidedSeq?: number;
 }
 
 export interface GuardrailDetail {
