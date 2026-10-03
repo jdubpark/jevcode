@@ -826,6 +826,14 @@ export class JevcodeDb {
       .all(sessionId) as { id: string; seq: number }[];
   }
 
+  /** listChangeUnits(sessionId).length, counted in SQL without reading or parsing a unit (final review B M-3). */
+  getChangeUnitCount(sessionId: string): number {
+    const row = this.statements
+      .prepare("SELECT COUNT(*) AS n FROM change_units WHERE sessionId = ?")
+      .get(sessionId) as { n: number };
+    return row.n;
+  }
+
   latestChangeUnits(sessionId: string, n: number): ChangeUnit[] {
     return this.listChangeUnits(sessionId).slice(0, n);
   }
@@ -847,6 +855,14 @@ export class JevcodeDb {
       )
       .all(sessionId) as (DecisionRow & { id: string })[];
     return rows.map((row) => decisionFromRow(row.id, row, this.listDecisionOptions(row.id)));
+  }
+
+  /** listDecisions(sessionId).length, counted in SQL without reading or parsing a decision (final review B M-3). */
+  getDecisionCount(sessionId: string): number {
+    const row = this.statements
+      .prepare("SELECT COUNT(*) AS n FROM decisions WHERE sessionId = ?")
+      .get(sessionId) as { n: number };
+    return row.n;
   }
 
   private listDecisionOptions(decisionId: string): Decision["options"] {

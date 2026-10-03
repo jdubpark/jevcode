@@ -431,6 +431,28 @@ describe("listChangeUnitVersions (lane 07 PL-3)", () => {
   });
 });
 
+describe("change unit and decision counts (final review B M-3)", () => {
+  it("counts the session's change units and decisions as their lists do, without another session's rows", () => {
+    const db = openSessionDb();
+    db.createSession({ id: "sess_other", repoId: "repo_fixture" });
+    expect([db.getChangeUnitCount(SESSION), db.getDecisionCount(SESSION)]).toEqual([0, 0]);
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_a" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_b" }));
+    // A rewrite and a superseded unit stay one row each.
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_a", title: "rewritten" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_b", status: "superseded" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_other", sessionId: "sess_other" }));
+    db.upsertDecision(makeDecision({ id: "dec_a" }));
+    db.upsertDecision(makeDecision({ id: "dec_a", status: "expired" }));
+    db.upsertDecision(makeDecision({ id: "dec_other", sessionId: "sess_other" }));
+    expect(db.getChangeUnitCount(SESSION)).toBe(db.listChangeUnits(SESSION).length);
+    expect(db.getDecisionCount(SESSION)).toBe(db.listDecisions(SESSION).length);
+    expect([db.getChangeUnitCount(SESSION), db.getDecisionCount(SESSION)]).toEqual([2, 1]);
+    expect([db.getChangeUnitCount("sess_other"), db.getDecisionCount("sess_other")]).toEqual([1, 1]);
+    db.close();
+  });
+});
+
 describe("graph lists (lane 07 PL-3 review)", () => {
   it("lists graph nodes and edges in rowid order: an upsert keeps its place, a new row comes last, the index serves it", () => {
     const db = openSessionDb();
