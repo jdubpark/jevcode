@@ -159,7 +159,14 @@ export function ConsoleView({ active }: ViewProps) {
     const height = virtualizer.scrollRect?.height || element.clientHeight;
     const first = virtualizer.getVirtualItems().find((item) => item.end > offset);
     const firstRow = first === undefined ? undefined : builtRef.current.rows[first.index];
-    if (first !== undefined && firstRow !== undefined) anchor.current = { key: firstRow.key, top: first.start - offset };
+    if (first !== undefined && firstRow !== undefined) {
+      // The anchor's top is read from the DOM, the same quantity the drift sampler compares after the next commit; the
+      // virtualizer's model value can lag the DOM under load and read as drift.
+      const node = findNode(firstRow.key);
+      const top =
+        node === undefined ? first.start - offset : node.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      anchor.current = { key: firstRow.key, top };
+    }
     const atEnd = offset + height >= virtualizer.getTotalSize() - END_THRESHOLD_PX;
     const state = store.get();
     if (atEnd) {
@@ -340,18 +347,16 @@ export function ConsoleView({ active }: ViewProps) {
     const element = scrollRef.current;
     const view = viewOf();
     if (before === null || element === null || view === null) return undefined;
-    // The baseline is the anchor row's DOM position in this commit, not the virtualizer's model value from an earlier
-    // frame (that one lags a frame under load and read as drift): the sample is what the commit's own layout did.
-    const baseNode = findNode(before.key);
-    if (baseNode === undefined) return undefined;
-    const base = baseNode.getBoundingClientRect().top - element.getBoundingClientRect().top;
+    // `before` is the anchor's DOM top from the last frame BEFORE this commit (frameHandler and the previous sample read
+    // it from the DOM), so a shift the commit itself caused (rows inserted above, an uncompensated height change) is
+    // part of the drift. Reading the baseline here would be after React applied the commit's mutations.
     const id = view.requestAnimationFrame(() => {
       const node = findNode(before.key);
       if (node === undefined) return;
       const top = node.getBoundingClientRect().top - element.getBoundingClientRect().top;
       // Only the reader's own input since the last sample re-baselines it; following moves the list on purpose.
       if (readerMoved.current) readerMoved.current = false;
-      else if (!store.get().follow) diagnostics.reportDrift(Math.abs(top - base));
+      else if (!store.get().follow) diagnostics.reportDrift(Math.abs(top - before.top));
       anchor.current = { key: before.key, top };
     });
     return () => view.cancelAnimationFrame(id);
