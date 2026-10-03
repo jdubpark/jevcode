@@ -1702,6 +1702,32 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(debug[0]).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
   }, 60_000);
 
+  it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
+    const order: string[] = [];
+    await runTurnEnd("pass-slices", (db) => {
+      // Six Jev decision writes of 8 ms each: a 48 ms stretch without slices.
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (order.length === 0) {
+          order.push("first decision");
+          setImmediate(() => order.push("waiting task"));
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+      const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+      db.upsertUiSnapshot = ((id, snapshot) => {
+        if (snapshot.surfaceId === "completion") order.push("completion");
+        return upsertUiSnapshot(id, snapshot);
+      }) as typeof db.upsertUiSnapshot;
+    });
+
+    expect(order).toEqual(["first decision", "waiting task", "completion"]);
+  }, 60_000);
+
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
     rmSync(dir, { recursive: true, force: true });

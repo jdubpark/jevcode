@@ -76,6 +76,35 @@ import type {
 
 const SYNC_DEBOUNCE_MS = 600;
 
+/**
+ * A sync pass yields to the event loop once it has run this long without a break, so IPC, the renderer's rows
+ * requests among it, is answered during a long pass. Spec §6.1 caps a synchronous block at 50 ms (lane 03 PL-2).
+ */
+const SYNC_SLICE_MS = 20;
+
+interface Slicer {
+  /** Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer. */
+  pace(): Promise<void>;
+  /** How many times pace() has yielded. */
+  readonly yields: number;
+}
+
+function createSlicer(sliceMs = SYNC_SLICE_MS): Slicer {
+  let sliceStart = performance.now();
+  let yields = 0;
+  return {
+    async pace() {
+      if (performance.now() - sliceStart < sliceMs) return;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      yields += 1;
+      sliceStart = performance.now();
+    },
+    get yields() {
+      return yields;
+    },
+  };
+}
+
 const RESUME_BUDGET = 3;
 
 interface ActiveSession {
@@ -955,11 +984,18 @@ export class PipelineRuntime {
    *
    * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions once per pass, not once per decision, and
    * one coordinator snapshot serves each stretch of the pass in which no store changes.
+   *
+   * Slices (PL-2): the pass yields to the event loop between steps once it has run SYNC_SLICE_MS, so no block of a
+   * turn end's pass runs past spec §6.1's 50 ms. Other work may run between slices, as it already did across a
+   * networked Jev client's awaits; a snapshot read before a yield is read again before the steps that follow it.
    */
   private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
+    const slicer = createSlicer();
+    const pace = (): Promise<void> => slicer.pace();
     try {
       session.coordinator.flush();
+      await pace();
       const snapshot = session.coordinator.snapshot();
       const ctx = this.buildUiContext(session, snapshot);
       const changedUnits = snapshot.units.filter((unit) => {
@@ -989,6 +1025,7 @@ export class PipelineRuntime {
             ? (files, symbols) => session.playbackLabels?.match(files, symbols)
             : undefined,
           snapshot,
+          pace,
           onJevLog: () => {
             jevLogged = true;
           },
@@ -1002,10 +1039,14 @@ export class PipelineRuntime {
         } finally {
           if (jevLogged) this.emitJevDebug(session);
         }
+        await pace();
         // Read after the stage's label writes. Surfaces, decision surfaces and telemetry change none of the
         // coordinator's stores, so this read serves the steps below unless a decision interrupts the agent.
         current = session.coordinator.snapshot();
-        this.syncOutcomes(session, result, ctx, current);
+        const yieldsAtRead = slicer.yields;
+        await this.syncOutcomes(session, result, ctx, current, pace);
+        await pace();
+        if (slicer.yields !== yieldsAtRead) current = session.coordinator.snapshot();
       }
       if (this.emitDecisions(session, ctx, current)) current = session.coordinator.snapshot();
       this.emitValidations(session, current);
@@ -1024,13 +1065,15 @@ export class PipelineRuntime {
     }
   }
 
-  private syncOutcomes(
+  private async syncOutcomes(
     session: ActiveSession,
     result: Awaited<ReturnType<typeof runJevStage>>,
     ctx: UiStageContext,
     snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
-  ): void {
+    pace: () => Promise<void>,
+  ): Promise<void> {
     for (const outcome of result.outcomes) {
+      await pace();
       const unit = snapshot.units.find(
         (candidate) => candidate.id === outcome.unitId,
       );

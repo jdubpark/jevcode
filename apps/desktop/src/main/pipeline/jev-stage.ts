@@ -42,6 +42,8 @@ export interface JevStageDeps {
    * loads every unit, decision, validation and graph row from the database (lane 03 PL-2).
    */
   snapshot?: ReturnType<PipelineCoordinator["snapshot"]>;
+  /** Awaited before each batch and each unit; the sync pass yields to the event loop there once its slice is spent. */
+  pace?: () => Promise<void>;
 }
 
 export interface JevUnitOutcome {
@@ -133,6 +135,7 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
   }
 
   for (const batch of chunkAttentionBatch(snapshot.units)) {
+    await deps.pace?.();
     const inputs = batch.map((unit) =>
       attentionInputFromChangeUnit(
         redactedUnits.get(unit.id) ?? unit,
@@ -143,6 +146,7 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
     const started = Date.now();
     const results = await client.attention(inputs);
     for (let i = 0; i < batch.length; i += 1) {
+      await deps.pace?.();
       const unit = batch[i];
       const input = inputs[i];
       const result = results[i];
