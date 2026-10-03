@@ -32,6 +32,18 @@ export interface FileEdge {
   weight: number;
 }
 
+interface TestRun {
+  validation: ValidationResult;
+  entry: SequencedFact;
+  bucketIndex: number;
+  /** The fact's 500ms batch window. */
+  window: number;
+  /** Tells a command's first run in its bucket from a repeat: the trimmed command. */
+  command: string;
+  failed: boolean;
+  hosts: string[];
+}
+
 export interface SessionInput {
   sessionId: string;
   taskPrompt?: string;
@@ -530,7 +542,9 @@ export function clusterSession(input: SessionInput): SemanticProjection {
   const validations: ValidationResult[] = [];
   const failures: FailureRecord[] = [];
   const validationHostUnits = new Map<string, string[]>();
-  const validationBuckets = new Map<string, number>();
+  // One entry per validation id (a duplicate test_result keeps the first position and
+  // the last fact, like the maps this replaced).
+  const runs = new Map<string, TestRun>();
 
   const trackDraft = (draft: UnitDraft): void => {
     if (!drafts.has(draft.id)) {
@@ -683,7 +697,6 @@ export function clusterSession(input: SessionInput): SemanticProjection {
 
   const bucketCommands = new Map<number, SequencedFact[]>();
   const revertFacts: SequencedFact[] = [];
-  const validationFacts = new Map<string, SequencedFact>();
 
   for (let index = 0; index < buckets.length; index += 1) {
     const bucket = buckets[index];
@@ -702,8 +715,15 @@ export function clusterSession(input: SessionInput): SemanticProjection {
         const { validation, failures: extracted } = extractTestResult(fact, sessionId);
         validations.push(validation);
         failures.push(...extracted);
-        validationBuckets.set(validation.id, index);
-        validationFacts.set(validation.id, entry);
+        runs.set(validation.id, {
+          validation,
+          entry,
+          bucketIndex: index,
+          window: entry.batchId,
+          command: validation.command.trim(),
+          failed: validation.status === "failed",
+          hosts: [],
+        });
         continue;
       }
       if (fact.type === "command_executed") {
@@ -842,65 +862,8 @@ export function clusterSession(input: SessionInput): SemanticProjection {
     if (linked.length > 0) decisionChangeUnitIds.set(decision.id, linked);
   }
 
-  const bucketFilesByIndex = new Map<number, Set<string>>();
-  for (let index = 0; index < buckets.length; index += 1) {
-    const bucket = buckets[index];
-    if (bucket === undefined) continue;
-    const files = new Set<string>();
-    for (const entry of bucket.facts) {
-      for (const file of factFiles(entry.fact)) files.add(file);
-    }
-    bucketFilesByIndex.set(index, files);
-  }
-
-  for (const [validationId, bucketIndex] of validationBuckets) {
-    const bucketFiles = bucketFilesByIndex.get(bucketIndex) ?? new Set<string>();
-    const hosts: string[] = [];
-    for (const id of unitsInOrder) {
-      const draft = drafts.get(id);
-      if (draft === undefined || draft.createdByFailure) continue;
-      for (const file of draft.fileSet) {
-        if (bucketFiles.has(file)) {
-          hosts.push(id);
-          break;
-        }
-      }
-    }
-    for (const hostId of hosts) {
-      const draft = drafts.get(hostId);
-      if (draft === undefined) continue;
-      addEvidence(draft, validationId);
-      const entry = validationFacts.get(validationId);
-      if (entry !== undefined) {
-        addEvidence(draft, entry.factId);
-        const unitFacts = unitEvidenceFacts.get(hostId) ?? [];
-        unitFacts.push(entry);
-        unitEvidenceFacts.set(hostId, unitFacts);
-      }
-    }
-    validationHostUnits.set(validationId, hosts);
-  }
-
-  for (const entry of revertFacts) {
-    const files = entry.fact.type === "revert_detected" ? new Set(entry.fact.files) : new Set<string>();
-    for (const id of unitsInOrder) {
-      const draft = drafts.get(id);
-      if (draft === undefined || draft.createdByFailure) continue;
-      let touches = false;
-      for (const file of draft.fileSet) {
-        if (files.has(file)) {
-          touches = true;
-          break;
-        }
-      }
-      if (!touches) continue;
-      addEvidence(draft, entry.factId);
-      const unitFacts = unitEvidenceFacts.get(draft.id) ?? [];
-      unitFacts.push(entry);
-      unitEvidenceFacts.set(draft.id, unitFacts);
-    }
-  }
-
+  // SPEC §6.3 failure attachment. It runs before run attachment because a unit a
+  // failing run reached through one of its failures counts as attached to that run.
   const fileHasFacts = new Set<string>();
   for (const entry of facts) {
     for (const file of factFiles(entry.fact)) fileHasFacts.add(file);
@@ -935,6 +898,165 @@ export function clusterSession(input: SessionInput): SemanticProjection {
       hosts.push(id);
     }
     failureHosts.set(failure.id, [...new Set(hosts)]);
+  }
+
+  // SPEC §6.3 run attachment, per idle bucket and keyed on 500ms batch windows, never
+  // seq, so reordering facts within a bucket changes nothing (§6.1). A run, passing or
+  // failing, reaches the units with a file changed in its range:
+  // - when its command already ran earlier in the bucket, the windows after the
+  //   previous run of any command, up to and including its own;
+  // - on its command's first run in the bucket, the windows after the last run that
+  //   came before the most recent change. With edits since the previous run that is
+  //   the same range; with none, it is the batch the previous run covered.
+  // A passing run also reaches every unit whose latest attached run of the bucket
+  // failed (red to green, flaky rerun); "latest" is by window, and a failure in that
+  // window wins. Every run of a window is decided from earlier windows only. Attaching
+  // runs bucket-wide grew each unit by every run (PL-1).
+  const bucketWindowFiles = new Map<number, Map<number, Set<string>>>();
+  for (let index = 0; index < buckets.length; index += 1) {
+    const bucket = buckets[index];
+    if (bucket === undefined) continue;
+    const windows = new Map<number, Set<string>>();
+    for (const entry of bucket.facts) {
+      for (const file of factFiles(entry.fact)) {
+        let windowFiles = windows.get(entry.batchId);
+        if (windowFiles === undefined) {
+          windowFiles = new Set();
+          windows.set(entry.batchId, windowFiles);
+        }
+        windowFiles.add(file);
+      }
+    }
+    bucketWindowFiles.set(index, windows);
+  }
+
+  const failureHostsByRun = new Map<string, string[]>();
+  for (const failure of failures) {
+    const hosts = failureHostsByRun.get(failure.validationId) ?? [];
+    hosts.push(...(failureHosts.get(failure.id) ?? []));
+    failureHostsByRun.set(failure.validationId, hosts);
+  }
+
+  const unitsTouching = (files: ReadonlySet<string>, alsoHost: (id: string) => boolean = () => false): string[] => {
+    const hosts: string[] = [];
+    for (const id of unitsInOrder) {
+      const draft = drafts.get(id);
+      if (draft === undefined || draft.createdByFailure) continue;
+      if (alsoHost(id)) {
+        hosts.push(id);
+        continue;
+      }
+      for (const file of draft.fileSet) {
+        if (files.has(file)) {
+          hosts.push(id);
+          break;
+        }
+      }
+    }
+    return hosts;
+  };
+
+  const runsByBucket = new Map<number, TestRun[]>();
+  for (const testRun of runs.values()) {
+    const bucketRuns = runsByBucket.get(testRun.bucketIndex) ?? [];
+    bucketRuns.push(testRun);
+    runsByBucket.set(testRun.bucketIndex, bucketRuns);
+  }
+  for (const [bucketIndex, bucketRuns] of runsByBucket) {
+    const windowFiles = bucketWindowFiles.get(bucketIndex) ?? new Map<number, Set<string>>();
+    const runsByWindow = new Map<number, TestRun[]>();
+    const firstWindowByCommand = new Map<string, number>();
+    for (const testRun of bucketRuns) {
+      const inWindow = runsByWindow.get(testRun.window) ?? [];
+      inWindow.push(testRun);
+      runsByWindow.set(testRun.window, inWindow);
+      const first = firstWindowByCommand.get(testRun.command);
+      if (first === undefined || testRun.window < first) firstWindowByCommand.set(testRun.command, testRun.window);
+    }
+    const latestRunBefore = (bound: number): number => {
+      let latest = Number.NEGATIVE_INFINITY;
+      for (const window of runsByWindow.keys()) if (window < bound && window > latest) latest = window;
+      return latest;
+    };
+    const latestBatchStart = (testRun: TestRun): number => {
+      let latestChange = Number.NEGATIVE_INFINITY;
+      for (const window of windowFiles.keys()) {
+        if (window <= testRun.window && window > latestChange) latestChange = window;
+      }
+      return latestRunBefore(latestChange);
+    };
+    const rangeStart = (testRun: TestRun): number => {
+      const first = firstWindowByCommand.get(testRun.command);
+      if (first !== undefined && first < testRun.window) return latestRunBefore(testRun.window);
+      return latestBatchStart(testRun);
+    };
+    const filesBetween = (start: number, end: number): Set<string> => {
+      const files = new Set<string>();
+      for (const [window, windowSet] of windowFiles) {
+        if (window <= start || window > end) continue;
+        for (const file of windowSet) files.add(file);
+      }
+      return files;
+    };
+    const latestRun = new Map<string, { window: number; failed: boolean }>();
+    const noteRun = (unitId: string, window: number, failed: boolean): void => {
+      const latest = latestRun.get(unitId);
+      if (latest === undefined || window > latest.window) {
+        latestRun.set(unitId, { window, failed });
+      } else if (window === latest.window && failed) {
+        latest.failed = true;
+      }
+    };
+    const hostsFor = (testRun: TestRun): string[] => {
+      const changed = filesBetween(rangeStart(testRun), testRun.window);
+      if (testRun.failed) {
+        // A failing rerun with no edit since the previous run still reaches the latest batch, so a red run is never orphaned.
+        return unitsTouching(changed.size > 0 ? changed : filesBetween(latestBatchStart(testRun), testRun.window));
+      }
+      return unitsTouching(changed, (id) => latestRun.get(id)?.failed === true);
+    };
+    for (const window of [...runsByWindow.keys()].sort((a, b) => a - b)) {
+      const inWindow = runsByWindow.get(window) ?? [];
+      for (const testRun of inWindow) testRun.hosts = hostsFor(testRun);
+      for (const testRun of inWindow) {
+        for (const id of testRun.hosts) noteRun(id, window, testRun.failed);
+        if (!testRun.failed) continue;
+        for (const id of failureHostsByRun.get(testRun.validation.id) ?? []) noteRun(id, window, true);
+      }
+    }
+  }
+
+  for (const [validationId, testRun] of runs) {
+    for (const hostId of testRun.hosts) {
+      const draft = drafts.get(hostId);
+      if (draft === undefined) continue;
+      addEvidence(draft, validationId);
+      addEvidence(draft, testRun.entry.factId);
+      const unitFacts = unitEvidenceFacts.get(hostId) ?? [];
+      unitFacts.push(testRun.entry);
+      unitEvidenceFacts.set(hostId, unitFacts);
+    }
+    validationHostUnits.set(validationId, testRun.hosts);
+  }
+
+  for (const entry of revertFacts) {
+    const files = entry.fact.type === "revert_detected" ? new Set(entry.fact.files) : new Set<string>();
+    for (const id of unitsInOrder) {
+      const draft = drafts.get(id);
+      if (draft === undefined || draft.createdByFailure) continue;
+      let touches = false;
+      for (const file of draft.fileSet) {
+        if (files.has(file)) {
+          touches = true;
+          break;
+        }
+      }
+      if (!touches) continue;
+      addEvidence(draft, entry.factId);
+      const unitFacts = unitEvidenceFacts.get(draft.id) ?? [];
+      unitFacts.push(entry);
+      unitEvidenceFacts.set(draft.id, unitFacts);
+    }
   }
 
   const units: ChangeUnit[] = [];

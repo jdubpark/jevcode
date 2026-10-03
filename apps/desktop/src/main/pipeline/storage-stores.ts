@@ -1,3 +1,4 @@
+import { canonicalJson, DecisionSchema } from "@jevcode/contracts";
 import type {
   ChangeUnit,
   Decision,
@@ -177,17 +178,31 @@ class StorageSemanticEventSink implements SemanticEventSink {
   }
 }
 
+// Every store write appends an event row, and the coordinator re-upserts every
+// validation, failure and decision on each rebuild. Like the change-unit store,
+// these stores write only when the payload differs from the last one written for
+// that id. Only this store writes validation and failure rows, so a private map
+// of the last payload is the database's current row.
 class StorageValidationStore implements ValidationStore {
+  private readonly lastValidationJson = new Map<string, string>();
+  private readonly lastFailureJson = new Map<string, string>();
+
   constructor(
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
   ) {}
 
   upsertValidation(validation: ValidationResult): void {
+    const json = JSON.stringify(validation);
+    if (this.lastValidationJson.get(validation.id) === json) return;
+    this.lastValidationJson.set(validation.id, json);
     this.db.upsertValidation(this.sessionId, validation);
   }
 
   upsertFailure(failure: FailureRecord): void {
+    const json = JSON.stringify(failure);
+    if (this.lastFailureJson.get(failure.id) === json) return;
+    this.lastFailureJson.set(failure.id, json);
     this.db.upsertFailure(this.sessionId, {
       validationId: failure.validationId,
       file: failure.file,
@@ -218,6 +233,18 @@ class StorageValidationStore implements ValidationStore {
   }
 }
 
+// The runtime also writes each incoming decision record straight to the database,
+// so a private map of the last payload can go stale: the store compares against the
+// database's current row instead. The decisions projection keeps neither `ts` nor
+// the option order, so both sides are compared in that projected form.
+function projectedDecisionJson(decision: Decision | undefined): string | null {
+  const parsed = DecisionSchema.safeParse(decision);
+  if (!parsed.success) return null;
+  const { ts: _ts, ...rest } = parsed.data;
+  const options = [...rest.options].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return canonicalJson({ ...rest, options });
+}
+
 class StorageDecisionStore implements DecisionStore {
   constructor(
     private readonly db: JevcodeDb,
@@ -225,6 +252,8 @@ class StorageDecisionStore implements DecisionStore {
   ) {}
 
   upsert(decision: Decision): void {
+    const next = projectedDecisionJson(decision);
+    if (next !== null && next === projectedDecisionJson(this.db.getDecision(decision.id))) return;
     this.db.upsertDecision(decision);
   }
 

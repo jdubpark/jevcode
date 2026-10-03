@@ -454,6 +454,191 @@ describe("clustering: validation and failure attachment", () => {
   });
 });
 
+describe("clustering: passing-run attachment (SPEC 6.3)", () => {
+  // Batch windows 0..3 sit in one idle bucket (all facts within 120s). src/a.ts and
+  // src/b.ts never share a window or an import, so they form separate units.
+  const validationAt = (result: ReturnType<typeof run>, ts: string): string => {
+    const validation = result.validations.find((candidate) => candidate.ts === ts);
+    if (validation === undefined) throw new Error(`no validation at ${ts}`);
+    return validation.id;
+  };
+
+  it("validates only units changed since the previous run; an untouched unit keeps its earlier runs", () => {
+    const result = run([
+      seq({ fact: hunk("src/a.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "run1", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/b.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 4 }), factId: "run2", seq: 4, batchId: 3 }),
+    ]);
+    const run1 = validationAt(result, tsOf(0, 10));
+    const run2 = validationAt(result, tsOf(0, 30));
+    const unitA = result.units.find((unit) => unit.files.includes("src/a.ts"));
+    const unitB = result.units.find((unit) => unit.files.includes("src/b.ts"));
+    expect(unitA?.id).not.toBe(unitB?.id);
+
+    expect(unitA?.validationResults).toEqual([run1]);
+    expect(unitA?.evidence).toContain("run1");
+    expect(unitA?.evidence).not.toContain("run2");
+    expect(unitA?.status).toBe("validated");
+
+    expect(unitB?.validationResults).toEqual([run2]);
+    expect(unitB?.evidence).not.toContain("run1");
+  });
+
+  it("gives the next run to a unit changed again after an earlier run", () => {
+    const result = run([
+      seq({ fact: hunk("src/a.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "run1", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 20), { added: 9 }), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 4 }), factId: "run2", seq: 4, batchId: 3 }),
+    ]);
+    const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    expect(unit?.validationResults).toEqual([validationAt(result, tsOf(0, 10)), validationAt(result, tsOf(0, 30))]);
+  });
+
+  it("counts a change in the run's own batch window, whatever their order inside it", () => {
+    const result = run([
+      seq({ fact: testResult(tsOf(0, 0), { passed: 3 }), factId: "run1", seq: 1, batchId: 0 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 1)), factId: "f2", seq: 2, batchId: 0 }),
+    ]);
+    const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    expect(unit?.validationResults).toEqual([validationAt(result, tsOf(0, 0))]);
+  });
+
+  it("red to green: a unit whose latest run failed also gets the next passing run", () => {
+    const result = run([
+      seq({ fact: hunk("tests/foo.test.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({
+        fact: testResult(tsOf(0, 10), {
+          passed: 0,
+          failed: 1,
+          failures: [{ file: "tests/foo.test.ts", testName: "foo works", message: "boom" }],
+        }),
+        factId: "red",
+        seq: 2,
+        batchId: 1,
+      }),
+      seq({ fact: hunk("src/foo.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 1 }), factId: "green", seq: 4, batchId: 3 }),
+    ]);
+    const red = validationAt(result, tsOf(0, 10));
+    const green = validationAt(result, tsOf(0, 30));
+    const testUnit = result.units.find((unit) => unit.files.includes("tests/foo.test.ts"));
+    const fooUnit = result.units.find((unit) => unit.files.includes("src/foo.ts"));
+    expect(testUnit?.id).not.toBe(fooUnit?.id);
+    expect(testUnit?.validationResults).toEqual([red, green]);
+    expect(testUnit?.evidence).toContain("green");
+    // R1 ran before src/foo.ts changed, so it never reaches it.
+    expect(fooUnit?.validationResults).toEqual([green]);
+  });
+
+  it("red to green after the test file changed in an earlier bucket: a unit reached only through a failure gets the next passing run", () => {
+    // The test file was written in an earlier bucket, so only the failure ties it to R1.
+    const result = run([
+      seq({ fact: hunk("tests/foo.test.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({
+        fact: testResult(tsOf(5, 0), {
+          failed: 1,
+          failures: [{ file: "tests/foo.test.ts", testName: "foo works", message: "boom" }],
+        }),
+        factId: "red",
+        seq: 2,
+        batchId: 600,
+      }),
+      seq({ fact: hunk("src/foo.ts", tsOf(5, 10)), factId: "f3", seq: 3, batchId: 620 }),
+      seq({ fact: testResult(tsOf(5, 20), { passed: 1 }), factId: "green", seq: 4, batchId: 640 }),
+    ]);
+    const testUnit = result.units.find((unit) => unit.files.includes("tests/foo.test.ts"));
+    expect(testUnit?.files).toEqual(["tests/foo.test.ts"]);
+    // R1 reaches the unit through its failure, which is listed after the run attachments.
+    expect([...(testUnit?.validationResults ?? [])].sort()).toEqual(
+      [validationAt(result, tsOf(5, 0)), validationAt(result, tsOf(5, 20))].sort(),
+    );
+  });
+
+  it("flaky rerun: a pass with no edit reaches the units the failing run reached, once", () => {
+    // src/b.ts was validated before src/a.ts changed, so neither the failure nor the rerun is about it.
+    const result = run([
+      seq({ fact: hunk("src/b.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "pass", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 2, failed: 1 }), factId: "fail", seq: 4, batchId: 3 }),
+      seq({ fact: testResult(tsOf(0, 40), { passed: 3 }), factId: "rerun", seq: 5, batchId: 4 }),
+      seq({ fact: testResult(tsOf(0, 50), { passed: 3 }), factId: "again", seq: 6, batchId: 5 }),
+    ]);
+    const unitA = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
+    expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 30)), validationAt(result, tsOf(0, 40))]);
+    expect(unitA?.evidence).not.toContain("again");
+    expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
+  });
+
+  it("a failing rerun with no edit and no failure file reaches the latest batch, so the red run is never orphaned", () => {
+    const result = run([
+      seq({ fact: hunk("src/b.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "pass1", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 3 }), factId: "pass2", seq: 4, batchId: 3 }),
+      seq({ fact: testResult(tsOf(0, 40), { passed: 2, failed: 1 }), factId: "fail", seq: 5, batchId: 4 }),
+    ]);
+    const unitA = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
+    expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 30)), validationAt(result, tsOf(0, 40))]);
+    expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
+  });
+
+  it("a failing run reaches only the units changed in its range", () => {
+    const result = run([
+      seq({ fact: hunk("src/a.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3 }), factId: "pass", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/b.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 2, failed: 1 }), factId: "fail", seq: 4, batchId: 3 }),
+    ]);
+    const unitA = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
+    expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
+    expect(unitA?.evidence).not.toContain("fail");
+    expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 30))]);
+  });
+
+  it("a command's first run reaches the previous run's batch when nothing changed since it", () => {
+    const result = run([
+      seq({ fact: hunk("src/b.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3, command: "pnpm test:unit" }), factId: "unit1", seq: 2, batchId: 1 }),
+      seq({ fact: hunk("src/a.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 4, command: "pnpm test:unit" }), factId: "unit2", seq: 4, batchId: 3 }),
+      seq({ fact: testResult(tsOf(0, 40), { passed: 1, command: "pnpm test:e2e" }), factId: "e2e", seq: 5, batchId: 4 }),
+      seq({ fact: testResult(tsOf(0, 50), { passed: 1, command: " pnpm test:e2e " }), factId: "e2e2", seq: 6, batchId: 5 }),
+    ]);
+    const unitA = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    const unitB = result.units.find((candidate) => candidate.files.includes("src/b.ts"));
+    // Not nothing (A gets e2e), not the whole bucket (B does not), and a rerun with no edit adds nothing.
+    expect(unitA?.validationResults).toEqual([validationAt(result, tsOf(0, 30)), validationAt(result, tsOf(0, 40))]);
+    expect(unitB?.validationResults).toEqual([validationAt(result, tsOf(0, 10))]);
+    expect(unitA?.evidence).not.toContain("e2e2");
+  });
+
+  it("stays linear with a per-file test command: each run reaches only the file edited before it", () => {
+    const facts: SequencedFact[] = [];
+    for (let k = 0; k < 10; k += 1) {
+      facts.push(seq({ fact: hunk(`src/m${k}.ts`, tsOf(0, 3 * k)), factId: `h${k}`, seq: 2 * k + 1, batchId: 2 * k }));
+      facts.push(
+        seq({
+          fact: testResult(tsOf(0, 3 * k + 1), { passed: k + 1, command: `pnpm test -- m${k}` }),
+          factId: `r${k}`,
+          seq: 2 * k + 2,
+          batchId: 2 * k + 1,
+        }),
+      );
+    }
+    const result = run(facts);
+    expect(result.units).toHaveLength(10);
+    for (const unit of result.units) {
+      expect(unit.validationResults, unit.files.join(",")).toHaveLength(1);
+    }
+  });
+});
+
 describe("clustering: command evidence and decisions", () => {
   it("links decisions to decision-candidate units via evidence refs", () => {
     const result = run(
@@ -569,7 +754,8 @@ describe("clustering: unit to agent call join (agentCallIds)", () => {
   });
 
   it("links a test fact hosted by several units to every host once", () => {
-    // A test file gets its own unit; the bucket's validation lands on both.
+    // A test file gets its own unit. Both units changed before the run (no earlier
+    // run in the bucket), so the run's validation lands on both.
     const files = ["src/feature.ts", "src/feature.test.ts"];
     const result = run([
       ...files.map((file, index) =>
