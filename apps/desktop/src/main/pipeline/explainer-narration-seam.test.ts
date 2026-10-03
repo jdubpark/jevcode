@@ -1,3 +1,4 @@
+import { buildManifest } from "@jevcode/codebase-map";
 import type { Component, OverviewSnapshot } from "@jevcode/contracts";
 import { OverviewSnapshotSchema } from "@jevcode/contracts";
 import { createFakeNarratorClient, NARRATOR_MODEL } from "@jevcode/jev-router";
@@ -183,5 +184,17 @@ describe("createNarrationSeamFactory (R4)", () => {
     expect(await sources.exports(components[0]!)).toEqual(["openVault", "LIMIT"]);
     const other = { ...component(1) };
     expect(await sources.blurb(other)).toBe("From the README.");
+  });
+
+  it("redacts a package description before its 600-character clip, so a key straddling character 600 never leaks (spec §6.2)", async () => {
+    // The key starts at character 581 and runs past 600; a clip first would leave "sk-ant-api03-AAAAAA" unredacted.
+    const description = `${"d".repeat(580)} sk-ant-api03-${"A".repeat(30)} ${"e".repeat(1_000)}`;
+    const manifest = buildManifest(["package.json"], new Map([["package.json", JSON.stringify({ name: "root", description })]]));
+    const root = { ...component(0), rootPath: "." };
+    const sources = viewBriefSources({ ...viewOf([root]), manifest }, { blurb: async () => null, exports: async () => [] });
+    const blurb = await sources.blurb(root);
+    expect(blurb).not.toContain("sk-ant");
+    expect(blurb).not.toContain("AAAA");
+    expect(Array.from(blurb ?? "")).toHaveLength(600);
   });
 });
