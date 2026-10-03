@@ -27,7 +27,7 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
 import type { RowsAvailableEmitter } from "./rows-available.js";
 import { sweepStaleSessions } from "./session-recovery.js";
-import { runShutdown } from "./shutdown.js";
+import { quitSteps, runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
@@ -363,7 +363,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  const stopping = { rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
+  const stopping = { runtime, rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
   rowsAvailable = null;
   explainer = null;
   importExtractor = null;
@@ -371,17 +371,7 @@ app.on("will-quit", () => {
   traceReader = null;
   db = null;
   runtime = null;
-  // The stage writes rows and overview_state, so it stops before the database closes. A step
-  // that throws is logged and the rest still run.
-  runShutdown(
-    [
-      { name: "rows available", run: () => stopping.rowsAvailable?.dispose() },
-      { name: "explainer", run: () => stopping.explainer?.dispose() },
-      { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
-      { name: "terminals", run: () => stopping.terminals?.disposeAll() },
-      { name: "trace reader", run: () => stopping.traceReader?.close() },
-      { name: "database", run: () => stopping.db?.close() },
-    ],
-    (message) => console.error(`[quit] ${message}`),
-  );
+  // The pipeline's sessions, then the stage (it writes rows and overview_state), stop before the database closes.
+  // A step that throws is logged and the rest still run (quitSteps, shutdown.ts).
+  runShutdown(quitSteps(stopping), (message) => console.error(`[quit] ${message}`));
 });

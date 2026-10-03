@@ -483,6 +483,33 @@ export class PipelineRuntime {
    * until then. `teardown: true`, the default (repo close, the replay CLI and
    * soak), releases the session as before.
    */
+  /**
+   * The app is quitting (index.ts will-quit) and the database closes next. Every session stops at once and writes
+   * nothing more: a pass waiting at a slicer yield, or on a Jev client, ends at its next slice check (PassStopped)
+   * without touching the database, ingestion drops records, sync timers are cleared, and the agent and the evidence
+   * collector are told to stop without waiting for them. Sessions keep the state the database holds; the boot sweep
+   * (session-recovery.ts) settles them at the next start. Synchronous, so the database can close right after it.
+   */
+  shutdown(): void {
+    for (const session of this.sessions.values()) {
+      session.stopping = true;
+      if (session.syncTimer !== null) {
+        clearTimeout(session.syncTimer);
+        session.syncTimer = null;
+      }
+      for (const [what, stop] of [
+        ["evidence", () => session.evidence?.stop()],
+        ["agent", () => session.adapter?.stop()],
+      ] as const) {
+        try {
+          void Promise.resolve(stop()).catch((error: unknown) => this.log(`quit: ${what} stop failed: ${String(error)}`));
+        } catch (error) {
+          this.log(`quit: ${what} stop failed: ${String(error)}`);
+        }
+      }
+    }
+  }
+
   async stopSession(
     sessionId: string,
     opts: { teardown?: boolean } = {},
