@@ -450,3 +450,15 @@ The lane files were drafted against the real code, and some names above had to c
 - The main window answers a decision with `answer_decision` and `{decisionId, decision: {decision: optionId}}`, and main checks that `optionId` is one of the decision's options.
 - Push delivery uses `TraceWindowRegistry.sendersForSession` and `isPushAllowed`, so trace windows also receive `trace:rowsAvailable`.
 - R5: a session switch opens on Console, and there is no per-window view memory.
+
+### 8.6 Final review additions (2026-10-04)
+
+The final whole-branch review's fix wave added these names; they are binding like the rest of §8.
+
+- **Contracts/storage:** `JevcodeDb.getChangeUnitCount(sessionId)` and `getDecisionCount(sessionId)` (SQL `COUNT(*)`; `buildSessionState` uses them, so `session:switch` parses no unit or decision).
+- **Narrator:** `isEmptySessionStoryInput(input)` (jev-router), shared by the client and the session explainer, so an empty story input makes no call and is neither recorded nor counted toward the schema brake.
+- **Explainer stage:** `onSessionSwitched()` writes a catch-up `overview_snapshot` row only for a session whose pipeline synced while another session was open (deduped by the written key); browsing a session that did not run appends nothing.
+- **Viewer model:** `DecisionDetail.decidedSeq?: number` (the seq of the row that answered or delegated the decision; kept by later re-emits, cleared on reopen). `DecisionDetail.answerSeq` has the same lifetime. `foldDecision` absorbs a pending supervisor message as the answer only when the row closes a decision that was open, and `turn.decisionAnswered` is set only then.
+- **Viewer layout:** `buildBriefDecisions` orders decided cards by `answerSeq ?? decidedSeq`. `componentDecisionIds(session, componentId)` (the uncapped inverse of `decisionComponents`); `ComponentDecision = { decisionId; stepId; title; status }` and `ComponentDetails.decisions` (session order), rendered in the component Inspector's "This session" list. `consoleReadingOrder` includes `guardrails` rows, keyed by their first step.
+- **Viewer UI:** `tabbable?: boolean` on `CitationChips`, `StoryBlock` and `SummaryBlock` (`ConsoleRowView` passes `false`, so the Console feed keeps one tab stop). `canToggleBrief(state)` in `view-state.ts`, re-exported next to `showsBrief`; the Brief button is pressed by `showsBrief` and enabled by `canToggleBrief`. `ViewPort.readingEntry?(id)` and `nextInOrder(order, current, dir, index, entryOf?)`. `HostViewSwitch` carries `data-trace-viewer`. The Brief root is a `<div tabIndex={-1} data-brief>` with no accessible name.
+- **Untrusted text:** `displayUntrusted`'s class is `[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]`, identical to jev-router's narrator guard.
