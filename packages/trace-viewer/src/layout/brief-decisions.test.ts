@@ -77,6 +77,19 @@ describe("buildBriefDecisions", () => {
     expect(cards.map((card) => [card.decisionId, card.decidedBy])).toEqual([["d3", "delegated"], ["d2", "supervisor"]]);
   });
 
+  it("orders decided cards by when they were answered, so the card just answered is always shown", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Go" });
+    for (const id of ["d1", "d2", "d3"]) b.decision({ id, status: "open" });
+    // Opened d1, d2, d3; answered d3, then d2, then d1 (the reader just answered d1, the oldest card).
+    for (const id of ["d3", "d2", "d1"]) {
+      b.agent({ type: "agent_message", role: "user", text: `Use ${id}.` });
+      b.decision({ id, status: "answered", answer: { decisionId: id, decision: { q: "a" }, evidence: [] } });
+    }
+    const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
+    expect(cards.map((card) => card.decisionId)).toEqual(["d1", "d2"]);
+  });
+
   it("finds no components without an overview", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "Go" });
