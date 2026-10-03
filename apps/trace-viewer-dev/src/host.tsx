@@ -18,6 +18,7 @@ import styles from "./host.module.css";
 import { loadOverview, withOverview } from "./overview-sample.js";
 import { PerfHud } from "./perf-hud.js";
 import { createSelftest, selftestDrip, type SelftestResult } from "./selftest.js";
+import { createBarProbe, type BarProbeResult } from "./selftest-bar.js";
 import { claimStepIdOf, createOpenProbe, type OpenProbeResult } from "./selftest-open.js";
 
 /** A dropped file is untrusted input: refuse anything past this before reading it. The 177 MB soak bundle fits. */
@@ -43,6 +44,27 @@ const VIEW_KIND = /^[a-z][a-z0-9-]{0,31}$/;
 /** `?view=console` etc.: the opening view when the hash names none (TraceViewerProps.initialView). */
 export function parseView(value: string | null): ViewKind | undefined {
   return value !== null && VIEW_KIND.test(value) ? value : undefined;
+}
+
+/** `?gaps=N` (1 to 50): the count of unknown-type rows to append, so the fold reports N gaps and the title bar shows its chip. */
+export function parseGaps(value: string | null): number {
+  const count = Number(value);
+  return value !== null && Number.isInteger(count) && count > 0 && count <= 50 ? count : 0;
+}
+
+/** Appends `count` rows of a type no build knows after the last row; the fold turns each into an unknown_row_type gap. */
+export function withGapRows(bundle: TraceBundle, count: number): TraceBundle {
+  if (count === 0) return bundle;
+  const last = bundle.rows.at(-1);
+  const lastSeq = last?.seq ?? 0;
+  const ts = last?.ts ?? new Date(0).toISOString();
+  const extra = Array.from({ length: count }, (_, index) => ({
+    seq: lastSeq + index + 1,
+    type: "dev_host_gap",
+    ts,
+    payload: {},
+  }));
+  return { ...bundle, rows: [...bundle.rows, ...extra] };
 }
 
 /** Spec §10 live tick run: "starting at lastSeq − 2000" is `?drip=20,1000,-2000`. */
@@ -94,6 +116,7 @@ function Viewer({
   hash,
   selftest,
   openProbe,
+  barProbe,
   chrome,
   view,
 }: {
@@ -102,6 +125,7 @@ function Viewer({
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  barProbe: boolean;
   chrome: "full" | "embedded";
   view: ViewKind | undefined;
 }) {
@@ -126,6 +150,7 @@ function Viewer({
       hash={hash}
       selftest={selftest}
       openProbe={openProbe}
+      barProbe={barProbe}
       chrome={chrome}
       view={view}
     />
@@ -139,6 +164,7 @@ function ViewerBody({
   hash,
   selftest,
   openProbe,
+  barProbe,
   chrome,
   view,
 }: {
@@ -148,6 +174,7 @@ function ViewerBody({
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  barProbe: boolean;
   chrome: "full" | "embedded";
   view: ViewKind | undefined;
 }) {
@@ -171,6 +198,13 @@ function ViewerBody({
     probe.start();
     return () => probe.stop();
   }, [probe]);
+  const [bar, setBar] = useState<BarProbeResult | null>(null);
+  const [barRun] = useState(() => (barProbe ? createBarProbe(setBar) : null));
+  useEffect(() => {
+    if (barRun === null) return undefined;
+    barRun.start();
+    return () => barRun.stop();
+  }, [barRun]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
   const showBrief = useMemo(() => new URLSearchParams(window.location.search).get("brief") === "1", []);
   const host = useMemo<ViewerHost>(
@@ -227,6 +261,11 @@ function ViewerBody({
           {opened === null ? "" : JSON.stringify(opened)}
         </pre>
       ) : null}
+      {barProbe ? (
+        <pre id="selftest" className={styles.result}>
+          {bar === null ? "" : JSON.stringify(bar)}
+        </pre>
+      ) : null}
     </>
   );
 }
@@ -238,6 +277,8 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const perf = params.get("perf") === "1";
   const selftest = params.get("selftest") === "drip";
   const openProbe = params.get("selftest") === "open";
+  const barProbe = params.get("selftest") === "bar";
+  const gapRows = parseGaps(params.get("gaps"));
   const chrome = params.get("chrome") === "embedded" ? "embedded" : "full";
   const view = parseView(params.get("view"));
   const overviewName = params.get("overview");
@@ -257,6 +298,11 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
       if (requestToken.current === token) requestToken.current += 1;
     };
   }, [bundleName, overviewName]);
+
+  const shownBundle = useMemo(
+    () => (loaded.kind === "ready" && gapRows > 0 ? withGapRows(loaded.bundle, gapRows) : null),
+    [loaded, gapRows],
+  );
 
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
@@ -288,11 +334,12 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
       {loaded.kind === "ready" ? (
         <Viewer
           key={`${loaded.bundle.session.sessionId}:${loaded.bundle.exportedAt}`}
-          bundle={loaded.bundle}
+          bundle={shownBundle ?? loaded.bundle}
           drip={drip}
           hash={hash}
           selftest={selftest}
           openProbe={openProbe}
+          barProbe={barProbe}
           chrome={chrome}
           view={view}
         />

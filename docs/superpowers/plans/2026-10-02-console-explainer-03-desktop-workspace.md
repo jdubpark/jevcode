@@ -2819,7 +2819,7 @@ Run:
 
 ```bash
 pnpm --filter jevcode-desktop run rebuild
-(perl -e 'alarm 240; exec @ARGV' node apps/desktop/scripts/smoke-workspace.mjs .superpowers/shots/d2 > .superpowers/smoke-d2.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-d2.log) &
+(perl -e 'alarm 300; exec @ARGV' node apps/desktop/scripts/smoke-workspace.mjs .superpowers/shots/d2 > .superpowers/smoke-d2.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-d2.log) &
 ```
 
 Wait until `grep -E "^EXIT=" .superpowers/smoke-d2.log` prints a line (poll every 15 s). Then run `grep -E "SMOKE_WORKSPACE|SMOKE_SHOT|SMOKE_OK|SMOKE_FAIL|WORKSPACE_SMOKE" .superpowers/smoke-d2.log`, and restore the Node ABI as in D-6 Step 9.
@@ -4932,7 +4932,7 @@ Expected: all exit 0.
 
 ```bash
 pnpm --filter jevcode-desktop run rebuild
-(perl -e 'alarm 240; exec @ARGV' node apps/desktop/scripts/smoke-workspace.mjs .superpowers/shots/d6 > .superpowers/smoke-d6.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-d6.log) &
+(perl -e 'alarm 300; exec @ARGV' node apps/desktop/scripts/smoke-workspace.mjs .superpowers/shots/d6 > .superpowers/smoke-d6.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-d6.log) &
 ```
 
 Poll every 15 s until `grep -E "^EXIT=" .superpowers/smoke-d6.log` prints a line (the run takes about a minute: 321 agent events 150 ms apart, plus boot and the view walk). Then run `grep -E "SMOKE_|WORKSPACE_SMOKE|EXIT=" .superpowers/smoke-d6.log`. If a stray Electron outlives the run, `pkill -f "jevcode-ws-smoke"` and `pkill -f "apps/desktop/node_modules/electron"` stop it.
