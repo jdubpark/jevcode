@@ -556,6 +556,8 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   }
 
   async function why(t: Tracked, client: NarratorClient, decisionId: string): Promise<void> {
+    // Settled since it was queued (setNarrator re-queues while a why is in flight): one why per decision.
+    if (t.whyDone.has(decisionId)) return;
     const session = t.session;
     const decision = t.sync?.decisions.find((candidate) => candidate.id === decisionId);
     if (session === null || decision === undefined || !current(t)) return;

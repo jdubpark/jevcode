@@ -780,6 +780,31 @@ describe("session explainer: decision whys", () => {
     expect(w.calls.every((call) => call.error === null)).toBe(true);
   });
 
+  it("writes one why when setNarrator re-queues the decision while its why is in flight", async () => {
+    // Review fix 4: the re-queue saw the in-flight decision as unexplained and asked for it a second time.
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    const grounded = narrator.why;
+    let release: () => void = () => undefined;
+    let asked = 0;
+    // Only the first call waits; a second call would answer at once (and write a second row).
+    narrator.why = (input) => {
+      asked += 1;
+      return asked > 1 ? grounded(input) : new Promise((resolve) => (release = () => resolve(grounded(input))));
+    };
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure here." });
+    const answered = w.decision("d1", "answered", [], "fail_open");
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], [answered]));
+    await vi.waitFor(() => expect(narrator.whyCalls).toHaveLength(1));
+    explainer.setNarrator(narrator);
+    release();
+    await explainer.idle();
+    expect(narrator.whyCalls).toHaveLength(1);
+    expect(w.rows("decision_why")).toHaveLength(1);
+  });
+
   it("retries a failed why once the backoff ends, without a new sync", async () => {
     const w = new World();
     const narrator = new ScriptedNarrator(w);
