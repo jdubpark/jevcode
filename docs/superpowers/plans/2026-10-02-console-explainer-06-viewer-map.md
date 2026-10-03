@@ -6021,25 +6021,21 @@ grep -n "export function RightPanel" packages/trace-viewer/src/ui/inspector/Righ
 grep -n "RightPanel" packages/trace-viewer/src/ui/shell/Shell.tsx
 ```
 
-Expected: each prints at least one line. The Shell now renders `RightPanel`, which shows the Brief whenever no step is selected, so P-3's Inspector branch is never reached on the Map. Fix that now: in `packages/trace-viewer/src/ui/inspector/RightPanel.tsx`, replace the body of `RightPanel` with:
+Expected: each prints at least one line (the third also finds `export function showsBrief`). The Shell now renders `RightPanel`, which shows the Brief whenever no step is selected, so P-3's Inspector branch is never reached on the Map. Fix that now **without replacing `RightPanel`'s body**: lane 02b's version carries the focus handover (when the panel switches while focus is inside it, focus moves to the Brief root or to the active view's tab stop; lane 02 deviation 21) and the Shell names the aside "Brief" or "Inspector" from the same `showsBrief`. Both stay right only if the Map case goes through `showsBrief`. In `packages/trace-viewer/src/ui/inspector/RightPanel.tsx`:
 
-```tsx
-export function RightPanel({ host }: { host: ViewerHost }): JSX.Element {
-  // On the Map a selected component takes the panel (lane 06 deviation 4); the Inspector routes it to ComponentInspector.
-  const mapComponent = useView((state) => (state.view === "map" ? state.mapSelection : null));
-  const showBrief = useView((state) => state.selection === null || state.brief);
-  if (mapComponent !== null) return <Inspector host={host} />;
-  return showBrief ? (
-    <ErrorBoundary region="Brief">
-      <Brief />
-    </ErrorBoundary>
-  ) : (
-    <Inspector host={host} />
-  );
+1. Extend `showsBrief` so a selected Map component takes the panel:
+
+```ts
+export function showsBrief(state: ViewState): boolean {
+  // On the Map a selected component takes the panel (lane 06 deviation 4).
+  if (state.view === "map" && state.mapSelection !== null) return false;
+  return state.selection === null || state.brief;
 }
 ```
 
-Rerun this lane's tests: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/model/fold-overview.test.ts src/layout/map-layout.test.ts src/layout/map-layout.property.test.ts src/ui/views/map src/ui/inspector/component-inspector.test.tsx` — expected: PASS (they render `Inspector` directly). The `RightPanel` branch gets its test in Step 2.
+2. Keep the rest of `RightPanel` as it is. Its non-Brief branch renders `<Inspector host={host} />`, which routes a Map selection to the component Inspector (`ComponentInspector`, P-3); if that routing lives elsewhere by now, render the component Inspector in that branch instead. Leave the `display: contents` wrapper, the `focusin` bookkeeping and the switch effect untouched.
+
+The aside label and the focus handover now follow the Map case too. Rerun this lane's tests and lane 02b's guards: `perl -e 'alarm 170; exec @ARGV' pnpm --filter @jevcode/trace-viewer exec vitest run src/model/fold-overview.test.ts src/layout/map-layout.test.ts src/layout/map-layout.property.test.ts src/ui/views/map src/ui/inspector/component-inspector.test.tsx src/ui/inspector/brief.test.tsx src/ui/shell/shell.test.tsx` — expected: PASS. In `brief.test.tsx`, the describe "focus when the panel switches under it (lane fix I-5)" must stay green unchanged; it fails if the body is replaced. In `shell.test.tsx`, so must the m3 test that the aside is named after its content. The `RightPanel` Map branch gets its own test in Step 2.
 
 Open `docs/superpowers/specs/2026-10-02-console-and-explainer-mockups/brief-architecture-1440.png` and `map-1440.png` (the Brief panel on the right).
 
