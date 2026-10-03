@@ -83,7 +83,8 @@ export interface SessionExplainerDeps {
   storyIntervalMs?: number;
   /** The main process's shared slicer (main-slicer.ts); index.ts passes the pipeline's. Default: an own instance. */
   slicer?: MainSlicer;
-  /** The length of a fold slice, folding and settling; default the slicer's budget. 0 settles and yields after every row. */
+  /** The length of a fold slice, folding and settling; default the slicer's budget. 0 settles and yields after
+   *  every row. */
   foldSliceMs?: number;
 }
 

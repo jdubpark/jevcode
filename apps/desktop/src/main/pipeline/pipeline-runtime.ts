@@ -1023,8 +1023,9 @@ export class PipelineRuntime {
    * explainer hook (onPipelineSync, lane 07 S-2), which only a completed pass reaches. The slice is the main slicer's
    * per-turn budget, shared with the session explainer (lane 07 PL-3): when the turn's budget is spent the pass sends
    * unsent Jev decisions to the debug panel and yields through the slicer, so no event-loop turn runs past spec
-   * §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
-   * stage, across their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
+   * §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev client's awaits.
+   * The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the stage, across
+   * their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
    * Each check also ends the pass (PassStopped) once the session is stopped, so a suspended pass writes nothing after
    * a stop and never interrupts a stopped adapter.
    */
