@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { foldRows, type StoryModel } from "../model/index.js";
+import { accumulateAll, createTraceState, finalize, foldRows, type StoryModel } from "../model/index.js";
 import { sentence } from "../test-support/explainer-fixtures.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { buildConsoleRows, consoleNewRowCount, type ConsoleRow, type ConsoleRowsState } from "./console-rows.js";
@@ -125,6 +125,25 @@ describe("buildConsoleRows with story rows", () => {
     expect(next.rows).toEqual(fresh.rows);
     expect([...next.byStep]).toEqual([...fresh.byStep]);
     expect(buildConsoleRows(full, index, next)).toBe(next);
+  });
+
+  it("an explainer-only commit (a why or highlights row) reuses the merged rows instead of merging again", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add a limiter" });
+    b.agent({ type: "agent_message", role: "assistant", text: "Reading the server." });
+    b.explainer({ kind: "story", sentences: [sentence("The agent read the server.", { kind: "step", id: "step:2" })], basisSeq: 2 });
+    const state = createTraceState(testMeta({ state: "running" }));
+    accumulateAll(state, b.rows);
+    const first = finalize(state, { live: true });
+    const prev = buildConsoleRows(first, buildTraceIndex(first));
+    b.explainer({ kind: "decision_why", decisionId: "d1", sentence: sentence("Because.", { kind: "step", id: "step:2" }) });
+    b.explainer({ kind: "highlights", basisSeq: 3, components: [{ id: "cmp_000000000001", state: "new", unitIds: [] }] });
+    accumulateAll(state, b.rows.slice(-2));
+    const second = finalize(state, { live: true });
+    expect(second.explainer.stories).toBe(first.explainer.stories);
+    const next = buildConsoleRows(second, buildTraceIndex(second), prev);
+    expect(next.rows).toBe(prev.rows);
+    expect(next.rows).toEqual(buildConsoleRows(second, buildTraceIndex(second)).rows);
   });
 
   it("counts a summary row in the Console's \"N new\" rows once its story row is past the reader's mark", () => {

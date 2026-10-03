@@ -9,13 +9,15 @@ import { HIGHLIGHT_STATES, type ExplainerModel, type HighlightEntryModel, type H
 export interface ExplainerFoldState {
   story: StoryModel | null;
   readonly stories: StoryModel[];
+  /** The finalize's copy of `stories`, kept until a story row adds a refresh (the Console merges on its identity). */
+  storiesOut: readonly StoryModel[] | null;
   readonly why: Map<string, NarrativeSentence>;
   highlights: HighlightsModel | null;
   out: ExplainerModel | null;
 }
 
 export function createExplainerFoldState(): ExplainerFoldState {
-  return { story: null, stories: [], why: new Map(), highlights: null, out: null };
+  return { story: null, stories: [], storiesOut: null, why: new Map(), highlights: null, out: null };
 }
 
 function copySentence(sentence: NarrativeSentence): NarrativeSentence {
@@ -37,7 +39,10 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
         seq,
         provenance: record.provenance ?? "model",
       };
-      if (current === null || !sameSentences(current.sentences, next.sentences)) state.stories.push(next);
+      if (current === null || !sameSentences(current.sentences, next.sentences)) {
+        state.stories.push(next);
+        state.storiesOut = null;
+      }
       state.story = next;
       break;
     }
@@ -63,7 +68,8 @@ export function foldExplainer(state: ExplainerFoldState, record: ExplainerRecord
 /** The finalize's view; the same object until the next folded explainer row changes something. */
 export function explainerModelOf(state: ExplainerFoldState): ExplainerModel {
   if (state.out === null) {
-    state.out = { story: state.story, stories: [...state.stories], decisionWhy: new Map(state.why), highlights: state.highlights };
+    state.storiesOut ??= [...state.stories];
+    state.out = { story: state.story, stories: state.storiesOut, decisionWhy: new Map(state.why), highlights: state.highlights };
   }
   return state.out;
 }
