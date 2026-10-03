@@ -105,6 +105,34 @@ describe("incremental finalize", () => {
     expect(reached).toBe(true);
   });
 
+  it("the random rows reach a steer right before a re-emit of an already answered decision (2ea4cf1's branch)", () => {
+    const payload = (row: TraceRow): { type?: unknown; role?: unknown; id?: unknown; status?: unknown } =>
+      row.payload !== null && typeof row.payload === "object" ? (row.payload as Record<string, unknown>) : {};
+    const closes = (status: unknown): boolean => status === "answered" || status === "delegated";
+    /** A user message whose next row re-closes a decision an earlier row closed, with no reopen between; it stays an instruction. */
+    const reaches = ({ meta, rows }: { meta: TraceSessionSummary; rows: TraceRow[] }): boolean => {
+      const closed = new Set<unknown>();
+      const steers: number[] = [];
+      rows.forEach((row, i) => {
+        const p = payload(row);
+        if (row.type === "decision") {
+          if (closes(p.status) && closed.has(p.id) && i > 0) {
+            const before = rows[i - 1];
+            const q = before === undefined ? {} : payload(before);
+            if (before?.type === "agent_event" && q.type === "agent_message" && q.role === "user") steers.push(before.seq);
+          }
+          if (closes(p.status)) closed.add(p.id);
+          else closed.delete(p.id);
+        }
+      });
+      if (steers.length === 0) return false;
+      const session = foldRows(meta, rows, { live: false });
+      return steers.some((seq) => session.steps.find((candidate) => candidate.seqs.includes(seq))?.kind === "instruction");
+    };
+    expect(fc.sample(arbRowSession(), { numRuns: 200, seed: 1 }).some(reaches)).toBe(true);
+    expect(fc.sample(arbDenseRowSession(), { numRuns: 200, seed: 1 }).some(reaches)).toBe(true);
+  });
+
   it("row by row: every prefix finalizes to the fresh fold", () => {
     fc.assert(
       fc.property(arbRowSession({ maxOps: 25 }), fc.boolean(), ({ meta, rows }, live) => {
