@@ -44,7 +44,10 @@ function pendingDecisionOf(session: TraceSession): string | null {
 }
 
 function changeOf(chapter: Chapter, session: TraceSession, index: TraceIndex): BriefChange {
-  const own = new Set<string>(chapter.stepIds);
+  // The viewer's anchor rulings (canvas-layout, overview-index, frame-label; ownsRunOutcome): a shared test run the unit
+  // reaches only as a validation (validationOnlyStepIds) is not its own, so it gives neither test counts nor attention.
+  const validationOnly = new Set<string>(chapter.validationOnlyStepIds ?? []);
+  const own = new Set<string>(chapter.stepIds.filter((id) => !validationOnly.has(id)));
   const stepOf = (id: string): Step | undefined => {
     const entry = index.entry(id);
     return entry?.kind === "step" ? session.steps[entry.position] : undefined;
@@ -54,6 +57,7 @@ function changeOf(chapter: Chapter, session: TraceSession, index: TraceIndex): B
   let tests: BriefChange["tests"] = null;
   let testsSeq = -1;
   for (const id of new Set<string>([...chapter.stepIds, ...chapter.validationStepIds])) {
+    if (validationOnly.has(id)) continue;
     const step = stepOf(id);
     if (step === undefined) continue;
     if (step.edit !== undefined && own.has(id)) {

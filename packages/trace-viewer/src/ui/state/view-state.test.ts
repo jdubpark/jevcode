@@ -281,6 +281,20 @@ describe("Brief pin (spec §3.3, E4) and the opening view", () => {
     expect(s).toMatchObject({ selection: null, brief: false });
   });
 
+  it("Esc with the Brief pinned clears the selection, skipping collapse and parent; unpinned it still steps out", () => {
+    const selected = run(initialViewState({ live: false }), [
+      { type: "select", id: test.id, by: "shell" },
+      { type: "expand/set", key: test.id, expanded: true },
+    ]);
+    expect(index.entry(test.id)?.parent).toBe("unit:u-linking-test");
+    const pinned = reduce(reduce(selected, { type: "brief/toggle" }, index), { type: "esc" }, index);
+    expect(pinned.selection).toBeNull();
+    const unpinned = reduce(selected, { type: "esc" }, index);
+    expect(unpinned.selection).toBe(test.id);
+    expect(isKeyExpanded(test.id, index, unpinned.expanded, unpinned.collapsed)).toBe(false);
+    expect(reduce(unpinned, { type: "esc" }, index)).toMatchObject({ selection: "unit:u-linking-test", brief: false });
+  });
+
   it("view switches keep the pin", () => {
     const s = run(initialViewState({ live: false }), [
       { type: "select", id: test.id, by: "shell" },
