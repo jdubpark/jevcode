@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { TraceSource, ViewerHost } from "@jevcode/trace-viewer";
+import type { TraceSource, ViewDefinition, ViewerHost } from "@jevcode/trace-viewer";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,8 @@ const viewerLog = vi.hoisted(() => ({
   mounts: [] as Array<{ sessionId: string; chrome: string | undefined; initialView: string | undefined; hostViews: string[] }>,
   unmounts: [] as string[],
   hosts: [] as ViewerHost[],
+  /** Mount the host views (Surfaces) inside the stand-in, as the real viewer does on key 4. */
+  renderHostViews: false,
 }));
 
 // The viewer itself is lane 02's and has its own tests. This stand-in keeps
@@ -24,7 +26,7 @@ vi.mock("@jevcode/trace-viewer", async () => {
     host?: ViewerHost;
     chrome?: string;
     initialView?: string;
-    hostViews?: readonly { kind: string }[];
+    hostViews?: readonly ViewDefinition[];
     pollMs?: number;
   }
   function TraceViewer(props: FakeProps) {
@@ -45,7 +47,13 @@ vi.mock("@jevcode/trace-viewer", async () => {
         viewerLog.unmounts.push(props.source.sessionId);
       };
     }, [controller]);
-    return React.createElement("div", { "data-testid": "viewer", "data-session": props.source.sessionId });
+    return React.createElement(
+      "div",
+      { "data-testid": "viewer", "data-session": props.source.sessionId },
+      viewerLog.renderHostViews
+        ? (props.hostViews ?? []).map((view) => React.createElement(view.Component, { key: view.kind, active: true }))
+        : null,
+    );
   }
   return { TraceViewer };
 });
@@ -83,6 +91,7 @@ beforeEach(() => {
   viewerLog.mounts.length = 0;
   viewerLog.unmounts.length = 0;
   viewerLog.hosts.length = 0;
+  viewerLog.renderHostViews = false;
   bridge = installFakeBridge();
 });
 
@@ -186,5 +195,92 @@ describe("WorkspaceHost after the dock move (spec §9)", () => {
       } as Parameters<FakeBridge["emitInstructionState"]>[0]),
     );
     expect((await screen.findByRole("list", { name: "Queued instructions" })).textContent).toContain("then update the docs");
+  });
+});
+
+// The Electron smoke failed with "useActions must be used within an ActionProvider": the desktop mounted its own
+// @json-render/react provider (zod 3 peer) around ui-catalog components that read ui-catalog's copy (zod 4 peer).
+describe("WorkspaceHost catalog surfaces answer through action:invoke", () => {
+  const decisionSpec = {
+    root: "decision",
+    elements: {
+      decision: {
+        type: "Decision",
+        props: {
+          decisionId: "dec-redis-1",
+          title: "Redis unavailability policy",
+          severity: "required",
+          context: "What should happen when Redis is unavailable?",
+          options: [
+            { id: "fail_open", label: "Fail open", description: "Allow requests through." },
+            { id: "fail_closed", label: "Fail closed", description: "Reject requests with 503." },
+          ],
+          actions: [
+            {
+              action: "answer_decision",
+              params: { decisionId: "dec-redis-1", decision: { redis_failure_policy: "fail_closed" }, evidence: ["se-1"] },
+            },
+            { action: "delegate_decision", params: { decisionId: "dec-redis-1" } },
+          ],
+        },
+        children: [],
+      },
+    },
+  };
+
+  const matrixSpec = {
+    root: "matrix",
+    elements: {
+      matrix: {
+        type: "TestMatrix",
+        props: {
+          title: "Verification",
+          rows: [{ name: "unit", status: "failed", passed: 4, failed: 1, skipped: 0 }],
+          actions: [
+            { action: "show_exact_diff", params: { files: ["src/limiter.ts"] } },
+            { action: "continue_task", params: {} },
+          ],
+        },
+        children: [],
+      },
+    },
+  };
+
+  function showSurface(surfaceId: string, spec: unknown) {
+    viewerLog.renderHostViews = true;
+    render(host("s1"));
+    act(() => bridge.emit("ui:spec", { sessionId: "s1", surfaceId, spec }));
+  }
+
+  it("renders a pushed Decision surface and sends the chosen option to main", async () => {
+    const consoleError = vi.spyOn(console, "error");
+    showSurface("decision:dec-redis-1", decisionSpec);
+    expect(await screen.findByText("Fail open")).toBeTruthy();
+    expect(screen.getByText("Fail closed")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("choose-fail_open"));
+    await waitFor(() => expect(bridge.calls.actionInvoke).toHaveBeenCalledTimes(1));
+    // The suggested answer's key and evidence carry over; the option is the one clicked.
+    expect(bridge.calls.actionInvoke).toHaveBeenCalledWith("answer_decision", {
+      decisionId: "dec-redis-1",
+      decision: { redis_failure_policy: "fail_open" },
+      evidence: ["se-1"],
+    });
+
+    fireEvent.click(screen.getByTestId("delegate"));
+    await waitFor(() => expect(bridge.calls.actionInvoke).toHaveBeenCalledTimes(2));
+    expect(bridge.calls.actionInvoke).toHaveBeenLastCalledWith("delegate_decision", { decisionId: "dec-redis-1" });
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("renders a surface's action buttons and sends each click to main", async () => {
+    const consoleError = vi.spyOn(console, "error");
+    showSurface("validation:unit", matrixSpec);
+    const buttons = await screen.findByTestId("action-buttons");
+
+    fireEvent.click(buttons.querySelector('[data-action="show_exact_diff"]') as HTMLButtonElement);
+    await waitFor(() => expect(bridge.calls.actionInvoke).toHaveBeenCalledTimes(1));
+    expect(bridge.calls.actionInvoke).toHaveBeenCalledWith("show_exact_diff", { files: ["src/limiter.ts"] });
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
