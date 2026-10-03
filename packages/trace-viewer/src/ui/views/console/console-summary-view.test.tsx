@@ -61,6 +61,11 @@ describe("Console summary rows (live)", () => {
     // Each summary row is named by its own sentences, so the two read differently in the feed.
     expect(within(feed).getByRole("article", { name: /^The agent read the server\./ }).getAttribute("data-kind")).toBe("summary");
     expect(within(feed).getByRole("article", { name: /^The agent added the middleware\./ }).getAttribute("data-kind")).toBe("summary");
+    // The name is the sentences only: the citation chips' "Open ..." labels stay out of it.
+    const readRow = within(feed).getByRole("article", { name: /^The agent read the server\./ });
+    expect(readRow.getAttribute("aria-label")).toBeNull();
+    expect(within(feed).getByRole("article", { name: "The agent read the server." })).toBe(readRow);
+    expect(readRow.querySelector("[aria-label^='Open']")).not.toBeNull();
     source.dispose();
   });
 });
