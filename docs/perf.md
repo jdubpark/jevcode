@@ -474,7 +474,7 @@ this section adds only what the session explainer changes.
 | Console append p95 with summary rows (`console-10k` plus 420 story rows, V-6 harness) | ≤ 150 ms, ≥ 300 samples | p95 28.8 ms, median of 3 runs (29.2, 28.8, 21.7 ms; append median 21.7, 20.1, 16.9 ms), 300 samples each; scroll 0.55, 0.00, 0.00% dropped | PASS |
 | Ingest soak ratio, stage on, narrator off (rule-based stories), sync passes during ingestion | ≤ 1.10 | 1.04: median `ingestMs` 16,014 ms against 15,422 ms | PASS |
 | Console append in the Electron main window with the session explainer hook (80-step evidence smoke) | p95 ≤ 150 ms | p95 73 and 89 ms, max 89 and 104 ms (load 4.25 and 3.42 before the runs); interleaved hook off / on at load 4.0–5.5: p95 89, 86 / 90, 79 ms | PASS |
-| Longest main-process block at a turn end, long session (spec §6.1) | ≤ 50 ms | 116–125 ms at 1,459 units (default and trace profiles); 441 ms at 2,937 units | MISS at S-6; see PL-3 below |
+| Longest main-process block at a turn end, long session (spec §6.1) | ≤ 50 ms | 116–125 ms at 1,459 units (default and trace profiles); 441 ms at 2,937 units | MISS at S-6. The orchestrator's PL-3 ruling fixed it except for the coordinator's rebuild, the one v1 known limit: below |
 
 **Live smoke.** `explainer-live.e2e.test.ts` runs the PRD §58 rate-limit demo through the real `PipelineRuntime`, the
 mock adapter and the real explainer stage (`storyIntervalMs` 1,500) on a 9-file git repository, with a stub narrator
@@ -581,8 +581,9 @@ What the explainer's blocks were:
 - **Mid-session.** Each pass appends a `jev_decision` row for every changed unit, so one sync brings 1,000–3,000 rows
   that reach as many chapters; the incremental finalize was already proportional to them (about 22 µs per row at 1,459
   units, up to 70 µs at 2,937, where chapters hold more steps). The explainer now folds in slices: it settles the rows
-  folded so far with an incremental finalize and yields once a slice's folding plus its predicted settle reaches
-  `FOLD_SLICE_MS` (20 ms), at each page end, and it starts a drain in a task of its own. Incremental equals fresh (S-3),
+  folded so far with an incremental finalize and yields once a slice's folding plus its predicted settle reaches 20 ms
+  (since the continuation below, the main slicer's per-turn budget), at each page end, and it starts a drain in a task
+  of its own. Incremental equals fresh (S-3),
   so the rows it writes are those of one finalize (`explainer-session.test.ts`, "fold slices").
 - Not the cause: the story and highlight builders (`computeHighlights` at most 4.8 ms, `sessionStoryInput` 7.1 ms,
   `detect` 2.2 ms at 2,937 units), and no non-live finalize: the explainer always finalizes with `live: true`.
@@ -591,17 +592,43 @@ What the pipeline's blocks were: `listChangeUnits` (read and parse every unit) r
 snapshot read the graph (17 ms at 1,459 units, 37 ms at 2,937). The unit and graph stores now keep the database's own
 list and read it again only when `JevcodeDb.projectionVersion` shows a row of that kind was written, by any writer.
 
-### Known limits (v1)
+### Continuation: one main-thread slicer (orchestrator ruling, 2026-10-03)
 
-- **The coordinator's rebuild re-projects the whole session.** At the turn end `coordinator.flush` takes 64–66 ms at
-  1,459 units and 156–184 ms at 2,937 units, in one block. Mid-session the same rebuild runs inside
-  `coordinator.ingest` (the debounce) and gives the session's longest blocks: gaps of 451–464 ms at 1,459 units and
-  855–882 ms at 2,937 units in the soak, where 10 records are ingested between yields. Follow-up: an incremental projection (cluster
-  only the facts since the last rebuild and re-project the units they touch), or run `clusterSession` and
-  `projectGraph` in a worker thread and apply the result in sliced writes.
-- **The Jev debug panel's read.** `emitJevDebug` reads `latestJevDecisions(50)`, which orders every `jev_decision` row
-  of the session by `seq` (the index is on `(sessionId, ts)`): 15–16 ms at 1,459 units, 45–59 ms at 2,937, run at a
-  slice's yield, so that slice passes 50 ms at 2,937 units. Follow-up: an index on `jev_decisions (sessionId, seq)`.
-- Two producers that yield with `setImmediate` can run in the same event-loop turn, so a tick gap can hold a pipeline
-  slice and an explainer slice. At 1,459 units the longest such gap was 66 ms: an explainer task of 29 ms with a
-  pipeline slice of 37 ms that `emitJevDebug` (16 ms) ran past its 20 ms.
+The numbers above are per task. IPC waits on event-loop turns, and two producers that yielded with their own
+`setImmediate` could run in the same turn: 66 ms at 1,459 units (an explainer task of 29 ms and a pipeline slice of
+37 ms) and 113 ms at 2,937 (with `emitJevDebug`'s 54 ms read). Four changes followed:
+
+- `createMainSlicer` (`apps/desktop/src/main/pipeline/main-slicer.ts`) keeps one queue of continuations, drained by one
+  `setImmediate` per turn under a 20 ms budget. The sync pass, the session explainer's fold and the overview rebuild
+  all check its shared clock and yield through it; `index.ts` passes them one instance.
+- Migration v6 indexes `jev_decisions (sessionId, seq)`. `latestJevDecisions(50)` took 52.6 ms over 65,340 rows on the
+  2,937-unit database, a sort of every row (`USE TEMP B-TREE FOR ORDER BY`); with the index it takes 0.07 ms.
+- With those, the longest turn without a coordinator rebuild at 2,937 units was a snapshot: 58–81 ms, from rereading
+  every graph row and every unit after a rebuild or the pass's label writes. The graph store now puts the rows it
+  writes into its lists itself, and the unit store rereads only the units whose rows moved (`listChangeUnitVersions`).
+
+Measured as the longest event-loop turn: the probe's `setImmediate` tick shares the check phase with the slicer's
+drain, so a gap holds one drain's work and anything else that ran in that turn. Two runs per size on 865c207, load
+4.3–6.0. "Rebuild turns" hold a coordinator rebuild (in `flush`, in `ingest`, or from its debounce timer).
+
+| Longest event-loop turn | 1,459 units | 2,937 units |
+|---|---|---|
+| Turn end, all turns | 65.8 and 68.9 ms: `coordinator.flush` | 167.2 and 180.5 ms: `coordinator.flush` |
+| Turn end, without a rebuild | under 8 ms (no other turn reached 8 ms) | 8.2 and 10.9 ms: the explainer's last finalize, highlights and triggers |
+| Mid-session, all turns | 389.7 and 392.6 ms: rebuilds in `coordinator.ingest` | 723.7 and 771.4 ms: rebuilds in `coordinator.ingest` |
+| Mid-session, without a rebuild | 31.6 and 28.8 ms: an explainer task (31.0), a 10-record ingest | 34.9 and 37.2 ms: an explainer task (32.6), a 10-record ingest |
+
+Before the continuation (130c82d, the first probe above), turns that ran an explainer task next to a pipeline slice
+reached 66.1 ms at 1,459 units and 112.6 ms at 2,937. After the slicer and the index alone (a92b3ea, this probe), the
+longest turns without a rebuild were 33.4–37.2 ms and 58.1–81.0 ms. One run at
+2,937 units also had a 260.4 ms turn in which 31 row writes took 258 ms: a single SQLite write that stalled on I/O
+(the WAL's automatic checkpoint commits on the writing connection), seen once in four runs.
+
+### Known limit (v1)
+
+**The coordinator's rebuild re-projects the whole session**, in one synchronous call. At the turn end
+`coordinator.flush` takes 65–69 ms at 1,459 units and 167–181 ms at 2,937 units. Mid-session the same rebuild runs
+inside `coordinator.ingest` and from its debounce timer, and gives the session's longest turns: 390–393 ms at 1,459
+units and 724–771 ms at 2,937 units in this soak, where 10 records are ingested between yields. Follow-up: an
+incremental projection (cluster only the facts since the last rebuild and re-project the units they touch), or run
+`clusterSession` and `projectGraph` in a worker thread and apply the result in sliced writes.
