@@ -116,6 +116,10 @@ describe("DecisionCard", () => {
     expect(within(region).getByText("Fail ⟨U+202E⟩open")).toBeTruthy();
     expect(within(region).getByText("availability: API stays up. · +1")).toBeTruthy();
     expect(within(region).getByText("availability: API stays up. · +1").getAttribute("title")).toBe("availability: API stays up.\nabuse: Limits stop.");
+    // The visible line shows one tradeoff; the accessible text carries the full list.
+    expect(within(region).getByText("availability: API stays up. · +1").getAttribute("aria-hidden")).toBe("true");
+    const full = within(region).getByText("Tradeoffs: availability: API stays up.; abuse: Limits stop.");
+    expect(full.closest("[aria-hidden]")).toBeNull();
     fireEvent.click(within(region).getByRole("button", { name: "Choose Fail ⟨U+202E⟩open" }));
     expect(onAnswer).toHaveBeenCalledWith("open");
     first.result.unmount();

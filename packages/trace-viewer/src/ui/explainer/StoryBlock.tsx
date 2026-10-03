@@ -10,17 +10,20 @@ import styles from "./explainer.module.css";
  * citation chips. A rule-based story (ruling F1) carries a quiet "rule-based" label; narrator text carries none.
  */
 export function StoryBlock({
+  id,
   sentences,
   label,
   provenance,
 }: {
+  /** Set where the sentences name an enclosing element (a Console summary row's aria-labelledby); then no label. */
+  id?: string;
   sentences: readonly NarrativeSentence[];
-  label: string;
+  label?: string;
   provenance?: "rule" | "model";
 }): JSX.Element {
   return (
     <div className={styles.storyWrap}>
-      <ol className={styles.story} aria-label={label}>
+      <ol id={id} className={styles.story} aria-label={label}>
         {sentences.map((item, index) => {
           const text = displayUntrusted(item.text);
           return (

@@ -21,7 +21,7 @@ export function SummaryBlock({
 }): JSX.Element {
   const dispatch = useDispatch();
   return (
-    <section id={id} className={styles.summaryRow} aria-label="Session summary">
+    <section className={styles.summaryRow} aria-label="Session summary">
       <span className={styles.diamond} aria-hidden="true">
         <span>◆</span>
       </span>
@@ -38,7 +38,8 @@ export function SummaryBlock({
             Brief
           </button>
         </div>
-        <StoryBlock sentences={sentences} label="Summary sentences" />
+        {/* `id` (the row's lineId) names the Console row by its own sentences, so each summary row reads differently. */}
+        <StoryBlock {...(id !== undefined ? { id } : { label: "Summary sentences" })} sentences={sentences} />
       </div>
     </section>
   );

@@ -54,6 +54,9 @@ describe("Console summary rows (live)", () => {
     const kinds = Array.from(feed.querySelectorAll("article")).map((article) => article.getAttribute("data-kind"));
     expect(kinds).toEqual(["instruction", "message", "summary", "message", "summary"]);
     expect(within(feed).getAllByRole("region", { name: "Session summary" }).at(-1)?.textContent).toContain("The agent added the middleware.");
+    // Each summary row is named by its own sentences, so the two read differently in the feed.
+    expect(within(feed).getByRole("article", { name: /^The agent read the server\./ }).getAttribute("data-kind")).toBe("summary");
+    expect(within(feed).getByRole("article", { name: /^The agent added the middleware\./ }).getAttribute("data-kind")).toBe("summary");
     source.dispose();
   });
 });
