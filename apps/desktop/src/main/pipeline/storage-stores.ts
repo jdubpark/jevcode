@@ -1,3 +1,4 @@
+import { canonicalJson, DecisionSchema } from "@jevcode/contracts";
 import type {
   ChangeUnit,
   Decision,
@@ -180,7 +181,8 @@ class StorageSemanticEventSink implements SemanticEventSink {
 // Every store write appends an event row, and the coordinator re-upserts every
 // validation, failure and decision on each rebuild. Like the change-unit store,
 // these stores write only when the payload differs from the last one written for
-// that id.
+// that id. Only this store writes validation and failure rows, so a private map
+// of the last payload is the database's current row.
 class StorageValidationStore implements ValidationStore {
   private readonly lastValidationJson = new Map<string, string>();
   private readonly lastFailureJson = new Map<string, string>();
@@ -231,18 +233,27 @@ class StorageValidationStore implements ValidationStore {
   }
 }
 
-class StorageDecisionStore implements DecisionStore {
-  private readonly lastJson = new Map<string, string>();
+// The runtime also writes each incoming decision record straight to the database,
+// so a private map of the last payload can go stale: the store compares against the
+// database's current row instead. The decisions projection keeps neither `ts` nor
+// the option order, so both sides are compared in that projected form.
+function projectedDecisionJson(decision: Decision | undefined): string | null {
+  const parsed = DecisionSchema.safeParse(decision);
+  if (!parsed.success) return null;
+  const { ts: _ts, ...rest } = parsed.data;
+  const options = [...rest.options].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return canonicalJson({ ...rest, options });
+}
 
+class StorageDecisionStore implements DecisionStore {
   constructor(
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
   ) {}
 
   upsert(decision: Decision): void {
-    const json = JSON.stringify(decision);
-    if (this.lastJson.get(decision.id) === json) return;
-    this.lastJson.set(decision.id, json);
+    const next = projectedDecisionJson(decision);
+    if (next !== null && next === projectedDecisionJson(this.db.getDecision(decision.id))) return;
     this.db.upsertDecision(decision);
   }
 
