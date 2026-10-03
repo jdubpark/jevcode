@@ -4,6 +4,7 @@ import type { Component, NarrativeSentence } from "@jevcode/contracts";
 import { decisionStableId, type DecisionDetail, type OverviewModel, type StepId, type TraceSession } from "../model/index.js";
 import { componentDecisionIds, decisionSteps } from "./brief-decisions.js";
 import { componentForPath } from "./map-layout.js";
+import { enterSession, sessionSlot } from "./session-slots.js";
 
 /** Spec §3.4: files are listed top 20, then "n more". */
 export const DETAIL_FILES_SHOWN = 20;
@@ -98,7 +99,15 @@ let last: {
   details: ComponentDetails;
 } | null = null;
 
+sessionSlot({
+  clear: () => {
+    last = null;
+  },
+  held: () => (last === null ? [] : [last.overview, last.entities, last.chapters, last.sessionOverview, last.steps]),
+});
+
 export function componentDetails(overview: OverviewModel, componentId: string, session: TraceSession): ComponentDetails | null {
+  enterSession(session.meta.sessionId);
   const component = overview.componentById.get(componentId);
   if (component === undefined) return null;
   const { entities, chapters, steps } = session;

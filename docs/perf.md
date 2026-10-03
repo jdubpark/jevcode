@@ -416,6 +416,17 @@ is Mac15,11 (Apple M3 Max, 36 GiB, macOS 27.0.1, Node v22.23.1), shared with oth
 | `componentDetails`, (b) explainer row | 0.177 / 0.177 | 0.0006 / 0.0003 | 0.521 / 0.524 | 0.0004 / 0.0005 |
 | `componentDetails`, (c) no change | 0.180 / 0.184 | 0.0002 / 0.0003 | 0.531 / 0.511 | 0.0004 / 0.0005 |
 | `componentDetails`, (d) clock, command running | 0.190 / 0.178 | 0.0035 / 0.0035 | 0.523 / 0.524 | 0.012 / 0.012 |
+| `editedFilesOf`, ungrouped files, (a) to (d) | 0.0022–0.0213 | 0.0001–0.0005 | 0.0023–0.0045 | 0.0002–0.0013 |
+| `editedFilesOf`, all files, (a) to (d) | 0.037–0.077 | 0.0002–0.0007 | 0.037–0.050 | 0.0002–0.0005 |
+
+The `editedFilesOf` rows are ranges over the four cases and both rounds. They come from a later pair of runs at
+03:20, at one-minute load 3.2–3.5. The Brief calls it for the files no unit holds yet beside its changes ("ungrouped";
+here every file has a unit) and for all files before any unit exists. Its before is f3cfaea's function from
+`ui/inspector/Brief.tsx`, copied verbatim into a scratch bench that was not committed. It sorted the entities on every
+commit and read each file's latest step through the index. It now lives in `layout/brief.ts`, is cached per entities
+list, and reads the first seq from the step id (`step:<firstSeq>`). In the same runs, after the review's session-slot
+change, `buildBrief` read 0.27–0.28 ms for (a), 0.23–0.28 ms for (d) and 2.5–4.9 µs for (b) and (c) at 63,872 steps,
+and `componentDetails` read 12–20 µs and under 1 µs.
 
 Earlier runs used chains with stories, so Now was the story and the old running-step and open-decision scans did not
 run. At 63,872 steps, `buildBrief` read 3.0–5.3 ms before. After, it read 0.29–0.44 ms for (a) and 1.5–4.3 µs for (b)
@@ -429,10 +440,10 @@ What still grows with the session:
   because finalize moves the running step's `durationMs` with the clock.
 - A commit that changes the chapter list (a `change_unit` row) re-sorts the shown chapters and rebuilds the decision
   joins over the current chapters. The changes of chapters that are the same objects are kept.
-- A commit that changes the entities re-sorts them for the Brief's touched components. Each entity's first seq and
-  each path's component are cached, per entity and per overview.
-- Outside these builders, the Brief's list of ungrouped edited files (`editedFilesOf` in `ui/inspector/Brief.tsx`)
-  still reads every entity on every commit. This bench does not cover it.
+- A commit that changes the entities (an edit) re-sorts them twice: once for the Brief's touched components and once
+  for `editedFilesOf`. Each entity's first seq and each path's component are cached, per entity and per overview.
+- The slots hold the lists of one session: the first build for another session id clears them all
+  (`layout/session-slots.ts`).
 
 ## Pipeline write volume (2026-10-03, PL-1)
 

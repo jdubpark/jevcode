@@ -6,14 +6,14 @@ import { accumulateAll, createTraceState, finalize } from "../model/fold.js";
 import type { TraceSession } from "../model/index.js";
 import { componentId, overviewSnapshot } from "../test-support/overview-builder.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
-import { buildBrief } from "./brief.js";
+import { buildBrief, editedFilesOf } from "./brief.js";
 import { componentDetails } from "./map-details.js";
 import { buildTraceIndex, type TraceIndex } from "./trace-index.js";
 
-// The Brief (mounted whenever nothing is selected) and the component Inspector rebuild on every live commit. Each bench
-// times one builder over a chain of real commits (fold, incremental finalize, incremental index, as the Shell does), so
-// every sample is a new session object built after its predecessor's. Benchmark, not a CI gate (docs/perf.md, "Brief and
-// component Inspector per commit").
+// The Brief (mounted whenever nothing is selected), its edited-files list and the component Inspector rebuild on every
+// live commit. Each bench times one builder over a chain of real commits (fold, incremental finalize, incremental index,
+// as the Shell does), so every sample is a new session object built after its predecessor's. Benchmark, not a CI gate
+// (docs/perf.md, "Brief and component Inspector per commit").
 //
 // Shape: PL-3's long soak had 2,937 units and 68,321 steps (docs/perf.md). Here a unit is 3 messages, a reasoning
 // step, 13 reads, 3 edits and a lint run (21 steps), a test run every 4 units, a re-emit of the previous unit, a
@@ -217,17 +217,20 @@ function chainBench(name: string, chain: readonly Commit[], build: (commit: Comm
 
 for (const units of [500, 3_000]) {
   const c = chains(units);
-  const brief = ({ session, index }: Commit): unknown => buildBrief(session, index);
-  const details = ({ session }: Commit): unknown =>
-    session.overview === null ? null : componentDetails(session.overview, c.componentId, session);
+  // editedFilesOf: the files no unit holds yet (the Brief beside its changes) and every edited file (before any unit).
+  const builders: readonly (readonly [string, (commit: Commit) => unknown])[] = [
+    ["buildBrief", ({ session, index }) => buildBrief(session, index)],
+    ["componentDetails", ({ session }) => (session.overview === null ? null : componentDetails(session.overview, c.componentId, session))],
+    ["editedFilesOf, ungrouped", ({ session }) => editedFilesOf(session.entities, true)],
+    ["editedFilesOf, all files", ({ session }) => editedFilesOf(session.entities, false)],
+  ];
+  const cases: readonly (readonly [string, readonly Commit[]])[] = [
+    ["(a) one step added", c.step],
+    ["(b) explainer rows only", c.explainer],
+    ["(c) no change", c.none],
+    ["(d) clock only, a command running", c.running],
+  ];
   describe(`Brief and component Inspector per commit, ${units.toLocaleString("en-US")} units / ${c.steps.toLocaleString("en-US")} steps`, () => {
-    chainBench("buildBrief, (a) one step added", c.step, brief);
-    chainBench("buildBrief, (b) explainer rows only", c.explainer, brief);
-    chainBench("buildBrief, (c) no change", c.none, brief);
-    chainBench("buildBrief, (d) clock only, a command running", c.running, brief);
-    chainBench("componentDetails, (a) one step added", c.step, details);
-    chainBench("componentDetails, (b) explainer rows only", c.explainer, details);
-    chainBench("componentDetails, (c) no change", c.none, details);
-    chainBench("componentDetails, (d) clock only, a command running", c.running, details);
+    for (const [name, build] of builders) for (const [label, chain] of cases) chainBench(`${name}, ${label}`, chain, build);
   });
 }

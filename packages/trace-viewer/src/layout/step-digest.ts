@@ -1,9 +1,10 @@
 // The steps the Brief and the component Inspector look for (decisions, running steps), found without a scan of the whole
 // session on every commit. Pure and React-free.
 import type { Step } from "../model/index.js";
+import { sessionSlot } from "./session-slots.js";
 
 /** A diff above this many positions is treated as a new list: the readers rebuild instead of patching. */
-export const STEP_DIFF_LIMIT = 64;
+const STEP_DIFF_LIMIT = 64;
 
 let lastDiff: { before: readonly Step[]; after: readonly Step[]; changed: readonly number[] | null } | null = null;
 
@@ -31,15 +32,15 @@ export function changedStepPositions(before: readonly Step[], after: readonly St
 }
 
 /** The ids at the changed positions of both lists (a step that moved, went or appeared), or null as above. */
-export function changedStepIds(before: readonly Step[], after: readonly Step[]): ReadonlySet<string> | null {
+export function changedStepIds(before: readonly Step[], after: readonly Step[]): string[] | null {
   const changed = changedStepPositions(before, after);
   if (changed === null) return null;
-  const ids = new Set<string>();
+  const ids: string[] = [];
   for (const at of changed) {
     const was = before[at];
     const is = after[at];
-    if (was !== undefined) ids.add(was.id);
-    if (is !== undefined) ids.add(is.id);
+    if (was !== undefined) ids.push(was.id);
+    if (is !== undefined && is.id !== was?.id) ids.push(is.id);
   }
   return ids;
 }
@@ -56,6 +57,14 @@ const isRunning = (step: Step): boolean => step.status === "running" && step.kin
 
 const digests = new WeakMap<readonly Step[], StepDigest>();
 let latest: { steps: readonly Step[]; digest: StepDigest } | null = null;
+
+sessionSlot({
+  clear: () => {
+    lastDiff = null;
+    latest = null;
+  },
+  held: () => [lastDiff?.before, lastDiff?.after, latest?.steps].filter((list) => list !== undefined),
+});
 
 function positionsOf(steps: readonly Step[], test: (step: Step) => boolean): number[] {
   const out: number[] = [];
