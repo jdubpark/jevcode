@@ -1,5 +1,6 @@
-// Dev host only: an in-browser sample overview for the Map (P-3). P-5 adds this repository's fixture.
-import { OverviewSnapshotSchema, type OverviewSnapshot, type Role, type TraceBundle } from "@jevcode/contracts";
+// Dev host only: in-browser overviews for the Map (P-3): a small sample repo and a 200-component synthetic map for
+// pan and zoom profiling. P-5 adds this repository's fixture.
+import { OverviewSnapshotSchema, ROLES, type OverviewSnapshot, type Role, type TraceBundle } from "@jevcode/contracts";
 
 interface SampleComponent { root: string; name: string; role: Role; purpose: string; files: number; deps?: readonly string[] }
 
@@ -78,6 +79,70 @@ export function sampleOverview(sessionId: string): OverviewSnapshot {
   });
 }
 
+/** mulberry32, as in the viewer's test-support `syntheticOverview` (which needs node:crypto, so the dev host ports it). */
+function generator(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * The viewer's synthetic stress map in the browser (spec §11 "Map pan and zoom", 200 components and 1,000 edges):
+ * components across every role, `edges` distinct pairs, the same draws as test-support `syntheticOverview`.
+ */
+export function syntheticSampleOverview(sessionId: string, options = { components: 200, edges: 1_000, seed: 3 }): OverviewSnapshot {
+  const next = generator(options.seed);
+  const pick = (n: number): number => Math.floor(next() * n);
+  const components = Array.from({ length: options.components }, (_, index) => {
+    const role: Role = ROLES[index % ROLES.length] ?? "domain";
+    const name = `p${String(index).padStart(3, "0")}`;
+    return {
+      id: `cmp_${hex(index + 1, 12)}`,
+      rootPath: `packages/${name}`,
+      name,
+      fileCount: 5 + pick(140),
+      files: [`packages/${name}/index.ts`],
+      language: "TypeScript",
+      roleGuess: role,
+      role,
+      purpose: index % 3 === 0 ? null : `Component ${index} of the synthetic repo.`,
+      provenance: index % 3 === 0 ? ("rule" as const) : ("model" as const),
+      contentHash: hex(index + 1, 40),
+      externalDeps: [],
+      entryPoints: [],
+      importsAnalyzed: true,
+    };
+  });
+  const edges: { from: string; to: string; count: number; examples: string[] }[] = [];
+  const seen = new Set<string>();
+  for (let attempt = 0; edges.length < options.edges && attempt < options.edges * 20; attempt += 1) {
+    const from = components[pick(components.length)];
+    const to = components[pick(components.length)];
+    if (from === undefined || to === undefined || from.id === to.id) continue;
+    const key = `${from.id}>${to.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ from: from.id, to: to.id, count: 1 + pick(40), examples: [] });
+  }
+  return OverviewSnapshotSchema.parse({
+    sessionId,
+    repoRoot: "/sample/synthetic",
+    scanId: "synthetic-1",
+    partial: false,
+    counts: { files: components.reduce((sum, component) => sum + component.fileCount, 0), components: components.length, edges: edges.length, languages: ["TypeScript"] },
+    components,
+    edges,
+    externals: [],
+    narrative: null,
+    generatedAt: "2026-10-02T09:00:00.000Z",
+  });
+}
+
 /** Appends one overview_snapshot row after the bundle's last row (spec §8.1 replace semantics). */
 export function withOverview(bundle: TraceBundle, snapshot: OverviewSnapshot): TraceBundle {
   const last = bundle.rows.at(-1);
@@ -92,5 +157,6 @@ export function withOverview(bundle: TraceBundle, snapshot: OverviewSnapshot): T
 /** The overview a `?overview=<name>` asks for; null for an unknown name. */
 export async function loadOverview(name: string, sessionId: string): Promise<OverviewSnapshot | null> {
   if (name === "sample") return sampleOverview(sessionId);
+  if (name === "synthetic") return syntheticSampleOverview(sessionId);
   return null;
 }

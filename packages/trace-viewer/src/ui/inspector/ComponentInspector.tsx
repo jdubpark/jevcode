@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type React from "react";
 
-import { componentDetails, listBarPx, type MapLink } from "../../layout/map-details.js";
+import { componentDetails, DETAIL_LINKS_SHOWN, listBarPx, type MapLink } from "../../layout/map-details.js";
 import { displayUntrusted, truncateMiddle } from "../../model/index.js";
 import { DiffBar } from "../graphics/DiffBar.js";
 import type { IconName } from "../icons/icon-names.js";
@@ -46,7 +46,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
         <p className={styles.quiet}>{component.importsAnalyzed ? "None" : "Not analyzed for this language"}</p>
       ) : (
         <ul className={styles.list}>
-          {list.map((link) => (
+          {list.slice(0, DETAIL_LINKS_SHOWN).map((link) => (
             <li key={link.id}>
               <span className={styles.row}>
                 <Icon name={iconOf(link.id)} size={12} />
@@ -65,6 +65,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
           ))}
         </ul>
       )}
+      {list.length > DETAIL_LINKS_SHOWN ? <p className={styles.quiet}>{`${(list.length - DETAIL_LINKS_SHOWN).toLocaleString("en-US")} more`}</p> : null}
     </div>
   );
   return (
@@ -98,7 +99,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
           </h3>
           <ul className={styles.list}>
             {details.files.shown.map((file) => (
-              <li key={file} className={styles.mono} data-component-file="" title={displayUntrusted(file)}>
+              <li key={file} className={styles.mono} data-component-file="" title={displayUntrusted(file)} aria-label={displayUntrusted(file)}>
                 {truncateMiddle(file, 48)}
               </li>
             ))}
@@ -143,6 +144,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
                 className={styles.change}
                 data-component-change=""
                 title={displayUntrusted(change.path)}
+                aria-label={`${displayUntrusted(change.path)}, ${change.added.toLocaleString("en-US")} lines added, ${change.removed.toLocaleString("en-US")} removed`}
                 onClick={() => {
                   store.dispatch({ type: "map/select", componentId: null });
                   store.dispatch({ type: "select", id: change.stepId, by: "shell" });

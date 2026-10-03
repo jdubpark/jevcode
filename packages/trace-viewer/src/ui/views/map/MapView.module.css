@@ -107,10 +107,16 @@
 
 .toggle:focus-visible,
 .ref:focus-visible,
-.more:focus-visible,
-.card:focus-visible {
+.more:focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 2px;
+}
+
+/* World px scale with the camera, so a card's rings read 2 screen px at any zoom through --map-inv-k (1 / k, written by
+   MapView at rest). */
+.card:focus-visible {
+  outline: calc(2px * var(--map-inv-k, 1)) solid var(--tv-accent);
+  outline-offset: calc(2px * var(--map-inv-k, 1));
 }
 
 .retry {
@@ -199,11 +205,9 @@
   cursor: grab;
 }
 
-/* Sizes inside the world are world px: the camera scales them by k, so on screen they read size × k. --map-wpx is one
-   world px; sizes below 12 world px are written through it because the static 12 px guard (tokens.test.ts) reads a
-   literal px font size as screen px. The detail level starts at k = 1.4, where 8.6 world px read 12 px. */
+/* Sizes inside the world are world px: the camera scales them by k, so on screen they read size × k (map.html values).
+   tokens.test.ts exempts the `.world[data-level=…]` rules of this file from the 12 px guard for that reason. */
 .world {
-  --map-wpx: 1px;
   position: absolute;
   left: 0;
   top: 0;
@@ -265,7 +269,7 @@
 
 .world[data-level="detail"] .band {
   gap: 5px;
-  font-size: calc(10.5 * var(--map-wpx));
+  font-size: 10.5px;
 }
 
 .world[data-level="detail"] .band svg {
@@ -325,7 +329,9 @@
 }
 
 .card[data-selected] {
-  box-shadow: 0 0 0 2px var(--tv-accent), var(--tv-shadow);
+  box-shadow:
+    0 0 0 calc(2px * var(--map-inv-k, 1)) var(--tv-accent),
+    var(--tv-shadow);
 }
 
 /* The card is two blocks, as in map.html: the head (name, and at the detail level the purpose and packages) and the
@@ -491,14 +497,14 @@
 }
 
 .world[data-level="detail"] .name {
-  font-size: calc(10.5 * var(--map-wpx));
+  font-size: 10.5px;
   line-height: 13px;
   -webkit-line-clamp: 1;
 }
 
 .world[data-level="detail"] .hub {
   gap: 2px;
-  font-size: calc(8.6 * var(--map-wpx));
+  font-size: 8.5px;
 }
 
 .world[data-level="detail"] .hub svg {
@@ -508,12 +514,12 @@
 
 .world[data-level="detail"] .purpose {
   margin-top: 2px;
-  font-size: calc(8.75 * var(--map-wpx));
+  font-size: 8.75px;
   line-height: 11.5px;
 }
 
 .world[data-level="detail"] .packages {
-  font-size: calc(8.6 * var(--map-wpx));
+  font-size: 8.25px;
   line-height: 11px;
 }
 
@@ -524,7 +530,7 @@
 
 .world[data-level="detail"] .foot {
   gap: 4px;
-  font-size: calc(8.6 * var(--map-wpx));
+  font-size: 8.25px;
   line-height: 11px;
 }
 

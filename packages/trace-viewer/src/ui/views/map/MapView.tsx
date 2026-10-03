@@ -22,7 +22,7 @@ import { Icon } from "../../icons/Icon.js";
 import { useSessionView } from "../../shell/session-context.js";
 import { ZOOM_STEP } from "../../state/keymap.js";
 import { useView, useViewStore } from "../../state/store.js";
-import { createViewportController, type ViewportController } from "../../viewport/controller.js";
+import { createViewportController, type FramePhase, type ViewportController } from "../../viewport/controller.js";
 import { useRegisterViewPort, useViewPortRegistry, type ViewPort, type ViewProps } from "../view-port.js";
 import { anchoredCamera, cardCenter, MAP_ICON_ONLY_K, MAP_ZOOM_PRESETS, mapZoomLimits, planMapFit, revealCamera, zoomedAtCenter } from "./map-camera.js";
 import { isMapNavKey, mapNeighbor } from "./map-nav.js";
@@ -65,29 +65,13 @@ function prefersReducedMotion(element: Element): boolean {
   return view !== null && typeof view.matchMedia === "function" && view.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-const relayoutSerial = new WeakMap<MapLayout, number>();
-let lastRelayoutSerial = 0;
-
-/**
- * Spec E12: a layout that moved a card the previous layout placed (a band appeared or emptied, a component joined or
- * left a column) gets a serial, so the view glides its cards and replays the edge fade; null for a first layout or one
- * that moved nothing. One serial per layout object, however often React calls this.
- */
-function relayoutOf(layout: MapLayout, previous: readonly MapCardBox[] | null): number | null {
-  if (previous === null) return null;
+/** Spec E12: true when `layout` moved a card that `previous` placed (a band appeared or emptied, a column changed). */
+function movedPlacedCard(layout: MapLayout, previous: readonly MapCardBox[]): boolean {
   const before = new Map(previous.map((card) => [card.id, card] as const));
-  const moved = layout.cards.some((card) => {
+  return layout.cards.some((card) => {
     const was = before.get(card.id);
     return was !== undefined && (was.x !== card.x || was.y !== card.y);
   });
-  if (!moved) return null;
-  let serial = relayoutSerial.get(layout);
-  if (serial === undefined) {
-    lastRelayoutSerial += 1;
-    serial = lastRelayoutSerial;
-    relayoutSerial.set(layout, serial);
-  }
-  return serial;
 }
 
 interface Latest {
@@ -117,7 +101,10 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const layout = useMemo(() => (overview === null ? null : layoutMap(overview, { level: "card" }, stickyRef.current)), [overview]);
   /** The cards of the last committed layout, to tell a relayout that moves cards from the first layout. */
   const prevCardsRef = useRef<readonly MapCardBox[] | null>(null);
-  const relayout = useMemo(() => (layout === null ? null : relayoutOf(layout, prevCardsRef.current)), [layout]);
+  /** Relayouts that moved cards so far; its parity picks the edge-fade keyframes, so back-to-back fades replay. */
+  const relayoutCountRef = useRef(0);
+  /** The card the reader last focused or selected: Esc from the Inspector returns focus there (not to the first card). */
+  const lastCardRef = useRef<string | null>(null);
   const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session]);
   const hubs = useMemo(() => (layout === null ? NO_HUBS : mapHubIds(layout.edges, layout.cards.length)), [layout]);
   const importers = useMemo(() => (layout === null ? NO_COUNTS : mapImporterCounts(layout.edges)), [layout]);
@@ -140,17 +127,41 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
 
   useLayoutEffect(() => {
     latest.current = { overview, cards: layout?.cards ?? null, bounds: layout?.bounds ?? null, level, active };
-    if (layout !== null) {
-      stickyRef.current = layout.state;
-      prevCardsRef.current = layout.cards;
-    }
+    if (layout !== null) stickyRef.current = layout.state;
   });
 
-  /** One write per camera frame: the world transform and the zoom band (names hide below MAP_ICON_ONLY_K). */
-  const writeCamera = useCallback((camera: UniformCamera) => {
+  // Spec E12: a new layout that moved placed cards marks the world in the same frame as the new positions, so the CSS
+  // glides the cards and fades the edges back in; never under reduced motion, never for the first layout.
+  useLayoutEffect(() => {
+    if (layout === null) return;
+    const previous = prevCardsRef.current;
+    prevCardsRef.current = layout.cards;
+    const world = worldRef.current;
+    const viewport = viewportRef.current;
+    if (world === null || viewport === null) return;
+    if (previous !== null && movedPlacedCard(layout, previous) && !prefersReducedMotion(viewport)) {
+      relayoutCountRef.current += 1;
+      world.dataset.relayout = relayoutCountRef.current % 2 === 0 ? "even" : "odd";
+    } else if (world.dataset.relayout !== undefined) {
+      delete world.dataset.relayout;
+    }
+  }, [layout]);
+
+  /**
+   * One write per camera frame: the world transform and the zoom band (names hide below MAP_ICON_ONLY_K). As in the
+   * Canvas (spike risk 2 and 7 rulings), will-change holds only while a gesture or a tween runs, and --map-inv-k (rings
+   * and focus outlines keep their screen width) is written at rest only, so a moving frame restyles no card.
+   */
+  const writeCamera = useCallback((camera: UniformCamera, phase: FramePhase) => {
     cameraRef.current = camera;
     const world = worldRef.current;
-    if (world !== null) world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
+    if (world !== null) {
+      world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
+      const moving = phase !== "settle";
+      if (!moving) world.style.setProperty("--map-inv-k", String(1 / camera.k));
+      const willChange = moving ? "transform" : "";
+      if (world.style.willChange !== willChange) world.style.willChange = willChange;
+    }
     const viewport = viewportRef.current;
     if (viewport !== null) {
       const band = camera.k < MAP_ICON_ONLY_K ? "icon" : "full";
@@ -176,10 +187,12 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       const token = (moveTokenRef.current += 1);
       const tween = animate && !prefersReducedMotion(element);
       // A jump shows at once, so no frame paints the old camera; the controller arrives on its next frame.
-      if (!tween) writeCamera(camera);
+      if (!tween) writeCamera(camera, "settle");
       void controller.set(camera, { animate: tween }).then(() => {
-        // A superseded move (a newer one started) never settles the level from the camera it left behind.
-        if (token === moveTokenRef.current && controllerRef.current === controller) settle(controller.get());
+        // A superseded move (a newer one started, or a gesture took over) never settles from the camera it left.
+        if (token !== moveTokenRef.current || controllerRef.current !== controller || controller.isGesturing()) return;
+        writeCamera(controller.get(), "settle");
+        settle(controller.get());
       });
     },
     [settle, writeCamera],
@@ -234,7 +247,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
         const bounds = latest.current.bounds;
         return bounds === null ? { x: 0, y: 0, w: 0, h: 0 } : { x: 0, y: 0, w: bounds.w, h: bounds.h };
       },
-      onFrame: (camera) => writeCamera(camera),
+      onFrame: (camera, phase) => writeCamera(camera, phase),
       onGestureEnd: (camera) => settle(camera),
       isHandTool: () => store.get().tool === "hand",
       reducedMotion: () => prefersReducedMotion(element),
@@ -244,7 +257,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       clearTimer: (handle) => win.clearTimeout(handle as number),
     });
     controllerRef.current = controller;
-    writeCamera(cameraRef.current);
+    writeCamera(cameraRef.current, "settle");
     const Observer = win.ResizeObserver;
     const observer =
       typeof Observer === "function"
@@ -285,6 +298,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const onSelectCard = useCallback(
     (id: string) => {
       if (store.get().tool === "hand" || controllerRef.current?.isGesturing() === true) return;
+      lastCardRef.current = id;
       setFocusId(id);
       store.dispatch({ type: "map/select", componentId: id });
     },
@@ -308,12 +322,19 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       const next = mapNeighbor(layout, from, event.key);
       if (next === null) return;
       event.preventDefault();
+      lastCardRef.current = next;
       pendingFocusRef.current = next;
       setFocusId(next);
       bump();
     },
     [layout],
   );
+
+  /** A card that takes focus any way (Tab, click, keys) is the one Esc from the Inspector returns to. */
+  const onCardFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const id = event.target instanceof Element ? (event.target.closest<HTMLElement>("[data-map-card]")?.dataset.mapCard ?? null) : null;
+    if (id !== null) lastCardRef.current = id;
+  }, []);
 
   const zoomTo = useCallback(
     (k: number) => {
@@ -335,7 +356,10 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       reveal: () => undefined,
       captureCamera: () => null,
       focusSelected: () => {
-        const id = store.get().mapSelection ?? latest.current.cards?.[0]?.id ?? null;
+        const cards = latest.current.cards ?? [];
+        const last = lastCardRef.current;
+        const remembered = last !== null && cards.some((card) => card.id === last) ? last : null;
+        const id = store.get().mapSelection ?? remembered ?? cards[0]?.id ?? null;
         if (id === null) return;
         pendingFocusRef.current = id;
         setFocusId(id);
@@ -377,9 +401,6 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       </section>
     );
   }
-  // Cards glide only when motion is allowed; the CSS also drops the glide under prefers-reduced-motion.
-  const viewportElement = viewportRef.current;
-  const glide = relayout !== null && viewportElement !== null && !prefersReducedMotion(viewportElement) ? (relayout % 2 === 0 ? "even" : "odd") : undefined;
   const laneTop = MAP_MARGIN - 4;
   const laneHeight = layout.bounds.h - 2 * MAP_MARGIN + 10; // down to bounds.h − MAP_MARGIN + 6
   return (
@@ -410,10 +431,10 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             className={styles.world}
             data-tv-world=""
             data-level={level}
-            data-relayout={glide}
             role="group"
             aria-label={`Codebase map, ${layout.cards.length.toLocaleString("en-US")} components`}
             onKeyDown={onKeyDown}
+            onFocus={onCardFocus}
             style={{ width: layout.bounds.w, height: layout.bounds.h }}
           >
             {layout.bands.map((band) => (

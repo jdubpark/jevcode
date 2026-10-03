@@ -6,6 +6,8 @@ import { componentForPath } from "./map-layout.js";
 
 /** Spec §3.4: files are listed top 20, then "n more". */
 export const DETAIL_FILES_SHOWN = 20;
+/** The Inspector lists the top 5 imports each way, then "n more" (approved map-selected-1440.png). */
+export const DETAIL_LINKS_SHOWN = 5;
 
 export interface MapLink { id: string; name: string; count: number; example: string | null }
 export interface ComponentChange { path: string; added: number; removed: number; stepId: StepId }
