@@ -101,12 +101,15 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   const existing = state.chapters.decisionSteps.get(decision.id);
   if (existing !== undefined) {
     const answerSeq = existing.decision?.answerSeq;
+    const decidedSeq = existing.decision?.decidedSeq;
     // Only the row that closes the decision ends its wait; the Jev projection pass re-emits
     // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
     const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(state, existing, ctx, false);
     existing.decision = decisionDetail(decision, existing.decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    // The first closing row decides; a re-emit of the closed decision keeps that seq (final review D I-1).
+    if (closes) existing.decision.decidedSeq = decidedSeq ?? ctx.seq;
     let end: { t: number; sourceTs: string } = ctx;
     if (closes && answer !== null) {
       removeStep(state, answer.step);
@@ -139,6 +142,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     target: decision.id,
   });
   step.decision = decisionDetail(decision);
+  if (closes) step.decision.decidedSeq = ctx.seq;
   state.chapters.decisionOrder.set(decision.id, state.chapters.decisionSteps.size);
   state.chapters.decisionSteps.set(decision.id, step);
   state.changes.decisionIds.add(decision.id);

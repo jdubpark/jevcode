@@ -236,6 +236,7 @@ describe("decisions and Jev", () => {
       ],
       decidedBy: "supervisor",
       answerSeq: message,
+      decidedSeq: answer,
     });
     expect(session.chapters[0]?.decisionIds).toEqual(["decision:dec-oauth-0001"]);
     // The answer is absorbed into the decision step (R25): no instruction step of its own.
@@ -268,6 +269,29 @@ describe("decisions and Jev", () => {
     b.agent({ type: "agent_message", role: "assistant", text: "b", ts: TraceBuilder.at(30) });
     b.decision({ id: "dec-1", status: "delegated" });
     expect(stepAt(fold(b), first)).toMatchObject({ tMs: 0, endTMs: 5_000, durationMs: 5_000 });
+  });
+
+  it("records the row that decided a decision as decidedSeq; re-emits keep it, and reopening clears it (final review D I-1)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBeUndefined();
+    const viewer = b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    const delegated = b.decision({ id: "dec-2", status: "delegated" });
+    b.decision({ id: "dec-1", status: "answered", affectedChangeUnits: ["cu_1"], answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    const session = fold(b);
+    // Answered in the viewer: no message, so no answerSeq; the re-emit adds a row but not a decision.
+    expect(stepAt(session, asked).decision).toMatchObject({ status: "answered", decidedSeq: viewer });
+    expect(stepAt(session, asked).decision?.answerSeq).toBeUndefined();
+    expect(stepAt(session, asked).lastSeq).toBeGreaterThan(viewer);
+    // A decision first seen closed is decided by that row.
+    expect(stepAt(session, delegated).decision?.decidedSeq).toBe(delegated);
+
+    const reopened = b.decision({ id: "dec-1", status: "open" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBeUndefined();
+    const again = b.decision({ id: "dec-1", status: "delegated" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBe(again);
+    expect(again).toBeGreaterThan(reopened);
   });
 
   it("reads a decision running while open and unknown once expired (spec §6.6 Status)", () => {

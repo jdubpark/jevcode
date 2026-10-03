@@ -90,6 +90,20 @@ describe("buildBriefDecisions", () => {
     expect(cards.map((card) => card.decisionId)).toEqual(["d1", "d2"]);
   });
 
+  it("a later re-emit of an old decision does not push it ahead of the card just answered (final review D I-1)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Go" });
+    // Answered in the viewer: the answered row arrives with no supervisor message before it, so no answerSeq.
+    for (const id of ["d1", "d2", "d3"]) {
+      b.decision({ id, status: "open" });
+      b.decision({ id, status: "answered", answer: { decisionId: id, decision: { q: "a" }, evidence: [] } });
+    }
+    // A later rebuild re-emits d1 with re-linked units; its step grows a row but it was decided first.
+    b.decision({ id: "d1", status: "answered", affectedChangeUnits: ["u9"], answer: { decisionId: "d1", decision: { q: "a" }, evidence: [] } });
+    const cards = buildBriefDecisions(foldRows(testMeta(), b.rows, { live: true }));
+    expect(cards.map((card) => card.decisionId)).toEqual(["d3", "d2"]);
+  });
+
   it("finds no components without an overview", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "Go" });

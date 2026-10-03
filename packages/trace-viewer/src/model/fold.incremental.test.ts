@@ -95,6 +95,16 @@ describe("incremental finalize", () => {
     );
   }, 600_000);
 
+  it("the random rows reach a decision closed without a message and re-emitted later (final review D I-1)", () => {
+    const reached = fc.sample(arbRowSession(), { numRuns: 200, seed: 1 }).some(({ meta, rows }) =>
+      foldRows(meta, rows, { live: false }).steps.some((step) => {
+        const decision = step.decision;
+        return decision?.decidedSeq !== undefined && decision.answerSeq === undefined && step.lastSeq > decision.decidedSeq;
+      }),
+    );
+    expect(reached).toBe(true);
+  });
+
   it("row by row: every prefix finalizes to the fresh fold", () => {
     fc.assert(
       fc.property(arbRowSession({ maxOps: 25 }), fc.boolean(), ({ meta, rows }, live) => {
