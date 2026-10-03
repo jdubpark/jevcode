@@ -23,7 +23,7 @@ import { CATEGORY_ICON, KIND_ICON } from "../icons/kind-icons.js";
 import { useViewerHost } from "../shell/host-context.js";
 import { displaySpanMs } from "../shell/TitleBar.js";
 import { useSessionView } from "../shell/session-context.js";
-import { useDispatch } from "../state/store.js";
+import { useDispatch, useView } from "../state/store.js";
 import { narratorNote } from "../views/map/map-text.js";
 import { ViewDefinitionsContext } from "../views/view-port.js";
 import styles from "./Brief.module.css";
@@ -52,7 +52,7 @@ export interface BriefViewProps {
   nowT: number;
   onSelect(id: SelectionId): void;
   onOpenMap(): void;
-  /** A Map view is registered (always in v1; the button hides otherwise). */
+  /** A Map view is registered and is not the one shown (the "Open the map" button hides otherwise). */
   mapAvailable: boolean;
 }
 
@@ -441,6 +441,7 @@ export function Brief(): JSX.Element {
   const { session, index, nowT, terminal } = useSessionView();
   const dispatch = useDispatch();
   const views = useContext(ViewDefinitionsContext);
+  const onMap = useView((state) => state.view === "map");
   const [, tick] = useReducer((n: number) => n + 1, 0);
   const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
@@ -470,7 +471,7 @@ export function Brief(): JSX.Element {
       nowT={nowT()}
       onSelect={(id) => dispatch({ type: "select", id, by: "shell" })}
       onOpenMap={() => dispatch({ type: "view/switch", view: "map" })}
-      mapAvailable={views.some((view) => view.kind === "map")}
+      mapAvailable={!onMap && views.some((view) => view.kind === "map")}
     />
   );
 }

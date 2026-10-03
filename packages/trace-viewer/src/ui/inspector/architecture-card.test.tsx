@@ -172,6 +172,11 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     const { store } = renderPanel(RULE_ONLY);
     await user.click(screen.getByRole("button", { name: "Open the map" }));
     expect(store.get().view).toBe("map");
+    // Already on the Map, the button goes (lane 06 fix, minor 6); the thumbnail and counts stay.
+    expect(screen.queryByRole("button", { name: "Open the map" })).toBeNull();
+    expect(part().querySelector("[data-map-thumbnail]")).not.toBeNull();
+    act(() => store.dispatch({ type: "view/switch", view: "console" }));
+    expect(screen.getByRole("button", { name: "Open the map" })).toBeTruthy();
   });
 
   it("on the Map, a selected component takes the right panel; Esc gives it back to the Brief", () => {
