@@ -351,6 +351,20 @@ describe("map selection (spec §3.4, lane 06 deviation 4)", () => {
     const elsewhere = { ...selected, view: "hybrid" as const };
     expect(reduce(elsewhere, { type: "esc" }, index).mapSelection).toBe("cmp_0123456789ab");
   });
+
+  it("B pins the Brief over a selected component; a new or cleared component unpins it (lane 06 fix, minor 3)", () => {
+    const selected = reduce(onMap, { type: "map/select", componentId: "cmp_0123456789ab" }, index);
+    const pinned = reduce(selected, { type: "brief/toggle" }, index);
+    expect(pinned.brief).toBe(true);
+    expect(reduce(pinned, { type: "brief/toggle" }, index).brief).toBe(false);
+    expect(reduce(pinned, { type: "map/select", componentId: "cmp_ba9876543210" }, index).brief).toBe(false);
+    expect(reduce(pinned, { type: "map/select", componentId: null }, index).brief).toBe(false);
+    // Esc clears the component and, with no step selected, the pin with it.
+    expect(reduce(pinned, { type: "esc" }, index)).toMatchObject({ mapSelection: null, brief: false });
+    // Off the Map a component selection is not a selection.
+    const elsewhere = { ...selected, view: "hybrid" as const };
+    expect(reduce(elsewhere, { type: "brief/toggle" }, index)).toBe(elsewhere);
+  });
 });
 
 describe("a step selection takes the panel back from a Map component (lane 06 fix I-1)", () => {

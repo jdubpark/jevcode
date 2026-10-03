@@ -39,7 +39,7 @@ export interface ViewState {
   /** Finding ids the reader collapsed; later folds never re-expand them. */
   collapsed: ReadonlySet<string>;
   inspectorTab: InspectorTab;
-  /** B pinned the Brief over the selection (spec §3.3, E4); a new or cleared selection unpins it. */
+  /** B pinned the Brief over the selection, or on the Map over the selected component (spec §3.3, E4); a new or cleared selection unpins it. */
   brief: boolean;
   tool: Tool;
   search: SearchState | null;
@@ -556,7 +556,8 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
     case "esc": {
       if (state.search !== null) return { ...state, search: null };
       if (state.tool === "hand") return { ...state, tool: "select" };
-      if (state.view === "map" && state.mapSelection !== null) return { ...state, mapSelection: null };
+      // A pin over the component alone ends with it; a pin over a step selection stays (spec §3.7).
+      if (state.view === "map" && state.mapSelection !== null) return { ...state, mapSelection: null, brief: state.selection === null ? false : state.brief };
       const selection = state.selection;
       if (selection === null) return state;
       // Spec §3.7: with the Brief pinned over a selection, Esc clears it, so the Brief stays (no step out to the parent).
@@ -567,10 +568,12 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
       return selectId(state, null, "shell", "keys", index);
     }
     case "brief/toggle":
-      // With nothing selected the Brief already fills the panel.
-      return state.selection === null ? state : { ...state, brief: !state.brief };
+      // With nothing selected the Brief already fills the panel. On the Map a selected component is a selection too, so
+      // B pins the Brief over its Inspector (lane 06 fix, minor 3).
+      return state.selection === null && !(state.view === "map" && state.mapSelection !== null) ? state : { ...state, brief: !state.brief };
     case "map/select":
-      return action.componentId === state.mapSelection ? state : { ...state, mapSelection: action.componentId };
+      // A new or cleared component selection unpins the Brief, as a step selection does.
+      return action.componentId === state.mapSelection ? state : { ...state, mapSelection: action.componentId, brief: false };
     case "seen":
       return action.seq > state.lastSeenSeq ? { ...state, lastSeenSeq: action.seq } : state;
   }
