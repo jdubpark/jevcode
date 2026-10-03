@@ -19,6 +19,7 @@ import type {
   ToMainPayload,
 } from "../shared/ipc-registry.js";
 import {
+  DebugNarratorCallsPayloadSchema,
   MainToRendererLocalChannels,
   RendererToMainLocalChannels,
 } from "../shared/local-channels.js";
@@ -30,8 +31,13 @@ import {
   applyPreferencesPatch,
   readAgentPreferences,
 } from "../shared/prefs.js";
+import { NarratorCallRecordSchema } from "../shared/narrator-log.js";
+import type { AgentPreferences, PreferencesView } from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
+import { droppedRecordMessage } from "./pipeline/narrator-call-log.js";
+import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
+import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { openRepoByPath } from "./repo-service.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
@@ -75,6 +81,10 @@ export interface IpcDeps {
   traceWindows: TraceWindowIpcDeps;
   /** The codebase-map explainer stage for the open repo (console-explainer spec §6). */
   explainer?: ExplainerRegistry;
+  /** Spec E15: preferences:set flips it; optional so existing harnesses stay valid. */
+  narrator?: NarratorSwitch;
+  /** Inspect → Narrator (deviation 9). */
+  narratorCalls?: NarratorCallLog;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -261,8 +271,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     };
   });
 
+  /** Spec §10 disclosure: the settings note reads what leaves the machine from main's switch. */
+  const withNarratorAvailability = (prefs: AgentPreferences): PreferencesView =>
+    deps.narrator === undefined ? prefs : { ...prefs, narratorAvailability: deps.narrator.availability() };
+
   handle(RendererToMainLocalChannels.preferencesGet, () => {
-    return readAgentPreferences((key) => deps.db.getPreference(key));
+    return withNarratorAvailability(readAgentPreferences((key) => deps.db.getPreference(key)));
   });
 
   handle(RendererToMainLocalChannels.preferencesSet, (patch) => {
@@ -273,8 +287,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // null marks the "unknown" state; storage has no deletePreference.
     deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
     deps.db.setPreference(EXPLAIN_WITH_MODEL_PREF_KEY, next.explainWithModel);
-    sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, next);
-    return next;
+    deps.narrator?.setEnabled(next.explainWithModel);
+    const view = withNarratorAvailability(next);
+    sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, view);
+    return view;
   });
 
   handle(RendererToMainChannels.sessionStart, async ({ repoId, prompt, model, reasoningEffort, approvalMode }) => {
@@ -471,6 +487,25 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       }));
     return { decisions };
   });
+
+  // The answer is parsed too: only the schema's fields, with its string caps, cross to the renderer.
+  // Each record is checked on its own, so one out-of-bounds record is left out instead of failing the list;
+  // the first one left out is logged once.
+  let narratorRecordDropReported = false;
+  handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) =>
+    DebugNarratorCallsPayloadSchema.parse({
+      availability: deps.narrator?.availability() ?? "off_setting",
+      calls: (deps.narratorCalls?.list(limit ?? 50) ?? []).flatMap((call) => {
+        const parsed = NarratorCallRecordSchema.safeParse(call);
+        if (parsed.success) return [parsed.data];
+        if (!narratorRecordDropReported) {
+          narratorRecordDropReported = true;
+          deps.log(droppedRecordMessage("debug:listNarratorCalls", parsed.error));
+        }
+        return [];
+      }),
+    }),
+  );
 
   registerTraceHandlers(handle, deps.trace);
   registerTraceWindowHandlers(handle, deps.traceWindows);

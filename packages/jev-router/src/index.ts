@@ -11,3 +11,4 @@ export * from "./selection.js";
 export * from "./state.js";
 export * from "./types.js";
 export * from "./typesafe-client.js";
+export * from "./narrator/index.js";

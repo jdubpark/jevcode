@@ -60,6 +60,21 @@ describe("preference IPC channels", () => {
     ).toThrowError();
   });
 
+  it("carries main's read-only narrator availability on preferences:updated", () => {
+    const withAvailability = { ...SAMPLE_PREFS, narratorAvailability: "off_no_key" };
+    expect(parseFromMain("preferences:updated", withAvailability)).toEqual(withAvailability);
+    expect(() =>
+      parseFromMain("preferences:updated", { ...SAMPLE_PREFS, narratorAvailability: "maybe" }),
+    ).toThrowError();
+    expect(() =>
+      parseToMain("preferences:set", { narratorAvailability: "on" }),
+    ).toThrowError();
+    // The renderer cannot set the read-only availability: preferences:set strips it (the schema stays non-strict).
+    expect(
+      parseToMain("preferences:set", { explainWithModel: true, narratorAvailability: "on" }),
+    ).toEqual({ explainWithModel: true });
+  });
+
   it("roundtrips preferences through the preload api", async () => {
     const invoke = vi.fn<(channel: string, payload: unknown) => Promise<unknown>>(
       async () => SAMPLE_PREFS,
