@@ -177,17 +177,30 @@ class StorageSemanticEventSink implements SemanticEventSink {
   }
 }
 
+// Every store write appends an event row, and the coordinator re-upserts every
+// validation, failure and decision on each rebuild. Like the change-unit store,
+// these stores write only when the payload differs from the last one written for
+// that id.
 class StorageValidationStore implements ValidationStore {
+  private readonly lastValidationJson = new Map<string, string>();
+  private readonly lastFailureJson = new Map<string, string>();
+
   constructor(
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
   ) {}
 
   upsertValidation(validation: ValidationResult): void {
+    const json = JSON.stringify(validation);
+    if (this.lastValidationJson.get(validation.id) === json) return;
+    this.lastValidationJson.set(validation.id, json);
     this.db.upsertValidation(this.sessionId, validation);
   }
 
   upsertFailure(failure: FailureRecord): void {
+    const json = JSON.stringify(failure);
+    if (this.lastFailureJson.get(failure.id) === json) return;
+    this.lastFailureJson.set(failure.id, json);
     this.db.upsertFailure(this.sessionId, {
       validationId: failure.validationId,
       file: failure.file,
@@ -219,12 +232,17 @@ class StorageValidationStore implements ValidationStore {
 }
 
 class StorageDecisionStore implements DecisionStore {
+  private readonly lastJson = new Map<string, string>();
+
   constructor(
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
   ) {}
 
   upsert(decision: Decision): void {
+    const json = JSON.stringify(decision);
+    if (this.lastJson.get(decision.id) === json) return;
+    this.lastJson.set(decision.id, json);
     this.db.upsertDecision(decision);
   }
 
