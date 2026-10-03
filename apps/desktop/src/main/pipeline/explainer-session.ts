@@ -90,6 +90,11 @@ export interface SessionExplainerDeps {
 
 export interface SessionExplainer {
   onPipelineSync(sync: PipelineSyncSnapshot): void;
+  /**
+   * The open session changed (lane fix I-2). Runs the sync the explainer kept for the session that is open now, if
+   * any, and a story or why that came due while it was not open. Returns at once.
+   */
+  onSessionSwitched(): void;
   /** Ruling R4: the stage's setNarrator forwards here. null turns narration off and aborts the call in flight (spec E15). */
   setNarrator(narrator: NarratorClient | null): void;
   /** Resolves once queued syncs and narrator calls have settled (dispose, tests). Timers are not awaited. */
@@ -154,9 +159,10 @@ function componentIdsOf(snapshot: OverviewSnapshot): ReadonlySet<string> | null 
   return snapshot.components.length > 0 ? new Set(snapshot.components.map((component) => component.id)) : null;
 }
 
-function countRuns(session: TraceSession): number {
+/** Settled test or check runs whose rows all came at or before `throughSeq`. */
+function countRuns(session: TraceSession, throughSeq = Number.POSITIVE_INFINITY): number {
   let runs = 0;
-  for (const step of session.steps) if (step.tests !== undefined && step.status !== "running") runs += 1;
+  for (const step of session.steps) if (step.tests !== undefined && step.status !== "running" && step.lastSeq <= throughSeq) runs += 1;
   return runs;
 }
 
@@ -166,6 +172,21 @@ function lastTerminalTurn(session: TraceSession): number {
     if (turn !== undefined && (turn.outcome === "completed" || turn.outcome === "failed")) return turn.index;
   }
   return -1;
+}
+
+/**
+ * The index of the last turn that had completed or failed by `throughSeq`: the turn of the last completion or failure
+ * step (a lifecycle step with status ok or failed) at or before it. -1 when none. A turn's endSeq does not tell, since
+ * rows after the turn's end (facts, decisions, explainer rows) extend it.
+ */
+function terminalTurnThrough(session: TraceSession, throughSeq: number): number {
+  let last = -1;
+  for (const step of session.steps) {
+    if (step.kind === "lifecycle" && (step.status === "ok" || step.status === "failed") && step.firstSeq <= throughSeq) {
+      last = Math.max(last, step.turnIndex);
+    }
+  }
+  return last;
 }
 
 function storyTextOf(sentences: readonly NarrativeSentence[], provenance: "rule" | "model"): string {
@@ -182,12 +203,17 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   let syncChain: Promise<void> = Promise.resolve();
   let narration: Promise<void> = Promise.resolve();
   /**
-   * The latest unprocessed sync of each session. Per session, not one shared slot: another session's
-   * sync must never overwrite the current session's (its agent_completed would be lost). Which session
-   * is current is decided when the sync is processed, not when it arrives, so a switch in flight keeps
-   * the latest sync of whichever session ends up current.
+   * The latest unprocessed sync of each session, at most one per session. Per session, not one shared slot: another
+   * session's sync must never overwrite the current session's (its agent_completed would be lost). A drain processes
+   * the entry of the session that is current then, not when the sync arrived, so a switch in flight keeps the latest
+   * sync of whichever session ends up current. The other entries are kept (lane fix I-2): a session that finished
+   * while another one was open gets its last sync processed when it is open again (onSessionSwitched). An entry goes
+   * once it is processed, when its session no longer exists, and with the explainer (dispose: the repo closed or the
+   * app quit, which ends the repo's sessions).
    */
   const pendingSyncs = new Map<string, PipelineSyncSnapshot>();
+  /** When each session's last story was narrated, so a session tracked again keeps its interval (spec §6.1 cost). */
+  const storyTimes = new Map<string, number>();
   let drainQueued = false;
   let inFlight: AbortController | null = null;
   // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
@@ -258,7 +284,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       sessionId, fold: createTraceState(meta), cursor: 0, session: null, sync: null, seeded: false,
       initialComponentIds: null, highlights: [], highlightsKey: null, seenUnits: new Set(), closedUnits: new Set(),
       answered: new Set(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
-      storyText: null, storyPending: false, storyRunning: false, lastStoryAt: null, storyTimer: null, whyQueue: [],
+      storyText: null, storyPending: false, storyRunning: false, lastStoryAt: storyTimes.get(sessionId) ?? null, storyTimer: null, whyQueue: [],
       whyDone: new Set(), whyRunning: false, whyTimer: null,
     };
     return tracked;
@@ -419,7 +445,11 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       t.highlightsKey = JSON.stringify(entries);
     }
     if (explainer.story === null) return;
-    // Narrated before (an app restart): the events up to now are already in the story.
+    // Narrated before (an app restart, or a session open again after another one was followed): the units, decisions
+    // and answers up to now count as told. Test runs and turn ends count only up to the story's basisSeq, so a run or
+    // an agent completion that came after it (a session that finished while another one was open, lane fix I-2) still
+    // triggers its story.
+    const basis = explainer.story.basisSeq;
     t.storyText = storyTextOf(explainer.story.sentences, explainer.story.provenance);
     for (const unit of sync.changeUnits) {
       t.seenUnits.add(unit.id);
@@ -430,8 +460,8 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       t.answered.add(decision.id);
       if (!t.whyDone.has(decision.id)) t.whyQueue.push(decision.id);
     }
-    t.testRuns = countRuns(session);
-    t.terminalTurn = lastTerminalTurn(session);
+    t.testRuns = countRuns(session, basis);
+    t.terminalTurn = terminalTurnThrough(session, basis);
     t.unitsAtStory = t.seenUnits.size;
   }
 
@@ -466,12 +496,25 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     return trigger;
   }
 
+  /** Keeps a sync whose session stopped being current before it was processed, unless a newer one is kept (I-2). */
+  function keep(sync: PipelineSyncSnapshot): void {
+    if (!disposed && !pendingSyncs.has(sync.sessionId)) pendingSyncs.set(sync.sessionId, sync);
+  }
+
   async function process(sync: PipelineSyncSnapshot): Promise<void> {
-    if (disposed || deps.sessionId() !== sync.sessionId) return;
+    if (disposed) return;
+    if (deps.sessionId() !== sync.sessionId) {
+      keep(sync);
+      return;
+    }
+    // A session that no longer exists has nothing to explain: its sync goes.
     const t = track(sync.sessionId);
     if (t === null) return;
     const session = await advance(t);
-    if (session === null || !current(t)) return;
+    if (session === null || !current(t)) {
+      keep(sync);
+      return;
+    }
     t.sync = sync;
     if (!t.seeded) seed(t, session, sync);
     const highlights = computeHighlights({
@@ -575,6 +618,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     // Spec §6.1: a story whose input equals the last narrated input is skipped.
     if (key === t.storyKey && (t.storyAsked || !canCall)) return;
     t.lastStoryAt = deps.now();
+    storyTimes.set(t.sessionId, t.lastStoryAt);
     const basisSeq = session.loadedThroughSeq;
     const narrated = canCall && client !== null ? await narrateStory(client, input) : { sentences: null, asked: false };
     if (!current(t)) return;
@@ -686,29 +730,49 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     }
   }
 
+  /**
+   * Processes the current session's kept sync, if any, in a task of its own. Without one, it resumes a story or why of
+   * the followed session that came due while that session was not open (their timers fired and found it not current).
+   */
+  function drain(): void {
+    if (drainQueued) return;
+    drainQueued = true;
+    syncChain = syncChain.then(async () => {
+      // The hook runs inside the pipeline's sync pass (after its last slice check): the fold starts in a turn the
+      // main slicer gives it, so its first slice never extends the pass's last one (PL-3).
+      await slicer.yield();
+      drainQueued = false;
+      if (disposed) return;
+      const sessionId = deps.sessionId();
+      const next = sessionId === null ? undefined : pendingSyncs.get(sessionId);
+      try {
+        if (next !== undefined) {
+          pendingSyncs.delete(next.sessionId);
+          await process(next);
+          return;
+        }
+        const t = tracked;
+        if (t !== null && current(t)) {
+          kick(t);
+          pumpWhy(t);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
   return {
     onPipelineSync(sync) {
       if (disposed) return;
       // Each sync carries the session's whole unit and decision lists, so a burst folds once per session,
-      // for its latest sync; process() skips every session that is not current by then.
+      // for its latest sync; the drain processes the current session's and keeps the others.
       pendingSyncs.set(sync.sessionId, sync);
-      if (drainQueued) return;
-      drainQueued = true;
-      syncChain = syncChain.then(async () => {
-        // The hook runs inside the pipeline's sync pass (after its last slice check): the fold starts in a turn the
-        // main slicer gives it, so its first slice never extends the pass's last one (PL-3).
-        await slicer.yield();
-        drainQueued = false;
-        const batch = [...pendingSyncs.values()];
-        pendingSyncs.clear();
-        for (const next of batch) {
-          try {
-            await process(next);
-          } catch (error) {
-            fail(error);
-          }
-        }
-      });
+      drain();
+    },
+    onSessionSwitched() {
+      if (disposed) return;
+      drain();
     },
     setNarrator(next) {
       if (disposed) return;
@@ -745,6 +809,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       if (tracked !== null) release(tracked);
       tracked = null;
       pendingSyncs.clear();
+      storyTimes.clear();
     },
   };
 }

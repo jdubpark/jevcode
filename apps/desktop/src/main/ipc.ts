@@ -343,6 +343,9 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       );
     }
     deps.state.session = session;
+    // Lane 07 fix I-2: the session explainer runs the sync it kept while this session was not open.
+    const repoRoot = deps.state.repo?.gitRoot;
+    if (repoRoot !== undefined) toExplainer("sessionSwitched", (explainer) => explainer.sessionSwitched(repoRoot));
     emitSessionState(deps.db, sessionId);
     void deps.instructionRouter.reloadPending(sessionId);
     return null;
