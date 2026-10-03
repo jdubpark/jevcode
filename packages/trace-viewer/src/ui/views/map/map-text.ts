@@ -16,7 +16,11 @@ export function overviewHeadline(overview: OverviewModel): { count: string; lang
   };
 }
 
-export type SentencePart = { text: string } | { text: string; componentId: string };
+/**
+ * `marker: true` is a citation the sentence does not spell out: the Map header draws it as a quiet footnote-style marker
+ * after the sentence's closing punctuation, never as sentence text.
+ */
+export type SentencePart = { text: string } | { text: string; componentId: string; marker?: true };
 
 const isWordChar = (char: string | undefined): boolean => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
 
@@ -36,7 +40,7 @@ function findWord(haystack: string, needle: string, taken: readonly { start: num
 /**
  * A narrator sentence as plain text with its cited components as links (the approved Map header: "component names are
  * quiet links"). A cited name is linked where it first appears as a whole word, ignoring case; a name the sentence
- * does not spell out is appended as a link after it. File citations and components missing from the map are skipped
+ * does not spell out is appended after it as a marker part (a footnote-style citation, not sentence text). File citations and components missing from the map are skipped
  * (the Map header no longer uses citation chips). The sentence and every name pass through displayUntrusted first.
  */
 export function linkSentence(sentence: { text: string; citations: readonly Citation[] }, overview: OverviewModel): SentencePart[] {
@@ -65,7 +69,7 @@ export function linkSentence(sentence: { text: string; citations: readonly Citat
     cursor = hit.end;
   }
   if (cursor < text.length) parts.push({ text: text.slice(cursor) });
-  for (const link of trailing) parts.push({ text: " " }, { text: link.name, componentId: link.id });
+  for (const link of trailing) parts.push({ text: link.name, componentId: link.id, marker: true });
   return parts;
 }
 

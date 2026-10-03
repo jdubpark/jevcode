@@ -104,7 +104,7 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
                   <button
                     key={at}
                     type="button"
-                    className={styles.ref}
+                    className={"marker" in part ? styles.refMarker : styles.ref}
                     data-map-cite={part.componentId}
                     data-selected={part.componentId === selectedId ? "" : undefined}
                     title={part.text}

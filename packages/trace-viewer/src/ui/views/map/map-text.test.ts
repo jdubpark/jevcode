@@ -17,6 +17,7 @@ const snapshot = overviewSnapshot({
 const overview = buildOverviewModel(snapshot, 1);
 const cite = (rootPath: string): Citation => ({ kind: "component", id: componentId(rootPath) });
 const link = (text: string, rootPath: string) => ({ text, componentId: componentId(rootPath) });
+const marker = (text: string, rootPath: string) => ({ text, componentId: componentId(rootPath), marker: true });
 
 describe("overviewHeadline", () => {
   it("splits the count from up to three languages by file count", () => {
@@ -46,16 +47,21 @@ describe("linkSentence (component names are quiet links)", () => {
   it("appends a link after a sentence that does not spell the name out, and links a name once", () => {
     expect(linkSentence({ text: "Everything runs in one process.", citations: [cite("apps/web"), cite("apps/web")] }, overview)).toEqual([
       { text: "Everything runs in one process." },
-      { text: " " },
-      link("web", "apps/web"),
+      marker("web", "apps/web"),
     ]);
+  });
+
+  it("keeps a sentence's inline links and puts the names it does not spell after the closing punctuation as markers", () => {
+    const parts = linkSentence({ text: "web calls the service.", citations: [cite("services/api"), cite("apps/web"), cite("pkg/core-db")] }, overview);
+    expect(parts).toEqual([link("web", "apps/web"), { text: " calls the service." }, marker("api", "services/api"), marker("core-db", "pkg/core-db")]);
+    // Only marker parts follow the sentence text, in citation order.
+    expect(parts.slice(2).every((part) => "marker" in part)).toBe(true);
   });
 
   it("matches whole words only, so a longer word does not become a link", () => {
     expect(linkSentence({ text: "The webapp serves pages.", citations: [cite("apps/web")] }, overview)).toEqual([
       { text: "The webapp serves pages." },
-      { text: " " },
-      link("web", "apps/web"),
+      marker("web", "apps/web"),
     ]);
   });
 
