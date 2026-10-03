@@ -8,10 +8,12 @@ import { IpcError } from "../shared/errors.js";
 
 export type SessionStatePayload = z.infer<typeof SessionStatePayloadSchema>;
 
+/** changeUnitCount: the session's change units when the caller already holds them (the pipeline's unit store). */
 export function buildSessionState(
   db: JevcodeDb,
   sessionId: string,
   agentThreadId?: string | null,
+  changeUnitCount?: number,
 ): SessionStatePayload {
   const session = db.getSession(sessionId);
   if (!session) {
@@ -20,7 +22,7 @@ export function buildSessionState(
   return {
     sessionId,
     state: session.state,
-    changeUnitCount: db.listChangeUnits(sessionId).length,
+    changeUnitCount: changeUnitCount ?? db.listChangeUnits(sessionId).length,
     decisionCount: db.listDecisions(sessionId).length,
     ...(agentThreadId !== undefined && agentThreadId !== null
       ? { agentThreadId }

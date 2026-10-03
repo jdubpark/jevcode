@@ -128,6 +128,8 @@ interface ActiveSession {
   adapter: CodingAgentAdapter | null;
   adapterKind: "codex" | "mock" | "none";
   coordinator: PipelineCoordinator;
+  /** The coordinator's stores: the session state counts the change units the unit store already holds (PL-3). */
+  stores: PipelineStores;
   client: JevClient;
   facts: EvidenceFact[];
   unitState: Map<string, JevStageUnitState & { coreSignature: string }>;
@@ -261,6 +263,7 @@ export class PipelineRuntime {
       adapter,
       adapterKind,
       coordinator: new PipelineCoordinator({ stores, onRebuildError: (error) => this.log(`pipeline rebuild failed (retried on the next sync): ${String(error)}`) }),
+      stores,
       client: this.opts.jevClient ?? createJevClient(),
       facts: [],
       unitState: new Map(),
@@ -1439,9 +1442,11 @@ export class PipelineRuntime {
   private emitSessionState(sessionId: string): void {
     try {
       const session = this.sessions.get(sessionId);
+      // A pass emits this after its snapshot, so the unit store's list is current and reread only after a unit write.
+      const changeUnitCount = session?.stores.units.all().length;
       this.opts.emit(
         MainToRendererChannels.sessionState,
-        buildSessionState(this.opts.db, sessionId, session?.threadId ?? null),
+        buildSessionState(this.opts.db, sessionId, session?.threadId ?? null, changeUnitCount),
       );
     } catch {
       // session may be mid-teardown
