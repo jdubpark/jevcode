@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useReducer, type JSX } from "react";
+import { useContext, useEffect, useId, useMemo, useReducer, type JSX } from "react";
 
 import { buildBrief, type BriefArchitecture, type BriefChange, type BriefModel } from "../../layout/brief.js";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
@@ -8,6 +8,7 @@ import {
   formatDuration,
   type Chapter,
   type Step,
+  type StepId,
   type StepKind,
   type TraceSession,
 } from "../../model/index.js";
@@ -28,6 +29,9 @@ export const BRIEF_CHANGES_SHOWN = 8;
 
 /** Files a change row's tooltip names before "+n more". */
 const TOOLTIP_FILES = 8;
+
+/** Edited files the "not grouped yet" list shows before "n more" (before the first change unit). */
+const EDITED_FILES_SHOWN = 5;
 
 /** Test dots a change row draws at most (the H1 mockup's narrow column). */
 const TALLY_DOTS = 5;
@@ -82,7 +86,7 @@ function stateWord(session: TraceSession): string {
 }
 
 function nowIcon(session: TraceSession): IconName {
-  if (session.live || session.steps.length === 0) return "live";
+  if (session.live) return "live";
   return session.meta.state === "completed" ? "check" : "clock";
 }
 
@@ -114,7 +118,8 @@ function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Ele
       break;
     }
   }
-  // With nothing running: before the first event, the latest step while live (what the agent is on), else the final state.
+  // With nothing running: while live, the wait for the first event or the latest step (what the agent is on); once
+  // the session is over, its final state (also for a session that ended before any event).
   const tail = running === undefined && session.live ? tailStepOf(session) : undefined;
   let lead: JSX.Element | null = null;
   if (running !== undefined) {
@@ -125,7 +130,7 @@ function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Ele
         <span className={styles.meta}>{formatDuration(elapsedMs)}</span>
       </StepRow>
     );
-  } else if (session.steps.length === 0) {
+  } else if (session.steps.length === 0 && session.live) {
     lead = (
       <p className={styles.quiet}>
         <Icon name="clock" size={14} />
@@ -139,7 +144,7 @@ function Now({ model, session, index, nowT, onSelect }: BriefViewProps): JSX.Ele
       <p className={styles.state}>
         <Icon name={nowIcon(session)} size={14} />
         <span className={styles.title}>{agentStateLabel(session.meta.state)}</span>
-        <span className={styles.meta}>{formatDuration(displaySpanMs(session))}</span>
+        {session.steps.length === 0 ? null : <span className={styles.meta}>{formatDuration(displaySpanMs(session))}</span>}
       </p>
     );
   }
@@ -220,6 +225,63 @@ function ChangeRow({ change, session, index, onSelect }: { change: BriefChange; 
   );
 }
 
+interface EditedFile {
+  path: string;
+  added: number;
+  removed: number;
+  /** The file's latest edit step, which a click selects (as a file location does, Shell selectionFromStableId). */
+  stepId: StepId;
+  seq: number;
+}
+
+/** The session's edited files, newest edit first: the D-3 rail's "Files in play" before any change unit exists. */
+function editedFilesOf(session: TraceSession, index: TraceIndex): EditedFile[] {
+  const files: EditedFile[] = [];
+  for (const entity of session.entities) {
+    const stepId = entity.stepIds.at(-1);
+    if (stepId === undefined) continue;
+    files.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId, seq: index.entry(stepId)?.firstSeq ?? 0 });
+  }
+  return files.sort((a, b) => b.seq - a.seq || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+function EditedFiles({ files, onSelect }: { files: readonly EditedFile[]; onSelect(id: SelectionId): void }) {
+  const shown = files.slice(0, EDITED_FILES_SHOWN);
+  const more = files.length - shown.length;
+  return (
+    <>
+      <p className={styles.quiet}>{`${files.length === 1 ? "1 file" : `${files.length} files`} edited · not grouped yet`}</p>
+      <ul className={styles.changes} aria-label="Files edited">
+        {shown.map((file) => {
+          const path = displayUntrusted(file.path);
+          const cut = path.lastIndexOf("/");
+          return (
+            <li key={file.path}>
+              <button
+                type="button"
+                className={`${styles.change} ${styles.file}`}
+                aria-label={`${path}, +${file.added} −${file.removed}`}
+                title={path}
+                onClick={() => onSelect(file.stepId)}
+              >
+                <Icon name="file" size={14} className={styles.icon} />
+                <span className={styles.path}>
+                  <span className={styles.name}>{path.slice(cut + 1)}</span>
+                  {cut < 0 ? null : <span className={styles.dir}>{path.slice(0, cut)}</span>}
+                </span>
+                <span className={styles.diff}>
+                  <DiffBar size="xs" added={file.added} removed={file.removed} />
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 ? <p className={styles.quietSmall}>{`${more} more`}</p> : null}
+    </>
+  );
+}
+
 function Architecture({ architecture, onOpenMap, mapAvailable }: { architecture: BriefArchitecture | null; onOpenMap(): void; mapAvailable: boolean }) {
   if (architecture === null) {
     return (
@@ -268,43 +330,48 @@ function Architecture({ architecture, onOpenMap, mapAvailable }: { architecture:
 /** Presentational Brief (spec §3.3): Now, Changes so far, Architecture. Every agent or narrator string goes through displayUntrusted. */
 export function BriefView(props: BriefViewProps): JSX.Element {
   const { model, session, index, onSelect } = props;
+  // Lanes 06 and 07 render BriefView directly (tests, the Map), so two Briefs can share a document.
+  const id = useId();
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
   const more = model.changes.length - shown.length;
+  const edited = useMemo(() => (model.changes.length === 0 ? editedFilesOf(session, index) : []), [model.changes.length, session, index]);
   return (
-    <section className={styles.brief} aria-labelledby="tv-brief-title">
+    <section className={styles.brief} aria-labelledby={`${id}-title`}>
       <div className={styles.header}>
         <Icon name="brief" size={16} />
-        <h2 id="tv-brief-title" className={styles.heading}>Brief</h2>
+        <h2 id={`${id}-title`} className={styles.heading}>Brief</h2>
         <span className={styles.stateWord}>{stateWord(session)}</span>
       </div>
-      <section className={styles.part} aria-labelledby="tv-brief-now">
-        <h3 id="tv-brief-now" className={styles.partTitle}>
+      <section className={styles.part} aria-labelledby={`${id}-now`}>
+        <h3 id={`${id}-now`} className={styles.partTitle}>
           <Icon name={nowIcon(session)} size={14} />
           Now
         </h3>
         <Now {...props} />
       </section>
-      <section className={styles.part} aria-labelledby="tv-brief-changes">
-        <h3 id="tv-brief-changes" className={styles.partTitle}>
+      <section className={styles.part} aria-labelledby={`${id}-changes`}>
+        <h3 id={`${id}-changes`} className={styles.partTitle}>
           <Icon name="list" size={14} />
           <span>
             Changes so far
             {model.changes.length > 0 ? <span aria-hidden="true">{` · ${model.changes.length}`}</span> : null}
           </span>
         </h3>
-        {model.changes.length === 0 ? (
-          <p className={styles.quiet}>No changes yet</p>
-        ) : (
+        {model.changes.length > 0 ? (
           <ul className={styles.changes} aria-label="Changes so far">
             {shown.map((change) => (
               <ChangeRow key={change.unitId} change={change} session={session} index={index} onSelect={onSelect} />
             ))}
           </ul>
+        ) : edited.length > 0 ? (
+          <EditedFiles files={edited} onSelect={onSelect} />
+        ) : (
+          <p className={styles.quiet}>No changes yet</p>
         )}
         {more > 0 ? <p className={styles.quietSmall}>{`${more} more in the views`}</p> : null}
       </section>
-      <section className={styles.part} aria-labelledby="tv-brief-architecture">
-        <h3 id="tv-brief-architecture" className={styles.partTitle}>
+      <section className={styles.part} aria-labelledby={`${id}-architecture`}>
+        <h3 id={`${id}-architecture`} className={styles.partTitle}>
           <Icon name="route" size={14} />
           Architecture
         </h3>
@@ -320,6 +387,7 @@ export function Brief(): JSX.Element {
   const dispatch = useDispatch();
   const views = useContext(ViewDefinitionsContext);
   const [, tick] = useReducer((n: number) => n + 1, 0);
+  const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
   const running = model !== null && model.now.kind === "rule" && model.now.runningStepId !== null;
   // The running row's bar and seconds advance once a second (the display clock; src/layout stays clock-free).
@@ -330,10 +398,10 @@ export function Brief(): JSX.Element {
   }, [running, terminal]);
   if (session === null || model === null) {
     return (
-      <section className={styles.brief} aria-labelledby="tv-brief-title">
+      <section className={styles.brief} aria-labelledby={loadingId}>
         <div className={styles.header}>
           <Icon name="brief" size={16} />
-          <h2 id="tv-brief-title" className={styles.heading}>Brief</h2>
+          <h2 id={loadingId} className={styles.heading}>Brief</h2>
         </div>
         <p className={styles.quiet}>Loading</p>
       </section>

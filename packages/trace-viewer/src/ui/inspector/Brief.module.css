@@ -130,6 +130,38 @@
   max-width: 100%;
 }
 
+/* An edited file before any change unit: name in ink, its folder after it in quiet ink (the folder gives way first). */
+.change.file {
+  grid-template-columns: 14px minmax(56px, 1fr) minmax(0, max-content);
+}
+
+.path {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.name,
+.dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name {
+  flex: 0 1 auto;
+  color: var(--tv-ink);
+}
+
+.dir {
+  flex: 0 1000 auto;
+  color: var(--tv-ink-3);
+}
+
 .state {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;

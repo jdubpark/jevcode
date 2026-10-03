@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { foldRows, type TraceSession } from "../model/index.js";
 import { arbTraceSession } from "../test-support/arbitraries.js";
+import { buildSession } from "../test-support/session-builder.js";
 import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { buildBrief } from "./brief.js";
 import { buildTraceIndex } from "./trace-index.js";
@@ -71,6 +72,61 @@ describe("buildBrief (spec §3.3, §8.4)", () => {
     const session = fold(b, "completed");
     const identity = buildBrief(session, buildTraceIndex(session)).changes.find((change) => change.unitId === "unit:cu_identity");
     expect(identity).toMatchObject({ added: 41, removed: 12, tests: { passed: 14, failed: 1 }, attention: true });
+  });
+
+  it("gives a shared failing run's counts only to the unit that owns its outcome", () => {
+    // As on oauth: every unit cites the run's test_result and its validation, but only cu_t holds the failing test's file.
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact(hunk("src/a.ts", 3, 0), "fact_a");
+    b.fact(hunk("tests/a.test.ts", 9, 0), "fact_t");
+    b.agent({ type: "command_started", command: "pnpm test" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 1, stdout: "", stderr: "" });
+    const failures = [{ file: "tests/a.test.ts", testName: "links", message: "expected null to be 7" }];
+    b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed: 3, failed: 1, skipped: 0, failures }, "fact_tr");
+    b.validation({ id: "val_1", kind: "test", command: "pnpm test", status: "failed", passed: 3, failed: 1, skipped: 0 });
+    b.unit({ id: "cu_a", files: ["src/a.ts"], evidence: ["fact_a", "fact_tr"], validationResults: ["val_1"] });
+    b.unit({ id: "cu_t", files: ["tests/a.test.ts"], evidence: ["fact_t", "fact_tr"], validationResults: ["val_1"] });
+    const session = fold(b, "completed");
+    const byUnit = new Map(buildBrief(session, buildTraceIndex(session)).changes.map((change) => [change.unitId, change]));
+    expect(session.chapters.find((chapter) => chapter.id === "unit:cu_a")?.validationOnlyStepIds).toHaveLength(1);
+    expect(byUnit.get("unit:cu_t")).toMatchObject({ tests: { passed: 3, failed: 1 }, attention: true });
+    expect(byUnit.get("unit:cu_a")).toMatchObject({ tests: null, attention: false });
+  });
+
+  it("takes the latest counts from the validations a unit owns", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.fact(hunk("tests/a.test.ts", 5, 0));
+    for (const [passed, failed, id] of [[4, 1, "val_1"], [5, 0, "val_2"]] as const) {
+      b.agent({ type: "command_started", command: "pnpm test" });
+      b.agent({ type: "command_completed", command: "pnpm test", exitCode: failed > 0 ? 1 : 0, stdout: "", stderr: "" });
+      b.fact({ type: "test_result", runner: "vitest", command: "pnpm test", passed, failed, skipped: 0, failures: [] });
+      b.validation({ id, kind: "test", command: "pnpm test", status: failed > 0 ? "failed" : "passed", passed, failed, skipped: 0 });
+    }
+    b.unit({ id: "cu_tests", category: "tests", files: ["tests/a.test.ts"], validationResults: ["val_1", "val_2"] });
+    const session = fold(b, "completed");
+    const chapter = session.chapters.find((candidate) => candidate.id === "unit:cu_tests");
+    expect(chapter?.validationStepIds).toHaveLength(2);
+    const change = buildBrief(session, buildTraceIndex(session)).changes.find((candidate) => candidate.unitId === "unit:cu_tests");
+    expect(change?.tests).toEqual({ passed: 5, failed: 0 });
+  });
+
+  it("leaves attention off for a finding the unit lists but that is anchored on a step it does not own", () => {
+    const built = buildSession({
+      steps: [
+        { kind: "edit", tMs: 0, chapter: "u0", edit: { path: "src/a.ts", added: 2, removed: 0 } },
+        { kind: "test", tMs: 1_000, chapter: "u1", tests: { passed: 3, failed: 1 } },
+      ],
+      chapters: [{ id: "u0", title: "Alpha" }, { id: "u1", title: "Beta" }],
+      findings: [{ ruleId: "failing_tests", severity: "warning", step: 1 }],
+    });
+    const finding = built.findings[0];
+    if (finding === undefined) throw new Error("no finding");
+    // u0 lists the finding (as a chapter a finding names), but its anchor is u1's test step.
+    const session = { ...built, chapters: built.chapters.map((chapter) => (chapter.id === "unit:u0" ? { ...chapter, findingIds: [finding.id] } : chapter)) };
+    const byUnit = new Map(buildBrief(session, buildTraceIndex(session)).changes.map((change) => [change.unitId, change.attention]));
+    expect(byUnit).toEqual(new Map([["unit:u0", false], ["unit:u1", true]]));
   });
 
   it("holds its invariants on generated sessions", () => {

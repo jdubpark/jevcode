@@ -84,6 +84,9 @@ function Header({
   step: Step | undefined;
   chapter: Chapter | undefined;
 }) {
+  // Since V-5 the Shell's RightPanel shows the Brief whenever nothing is selected, so this branch (and Summary's session
+  // summary) is unreachable inside the viewer. It stays because the Inspector is a self-contained region whose tests
+  // render it without a selection, and the session summary's signal chips and coverage have no other home yet.
   if (session === null || selection === null) {
     return (
       <div className={styles.header}>

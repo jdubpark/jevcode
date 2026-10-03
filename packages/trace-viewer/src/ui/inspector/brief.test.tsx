@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useState, type ReactNode } from "react";
+import { useState, type JSX, type ReactNode } from "react";
 
 import { buildBrief, type BriefModel } from "../../layout/brief.js";
 import { buildTraceIndex } from "../../layout/trace-index.js";
@@ -104,10 +104,10 @@ describe("Brief (spec §3.3, E4)", () => {
     const { model } = oauthModel();
     const first = model.changes[0];
     if (first === undefined) throw new Error("oauth has no change units");
-    renderView({ ...model, changes: [{ ...first, title: "Fix ‮login\u0007" }] });
+    renderView({ ...model, changes: [{ ...first, title: "Fix \u202Elogin\u0007" }] });
     const button = within(screen.getByRole("list", { name: "Changes so far" })).getByRole("button");
     expect(button.textContent).toContain("Fix ⟨U+202E⟩login⟨U+0007⟩");
-    expect(button.textContent).not.toContain("‮");
+    expect(button.textContent).not.toContain("\u202E");
     expect(button.getAttribute("aria-label")).toContain("Fix ⟨U+202E⟩login⟨U+0007⟩");
   });
 
@@ -149,7 +149,7 @@ describe("Brief (spec §3.3, E4)", () => {
     const { onOpenMap } = renderView({
       ...model,
       architecture: {
-        overviewSentences: [{ text: "A pnpm workspace with an Electron ‮app.", citations: [{ kind: "component", id: "cmp_0123456789ab" }] }],
+        overviewSentences: [{ text: "A pnpm workspace with an Electron \u202Eapp.", citations: [{ kind: "component", id: "cmp_0123456789ab" }] }],
         componentCount: 12,
         touched: [],
         scanning: null,
@@ -191,6 +191,13 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(screen.getByText("Starting")).toBeTruthy();
     cleanup();
 
+    // A session that ended before its first event: Now follows the header's state.
+    renderSession(foldLive(new TraceBuilder(), "completed"));
+    const ended = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
+    expect(ended.getByText("Completed")).toBeTruthy();
+    expect(screen.queryByText("Waiting for the agent's first event")).toBeNull();
+    cleanup();
+
     const between = new TraceBuilder();
     between.agent({ type: "agent_started", prompt: "Add OAuth" });
     between.agent({ type: "agent_message", role: "assistant", text: "The email comparison was case-sensitive.\nNormalizing before the lookup." });
@@ -202,6 +209,7 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(message.getAttribute("title")).toContain("Normalizing before the lookup.");
     fireEvent.click(message);
     expect(onSelect).toHaveBeenCalledWith(live.steps.find((step) => step.kind === "message")?.id);
+    expect(screen.getByText("No changes yet")).toBeTruthy();
     cleanup();
 
     const finished = new TraceBuilder();
@@ -218,6 +226,51 @@ describe("Brief (spec §3.3, E4)", () => {
     const change = within(screen.getByRole("list", { name: "Changes so far" })).getByRole("button");
     expect(change.getAttribute("aria-label")).toBe("Identity linking, 2 files, +41 −12");
     expect(change.getAttribute("title")).toBe("Identity linking\nsrc/identity.ts\nsrc/google.ts");
+  });
+
+  it("before any change unit, lists the edited files newest first under a quiet note", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add OAuth" });
+    const paths = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts", "src/f.ts", "src/auth/\u202Eevil.ts"];
+    paths.forEach((path, i) => {
+      b.agent({ type: "file_changed", path, callId: `edit_${i}` });
+      b.fact({ type: "git_hunk", file: path, added: i + 1, removed: 0, isFormattingOnly: false, isConfigOnly: false, isLockfile: false });
+    });
+    const session = foldLive(b, "running");
+    expect(session.chapters).toHaveLength(0);
+    const { onSelect } = renderSession(session);
+    expect(screen.getByText("7 files edited · not grouped yet")).toBeTruthy();
+    expect(screen.queryByText("No changes yet")).toBeNull();
+    const rows = within(screen.getByRole("list", { name: "Files edited" })).getAllByRole("button");
+    expect(rows).toHaveLength(5);
+    const newest = rows[0] as HTMLElement;
+    expect(newest.getAttribute("aria-label")).toBe("src/auth/⟨U+202E⟩evil.ts, +7 −0");
+    expect(newest.getAttribute("title")).toBe("src/auth/⟨U+202E⟩evil.ts");
+    expect(newest.textContent).not.toContain("\u202E");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("src/f.ts, +6 −0");
+    expect(screen.getByText("2 more")).toBeTruthy();
+    fireEvent.click(newest);
+    expect(onSelect).toHaveBeenCalledWith(session.entities.find((entity) => entity.path === paths[6])?.stepIds.at(-1));
+  });
+
+  it("gives each rendered Brief its own heading ids", () => {
+    const { model } = oauthModel();
+    const session = foldFixture("oauth");
+    const index = buildTraceIndex(session);
+    const view = (): JSX.Element => (
+      <BriefView model={model} session={session} index={index} nowT={0} onSelect={vi.fn()} onOpenMap={vi.fn()} mapAvailable />
+    );
+    render(
+      <>
+        {view()}
+        {view()}
+      </>,
+    );
+    for (const name of ["Brief", "Now", "Changes so far", "Architecture"]) {
+      const ids = screen.getAllByRole("heading", { name }).map((heading) => heading.id);
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size, name).toBe(2);
+    }
   });
 
   it("Shift+B switches the panel between the Inspector and the Brief, and Esc from a selection returns to the Brief", () => {
@@ -239,6 +292,15 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(screen.getByRole("heading", { name: "Brief" })).toBeTruthy();
     shiftB();
     expect(screen.queryByRole("heading", { name: "Brief" })).toBeNull();
+    fireEvent.keyDown(document.body, { code: "Escape", key: "Escape" });
+    expect(h.store.get().selection).toBeNull();
+    expect(screen.getByRole("heading", { name: "Brief" })).toBeTruthy();
+
+    // Pinned over a step inside a chapter, Esc clears the selection instead of stepping out to the chapter's Inspector.
+    const inner = session.steps.find((item) => item.chapterIds.length > 0);
+    if (inner === undefined) throw new Error("oauth has no step inside a chapter");
+    act(() => h.store.dispatch({ type: "select", id: inner.id, by: "shell" }));
+    shiftB();
     fireEvent.keyDown(document.body, { code: "Escape", key: "Escape" });
     expect(h.store.get().selection).toBeNull();
     expect(screen.getByRole("heading", { name: "Brief" })).toBeTruthy();

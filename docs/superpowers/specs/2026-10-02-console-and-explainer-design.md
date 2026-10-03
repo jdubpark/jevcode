@@ -152,7 +152,7 @@ Phase A, B and C UI tasks begin with HTML mockups (E16).
 | `3` | Map |
 | `4` | Surfaces |
 | Shift+B | Toggle the Brief (lowercase `b` is the viewer's brush-chapter key in Hybrid, so the Brief takes Shift+B) |
-| Esc | Go back from a selection to the Brief |
+| Esc | Esc steps out of a selection (collapse, then parent, then none); with the Brief pinned it clears the selection; with nothing selected the Brief shows. |
 | Cmd+Enter | Send the prompt |
 | Cmd+L | Focus the prompt line |
 

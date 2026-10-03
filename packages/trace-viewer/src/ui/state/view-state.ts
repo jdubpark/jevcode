@@ -540,6 +540,8 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
       if (state.tool === "hand") return { ...state, tool: "select" };
       const selection = state.selection;
       if (selection === null) return state;
+      // Spec §3.7: with the Brief pinned over a selection, Esc clears it, so the Brief stays (no step out to the parent).
+      if (state.brief) return selectId(state, null, "shell", "keys", index);
       if (isKeyExpanded(selection, index, state.expanded, state.collapsed)) return setExpanded(state, selection, false, index);
       const parent = selection.startsWith("step:") ? index.entry(selection)?.parent ?? null : null;
       if (parent !== null) return selectId(state, parent, "shell", "keys", index);
