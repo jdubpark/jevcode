@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type React from "react";
 
 import type { OverviewModel } from "../../../model/index.js";
@@ -26,6 +26,8 @@ export interface MapHeaderProps {
  */
 export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = null, onHoverComponent }: MapHeaderProps): React.JSX.Element {
   const [open, setOpen] = useState(true);
+  // Two viewers can mount at once, so the narrative's id is per header.
+  const narrativeId = useId();
   const [more, setMore] = useState(false);
   const sentences = overview.snapshot.narrative?.sentences ?? null;
   const headline = overviewHeadline(overview);
@@ -42,7 +44,7 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
         <span className={styles.headline}>{headline.count}</span>
         {headline.languages === null ? null : <span className={styles.languages}>{headline.languages}</span>}
         {sentences === null ? null : (
-          <button type="button" className={styles.toggle} aria-expanded={open} aria-controls="tv-map-overview" onClick={() => setOpen((value) => !value)}>
+          <button type="button" className={styles.toggle} aria-expanded={open} aria-controls={open ? narrativeId : undefined} onClick={() => setOpen((value) => !value)}>
             <span>Overview</span>
             <Icon name={open ? "chev-d" : "chev-r"} size={12} />
           </button>
@@ -94,7 +96,7 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
         </div>
       ) : null}
       {sentences !== null && open ? (
-        <p id="tv-map-overview" className={styles.narrative} data-map-narrative="">
+        <p id={narrativeId} className={styles.narrative} data-map-narrative="">
           {shown.map((sentence, index) => (
             <span key={index} className={styles.sentence}>
               {linkSentence(sentence, overview).map((part, at) =>

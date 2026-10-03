@@ -124,4 +124,30 @@ describe("ComponentInspector (spec §3.4)", () => {
     renderInspector({ view: "map", mapSelection: "cmp_000000000000" });
     expect(screen.getByText("This component is no longer in the map.")).toBeTruthy();
   });
+
+  it("lists the top 5 imports each way, then how many more", () => {
+    const hub = "packages/hub";
+    const targets = Array.from({ length: 8 }, (_, n) => `packages/t${n}`);
+    const many = overviewSnapshot({
+      components: [{ rootPath: hub, name: "hub", role: "domain" }, ...targets.map((rootPath) => ({ rootPath, role: "domain" as const }))],
+      edges: targets.map((to, n) => ({ from: hub, to, count: 20 - n })),
+    });
+    renderWithViewer(<Inspector host={{}} />, { session: buildSession({ steps: [{ kind: "instruction", tMs: 0, text: "Map" }], overview: many }), state: { view: "map", mapSelection: componentId(hub) } });
+    const out = part(panel(componentId(hub)), "[data-imports='out']");
+    expect(within(out).getByText("Imports out · 8")).toBeTruthy();
+    // By count: t0 (20) to t4 (16) show, t5 to t7 sit behind "3 more".
+    expect([...out.querySelectorAll("li")].map((row) => row.textContent)).toEqual(["t020", "t119", "t218", "t317", "t416"]);
+    expect(within(out).getByText("3 more")).toBeTruthy();
+    expect(part(panel(componentId(hub)), "[data-imports='in']").textContent).not.toContain("more");
+  });
+
+  it("names file rows and session changes by their full path; the visible text may be shortened", () => {
+    renderInspector({ view: "map", mapSelection: componentId(MAIN) });
+    const root = panel(componentId(MAIN));
+    const file = root.querySelector("[data-component-file]");
+    expect(file?.getAttribute("aria-label")).toBe(`${MAIN}/f00.ts`);
+    const change = root.querySelector("[data-component-change]");
+    expect(change?.getAttribute("aria-label")).toBe(`${MAIN}/pipeline/explainer-stage.ts, 120 lines added, 4 removed`);
+    expect(change?.textContent).not.toContain(MAIN);
+  });
 });

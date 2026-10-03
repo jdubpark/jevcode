@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OverviewSnapshot } from "@jevcode/contracts";
@@ -18,6 +19,8 @@ import {
 import { componentId, overviewSnapshot, syntheticOverview } from "../../../test-support/overview-builder.js";
 import { buildSession } from "../../../test-support/session-builder.js";
 import { Inspector } from "../../inspector/Inspector.js";
+import { KeyboardLayer } from "../../shell/KeyboardLayer.js";
+import { MapHeader } from "./MapHeader.js";
 import { planMapFit } from "./map-camera.js";
 import { MapView } from "./MapView.js";
 
@@ -133,7 +136,9 @@ describe("MapView (spec §3.4, E13)", () => {
     const { store } = renderMap(WEB_API_DB);
     await user.click(cardOf("packages/api"));
     expect(store.get().mapSelection).toBe(componentId("packages/api"));
-    expect(cardOf("packages/api").getAttribute("aria-pressed")).toBe("true");
+    // The selected card is the current one; a card is not a toggle (it never unpresses).
+    expect(cardOf("packages/api").getAttribute("aria-current")).toBe("true");
+    expect(cardOf("packages/api").hasAttribute("aria-pressed")).toBe(false);
     expect(edgeOf("apps/web", "packages/api")?.hasAttribute("data-lit")).toBe(true);
     expect(edgeOf("packages/api", "packages/db")?.hasAttribute("data-lit")).toBe(true);
     expect(edgeOf("apps/web", "packages/db")?.hasAttribute("data-dim")).toBe(true);
@@ -192,7 +197,7 @@ describe("MapView (spec §3.4, E13)", () => {
     act(() => store.dispatch({ type: "esc" }));
     expect(store.get().mapSelection).toBeNull();
     expect(document.querySelector("[data-component-inspector]")).toBeNull();
-    expect(cardOf("packages/api").getAttribute("aria-pressed")).toBe("false");
+    expect(cardOf("packages/api").hasAttribute("aria-current")).toBe(false);
     await user.click(cardOf("packages/db"));
     const viewport = document.querySelector<HTMLElement>("[data-tv-viewport='map']");
     if (viewport === null) throw new Error("no map viewport");
@@ -452,6 +457,11 @@ describe("MapView (spec §3.4, E13)", () => {
       // A new Agents band opens between API and Storage, so the Storage column shifts right by one column and gutter.
       expect(Number.parseFloat(cardOf("packages/db").style.left)).toBe(before + 140 + 22);
       expect(world()?.hasAttribute("data-relayout")).toBe(true);
+      const first = world()?.getAttribute("data-relayout");
+      act(() => harness.setSession(sessionWith(WEB_API_DB)));
+      // Back-to-back relayouts alternate the value, so the edge fade replays.
+      expect(world()?.getAttribute("data-relayout")).not.toBe(first);
+      act(() => harness.setSession(sessionWith(withAgent)));
       // A snapshot that moves no card (a new purpose) glides nothing.
       const described = overviewSnapshot({
         components: [
@@ -479,5 +489,103 @@ describe("MapView (spec §3.4, E13)", () => {
       expect(Number.parseFloat(cardOf("packages/db").style.left)).toBe(before + 140 + 22);
       expect(world()?.hasAttribute("data-relayout")).toBe(false);
     });
+  });
+
+  it("Esc from the component Inspector returns focus to the inspected card and leaves the camera", async () => {
+    const user = userEvent.setup();
+    function WithKeys() {
+      const [root, setRoot] = useState<HTMLDivElement | null>(null);
+      return (
+        <div ref={setRoot}>
+          <main data-region="main">
+            <MapView active />
+          </main>
+          <aside data-region="inspector" tabIndex={-1}>
+            <Inspector host={{}} />
+          </aside>
+          <KeyboardLayer root={root} />
+        </div>
+      );
+    }
+    const harness = renderWithViewer(<WithKeys />, { session: sessionWith(WEB_API_DB), state: { view: "map" } });
+    act(() => resize.resize(1200, 800));
+    const transform = (): string | undefined => document.querySelector<HTMLElement>("[data-tv-world]")?.style.transform;
+    await user.click(cardOf("packages/db"));
+    const before = transform();
+    const aside = document.querySelector<HTMLElement>("aside[data-region='inspector']");
+    if (aside === null) throw new Error("no inspector region");
+    act(() => aside.focus());
+    fireEvent.keyDown(aside, { code: "Escape", key: "Escape" });
+    expect(harness.store.get().mapSelection).toBeNull();
+    expect(document.activeElement).toBe(cardOf("packages/db"));
+    expect(transform()).toBe(before);
+  });
+
+  it("after a Fit below 10%, zooming out keeps the Fit zoom", () => {
+    const frames = stubAnimationFrames();
+    // One band of 200 cards is 18,460 world px tall: Fit in 1,200 × 800 needs k = 712 / 18,460, below 10%.
+    const tall = overviewSnapshot({
+      components: Array.from({ length: 200 }, (_, i) => ({ rootPath: `pkg/c${String(i).padStart(3, "0")}`, role: "domain" as const })),
+    });
+    const { registry } = renderMap(tall);
+    act(() => frames.flush());
+    const plan = planMapFit(buildOverviewModel(tall, 1), { w: 1200, h: 800 });
+    if (plan === null) throw new Error("no fit");
+    expect(plan.camera.k).toBeLessThan(0.1);
+    const scale = (): number => Number(/scale\(([^)]+)\)/.exec(document.querySelector<HTMLElement>("[data-tv-world]")?.style.transform ?? "")?.[1]);
+    expect(scale()).toBeCloseTo(plan.camera.k, 10);
+    act(() => registry.get("map")?.zoom.zoomOut());
+    act(() => frames.flush());
+    expect(scale()).toBeCloseTo(plan.camera.k, 10);
+  });
+
+  it("promotes the world only while it moves, and sizes rings by 1 / k at rest", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const frames = stubAnimationFrames();
+      const { registry } = renderMap(WEB_API_DB);
+      // The jump's frame, then its settle write once the controller's promise resolves.
+      await act(async () => frames.flush());
+      const world = (): HTMLElement | null => document.querySelector<HTMLElement>("[data-tv-world]");
+      const plan = planMapFit(buildOverviewModel(WEB_API_DB, 1), { w: 1200, h: 800 });
+      if (plan === null) throw new Error("no fit");
+      expect(world()?.style.willChange).toBe("");
+      expect(Number(world()?.style.getPropertyValue("--map-inv-k"))).toBeCloseTo(1 / plan.camera.k, 10);
+      act(() => registry.get("map")?.zoom.zoomIn());
+      act(() => frames.flush());
+      expect(world()?.style.willChange).toBe("transform");
+      act(() => vi.advanceTimersByTime(200));
+      expect(world()?.style.willChange).toBe("");
+      expect(Number(world()?.style.getPropertyValue("--map-inv-k"))).toBeCloseTo(1 / (plan.camera.k * 1.25), 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("each header's Overview toggle controls its own narrative, and only while it is open", async () => {
+    const user = userEvent.setup();
+    const overview = buildOverviewModel(
+      overviewSnapshot({
+        components: [{ rootPath: "apps/web", name: "web", role: "ui" }],
+        narrative: { provenance: "model", sentences: [{ text: "web is the app.", citations: [{ kind: "component", id: componentId("apps/web") }] }] },
+      }),
+      1,
+    );
+    renderWithViewer(
+      <>
+        <MapHeader overview={overview} onSelectComponent={() => undefined} />
+        <MapHeader overview={overview} onSelectComponent={() => undefined} />
+      </>,
+      { session: null },
+    );
+    const toggles = screen.getAllByRole("button", { name: "Overview" });
+    const ids = toggles.map((toggle) => toggle.getAttribute("aria-controls"));
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) expect(id !== null && document.getElementById(id)?.hasAttribute("data-map-narrative")).toBe(true);
+    const first = toggles[0];
+    if (first === undefined) throw new Error("no toggle");
+    await user.click(first);
+    expect(first.hasAttribute("aria-controls")).toBe(false);
+    expect(first.getAttribute("aria-expanded")).toBe("false");
   });
 });

@@ -63,7 +63,7 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
       data-map-card={component.id}
       data-level={level}
       data-selected={selected ? "" : undefined}
-      aria-pressed={selected}
+      aria-current={selected ? "true" : undefined}
       aria-label={label}
       title={purpose === null ? `${name}: ${root}` : `${name}: ${purpose}`}
       tabIndex={tabStop ? 0 : -1}
