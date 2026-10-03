@@ -234,10 +234,14 @@ interface EditedFile {
   seq: number;
 }
 
-/** The session's edited files, newest edit first: the D-3 rail's "Files in play" before any change unit exists. */
-function editedFilesOf(session: TraceSession, index: TraceIndex): EditedFile[] {
+/**
+ * The session's edited files, newest edit first: the D-3 rail's "Files in play" before any change unit exists, and
+ * once units exist the files no unit holds yet (`ungroupedOnly`, lane triage t3).
+ */
+function editedFilesOf(session: TraceSession, index: TraceIndex, ungroupedOnly = false): EditedFile[] {
   const files: EditedFile[] = [];
   for (const entity of session.entities) {
+    if (ungroupedOnly && entity.chapterIds.length > 0) continue;
     const stepId = entity.stepIds.at(-1);
     if (stepId === undefined) continue;
     files.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId, seq: index.entry(stepId)?.firstSeq ?? 0 });
@@ -334,7 +338,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
   const id = useId();
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
   const more = model.changes.length - shown.length;
-  const edited = useMemo(() => (model.changes.length === 0 ? editedFilesOf(session, index) : []), [model.changes.length, session, index]);
+  const edited = useMemo(() => editedFilesOf(session, index, model.changes.length > 0), [model.changes.length, session, index]);
   return (
     <section className={styles.brief} aria-labelledby={`${id}-title`} tabIndex={-1} data-brief="">
       <div className={styles.header}>
@@ -369,6 +373,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
           <p className={styles.quiet}>No changes yet</p>
         )}
         {more > 0 ? <p className={styles.quietSmall}>{`${more} more in the views`}</p> : null}
+        {model.changes.length > 0 && edited.length > 0 ? <EditedFiles files={edited} onSelect={onSelect} /> : null}
       </section>
       <section className={styles.part} aria-labelledby={`${id}-architecture`}>
         <h3 id={`${id}-architecture`} className={styles.partTitle}>
