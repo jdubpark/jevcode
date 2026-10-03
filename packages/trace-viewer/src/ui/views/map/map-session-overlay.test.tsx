@@ -31,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function render(withOther = false, ui: React.ReactElement = <MapView active />, view: "map" | "hybrid" = "map") {
+function buildRows(withOther: boolean): TraceBuilder {
   const b = new TraceBuilder();
   b.agent({ type: "agent_started", prompt: "Add a limiter" });
   b.overview(
@@ -63,6 +63,11 @@ function render(withOther = false, ui: React.ReactElement = <MapView active />, 
       { id: componentId("(other)"), state: "new", unitIds: [] },
     ],
   });
+  return b;
+}
+
+function render(withOther = false, ui: React.ReactElement = <MapView active />, view: "map" | "hybrid" = "map") {
+  const b = buildRows(withOther);
   const harness = renderWithViewer(ui, {
     session: foldRows(testMeta(), b.rows, { live: true }),
     state: { view },
@@ -133,6 +138,35 @@ describe("Map session overlay (spec §3.4)", () => {
     expect([...(rows[3]?.querySelectorAll("[data-state]") ?? [])].map((node) => node.getAttribute("data-state"))).toEqual(["new", "failing"]);
     fireEvent.click(rows[2] as Element);
     expect(harness.store.get().mapSelection).toBe(componentId("src/server"));
+  });
+
+  it("marks the selected row aria-current and activates a focused row with Enter", async () => {
+    const harness = render(false, <><MapView active /><Brief /></>);
+    const row = document.querySelector<HTMLElement>(`[data-brief-session-row="${componentId("src/redis")}"]`);
+    expect(row?.getAttribute("aria-current")).toBeNull();
+    row?.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(harness.store.get().mapSelection).toBe(componentId("src/redis"));
+    expect(document.querySelector(`[data-brief-session-row="${componentId("src/redis")}"]`)?.getAttribute("aria-current")).toBe("true");
+    expect(document.querySelectorAll("[data-brief-session-row][aria-current]")).toHaveLength(1);
+  });
+
+  it("moves focus to the section heading when the focused row's component leaves the list", async () => {
+    const harness = render(false, <><MapView active /><Brief /></>);
+    const row = document.querySelector<HTMLElement>(`[data-brief-session-row="${componentId("src/redis")}"]`);
+    row?.focus();
+    expect(document.activeElement).toBe(row);
+    const b = buildRows(false);
+    b.explainer({
+      kind: "highlights",
+      basisSeq: 3,
+      components: [{ id: componentId("src/server"), state: "changed", unitIds: ["u1"] }],
+    });
+    act(() => harness.setSession(foldRows(testMeta(), b.rows, { live: true })));
+    expect(document.querySelector(`[data-brief-session-row="${componentId("src/redis")}"]`)).toBeNull();
+    const heading = screen.getByRole("heading", { name: "This session · 1 component" });
+    expect(heading.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(heading);
   });
 
   it("outside the Map the Brief keeps its Architecture part", () => {
