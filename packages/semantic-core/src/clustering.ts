@@ -978,14 +978,25 @@ export function clusterSession(input: SessionInput): SemanticProjection {
       for (const window of runsByWindow.keys()) if (window < bound && window > latest) latest = window;
       return latest;
     };
-    const rangeStart = (testRun: TestRun): number => {
-      const first = firstWindowByCommand.get(testRun.command);
-      if (first !== undefined && first < testRun.window) return latestRunBefore(testRun.window);
+    const latestBatchStart = (testRun: TestRun): number => {
       let latestChange = Number.NEGATIVE_INFINITY;
       for (const window of windowFiles.keys()) {
         if (window <= testRun.window && window > latestChange) latestChange = window;
       }
       return latestRunBefore(latestChange);
+    };
+    const rangeStart = (testRun: TestRun): number => {
+      const first = firstWindowByCommand.get(testRun.command);
+      if (first !== undefined && first < testRun.window) return latestRunBefore(testRun.window);
+      return latestBatchStart(testRun);
+    };
+    const filesBetween = (start: number, end: number): Set<string> => {
+      const files = new Set<string>();
+      for (const [window, windowSet] of windowFiles) {
+        if (window <= start || window > end) continue;
+        for (const file of windowSet) files.add(file);
+      }
+      return files;
     };
     const latestRun = new Map<string, { window: number; failed: boolean }>();
     const noteRun = (unitId: string, window: number, failed: boolean): void => {
@@ -997,13 +1008,11 @@ export function clusterSession(input: SessionInput): SemanticProjection {
       }
     };
     const hostsFor = (testRun: TestRun): string[] => {
-      const start = rangeStart(testRun);
-      const changed = new Set<string>();
-      for (const [window, files] of windowFiles) {
-        if (window <= start || window > testRun.window) continue;
-        for (const file of files) changed.add(file);
+      const changed = filesBetween(rangeStart(testRun), testRun.window);
+      if (testRun.failed) {
+        // A failing rerun with no edit since the previous run still reaches the latest batch, so a red run is never orphaned.
+        return unitsTouching(changed.size > 0 ? changed : filesBetween(latestBatchStart(testRun), testRun.window));
       }
-      if (testRun.failed) return unitsTouching(changed);
       return unitsTouching(changed, (id) => latestRun.get(id)?.failed === true);
     };
     for (const window of [...runsByWindow.keys()].sort((a, b) => a - b)) {
