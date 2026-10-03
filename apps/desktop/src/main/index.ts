@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -79,6 +80,22 @@ const SMOKE_STEPS = Number.parseInt(process.env["JEVCODE_SMOKE_STEPS"] ?? "", 10
 /** The workspace smoke's append clock: main's wall time at each committed trace row (Console append latency, D-6). */
 const smokeAppends = SMOKE_WORKSPACE ? createAppendLog(() => Date.now()) : null;
 
+/** Main's event-loop delay histogram (10 ms resolution), read over the append phase to attribute a max spike. */
+const smokeLoopHistogram = SMOKE_WORKSPACE ? monitorEventLoopDelay({ resolution: 10 }) : null;
+const smokeLoopDelay: WorkspaceSmokeDeps["loopDelay"] =
+  smokeLoopHistogram === null
+    ? undefined
+    : {
+        reset: () => {
+          smokeLoopHistogram.reset();
+          smokeLoopHistogram.enable();
+        },
+        snapshot: () => {
+          smokeLoopHistogram.disable();
+          return { p99Ms: smokeLoopHistogram.percentile(99) / 1e6, maxMs: smokeLoopHistogram.max / 1e6 };
+        },
+      };
+
 function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
   return {
     exec: (script) => window.webContents.executeJavaScript(script, true) as Promise<unknown>,
@@ -100,6 +117,7 @@ function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
       writeFileSync(filePath, data);
     },
     appends: smokeAppends ?? createAppendLog(() => Date.now()),
+    loopDelay: smokeLoopDelay,
     wallNow: () => Date.now(),
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -185,7 +203,7 @@ app.whenReady().then(() => {
   // Each trace row is hinted as it commits; the pipeline writes without transactions (lane 03 PL-2).
   observeTraceAppends(db, (event) => {
     emitter.notify(event.sessionId, event.seq);
-    smokeAppends?.record(event.sessionId, event.seq);
+    smokeAppends?.record(event.sessionId, event.seq, event.type);
   });
 
   // Crash recovery: any session left running/paused by a dead process is

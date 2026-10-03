@@ -36,10 +36,12 @@ export const VIEW_KEYS = [
 export interface AppendRecord {
   seq: number;
   atMs: number;
+  /** The stored row's type, when main reports it (observeTraceAppends does). */
+  type?: string;
 }
 
 export interface AppendLog {
-  record(sessionId: string, seq: number): void;
+  record(sessionId: string, seq: number, type?: string): void;
   entries(sessionId: string): readonly AppendRecord[];
 }
 
@@ -47,9 +49,9 @@ export interface AppendLog {
 export function createAppendLog(now: () => number): AppendLog {
   const bySession = new Map<string, AppendRecord[]>();
   return {
-    record(sessionId, seq) {
+    record(sessionId, seq, type) {
       const list = bySession.get(sessionId) ?? [];
-      list.push({ seq, atMs: now() });
+      list.push(type === undefined ? { seq, atMs: now() } : { seq, atMs: now(), type });
       bySession.set(sessionId, list);
     },
     entries: (sessionId) => bySession.get(sessionId) ?? [],
@@ -76,6 +78,8 @@ export interface WorkspaceSmokeDeps {
   capture(width: number, height: number): Promise<Uint8Array>;
   writeFile(filePath: string, data: Uint8Array): void;
   appends: AppendLog;
+  /** Main's event-loop delay over the append phase (perf_hooks.monitorEventLoopDelay); absent in tests that do not need it. */
+  loopDelay?: { reset(): void; snapshot(): { p99Ms: number; maxMs: number } };
   /** Date.now(): the clock both the append log and CONSOLE_PAINT use. */
   wallNow(): number;
   setTimeout(fn: () => void, ms: number): unknown;
@@ -128,6 +132,29 @@ export function appendLatencies(
     else latencies.push(Math.max(0, paint.atMs - append.atMs));
   }
   return { latencies, unpainted };
+}
+
+export interface SlowestAppend {
+  seq: number;
+  type: string;
+  storedAtMs: number;
+  paintedAtMs: number;
+  latencyMs: number;
+}
+
+/** The append with the largest stored → painted time, for attributing a one-off max spike; null when none painted. */
+export function slowestAppend(appends: readonly AppendRecord[], paints: readonly ConsolePaint[]): SlowestAppend | null {
+  const ordered = [...paints].sort((a, b) => a.atMs - b.atMs);
+  let slowest: SlowestAppend | null = null;
+  for (const append of appends) {
+    const paint = ordered.find((candidate) => candidate.throughSeq >= append.seq);
+    if (paint === undefined) continue;
+    const latencyMs = Math.max(0, paint.atMs - append.atMs);
+    if (slowest === null || latencyMs > slowest.latencyMs) {
+      slowest = { seq: append.seq, type: append.type ?? "unknown", storedAtMs: append.atMs, paintedAtMs: paint.atMs, latencyMs };
+    }
+  }
+  return slowest;
 }
 
 /** Nearest-rank percentile; NaN for no values. */
@@ -226,7 +253,14 @@ async function measureAppends(
     if (last === undefined || deps.wallNow() - last.atMs < APPEND_QUIET_MS) return false;
     return paints.some((paint) => paint.sessionId === sessionId && paint.throughSeq >= last.seq);
   };
-  await waitUntil(deps, settled, APPEND_PHASE_TIMEOUT_MS, "the session's last row painted in the Console");
+  deps.loopDelay?.reset();
+  let loop: { p99Ms: number; maxMs: number } | undefined;
+  try {
+    await waitUntil(deps, settled, APPEND_PHASE_TIMEOUT_MS, "the session's last row painted in the Console");
+  } finally {
+    // snapshot() also disables the histogram, so a timed-out phase does not leave it sampling.
+    loop = deps.loopDelay?.snapshot();
+  }
   const appends = deps.appends.entries(sessionId).filter((entry) => entry.atMs >= readyAt);
   const { latencies, unpainted } = appendLatencies(
     appends,
@@ -242,6 +276,17 @@ async function measureAppends(
   deps.log(
     `SMOKE_CONSOLE appends=${latencies.length} p50_ms=${Math.round(p50)} p95_ms=${Math.round(p95)} max_ms=${Math.round(max)}`,
   );
+  const paintsOfSession = paints.filter((paint) => paint.sessionId === sessionId);
+  const slowest = slowestAppend(appends, paintsOfSession);
+  if (slowest !== null) {
+    deps.log(
+      `SMOKE_CONSOLE_SLOWEST seq=${slowest.seq} type=${slowest.type} stored_at_ms=${slowest.storedAtMs} painted_at_ms=${slowest.paintedAtMs} latency_ms=${Math.round(slowest.latencyMs)}`,
+    );
+  }
+  if (loop !== undefined) {
+    // The histogram samples every 10 ms, so a value includes up to that resolution on top of the stall itself.
+    deps.log(`SMOKE_LOOP_DELAY p99_ms=${Math.round(loop.p99Ms)} max_ms=${Math.round(loop.maxMs)} resolution_ms=10`);
+  }
   if (p95 > CONSOLE_APPEND_P95_BUDGET_MS) {
     throw new Error(`Console append p95 ${Math.round(p95)} ms is over the ${CONSOLE_APPEND_P95_BUDGET_MS} ms budget`);
   }

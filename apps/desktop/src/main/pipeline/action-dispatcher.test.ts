@@ -41,7 +41,8 @@ function makeDeps(
   };
 }
 
-const db = openDb({ dbPath: "/tmp/jevcode-actions-test.db" });
+// In memory: a fixed /tmp path was shared by every worktree and broke when another one migrated it ahead.
+const db = openDb({ dbPath: ":memory:" });
 afterAll(() => {
   db.close();
 });

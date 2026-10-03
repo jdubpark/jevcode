@@ -816,6 +816,76 @@ describe("push hints (spec E5, §8.7)", () => {
     ]);
   });
 
+  it("a hint-started poll that rejects does not leave its 50 ms commit gap for the retry", async () => {
+    const scheduler = new FakeScheduler();
+    const { source: base, control } = fakeSource(messageRows(8), { state: "running", released: 3 });
+    const { source, hint } = withHints(base);
+    const controller = createDataController({ source, pollMs: 10_000, pageSize: 2, scheduler, isHidden: () => false });
+    const commits: Array<[at: number, loadedThroughSeq: number]> = [];
+    controller.subscribe((snapshot) => {
+      const seq = snapshot.session?.loadedThroughSeq;
+      if (seq !== undefined && seq !== commits.at(-1)?.[1]) commits.push([scheduler.now(), seq]);
+    });
+    controller.start();
+    await scheduler.run(600);
+    control.released = 8;
+    control.failures = 1;
+    hint(8); // the hint's poll rejects: the reconnect state takes over
+    await scheduler.run(10);
+    expect(controller.get().status.kind).toBe("reconnecting");
+    await scheduler.run(BACKOFF_MS[0] ?? 1_000);
+    expect(controller.get().session?.loadedThroughSeq).toBe(5); // the retry's first page publishes at once
+    const progressive = commits.find(([, seq]) => seq === 5);
+    await scheduler.run(HINT_COMMIT_GAP_MS + 10);
+    // Seq 8 is the retry's caught-up commit: it waits the plain 250 ms cap behind the progressive one, not 50 ms.
+    expect(commits.some(([, seq]) => seq === 8)).toBe(false);
+    await scheduler.run(250);
+    const caughtUp = commits.find(([, seq]) => seq === 8);
+    expect(caughtUp?.[0]).toBe((progressive?.[0] ?? 0) + 250);
+  });
+
+  it("a hint held behind a pending commit or the first load, whose poll then rejects, leaves the retry the plain 250 ms gap", async () => {
+    for (const during of ["commit timer", "first load"] as const) {
+      const scheduler = new FakeScheduler();
+      const { source: base, control } = fakeSource(messageRows(8), { state: "running", released: 3 });
+      const { source, hint } = withHints(base);
+      const controller = createDataController({ source, pollMs: 10_000, pageSize: 2, scheduler, isHidden: () => false });
+      const commits: Array<[at: number, loadedThroughSeq: number]> = [];
+      controller.subscribe((snapshot) => {
+        const seq = snapshot.session?.loadedThroughSeq;
+        if (seq !== undefined && seq !== commits.at(-1)?.[1]) commits.push([scheduler.now(), seq]);
+      });
+      controller.start();
+      if (during === "commit timer") {
+        await scheduler.run(300);
+        control.released = 4;
+        hint(4); // commits at once (t = 300)
+        await scheduler.run(0);
+        control.released = 5;
+        hint(5); // its commit waits behind the commit at t = 300
+        await scheduler.run(10);
+        control.released = 8;
+        control.failures = 1; // the poll the held hint starts rejects
+        hint(8); // arrives while that commit timer is pending: held
+      } else {
+        control.released = 8;
+        control.failures = 1;
+        hint(8); // the summary and the first page are still in flight
+      }
+      await scheduler.run(HINT_COMMIT_GAP_MS + 10);
+      await scheduler.run(10);
+      const before = scheduler.now();
+      await scheduler.run((BACKOFF_MS[0] ?? 1_000) + 400);
+      expect(controller.get().status.kind, during).toBe("ready");
+      const retried = commits.filter(([at]) => at > before);
+      const last = retried.at(-1);
+      const previous = retried.at(-2);
+      expect(last?.[1], during).toBe(8);
+      expect(previous, during).toBeDefined();
+      expect((last?.[0] ?? 0) - (previous?.[0] ?? 0), during).toBe(250);
+    }
+  });
+
   it("ignores a hint at or below the cursor", async () => {
     const scheduler = new FakeScheduler();
     const { source: base, control } = fakeSource(messageRows(5), { state: "running", released: 3 });
