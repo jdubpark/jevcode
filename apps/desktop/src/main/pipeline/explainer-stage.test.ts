@@ -285,6 +285,40 @@ describe("ExplainerStage scan and rows (spec §6.1, §6.5)", () => {
     expect(h.calls.scan).toBe(1);
   });
 
+  it("writes the current snapshot to a session switched back to after it changed elsewhere, once (final review B M-4)", async () => {
+    let current = SESSION;
+    const h = harness({ sessionId: () => current });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    current = SESSION_2;
+    stage.onSessionStarted(SESSION_2);
+    h.sources["packages/core/src/index.ts"] = "export const user = 2;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+    const latest = snapshotRows(h.db, SESSION_2).at(-1)?.snapshot as OverviewSnapshot;
+    // The rebuild wrote only the session that was open.
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+
+    current = SESSION;
+    stage.onSessionSwitched();
+    await stage.whenIdle();
+    const rows = snapshotRows(h.db, SESSION);
+    expect(rows).toHaveLength(2);
+    const contentHashes = (snapshot: OverviewSnapshot | undefined) => snapshot?.components.map((c) => c.contentHash);
+    expect(contentHashes(rows[1]?.snapshot)).toEqual(contentHashes(latest));
+    expect(h.hints.at(-1)).toEqual([SESSION, rows[1]?.seq]);
+
+    // Deduped by the written key: switching again with nothing new writes nothing.
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    stage.onSessionSwitched();
+    await stage.whenIdle();
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(2);
+  });
+
   it("scans on the first session start when the repo-open scan never ran", async () => {
     const h = harness();
     const stage = start(h);

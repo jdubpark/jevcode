@@ -769,6 +769,10 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     },
     onSessionSwitched() {
       if (disposed) return;
+      // Spec §5.5: a session switched back to gets the current snapshot when a rebuild ran while it was not open (only
+      // the open session gets rebuild rows). Deduped by the key written to that session; in a turn of its own, so the
+      // switch's IPC handler appends nothing (final review B M-4).
+      requestWriteForCurrentSession(true);
       try {
         sessionExplainer.onSessionSwitched();
       } catch (error) {
