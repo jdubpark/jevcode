@@ -1,8 +1,9 @@
-import { agentStateLabel } from "@jevcode/trace-viewer/model";
+import { agentStateLabel, displayUntrusted } from "@jevcode/trace-viewer/model";
 import { useEffect, useRef, useState, type Dispatch } from "react";
 
 import type { AgentInstructionStatePayload, JevcodeApi } from "../../shared/api.js";
 import { traceNoteTarget, type ComposerEvent, type ComposerState } from "../components/composer-prefill.js";
+import { Glyph } from "../components/glyph.js";
 import type { SessionStatePayload } from "../payload-types.js";
 
 export type InstructionMode = "steer" | "queue";
@@ -121,9 +122,9 @@ export function PromptDock(props: PromptDockProps) {
         <ul className="dock-queue" aria-label="Queued instructions">
           {pending.map((item) => (
             <li key={item.id}>
-              <span className="dock-queue-mode">{item.mode === "steer" ? "steer" : "next"}</span>
+              <Glyph name="clock" />
               <span className="dock-queue-text" title={item.text}>
-                {item.text}
+                Queued · {displayUntrusted(item.text)}
               </span>
               <button
                 type="button"
@@ -131,7 +132,7 @@ export function PromptDock(props: PromptDockProps) {
                 aria-label="Cancel queued instruction"
                 onClick={() => void bridge.agent.cancelInstruction(sessionId, item.id)}
               >
-                ×
+                Cancel
               </button>
             </li>
           ))}

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { composerReducer, initialComposer } from "../components/composer-prefill.js";
+import type { ComposerPrefillPayload } from "../../shared/local-channels.js";
 import type { SessionStatePayload } from "../payload-types.js";
 import { PromptDock, continuesSession, type PromptDockProps } from "./PromptDock.js";
 
@@ -23,8 +24,12 @@ function Harness(props: {
   bridge: ReturnType<typeof fakeBridge>;
   state: SessionStatePayload["state"] | null;
   pending?: PromptDockProps["pending"];
+  held?: ComposerPrefillPayload;
 }) {
   const [composer, dispatch] = useReducer(composerReducer, "s1", initialComposer);
+  useEffect(() => {
+    if (props.held !== undefined) dispatch({ type: "prefill", payload: props.held });
+  }, [props.held]);
   return (
     <PromptDock
       bridge={props.bridge as unknown as PromptDockProps["bridge"]}
@@ -132,5 +137,43 @@ describe("PromptDock (spec §3.1, §3.7)", () => {
     rerender(<Harness bridge={bridge} state="paused" />);
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(bridge.agent.resume).toHaveBeenCalledWith("s1"));
+  });
+
+  it("shows a status chip that names a decision the agent waits on", () => {
+    render(<Harness bridge={fakeBridge()} state="waiting_decision" />);
+    const chip = document.querySelector(".dock-status");
+    expect(chip?.className).toContain("dock-status-waiting_decision");
+    expect(chip?.textContent).toContain("Needs your decision");
+  });
+
+  it("queued items read 'Queued · text' with a text Cancel that keeps its accessible name", () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" pending={[{ id: "i1", mode: "queue", text: "add a sign\u202Eout button" }] as PromptDockProps["pending"]} />);
+    const item = screen.getByRole("list", { name: "Queued instructions" }).querySelector("li");
+    expect(item?.textContent).toBe("Queued · add a sign⟨U+202E⟩out buttonCancel");
+    expect(screen.getByRole("button", { name: "Cancel queued instruction" }).textContent).toBe("Cancel");
+  });
+
+  describe("a trace note held for another session", () => {
+    const HELD: ComposerPrefillPayload = { sessionId: "s2", text: "check the retry path" };
+
+    it("Switch moves to that session and Dismiss drops the notice", async () => {
+      const bridge = fakeBridge();
+      render(<Harness bridge={bridge} state="running" held={HELD} />);
+      const notice = await screen.findByRole("status");
+      expect(notice.textContent).toContain("Trace note for another session");
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await waitFor(() => expect(bridge.session.switchTo).toHaveBeenCalledWith("s2"));
+    });
+
+    it("Dismiss removes the notice without switching or touching the draft", async () => {
+      const bridge = fakeBridge();
+      render(<Harness bridge={bridge} state="running" held={HELD} />);
+      await screen.findByRole("status");
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(bridge.session.switchTo).not.toHaveBeenCalled();
+      expect(input().value).toBe("");
+    });
   });
 });

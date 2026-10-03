@@ -27,6 +27,7 @@ export function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState("");
+  const [activeStartedAt, setActiveStartedAt] = useState<string | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<PreferencesView>(
     DEFAULT_AGENT_PREFERENCES,
@@ -50,6 +51,7 @@ export function App() {
   useEffect(() => {
     if (!repo || !sessionState) {
       setActivePrompt("");
+      setActiveStartedAt(null);
       return;
     }
     let cancelled = false;
@@ -61,9 +63,13 @@ export function App() {
           (session) => session.sessionId === sessionState.sessionId,
         );
         setActivePrompt(active?.prompt ?? "");
+        setActiveStartedAt(active?.startedAt ?? null);
       })
       .catch(() => {
-        if (!cancelled) setActivePrompt("");
+        if (!cancelled) {
+          setActivePrompt("");
+          setActiveStartedAt(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -105,6 +111,7 @@ export function App() {
       setRepo(null);
       setSessionState(null);
       setActivePrompt("");
+      setActiveStartedAt(null);
       setTraceError(null);
     }
   }, [bridge, repo]);
@@ -114,6 +121,8 @@ export function App() {
       <Header
         repo={repo}
         sessionState={sessionState}
+        sessionPrompt={activePrompt}
+        sessionStartedAt={activeStartedAt}
         terminalOpen={terminalOpen}
         debugOpen={debugOpen}
         onOpenRepo={() => void bridge.repo.browse()}
@@ -124,7 +133,7 @@ export function App() {
       />
       <div className="body">
         <aside className="sidebar">
-          <RecentRepos onSelect={(path) => void bridge.repo.open(path)} />
+          <RecentRepos selectedRepoId={repo?.repoId ?? null} onSelect={(path) => void bridge.repo.open(path)} />
           <SessionSwitcher repo={repo} sessionState={sessionState} />
           <AgentSettings
             prefs={prefs}

@@ -1,7 +1,7 @@
 import { TRACE_LIVE_POLL_MS } from "@jevcode/contracts";
 import { TraceViewer } from "@jevcode/trace-viewer";
 import type { ViewDefinition } from "@jevcode/trace-viewer";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef } from "react";
 
 import { getBridge } from "../bridge.js";
 import { createIpcTraceSource } from "../trace/ipc-source.js";
@@ -19,7 +19,7 @@ export interface EmbeddedWorkspaceProps {
 
 /**
  * The main window's center column (spec §9, E2): the trace viewer for one
- * session, Console first, in embedded chrome. The parent keys this component
+ * session, Console first, in embedded chrome. The viewer's own title bar carries the view switcher beside Review/Live. The parent keys this component
  * by session id, so a switch unmounts the viewer (its DataController stops and
  * drops its push subscription) and mounts a fresh one on Console. Source and
  * host are created once per session.
@@ -28,8 +28,6 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
   const bridge = getBridge();
   const latest = useRef(props);
   latest.current = props;
-  const [switcher, setSwitcher] = useState<ReactNode>(null);
-  const placeSwitch = useCallback((node: ReactNode) => setSwitcher(() => node), []);
 
   const source = useMemo(() => createIpcTraceSource(bridge.trace, props.sessionId), [bridge, props.sessionId]);
   const host = useMemo(
@@ -46,7 +44,6 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
 
   return (
     <div className="embedded-workspace">
-      <div className="workspace-bar">{switcher}</div>
       <div className="workspace-viewer">
         <TraceViewer
           key={props.sessionId}
@@ -55,7 +52,6 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
           chrome="embedded"
           initialView="console"
           hostViews={HOST_VIEWS}
-          renderSwitch={placeSwitch}
           pollMs={TRACE_LIVE_POLL_MS}
         />
       </div>

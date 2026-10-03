@@ -1,8 +1,15 @@
+import { agentStateLabel, displayUntrusted, formatDuration } from "@jevcode/trace-viewer/model";
+import { useEffect, useState } from "react";
+
 import type { RepoOpenedPayload, SessionStatePayload } from "../payload-types.js";
+import { Glyph } from "./glyph.js";
 
 interface HeaderProps {
   repo: RepoOpenedPayload | null;
   sessionState: SessionStatePayload | null;
+  /** The active session's prompt (shown in the breadcrumb) and start time (the chip's elapsed time). */
+  sessionPrompt: string;
+  sessionStartedAt: string | null;
   terminalOpen: boolean;
   debugOpen: boolean;
   onOpenRepo: () => void;
@@ -13,76 +20,97 @@ interface HeaderProps {
   onOpenTrace: () => void;
 }
 
-function taskStatusLabel(sessionState: SessionStatePayload | null): string {
-  if (!sessionState) return "idle";
-  switch (sessionState.state) {
-    case "starting":
-      return "starting";
-    case "running":
-      return "in progress";
-    case "waiting_decision":
-      return "awaiting decision";
-    case "paused":
-      return "paused";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    default:
-      return sessionState.state;
-  }
+const LIVE_STATES: ReadonlySet<string> = new Set(["starting", "running", "waiting_decision"]);
+
+export function repoDisplayName(repo: RepoOpenedPayload): string {
+  const trimmed = repo.gitRoot.replace(/[\\/]+$/, "");
+  return displayUntrusted(trimmed.slice(trimmed.search(/[^\\/]*$/)) || trimmed);
 }
 
-function agentStatusLabel(sessionState: SessionStatePayload | null): string {
-  if (!sessionState) return "no agent";
-  return sessionState.state;
+function stateChipText(state: SessionStatePayload, startedAt: string | null, now: number): string {
+  const label = agentStateLabel(state.state);
+  if (startedAt === null) return label;
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started)) return label;
+  const end = LIVE_STATES.has(state.state) ? now : Date.parse(state.ts);
+  if (!Number.isFinite(end)) return label;
+  return `${label} · ${formatDuration(Math.max(0, end - started))}`;
 }
 
 export function Header(props: HeaderProps) {
   const { repo, sessionState } = props;
+  const live = sessionState !== null && LIVE_STATES.has(sessionState.state);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    if (!live) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live, sessionState?.sessionId]);
+
+  const prompt = props.sessionPrompt.trim();
   return (
     <header className="header">
-      <div className="header-brand">Jevcode</div>
-      <div className="header-repo">
+      <span className="header-brand">jevcode</span>
+      <div className="header-crumb">
         {repo ? (
           <>
-            <span className="repo-name">{repo.path}</span>
-            <span className="repo-branch">{repo.branch || "no branch"}</span>
+            <span className="crumb-repo" title={repo.path}>
+              {repoDisplayName(repo)}
+            </span>
+            {prompt.length > 0 ? (
+              <>
+                <span className="crumb-sep" aria-hidden="true">
+                  /
+                </span>
+                <span className="crumb-task" title={prompt}>
+                  {displayUntrusted(prompt)}
+                </span>
+              </>
+            ) : null}
           </>
         ) : (
-          <span className="repo-name dim">No repository open</span>
+          <span className="crumb-repo">No repository open</span>
         )}
       </div>
-      <div className="header-statuses">
-        <span className={`chip agent-${agentStatusLabel(sessionState)}`}>
-          {taskStatusLabel(sessionState)}
+      {sessionState ? (
+        <span className={`chip agent-${sessionState.state}`}>
+          <span className="chip-dot" aria-hidden="true" />
+          {stateChipText(sessionState, props.sessionStartedAt, now)}
         </span>
-      </div>
+      ) : null}
       <div className="header-actions">
-        <button type="button" onClick={props.onOpenRepo}>
-          Open
+        <button type="button" className="quiet-icon" aria-label="Open" title="Open a repository" onClick={props.onOpenRepo}>
+          <Glyph name="folder" />
         </button>
         {repo && (
-          <button type="button" onClick={props.onCloseRepo}>
-            Close repo
+          <button type="button" className="quiet-icon" aria-label="Close repo" title="Close repository" onClick={props.onCloseRepo}>
+            <Glyph name="close" />
           </button>
         )}
         <button
           type="button"
-          className={props.terminalOpen ? "active" : ""}
+          className={`quiet-icon${props.terminalOpen ? " active" : ""}`}
+          aria-label="Terminal"
+          aria-pressed={props.terminalOpen}
+          title="Terminal"
           onClick={props.onToggleTerminal}
         >
-          Terminal
+          <Glyph name="term" />
         </button>
         <button
           type="button"
-          className={props.debugOpen ? "active" : ""}
+          className={`quiet-icon${props.debugOpen ? " active" : ""}`}
+          aria-label="Inspect"
+          aria-pressed={props.debugOpen}
+          title="Inspect telemetry"
           onClick={props.onToggleDebug}
         >
-          Inspect
+          <Glyph name="inspect" />
         </button>
         <button
           type="button"
+          className="quiet-action"
           onClick={props.onOpenTrace}
           disabled={!props.sessionState}
           title={
@@ -91,6 +119,7 @@ export function Header(props: HeaderProps) {
               : "Open a session to see its trace"
           }
         >
+          <Glyph name="trace" />
           Trace
         </button>
       </div>

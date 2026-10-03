@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import {
   AGENT_MODEL_OPTIONS,
   REASONING_EFFORT_OPTIONS,
@@ -11,6 +13,8 @@ import type {
   ReasoningEffortOption,
 } from "../../shared/prefs.js";
 
+import { Glyph } from "./glyph.js";
+
 interface AgentSettingsProps {
   prefs: AgentPreferences;
   /** Main's narrator availability (preferences:get / preferences:updated); absent falls back to the setting. */
@@ -20,6 +24,7 @@ interface AgentSettingsProps {
 
 export function AgentSettings(props: AgentSettingsProps) {
   const { prefs } = props;
+  const [open, setOpen] = useState(false);
   // Spec §10: the note says what leaves the machine, so it follows main's availability (setting,
   // key and JEVCODE_NARRATOR). Without it, the setting decides.
   const availability: NarratorAvailability =
@@ -30,8 +35,9 @@ export function AgentSettings(props: AgentSettingsProps) {
     : Math.round(Number(prefs.usageBudgetFraction) * 100);
 
   return (
-    <section className="panel agent-settings">
-      <h2>Agent settings</h2>
+    <section className="agent-settings">
+      {open ? (
+        <div id="agent-settings-body" className="agent-settings-body">
       <label className="agent-settings-row">
         <span>Model</span>
         <select
@@ -108,6 +114,18 @@ export function AgentSettings(props: AgentSettingsProps) {
       <p id="narrator-setting-note" className="narrator-note">
         {narratorSettingNote(availability)}
       </p>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        className={`side-row${open ? " on" : ""}`}
+        aria-expanded={open}
+        aria-controls="agent-settings-body"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Glyph name="list" />
+        <span className="side-label">Agent settings</span>
+      </button>
     </section>
   );
 }
