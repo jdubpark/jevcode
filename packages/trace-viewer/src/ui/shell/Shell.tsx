@@ -19,7 +19,7 @@ import {
 import { compareFindings, resolveStableId, type StableId, type TraceSession } from "../../model/index.js";
 import { IconSprite } from "../icons/IconSprite.js";
 import { selectionTitle } from "../inspector/finding-copy.js";
-import { Inspector } from "../inspector/Inspector.js";
+import { RightPanel } from "../inspector/RightPanel.js";
 import type { ViewerLocation } from "../state/location.js";
 import { useViewStore } from "../state/store.js";
 import { locationOf } from "../state/view-state.js";
@@ -329,7 +329,7 @@ export function Shell({
                       <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
                     </main>
                     <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
-                      <Inspector host={host} />
+                      <RightPanel host={host} />
                     </aside>
                   </div>
                   <KeyboardLayer root={root} />

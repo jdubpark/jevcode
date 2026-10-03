@@ -71,6 +71,8 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   const embedded = chrome === "embedded";
   const dispatch = useDispatch();
   const follow = useView((state) => state.follow);
+  const hasSelection = useView((state) => state.selection !== null);
+  const briefPinned = useView((state) => state.brief);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
   const newCount = useView((state) => selectNewCount(state, index));
   const port = useActiveViewPort();
@@ -286,6 +288,19 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           ) : null}
         </span>
       )}
+
+      {/* Above the right panel (H1 mockup). With nothing selected the Brief already shows: pressed and disabled. */}
+      <button
+        type="button"
+        className={styles.toggle}
+        aria-pressed={!hasSelection || briefPinned}
+        disabled={!hasSelection}
+        title="Brief (Shift+B)"
+        onClick={() => dispatch({ type: "brief/toggle" })}
+      >
+        <Icon name="brief" size={14} />
+        <span>Brief</span>
+      </button>
     </div>
   );
 }
