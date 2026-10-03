@@ -344,6 +344,10 @@ const v5: Migration = {
 const v6: Migration = {
   version: 6,
   up: (db) => {
+    // v1 creates jev_decisions. A database without it (the hand-built older schemas in the upgrade tests) has
+    // nothing to index.
+    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jev_decisions'").get();
+    if (table === undefined) return;
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_jev_decisions_session_seq ON jev_decisions (sessionId, seq);
     `);
