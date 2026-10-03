@@ -15,7 +15,7 @@ import {
   type MapLayoutState,
   type MapLevel,
 } from "../../../layout/map-layout.js";
-import type { Size, UniformCamera } from "../../../layout/viewport.js";
+import type { Point, Size, UniformCamera } from "../../../layout/viewport.js";
 import type { OverviewModel } from "../../../model/index.js";
 import type { IconName } from "../../icons/icon-names.js";
 import { Icon } from "../../icons/Icon.js";
@@ -117,6 +117,12 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   /** The camera last written to the world (the one on screen). */
   const cameraRef = useRef<UniformCamera>(START);
   const moveTokenRef = useRef(0);
+  /** The viewport's client origin, kept at rest (resize, pointer entry) so a zoom gesture starts with no layout read. */
+  const originRef = useRef<Point | null>(null);
+  /** Pointer over the map, focus inside it, a gesture or tween running: any of them keeps the world promoted. */
+  const engagedRef = useRef({ pointer: false, focus: false, moving: false });
+  /** The k that --map-inv-k was last written for. */
+  const invKRef = useRef<number | null>(null);
   const sizeRef = useRef<Size>({ w: 0, h: 0 });
   const fittedRepoRef = useRef<string | null>(null);
   /** The camera the last Fit chose; a resize refits only while the camera is still there. */
@@ -148,26 +154,44 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   }, [layout]);
 
   /**
-   * One write per camera frame: the world transform and the zoom band (names hide below MAP_ICON_ONLY_K). As in the
-   * Canvas (spike risk 2 and 7 rulings), will-change holds only while a gesture or a tween runs, and --map-inv-k (rings
-   * and focus outlines keep their screen width) is written at rest only, so a moving frame restyles no card.
+   * will-change on the world (fix round 2). The world is promoted while the pointer is over the map or focus is inside
+   * it, and while a gesture or tween runs, so the first frame of a gesture never promotes it (and rasterizes 200 cards)
+   * in the same frame as the move; it drops once the map is at rest and left.
    */
-  const writeCamera = useCallback((camera: UniformCamera, phase: FramePhase) => {
-    cameraRef.current = camera;
+  const applyWillChange = useCallback(() => {
     const world = worldRef.current;
-    if (world !== null) {
-      world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
-      const moving = phase !== "settle";
-      if (!moving) world.style.setProperty("--map-inv-k", String(1 / camera.k));
-      const willChange = moving ? "transform" : "";
-      if (world.style.willChange !== willChange) world.style.willChange = willChange;
-    }
-    const viewport = viewportRef.current;
-    if (viewport !== null) {
-      const band = camera.k < MAP_ICON_ONLY_K ? "icon" : "full";
-      if (viewport.dataset.zoomBand !== band) viewport.dataset.zoomBand = band;
-    }
+    if (world === null) return;
+    const engaged = engagedRef.current;
+    const willChange = engaged.pointer || engaged.focus || engaged.moving ? "transform" : "";
+    if (world.style.willChange !== willChange) world.style.willChange = willChange;
   }, []);
+
+  /**
+   * One write per camera frame: the world transform and the zoom band (names hide below MAP_ICON_ONLY_K).
+   * --map-inv-k (rings and focus outlines keep their screen width) is written at rest and only when k changed, so a
+   * pan restyles no card and a moving frame never does.
+   */
+  const writeCamera = useCallback(
+    (camera: UniformCamera, phase: FramePhase) => {
+      cameraRef.current = camera;
+      const world = worldRef.current;
+      if (world !== null) {
+        world.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.k})`;
+        if (phase === "settle" && invKRef.current !== camera.k) {
+          invKRef.current = camera.k;
+          world.style.setProperty("--map-inv-k", String(1 / camera.k));
+        }
+      }
+      engagedRef.current.moving = phase !== "settle";
+      applyWillChange();
+      const viewport = viewportRef.current;
+      if (viewport !== null) {
+        const band = camera.k < MAP_ICON_ONLY_K ? "icon" : "full";
+        if (viewport.dataset.zoomBand !== band) viewport.dataset.zoomBand = band;
+      }
+    },
+    [applyWillChange],
+  );
 
   /** At rest the level follows the zoom (spec §8.3); cards keep their place, only their content changes. */
   const settle = useCallback(
@@ -255,9 +279,18 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       cancelRaf: (handle) => win.cancelAnimationFrame(handle),
       setTimer: (callback, ms) => win.setTimeout(callback, ms),
       clearTimer: (handle) => win.clearTimeout(handle as number),
+      clientOrigin: () => originRef.current,
     });
     controllerRef.current = controller;
     writeCamera(cameraRef.current, "settle");
+    // At rest, never in a gesture's first frame: a resize (after layout, so the read is cheap) or the pointer entering.
+    const keepOrigin = (): void => {
+      const box = element.getBoundingClientRect();
+      originRef.current = { x: box.left, y: box.top };
+    };
+    const forgetOrigin = (): void => {
+      originRef.current = null;
+    };
     const Observer = win.ResizeObserver;
     const observer =
       typeof Observer === "function"
@@ -265,16 +298,48 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             const rect = entries[0]?.contentRect;
             if (rect === undefined || rect.width <= 0 || rect.height <= 0) return; // 0 × 0 under <Activity mode="hidden">
             sizeRef.current = { w: rect.width, h: rect.height };
+            keepOrigin();
             if (!refitIfStillFitted()) fitIfPending();
           })
         : null;
     observer?.observe(element);
+    const onPointerEnter = (): void => {
+      keepOrigin();
+      engagedRef.current.pointer = true;
+      applyWillChange();
+    };
+    const onPointerLeave = (): void => {
+      engagedRef.current.pointer = false;
+      applyWillChange();
+    };
+    const onFocusIn = (): void => {
+      engagedRef.current.focus = true;
+      applyWillChange();
+    };
+    const onFocusOut = (event: FocusEvent): void => {
+      if (event.relatedTarget instanceof Node && element.contains(event.relatedTarget)) return;
+      engagedRef.current.focus = false;
+      applyWillChange();
+    };
+    element.addEventListener("pointerenter", onPointerEnter);
+    element.addEventListener("pointerleave", onPointerLeave);
+    element.addEventListener("focusin", onFocusIn);
+    element.addEventListener("focusout", onFocusOut);
+    // A scrolled ancestor or a moved window can shift the viewport without resizing it: measure again at the next gesture.
+    win.addEventListener("scroll", forgetOrigin, { capture: true, passive: true });
+    win.addEventListener("resize", forgetOrigin);
     return () => {
       observer?.disconnect();
+      element.removeEventListener("pointerenter", onPointerEnter);
+      element.removeEventListener("pointerleave", onPointerLeave);
+      element.removeEventListener("focusin", onFocusIn);
+      element.removeEventListener("focusout", onFocusOut);
+      win.removeEventListener("scroll", forgetOrigin, { capture: true });
+      win.removeEventListener("resize", forgetOrigin);
       controller.destroy();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [hasOverview, fitIfPending, refitIfStillFitted, settle, store, writeCamera]);
+  }, [hasOverview, applyWillChange, fitIfPending, refitIfStillFitted, settle, store, writeCamera]);
 
   useLayoutEffect(() => {
     fitIfPending();
