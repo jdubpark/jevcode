@@ -157,7 +157,9 @@ export function ConsoleView({ active }: ViewProps) {
     if (element === null || current === null) return;
     const offset = virtualizer.scrollOffset ?? element.scrollTop;
     const height = virtualizer.scrollRect?.height || element.clientHeight;
-    const first = virtualizer.getVirtualItems().find((item) => item.end > offset);
+    // The drift anchor is a layout read (getBoundingClientRect) on every scroll frame; only the selftest's drift sampler
+    // uses it, so production frames skip it (lane triage t1, docs/perf.md "Console").
+    const first = diagnostics.enabled ? virtualizer.getVirtualItems().find((item) => item.end > offset) : undefined;
     const firstRow = first === undefined ? undefined : builtRef.current.rows[first.index];
     if (first !== undefined && firstRow !== undefined) {
       // The anchor's top is read from the DOM, the same quantity the drift sampler compares after the next commit; the
