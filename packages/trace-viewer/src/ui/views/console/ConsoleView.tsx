@@ -342,6 +342,14 @@ export function ConsoleView({ active }: ViewProps) {
   const port = useMemo<ViewPort>(
     () => ({
       readingOrder: () => consoleReadingOrder(builtRef.current.rows),
+      // The row that shows the step (byStep) stands for it in j/k: its first step is the row's reading-order entry.
+      readingEntry: (id) => {
+        const state = builtRef.current;
+        const at = state.byStep.get(id);
+        const row = at === undefined ? undefined : state.rows[at];
+        const first = row === undefined ? undefined : consoleRowStepIds(row)[0];
+        return first === undefined ? null : (first as SelectionId);
+      },
       reveal: (id) => {
         const at = rowIndexOfSelection(builtRef.current, live.current.session, live.current.index, id);
         if (at >= 0) revealRef.current(at);

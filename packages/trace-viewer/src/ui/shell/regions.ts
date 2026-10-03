@@ -50,15 +50,22 @@ export function hasTextSelection(view: Window | null): boolean {
   return selection !== null && !selection.isCollapsed && selection.toString().length > 0;
 }
 
-/** j/k over a view's reading order; an unknown id falls back to its parent (step → unit); nothing selected starts at an end; null at an end. */
+/**
+ * j/k over a view's reading order. The selection is first mapped to the order entry that stands for it (`entryOf`, the
+ * view's ViewPort.readingEntry: in the Console the first step of the row that shows it, so a guardrail member or a later
+ * read moves to the neighbouring rows); an unknown id falls back to its parent (step → unit); nothing selected starts at
+ * an end; null at an end.
+ */
 export function nextInOrder(
   order: readonly SelectionId[],
   current: SelectionId | null,
   dir: 1 | -1,
   index: TraceIndex,
+  entryOf?: (id: SelectionId) => SelectionId | null,
 ): SelectionId | null {
   if (order.length === 0) return null;
-  let position = current === null ? -1 : order.indexOf(current);
+  const key = current === null ? null : (entryOf?.(current) ?? current);
+  let position = key === null ? -1 : order.indexOf(key);
   if (position < 0 && current !== null) {
     const parent = index.entry(current)?.parent ?? null;
     if (parent !== null) position = order.indexOf(parent);
