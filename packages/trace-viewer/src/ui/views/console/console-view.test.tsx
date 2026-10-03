@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Activity, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { Activity, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceRow } from "@jevcode/contracts";
@@ -18,7 +18,9 @@ import {
 } from "../../../test-support/ui-harness.js";
 import type { ViewerHost } from "../../shell/host.js";
 import { ViewerHostContext } from "../../shell/host-context.js";
+import { KeyboardLayer } from "../../shell/KeyboardLayer.js";
 import { LiveRegion } from "../../shell/LiveRegion.js";
+import { TitleBar } from "../../shell/TitleBar.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "../../shell/session-context.js";
 import { ViewStoreContext, type ViewStore } from "../../state/store.js";
 import { ViewPortRegistryContext } from "../view-port.js";
@@ -82,7 +84,21 @@ function SessionApplier({ session, index, store, children }: { session: TraceSes
 }
 
 /** The Console inside the providers the Shell gives it; update() applies a new commit the way the Shell does. */
-function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost; activity?: boolean; } = {}): Mounted {
+/** The viewer's real keyboard layer around the Console, as the Shell mounts it. */
+function Keyed({ children }: { children: ReactNode }) {
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  return (
+    <div ref={setRoot}>
+      {children}
+      <KeyboardLayer root={root} />
+    </div>
+  );
+}
+
+function mountConsole(
+  session: TraceSession,
+  options: HarnessOptions & { host?: ViewerHost; activity?: boolean; keys?: boolean; titleBar?: boolean } = {},
+): Mounted {
   const h = createHarness(session, options);
   let view: SessionView = h.view;
   let mode: "visible" | "hidden" = "visible";
@@ -94,10 +110,15 @@ function mountConsole(session: TraceSession, options: HarnessOptions & { host?: 
           <ViewerHostContext.Provider value={options.host ?? {}}>
             <ViewPortRegistryContext.Provider value={h.registry}>
               <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+                {options.titleBar === true ? <TitleBar onRetry={() => undefined} /> : null}
                 {options.activity === true ? (
                   <Activity mode={mode}>
                     <ConsoleView active={mode === "visible"} />
                   </Activity>
+                ) : options.keys === true ? (
+                  <Keyed>
+                    <ConsoleView active />
+                  </Keyed>
                 ) : (
                   <ConsoleView active />
                 )}
@@ -760,5 +781,88 @@ describe("ConsoleView anchor drift sampler (viewer spec §10)", () => {
     } finally {
       stub.restore();
     }
+  });
+});
+
+describe("Console Live without a selection (lane fix I-1, I-2)", () => {
+  /** A running Console the reader scrolled back from, with `late` rows arrived since. */
+  async function scrolledBack(options: Parameters<typeof mountConsole>[1] = {}, late?: (b: TraceBuilder) => void) {
+    const b = messages(60);
+    const first = live(b);
+    const m = mountConsole(first, {
+      ...options,
+      state: { view: "console", follow: true, loaded: true, lastSeenSeq: first.loadedThroughSeq, ...options.state },
+    });
+    await frames();
+    const scroller = m.scroller();
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: -400 });
+      scroller.scrollTop = 320;
+      fireEvent.scroll(scroller);
+    });
+    await frames();
+    expect(m.h.store.get().follow).toBe(false);
+    if (late === undefined) for (let i = 0; i < 3; i += 1) b.agent({ type: "agent_message", role: "assistant", text: `late ${i}` });
+    else late(b);
+    m.update(live(b));
+    await frames();
+    return { m, b, scroller };
+  }
+
+  it("the pill with nothing selected turns Live on and goes to the tail without selecting (the Brief stays)", async () => {
+    const { m, b } = await scrolledBack();
+    const before = layout.scrollCalls.length;
+    fireEvent.click(screen.getByRole("button", { name: /3 new/ }));
+    await frames();
+    expect(m.h.store.get().selection).toBeNull();
+    expect(m.h.store.get().follow).toBe(true);
+    expect(m.h.store.get().lastSeenSeq).toBe(live(b).loadedThroughSeq);
+    expect(layout.scrollCalls.length).toBeGreaterThan(before);
+  });
+
+  it("G in the Console with nothing selected follows the tail and selects nothing", async () => {
+    const { m } = await scrolledBack({ keys: true });
+    const before = layout.scrollCalls.length;
+    act(() => {
+      fireEvent.keyDown(document.body, { code: "KeyG", key: "G", shiftKey: true });
+    });
+    await frames();
+    expect(m.h.store.get().selection).toBeNull();
+    expect(m.h.store.get().follow).toBe(true);
+    expect(layout.scrollCalls.length).toBeGreaterThan(before);
+  });
+
+  it("G in the Console keeps an existing selection", async () => {
+    const { m, scroller } = await scrolledBack({ keys: true });
+    const row = Array.from(scroller.querySelectorAll<HTMLElement>("[data-key]")).find((item) => item.dataset.index === "20");
+    if (row === undefined) throw new Error("row 20 is not mounted");
+    fireEvent.click(row);
+    const selected = m.h.store.get().selection;
+    expect(selected).toBe(row.dataset.key);
+    act(() => {
+      fireEvent.keyDown(document.body, { code: "KeyG", key: "G", shiftKey: true });
+    });
+    await frames();
+    expect(m.h.store.get().selection).toBe(selected);
+    expect(m.h.store.get().follow).toBe(true);
+  });
+
+  it("the title bar's pill shows the Console's row count and goes Live the same way", async () => {
+    const { m } = await scrolledBack({ titleBar: true }, (b) => {
+      // Four model steps, two Console rows: a read group, a silent Jev step, a message.
+      b.agent({ type: "file_read", path: "src/a.ts" });
+      b.agent({ type: "file_read", path: "src/b.ts" });
+      b.jev({ id: "j1", clamps: ["suppress_formatting"] });
+      b.agent({ type: "agent_message", role: "assistant", text: "late" });
+    });
+    const pills = screen.getAllByRole("button", { name: /new/ });
+    expect(pills).toHaveLength(2);
+    for (const pill of pills) expect(pill.textContent).toContain("2 new");
+    const titlePill = pills.find((pill) => !(pill.textContent ?? "").startsWith("↓"));
+    if (titlePill === undefined) throw new Error("no title-bar pill");
+    fireEvent.click(titlePill);
+    await frames();
+    expect(m.h.store.get().selection).toBeNull();
+    expect(m.h.store.get().follow).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from "react";
 
 import type { TraceRow } from "@jevcode/contracts";
 
@@ -16,7 +16,7 @@ import { useDiagnostics, useSessionView } from "../../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../../state/store.js";
 import { extendRange, revealAlign, spineVirtualOptions } from "../hybrid/spine/scroll-sync.js";
 import { NewBadge } from "../shared/NewBadge.js";
-import { useRegisterViewPort, type ViewPort, type ViewProps, type ZoomPort } from "../view-port.js";
+import { useRegisterViewPort, ViewPortRegistryContext, type ViewPort, type ViewProps, type ZoomPort } from "../view-port.js";
 import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable, isRunningRow, type AnswerState } from "./ConsoleRowView.js";
 import styles from "./ConsoleView.module.css";
 
@@ -215,6 +215,13 @@ export function ConsoleView({ active }: ViewProps) {
     [],
   );
 
+  /** Going to the tail is now the reader's intent: a scroll from their last wheel must not turn Live off again. */
+  const endReaderScroll = (): void => {
+    userScroll.current = false;
+    if (userTimer.current !== null) viewOf()?.clearTimeout(userTimer.current);
+    userTimer.current = null;
+  };
+
   /** The row revealed since the last frame: the port (after j/k) and the selection effect ask for the same row once. */
   const revealedThisFrame = useRef<number | null>(null);
   const reveal = (position: number): void => {
@@ -270,6 +277,19 @@ export function ConsoleView({ active }: ViewProps) {
   const focusRowRef = useRef(focusRow);
   focusRowRef.current = focusRow;
 
+  // G, the pills and the title bar's Live (lane ruling I-1): Live on and the tail in view, never a selection, so the
+  // Brief stays when nothing is selected and an existing selection is kept. A finished session only scrolls there.
+  const goToTail = (): void => {
+    endReaderScroll();
+    const current = live.current;
+    if (!current.terminal) store.dispatch({ type: "follow/set", follow: true });
+    if (current.session !== null) store.dispatch({ type: "seen", seq: current.session.loadedThroughSeq });
+    const count = builtRef.current.rows.length;
+    if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end", behavior: "auto" });
+  };
+  const goToTailRef = useRef(goToTail);
+  goToTailRef.current = goToTail;
+
   const port = useMemo<ViewPort>(
     () => ({
       readingOrder: () => consoleReadingOrder(builtRef.current.rows),
@@ -286,11 +306,21 @@ export function ConsoleView({ active }: ViewProps) {
         if (row !== undefined && isExpandable(row)) store.dispatch({ type: "expand/toggle", key: expandKey(row) });
         return true;
       },
+      goToTail: () => {
+        goToTailRef.current();
+        return true;
+      },
+      newCount: () => consoleNewRowCount(builtRef.current, live.current.index, store.get().lastSeenSeq),
       zoom: NO_ZOOM,
     }),
     [store],
   );
   useRegisterViewPort("console", port);
+  // The title bar reads newCount() through the port: tell it when the count changes.
+  const registry = useContext(ViewPortRegistryContext);
+  useLayoutEffect(() => {
+    if (active) registry?.notify();
+  }, [newCount, active, registry]);
 
   // Opening (or showing) the Console: a following Console starts at the tail, a reviewing one at its selection.
   // The reset lives in the cleanup: under <Activity mode="hidden"> React runs cleanups but never the body of an
@@ -337,6 +367,7 @@ export function ConsoleView({ active }: ViewProps) {
     const before = wasFollowing.current;
     wasFollowing.current = follow;
     if (!follow || before || !active || rows.length === 0) return;
+    endReaderScroll();
     virtualizer.scrollToIndex(rows.length - 1, { align: "end", behavior: "auto" });
   }, [follow, active]);
 
@@ -554,10 +585,7 @@ export function ConsoleView({ active }: ViewProps) {
             problems={newProblems}
             afterRange={false}
             noun="row"
-            onActivate={() => {
-              dispatch({ type: "nav/last" });
-              if (!terminal) dispatch({ type: "follow/set", follow: true });
-            }}
+            onActivate={() => goToTailRef.current()}
           />
         )}
       </div>

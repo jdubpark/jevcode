@@ -194,7 +194,11 @@ async function runConsoleScroll(scroller: HTMLElement): Promise<ConsoleScroll> {
   };
 }
 
-/** Back to Live (G), then wait for CONSOLE_APPEND_SAMPLES tv:console-append measures from the drip. */
+/**
+ * Back to Live (G), then wait for CONSOLE_APPEND_SAMPLES tv:console-append measures from the drip. In the Console, G
+ * turns Live on at the tail without selecting (lane ruling I-1), so the run measures the default Console + Brief state,
+ * not the Inspector of a selected tail step.
+ */
 async function runConsoleAppend(samples: number, timeoutMs: number): Promise<Stat> {
   performance.clearMeasures(PERF.consoleAppend);
   press("KeyG", "G", { shiftKey: true });
