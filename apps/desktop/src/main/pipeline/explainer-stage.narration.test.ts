@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narrator-log.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./explainer-narration-seam.js";
 import type { BriefSources } from "./explainer-narration.js";
-import { SNAPSHOT_WRITE_INTERVAL_MS, createExplainerRegistry, createExplainerStage } from "./explainer-stage.js";
+import { NO_NARRATION, SNAPSHOT_WRITE_INTERVAL_MS, createExplainerRegistry, createExplainerStage } from "./explainer-stage.js";
 import type { ExplainerStage, ExplainerStageDeps } from "./explainer-stage.js";
 import { createNarratorSwitch } from "./narrator-switch.js";
 
@@ -41,9 +41,11 @@ const MANIFEST: WorkspaceManifest = {
 };
 
 const dirs: string[] = [];
+const dbs: JevcodeDb[] = [];
 const stages: { dispose(): void }[] = [];
 afterEach(() => {
   for (const stage of stages.splice(0)) stage.dispose();
+  for (const db of dbs.splice(0)) db.close();
   while (dirs.length > 0) rmSync(dirs.pop() as string, { recursive: true, force: true });
 });
 
@@ -51,6 +53,7 @@ function openStore(): JevcodeDb {
   const dir = mkdtempSync(path.join(os.tmpdir(), "jevcode-n5-"));
   dirs.push(dir);
   const db = openDb({ dbPath: path.join(dir, "n5.db") });
+  dbs.push(db);
   db.upsertRepository({ id: REPO_ID, path: REPO_ROOT, gitRoot: REPO_ROOT });
   db.createSession({ id: SESSION, repoId: REPO_ID });
   return db;
@@ -313,13 +316,30 @@ describe("the narrator switch reaches the open repo's stage (index.ts wiring, sp
       }),
     );
     stages.push(registry);
-    const unsubscribe = connectNarratorSwitch(narratorSwitch, registry, () => REPO_ROOT);
+    const unsubscribe = connectNarratorSwitch(narratorSwitch, registry);
     stages.push({ dispose: unsubscribe });
     registry.repoOpened(REPO_ROOT);
     registry.sessionStarted(REPO_ROOT, SESSION);
     const stage = registry.get(REPO_ROOT)!;
-    return { db, clock, narratorSwitch, stage };
+    return { db, clock, narratorSwitch, registry, stage };
   }
+
+  it("the registry forwards setNarrator to the active stage only, whatever the app state says", () => {
+    const seen: string[] = [];
+    const registry = createExplainerRegistry((repoRoot) => ({
+      ...createExplainerStage(stageDeps(openStore(), fakeClock(), { narrator: null })),
+      setNarrator: (narrator: NarratorClient | null) => void seen.push(`${repoRoot}:${narrator === null ? "off" : "on"}`),
+    }));
+    stages.push(registry);
+    expect(() => registry.setNarrator(null)).not.toThrow();
+    registry.repoOpened("/a");
+    registry.setNarrator(echoClient());
+    registry.repoOpened("/b");
+    registry.setNarrator(null);
+    registry.repoClosed("/b");
+    registry.setNarrator(echoClient());
+    expect(seen).toEqual(["/a:on", "/b:off"]);
+  });
 
   it("switching the setting off aborts the in-flight call and stops calls; switching it on narrates", async () => {
     const records: NarratorCallRecord[] = [];
@@ -346,6 +366,34 @@ describe("the narrator switch reaches the open repo's stage (index.ts wiring, sp
     narratorSwitch.setEnabled(true);
     await settle(stage, clock, () => narrated(snapshotRows(db).at(-1)) && snapshotRows(db).at(-1)?.status?.narrator === "ready");
     expect(client.calls.map((call) => call.method)).toEqual(["describeComponents", "describeComponents", "overviewNarrative"]);
+    const narratedHash = db.getOverviewState(REPO_ROOT)?.narrativeInputsHash ?? null;
+    expect(narratedHash).not.toBeNull();
+
+    // Off again: the row says "off" and keeps the cached text (0 calls); the stored narrative hash survives.
+    narratorSwitch.setEnabled(false);
+    await settle(stage, clock, () => db.getOverviewState(REPO_ROOT)?.snapshot.status?.narrator === "off");
+    expect(narrated(snapshotRows(db).at(-1))).toBe(true);
+    expect(db.getOverviewState(REPO_ROOT)?.narrativeInputsHash).toBe(narratedHash);
+    expect(client.calls).toHaveLength(3);
+  });
+
+  it("a rule-only row after a narrated one keeps the stored narrative and its inputs hash (lane 04 persist)", async () => {
+    const db = openStore();
+    const clock = fakeClock();
+    const narrator = start(db, clock, { narrator: echoClient() });
+    await settle(narrator, clock, () => db.getOverviewState(REPO_ROOT)?.snapshot.status?.narrator === "ready");
+    const stored = db.getOverviewState(REPO_ROOT);
+    expect(stored?.narrativeInputsHash).not.toBeNull();
+    narrator.dispose();
+
+    const ruleOnly = createExplainerStage({ ...stageDeps(db, clock, { narrator: null }), narration: () => NO_NARRATION });
+    stages.push(ruleOnly);
+    ruleOnly.onRepoOpened();
+    ruleOnly.onSessionStarted(SESSION);
+    await settle(ruleOnly, clock, () => db.getOverviewState(REPO_ROOT)?.snapshot.components.every((entry) => entry.provenance === "rule") === true);
+    expect(ruleBased(snapshotRows(db).at(-1)!)).toBe(true);
+    expect(db.getOverviewState(REPO_ROOT)?.narrativeInputsHash).toBe(stored?.narrativeInputsHash);
+    expect(db.getOverviewState(REPO_ROOT)?.narrative).toEqual(stored?.narrative);
   });
 
   it("without a key the row reads unavailable with the setting on and off with it off (R2, R3)", async () => {

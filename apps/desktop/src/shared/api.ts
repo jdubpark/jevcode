@@ -35,8 +35,8 @@ import type {
   SessionSummary,
 } from "./local-channels.js";
 import type {
-  AgentPreferences,
   AgentPreferencesPatch,
+  PreferencesView,
 } from "./prefs.js";
 
 export const IPC_ERROR_PREFIX = "jevcode.ipc.";
@@ -121,8 +121,8 @@ export interface JevcodeApi {
     flush(sessionId?: string): Promise<{ count: number }>;
   };
   prefs: {
-    get(): Promise<AgentPreferences>;
-    set(patch: AgentPreferencesPatch): Promise<AgentPreferences>;
+    get(): Promise<PreferencesView>;
+    set(patch: AgentPreferencesPatch): Promise<PreferencesView>;
   };
   debug: {
     listTelemetry(
@@ -164,7 +164,7 @@ export interface JevcodeApi {
   onInstructionState(
     listener: (payload: AgentInstructionStatePayload) => void,
   ): () => void;
-  onPrefsUpdated(listener: (payload: AgentPreferences) => void): () => void;
+  onPrefsUpdated(listener: (payload: PreferencesView) => void): () => void;
   /** A trace window's "Request changes" note for the composer (spec §8.5). */
   onComposerPrefill(listener: (payload: ComposerPrefillPayload) => void): () => void;
 }
@@ -288,10 +288,10 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
     },
     prefs: {
       get: async () => {
-        return (await invoke("preferences:get", {})) as AgentPreferences;
+        return (await invoke("preferences:get", {})) as PreferencesView;
       },
       set: async (patch) => {
-        return (await invoke("preferences:set", patch)) as AgentPreferences;
+        return (await invoke("preferences:set", patch)) as PreferencesView;
       },
     },
     debug: {

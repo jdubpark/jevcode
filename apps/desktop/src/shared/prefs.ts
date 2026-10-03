@@ -1,3 +1,5 @@
+import type { NarratorAvailability } from "./narrator-log.js";
+
 export const AGENT_MODEL_OPTIONS = [
   "auto",
   "gpt-5.6-mini",
@@ -30,6 +32,15 @@ export interface AgentPreferences {
   usageBudgetFraction: string | null;
   /** On by default (spec E15). False: rule-based explainer data only, no model calls. */
   explainWithModel: boolean;
+}
+
+/**
+ * What preferences:get, the preferences:set reply and preferences:updated carry: the stored
+ * preferences plus main's read-only narrator availability (setting, API key, JEVCODE_NARRATOR).
+ * The availability is never stored; it is absent when main has no narrator switch.
+ */
+export interface PreferencesView extends AgentPreferences {
+  narratorAvailability?: NarratorAvailability;
 }
 
 export interface AgentPreferencesPatch {

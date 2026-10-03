@@ -16,7 +16,7 @@ import {
   sendToRenderer,
   setMainWindow,
 } from "./ipc.js";
-import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel } from "../shared/prefs.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
@@ -28,7 +28,6 @@ import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
 import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
-import { readAgentPreferences } from "../shared/prefs.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
@@ -176,7 +175,7 @@ app.whenReady().then(() => {
     });
   }, (message) => console.error(`[explainer] ${message}`));
   explainer = explainerRegistry;
-  connectNarratorSwitch(narratorSwitch, explainerRegistry, () => state.repo?.gitRoot);
+  connectNarratorSwitch(narratorSwitch, explainerRegistry);
 
   runtime = new PipelineRuntime({
     db,

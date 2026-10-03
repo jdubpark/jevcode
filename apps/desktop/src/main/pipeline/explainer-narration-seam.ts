@@ -60,18 +60,14 @@ export function createNarrationSeamFactory(options: NarrationSeamOptions): (ctx:
 }
 
 /**
- * Spec E15: every change of the narrator switch reaches the open repo's stage, so switching the
- * setting off stops calls and aborts in-flight ones, and a lost or found reason (no key) reaches
- * status.narrator. A stage created later starts from `narratorSwitch.current()`. Returns the
- * unsubscribe function.
+ * Spec E15: every change of the narrator switch reaches the registry's active stage, so switching
+ * the setting off stops calls and aborts in-flight ones, and a lost or found reason (no key)
+ * reaches status.narrator. A stage created later starts from `narratorSwitch.current()`. Returns
+ * the unsubscribe function.
  */
 export function connectNarratorSwitch(
   narratorSwitch: Pick<NarratorSwitch, "subscribe">,
-  registry: Pick<ExplainerRegistry, "get">,
-  openRepoRoot: () => string | undefined,
+  registry: Pick<ExplainerRegistry, "setNarrator">,
 ): () => void {
-  return narratorSwitch.subscribe((client) => {
-    const root = openRepoRoot();
-    if (root !== undefined) registry.get(root)?.setNarrator(client);
-  });
+  return narratorSwitch.subscribe((client) => registry.setNarrator(client));
 }
