@@ -43,6 +43,17 @@ import type { PipelineSyncSnapshot } from "./types.js";
 // onPipelineSync returns at once; folds run on syncChain, narrator calls one at a time on narration.
 
 const FOLD_PAGE = 2_000;
+/**
+ * Spec §6.1 caps a main-process block at 50 ms (lane 07 PL-3). A pass can append rows for every change unit (the
+ * Jev stage logs each changed unit), so one sync can bring thousands of rows. The fold works in slices of about this
+ * long: it folds rows, settles them with an incremental finalize, which re-derives only what those rows changed, and
+ * yields. A slice stops folding once its folding time, plus the settle that time predicts, reaches this length.
+ */
+export const FOLD_SLICE_MS = 20;
+/** The first guess of a settle's time per ms of folding; each settle measures it again. */
+const SETTLE_RATIO_START = 3;
+/** A slice folds for at least this share of FOLD_SLICE_MS, so a settle's fixed cost cannot shrink slices to a row. */
+const MIN_FOLD_SHARE = 0.25;
 const CLOSED_UNIT: ReadonlySet<ChangeUnit["status"]> = new Set<ChangeUnit["status"]>(["validated", "failed"]);
 
 type Question = "sessionStory" | "decisionWhy";
@@ -69,6 +80,8 @@ export interface SessionExplainerDeps {
   recordCall?(record: NarratorCallRecord): void;
   /** Minimum time between story narrations; default STORY_MIN_INTERVAL_MS. */
   storyIntervalMs?: number;
+  /** The length of a fold slice, folding and settling; default FOLD_SLICE_MS. 0 settles and yields after every row. */
+  foldSliceMs?: number;
 }
 
 export interface SessionExplainer {
@@ -161,6 +174,7 @@ function storyTextOf(sentences: readonly NarrativeSentence[], provenance: "rule"
 
 export function createSessionExplainer(deps: SessionExplainerDeps): SessionExplainer {
   const interval = deps.storyIntervalMs ?? STORY_MIN_INTERVAL_MS;
+  const sliceMs = deps.foldSliceMs ?? FOLD_SLICE_MS;
   let narrator = deps.narrator;
   let tracked: Tracked | null = null;
   let disposed = false;
@@ -178,6 +192,10 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
   let failures = 0;
   let retryAt = 0;
+  // How long a fold slice folds before it settles (advance): its share of sliceMs, from the measured time a settle
+  // takes per ms of folding (averaged over the settles so far).
+  let settleRatio = SETTLE_RATIO_START;
+  const foldBudget = (): number => sliceMs * Math.max(1 / (1 + settleRatio), MIN_FOLD_SHARE);
   // Lane 05's schema brake: schema-valid answers so far, and schema-invalid ones since the last valid one.
   let validAnswers = 0;
   let invalidStreak = 0;
@@ -247,26 +265,48 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   }
 
   /**
-   * Folds the rows after the cursor, 2,000 per page with a yield between pages (spec §6.1). Null when the
-   * explainer was disposed (the app quit closes the database next) or the session switched between pages.
+   * Folds the rows after the cursor, read 2,000 per page (spec §6.1), in slices (FOLD_SLICE_MS, PL-3): once a slice's
+   * folding plus its predicted settle reaches sliceMs, and at the end of each full page, it settles the rows folded
+   * so far with an incremental finalize and yields. So no block folds or finalizes more than a slice's rows, however
+   * many rows the pass appended. A settle's session is discarded: the session is the last finalize's, which
+   * incremental equals fresh (S-3) makes deep-equal to one finalize of every row. Null when the explainer was
+   * disposed (the app quit closes the database next) or the session switched during a yield.
    */
   async function advance(t: Tracked): Promise<TraceSession | null> {
+    let sliceStart = performance.now();
+    let budget = foldBudget();
+    let unsettled = false;
+    const pause = async (): Promise<boolean> => {
+      if (unsettled) {
+        const settleStart = performance.now();
+        finalize(t.fold, { live: true });
+        const folded = Math.max(settleStart - sliceStart, 0.5);
+        settleRatio = (settleRatio + (performance.now() - settleStart) / folded) / 2;
+        budget = foldBudget();
+      }
+      unsettled = false;
+      await yieldToEventLoop();
+      sliceStart = performance.now();
+      return current(t);
+    };
     for (;;) {
       const events = deps.db.listEvents(t.sessionId, { fromSeq: t.cursor, limit: FOLD_PAGE });
       for (const event of events) {
         t.cursor = event.seq;
-        if (!isTraceRowType(event.type)) continue;
-        const payload = JSON.parse(event.payloadJson) as unknown;
-        if (event.type === "overview_snapshot" && t.initialComponentIds === null) {
-          // The fold drops a snapshot that fails the contract schema (an invalid_row gap), so the baseline does too.
-          const parsed = OverviewSnapshotSchema.safeParse(payload);
-          if (parsed.success) t.initialComponentIds = componentIdsOf(parsed.data);
+        if (isTraceRowType(event.type)) {
+          const payload = JSON.parse(event.payloadJson) as unknown;
+          if (event.type === "overview_snapshot" && t.initialComponentIds === null) {
+            // The fold drops a snapshot that fails the contract schema (an invalid_row gap), so the baseline does too.
+            const parsed = OverviewSnapshotSchema.safeParse(payload);
+            if (parsed.success) t.initialComponentIds = componentIdsOf(parsed.data);
+          }
+          accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
+          unsettled = true;
         }
-        accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
+        if (performance.now() - sliceStart >= budget && !(await pause())) return null;
       }
       if (events.length < FOLD_PAGE) break;
-      await yieldToEventLoop();
-      if (!current(t)) return null;
+      if (!(await pause())) return null;
     }
     const state = deps.db.getSession(t.sessionId)?.state;
     t.session = finalize(t.fold, { live: true, throughSeq: t.cursor, ...(state !== undefined ? { state } : {}) });
@@ -642,6 +682,9 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       if (drainQueued) return;
       drainQueued = true;
       syncChain = syncChain.then(async () => {
+        // The hook runs inside the pipeline's sync pass (after its last slice check): fold in a task of our own, so
+        // the fold's first slice never extends the pass's last one (PL-3).
+        await yieldToEventLoop();
         drainQueued = false;
         const batch = [...pendingSyncs.values()];
         pendingSyncs.clear();
