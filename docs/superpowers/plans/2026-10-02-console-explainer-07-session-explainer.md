@@ -3854,7 +3854,7 @@ Create `packages/trace-viewer/src/layout/console-summary.ts`:
 
 ```ts
 import type { StoryModel } from "../model/index.js";
-import type { ConsoleRow, ConsoleRowsState } from "./console-rows.js";
+import { consoleRowStepIds, type ConsoleRow, type ConsoleRowsState } from "./console-rows.js";
 
 // Spec §3.2: a "◆ Summary" block per story refresh. A block sits where its story row arrived: after every
 // step that started before that row. Stories are in seq order (fold-explainer.ts), so a two-pointer merge
@@ -3865,14 +3865,13 @@ export function summaryRowKey(story: StoryModel): string {
   return `summary:${story.seq}`;
 }
 
-/** The seq a row hangs off: its step's firstSeq (StepId is step:<firstSeq>); null for summary rows. */
+/**
+ * The seq a row hangs off: its first step's firstSeq (StepId is step:<firstSeq>); null for summary rows. Every kind names
+ * its steps through consoleRowStepIds (lane 02b), including the `guardrails` fold, which has `stepIds`, not `stepId`.
+ */
 export function rowAnchorSeq(row: ConsoleRow): number | null {
-  if (row.kind === "summary") return null;
-  if (row.kind === "reads") {
-    const first = row.stepIds[0];
-    return first === undefined ? null : Number(first.slice("step:".length));
-  }
-  return Number(row.stepId.slice("step:".length));
+  const first = consoleRowStepIds(row)[0];
+  return first === undefined ? null : Number(first.slice("step:".length));
 }
 
 function summaryRow(story: StoryModel): ConsoleRow {

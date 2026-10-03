@@ -29,6 +29,6 @@ describe("registered Hybrid view", () => {
     expect(screen.getByRole("alert")).toBeTruthy();
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Outline" })).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "Inspector" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: /^(Brief|Inspector)$/ })).toBeTruthy();
   });
 });

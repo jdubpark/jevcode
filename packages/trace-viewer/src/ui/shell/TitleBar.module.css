@@ -189,6 +189,36 @@ button.chip {
   cursor: pointer;
 }
 
+/* The Brief toggle (spec §3.3): quiet until it pins the Brief over a selection. */
+.toggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tv-ink-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.toggle:hover:not(:disabled) {
+  background: var(--tv-fill);
+}
+
+.toggle[aria-pressed="true"]:not(:disabled) {
+  background: var(--tv-fill-2);
+  color: var(--tv-ink);
+}
+
+.toggle:disabled {
+  cursor: default;
+}
+
 .menu {
   position: absolute;
   top: 28px;

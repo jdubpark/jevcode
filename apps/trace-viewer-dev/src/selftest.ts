@@ -37,11 +37,12 @@ export interface Selftest {
   stop(): void;
 }
 
-/** The reader scrolls the spine to its middle: a wheel event first, so the spine counts the scroll as the reader's
- *  and re-baselines its drift sample instead of reporting it (lane review I-3). */
+/** The reader scrolls the shown view's feed (the spine, or the Console) to its middle: a wheel event first, so the view
+ *  counts the scroll as the reader's and re-baselines its drift sample instead of reporting it (lane review I-3).
+ *  Hidden views stay mounted under display: none, so the first feed in the document may not be the shown one. */
 function scrollSpineToMiddle(): void {
-  const feed = document.querySelector<HTMLElement>('[role="feed"]');
-  if (feed === null) return;
+  const feed = Array.from(document.querySelectorAll<HTMLElement>('[role="feed"]')).find((node) => node.getClientRects().length > 0);
+  if (feed === undefined) return;
   feed.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true, cancelable: true }));
   feed.scrollTop = Math.max(0, (feed.scrollHeight - feed.clientHeight) / 2);
 }

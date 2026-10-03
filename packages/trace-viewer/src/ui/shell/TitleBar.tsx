@@ -71,9 +71,13 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   const embedded = chrome === "embedded";
   const dispatch = useDispatch();
   const follow = useView((state) => state.follow);
+  const hasSelection = useView((state) => state.selection !== null);
+  const briefPinned = useView((state) => state.brief);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
-  const newCount = useView((state) => selectNewCount(state, index));
+  const stepCount = useView((state) => selectNewCount(state, index));
   const port = useActiveViewPort();
+  // The active view's own count when it has one (the Console counts rows), so both pills agree.
+  const newCount = port?.newCount?.() ?? stepCount;
   const [gapsOpen, setGapsOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [approxOpen, setApproxOpen] = useState(false);
@@ -110,6 +114,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   };
 
   const goLive = (): void => {
+    if (port?.goToTail?.() === true) return;
     dispatch({ type: "nav/last" });
     if (running) dispatch({ type: "follow/set", follow: true });
   };
@@ -245,7 +250,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
         </button>
       ) : null}
 
-      {port === undefined ? null : (
+      {port === undefined || port.zoom.label() === "" ? null : (
         <span className={styles.anchor} ref={zoomPopover.anchorRef}>
           <button
             type="button"
@@ -286,6 +291,19 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           ) : null}
         </span>
       )}
+
+      {/* Above the right panel (H1 mockup). With nothing selected the Brief already shows: pressed and disabled. */}
+      <button
+        type="button"
+        className={styles.toggle}
+        aria-pressed={!hasSelection || briefPinned}
+        disabled={!hasSelection}
+        title="Brief (Shift+B)"
+        onClick={() => dispatch({ type: "brief/toggle" })}
+      >
+        <Icon name="brief" size={14} />
+        <span>Brief</span>
+      </button>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { TraceBundle } from "@jevcode/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ROWS_RELEASED_MARK } from "../source.js";
 import { TraceSourceError } from "./errors.js";
 import { createStaticBundleSource, parseTraceBundle } from "./static-bundle.js";
 
@@ -61,6 +62,17 @@ describe("parseTraceBundle", () => {
 });
 
 describe("createStaticBundleSource", () => {
+  it("marks tv:rows-released on every drip tick that releases rows", () => {
+    performance.clearMarks(ROWS_RELEASED_MARK);
+    const source = createStaticBundleSource(bundle(), { drip: { rowsPerTick: 2, intervalMs: 100, manual: true } });
+    source.tick();
+    expect(performance.getEntriesByName(ROWS_RELEASED_MARK, "mark")).toHaveLength(1);
+    source.tick();
+    source.tick();
+    expect(performance.getEntriesByName(ROWS_RELEASED_MARK, "mark")).toHaveLength(2);
+    performance.clearMarks(ROWS_RELEASED_MARK);
+  });
+
   it("serves every row without drip, with lastSeq from the session (filtered rows count)", async () => {
     const source = createStaticBundleSource(bundle());
     expect(source.sessionId).toBe("s1");

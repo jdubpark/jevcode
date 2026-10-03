@@ -16,7 +16,7 @@ const WIDTHS = [1440, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
 
 function parseArgs(argv) {
-  const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT };
+  const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--skip-build") options.skipBuild = true;
@@ -26,6 +26,8 @@ function parseArgs(argv) {
       i += 1;
       if (!Number.isInteger(options.port) || options.port <= 0) throw new Error("--port needs a port number");
     }
+    else if (arg === "--embedded") options.embedded = true;
+    else if (arg === "--console-perf") options.consolePerf = true;
     else if (arg === "--views") {
       options.views = String(argv[i + 1] ?? "")
         .split(",")
@@ -33,9 +35,9 @@ function parseArgs(argv) {
       i += 1;
     } else throw new Error(`unknown argument ${arg}`);
   }
-  if (options.views.length === 0) throw new Error("--views needs hybrid, canvas or both");
+  if (options.views.length === 0) throw new Error("--views needs hybrid, canvas or console");
   for (const view of options.views) {
-    if (view !== "hybrid" && view !== "canvas") throw new Error(`unknown view ${view}`);
+    if (view !== "hybrid" && view !== "canvas" && view !== "console") throw new Error(`unknown view ${view}`);
   }
   return options;
 }
@@ -147,7 +149,7 @@ function chrome(profile, args) {
  * `<pre id="selftest">` until it holds text, returns it parsed. The view-switch selftest needs it: under
  * `--virtual-time-budget` its paint wait (rAF, then a MessageChannel post) stalls after the third switch.
  */
-async function chromeSelftest(profile, url, timeoutMs) {
+async function chromeSelftest(profile, url, timeoutMs, selector = "pre#selftest") {
   rmSync(profile, { recursive: true, force: true });
   const browser = spawn(
     CHROME,
@@ -197,7 +199,7 @@ async function chromeSelftest(profile, url, timeoutMs) {
         socket.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
       });
     for (;;) {
-      const text = await evaluate('document.querySelector("pre#selftest")?.textContent ?? ""');
+      const text = await evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`);
       if (typeof text === "string" && text.trim() !== "") return JSON.parse(text);
       if (Date.now() > deadline) throw new Error("the selftest wrote no result");
       await sleep(250);
@@ -241,6 +243,7 @@ async function main() {
     mkdirSync(bundles, { recursive: true });
     copyFileSync(path.join(tmp, "oauth", "trace.json"), path.join(bundles, "oauth.json"));
     const sessionId = JSON.parse(readFileSync(path.join(bundles, "oauth.json"), "utf8")).session.sessionId;
+    if (options.consolePerf) run("node", [path.join(APP, "scripts", "console-bundle.mjs")]);
     run("pnpm", ["--filter", "jevcode-trace-viewer-dev", "build"]);
     preview = spawn(
       "pnpm",
@@ -317,6 +320,48 @@ async function main() {
         );
       }
       console.log(`view switch: ${switchResult.switches} switches, 0 misses`);
+    }
+    if (options.embedded) {
+      // The main-window frame (spec §9) around the embedded viewer on the Console; a drip opens it in Live, so the
+      // right panel shows the Brief (V-6 compares these with console-main-*.png).
+      for (const width of WIDTHS) {
+        const file = path.join(SMOKE_DIR, `console-embedded-${width}.png`);
+        rmSync(file, { force: true });
+        await chrome(profile, [
+          `--window-size=${width},900`,
+          "--virtual-time-budget=4000",
+          `--screenshot=${file}`,
+          `${ORIGIN}/?bundle=oauth&chrome=embedded&drip=4,200,-60${locationHash(sessionId, "console")}`,
+        ]);
+        if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
+        shots += 1;
+      }
+    }
+    if (options.consolePerf) {
+      const consoleSession = JSON.parse(readFileSync(path.join(bundles, "console-10k.json"), "utf8")).session.sessionId;
+      const result = await chromeSelftest(
+        path.join(tmp, "chrome-console-perf"),
+        `${ORIGIN}/?bundle=console-10k&perf=1&perfrun=console&chrome=embedded&drip=1,120,-600${locationHash(consoleSession, "console")}`,
+        240_000,
+        "pre#perf-result",
+      );
+      if (result.error !== undefined) throw new Error(`console perf: ${result.error}`);
+      const line = [
+        `steps=${result.steps}`,
+        `append_n=${result.append.count}`,
+        `append_median=${result.append.median?.toFixed(1)}`,
+        `append_p95=${result.append.p95?.toFixed(1)}`,
+        `scroll_dropped=${result.scroll.droppedPct.toFixed(2)}%`,
+        `scroll_p95_frames=${result.scroll.p95Rounded}`,
+        `refresh_ms=${result.scroll.refreshMs.toFixed(1)}`,
+      ].join(" ");
+      console.log(`CONSOLE_PERF ${line}`);
+      const misses = [];
+      if (result.steps < 10_000) misses.push(`only ${result.steps} steps`);
+      if (result.append.count < 300) misses.push(`only ${result.append.count} append samples`);
+      if (!(result.append.p95 <= 150)) misses.push(`append p95 ${result.append.p95} ms > 150 ms`);
+      if (!(result.scroll.droppedPct <= 5)) misses.push(`scroll dropped ${result.scroll.droppedPct.toFixed(2)}% > 5%`);
+      if (misses.length > 0) throw new Error(`console perf: ${misses.join("; ")}`);
     }
     console.log(`SMOKE_OK ${shots} screenshots`);
   } finally {

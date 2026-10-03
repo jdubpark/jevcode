@@ -17,35 +17,59 @@ function graphemes(text: string): string[] {
   return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
 }
 
-/** Bidi controls (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) and C0 controls other than \t,
- *  and \n when multiline. All are single UTF-16 code units. Checked by code, not by a regex,
- *  because ESLint's no-control-regex rejects control ranges in patterns. */
-function isUntrustedCode(code: number, multiline: boolean): boolean {
-  if (code < 0x20) return code !== 0x09 && !(multiline && code === 0x0a);
-  return (
-    code === 0x200e ||
-    code === 0x200f ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  );
+/**
+ * Code points that can hide, reorder or fake text: controls (C0, DEL, C1), format characters (bidi controls, zero-width
+ * characters, the soft hyphen, tag characters), line and paragraph separators, and every default-ignorable code point
+ * (Hangul fillers, variation selectors). The same class as jev-router's plain-text guard.
+ */
+const UNTRUSTED = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+const UNTRUSTED_ALL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+/**
+ * Exactly one RGI emoji (ZWJ sequences, keycaps, tag-sequence flags, VS16 forms), plus at most one trailing U+FE0F.
+ * Anything more in the cluster (tag characters, variation selector runs, joiners, CGJ) is smuggled text and is shown.
+ * Built with the constructor: the `v` flag needs ES2024 syntax and the package targets ES2022 (Node 22 and Chromium 130
+ * support it at run time).
+ */
+const RGI_EMOJI = new RegExp("^\\p{RGI_Emoji}\\uFE0F?$", "v");
+
+function allowed(char: string, multiline: boolean): boolean {
+  return char === "\t" || (multiline && char === "\n");
+}
+
+/** True when `text` holds an untrusted code point other than a tab (and a line feed in multi-line text). */
+function hasUntrusted(text: string, multiline: boolean): boolean {
+  if (!UNTRUSTED.test(text)) return false;
+  UNTRUSTED_ALL.lastIndex = 0;
+  for (let match = UNTRUSTED_ALL.exec(text); match !== null; match = UNTRUSTED_ALL.exec(text)) {
+    if (!allowed(match[0], multiline)) return true;
+  }
+  return false;
+}
+
+function token(char: string): string {
+  return `⟨U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}⟩`;
 }
 
 /**
- * Replaces bidi and control characters with a visible ⟨U+XXXX⟩ token (spec §6.8), so agent text
- * cannot reorder or hide a command or path the supervisor reads. Tabs stay; line breaks stay only
- * with { multiline: true }. Text without such characters is returned as is.
+ * Replaces hidden and reordering characters with a visible ⟨U+XXXX⟩ token (spec §6.8), so agent text cannot reorder or
+ * hide a command or path the supervisor reads. A grapheme cluster that is exactly one RGI emoji (ZWJ sequences, VS16
+ * hearts and checks, keycaps, tag-sequence flags) renders as itself; any other cluster shows its hidden code points as
+ * tokens, so text smuggled after an emoji in tag characters or variation selectors is visible. Bidi controls,
+ * zero-width spaces and the soft hyphen are grapheme Control characters and always stand alone.
+ * Tabs stay; line feeds stay only with { multiline: true }. Text without such characters is returned as is.
  */
 export function displayUntrusted(text: string, options: { multiline?: boolean } = {}): string {
   const multiline = options.multiline === true;
+  if (!hasUntrusted(text, multiline)) return text;
   let result = "";
-  let start = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    if (!isUntrustedCode(code, multiline)) continue;
-    result += `${text.slice(start, index)}⟨U+${code.toString(16).toUpperCase().padStart(4, "0")}⟩`;
-    start = index + 1;
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    if (!UNTRUSTED.test(segment) || RGI_EMOJI.test(segment)) {
+      result += segment;
+      continue;
+    }
+    for (const char of segment) result += UNTRUSTED.test(char) && !allowed(char, multiline) ? token(char) : char;
   }
-  return start === 0 ? text : result + text.slice(start);
+  return result;
 }
 
 /** "exit 0", "exit 1"; "exit unknown" for a negative code (R2: -1 = Codex gave none); "" while running. */

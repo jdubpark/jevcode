@@ -1,0 +1,433 @@
+/* Spec §3.2 and the approved Phase A mockup (console-main.html): one glyph column with a single gutter rule, row rhythm
+   without boxes, mono for commands, paths and output, red only for failing tests and real failures. */
+
+.console {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--tv-panel);
+  container-type: inline-size;
+}
+
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 16px;
+}
+
+.count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  width: 180px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--tv-fill);
+  color: var(--tv-ink-3);
+}
+
+.search:focus-within {
+  box-shadow: 0 0 0 2px var(--tv-accent-soft);
+}
+
+.search svg {
+  flex: none;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  outline: none;
+}
+
+.search input::placeholder {
+  color: var(--tv-ink-3);
+}
+
+/* The mockup narrows the field below a 1180 px window, where the Console column is about 700 px wide. */
+@container (max-width: 760px) {
+  .search {
+    width: 120px;
+  }
+}
+
+.empty {
+  margin: 0;
+  padding: 24px 16px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+}
+
+.placeholders {
+  padding-top: 40px;
+}
+
+.placeholder {
+  height: 14px;
+  margin: 12px 16px 12px 46px;
+  border-radius: 4px;
+  background: var(--tv-fill);
+}
+
+.scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+
+/* One thin gutter rule under the glyph column; glyphs sit on the panel color over it (spec §3.2: no boxes). */
+.sizer {
+  position: relative;
+  width: 100%;
+  background: linear-gradient(var(--tv-hair), var(--tv-hair)) 25px 0 / 1px 100% no-repeat;
+}
+
+.slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  outline: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: start;
+  padding: 3px 16px 3px 15px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tv-ink-2);
+}
+
+.slot[data-selected] .row,
+.slot[data-selected] .rule {
+  background: var(--tv-accent-soft);
+}
+
+.slot[data-selected] .decision {
+  box-shadow: inset 0 0 0 1px var(--tv-accent);
+}
+
+.slot[data-match] .row {
+  box-shadow: inset 2px 0 0 var(--tv-accent);
+}
+
+.slot:focus-visible .row,
+.slot:focus-visible .rule,
+.slot:focus-visible .decision {
+  box-shadow: inset 0 0 0 2px var(--tv-accent);
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  background: var(--tv-panel);
+  color: var(--tv-ink-3);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.slot[data-selected] .glyph {
+  background: transparent;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt {
+  margin: 0;
+  color: var(--tv-ink);
+  font-weight: 500;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prose {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dim {
+  margin: 0;
+  color: var(--tv-ink-3);
+}
+
+.command {
+  margin: 0;
+  color: var(--tv-ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--tv-ink-3);
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meta svg {
+  flex: none;
+}
+
+.more {
+  flex: none;
+}
+
+.bad {
+  color: var(--tv-bad-ink);
+}
+
+.flag {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tv-ink-2);
+}
+
+/* The output tail: one line per output line, cut at the row edge (the tooltip holds the full tail). */
+.output {
+  grid-column: 2 / 4;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 2px 0 2px 10px;
+  overflow: hidden;
+  box-shadow: inset 1px 0 0 var(--tv-hair);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tv-ink-3);
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* Expanded full output wraps, so no line is lost. */
+.full {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The second line of a test run (dots, passed/total, failing names), under the command. */
+.under {
+  grid-column: 2 / 4;
+  display: flex;
+  min-width: 0;
+  margin: 3px 0 0;
+}
+
+.detail {
+  grid-column: 2 / 4;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.paths li {
+  padding: 3px 0;
+  color: var(--tv-ink-2);
+}
+
+.members li {
+  padding: 3px 0;
+}
+
+.members button {
+  max-width: 100%;
+  text-align: left;
+}
+
+.chev {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tv-ink-3);
+  cursor: pointer;
+}
+
+.chev:hover {
+  background: var(--tv-fill);
+}
+
+.chev:focus-visible,
+.link:focus-visible,
+.option:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tv-ink-2);
+  font: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--tv-ink);
+  text-decoration: underline;
+}
+
+/* A lifecycle rule spans the Console, its label centered between two hairlines. */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-3);
+}
+
+.rule::before,
+.rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--tv-hair);
+}
+
+/* The decision block spans the Console in accent-soft; its fork icon sits over the glyph column. */
+.decision {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--tv-accent-soft);
+  color: var(--tv-ink);
+}
+
+.decision[data-status="answered"] {
+  background: var(--tv-fill);
+}
+
+.question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 500;
+}
+
+.question svg {
+  flex: none;
+}
+
+.note {
+  margin: 2px 0 0 22px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--tv-ink-2);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0 22px;
+}
+
+.option {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.option:disabled {
+  color: var(--tv-ink-3);
+  cursor: default;
+}
+
+.summaryLabel {
+  margin-right: 6px;
+  font-weight: 500;
+  color: var(--tv-ink);
+}
+
+.badge {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 2;
+  transform: translateX(-50%);
+}

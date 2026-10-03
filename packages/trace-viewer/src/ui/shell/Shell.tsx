@@ -19,9 +19,9 @@ import {
 import { compareFindings, resolveStableId, type StableId, type TraceSession } from "../../model/index.js";
 import { IconSprite } from "../icons/IconSprite.js";
 import { selectionTitle } from "../inspector/finding-copy.js";
-import { Inspector } from "../inspector/Inspector.js";
+import { RightPanel, showsBrief } from "../inspector/RightPanel.js";
 import type { ViewerLocation } from "../state/location.js";
-import { useViewStore } from "../state/store.js";
+import { useView, useViewStore } from "../state/store.js";
 import { locationOf } from "../state/view-state.js";
 import base from "../tokens/base.module.css";
 import { tokenStyle } from "../tokens/tokens.js";
@@ -34,10 +34,12 @@ import {
 } from "../views/view-port.js";
 import { isLiveState, LIVE_TICK_START, type DataController, type DataSnapshot } from "./data-controller.js";
 import type { ViewerHost } from "./host.js";
+import { ViewerHostContext } from "./host-context.js";
 import { LiveRegion } from "./LiveRegion.js";
 import { Outline } from "./Outline/Outline.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
+import { DecisionAnnouncer } from "./DecisionAnnouncer.js";
 import { KeyboardLayer } from "./KeyboardLayer.js";
 import styles from "./Shell.module.css";
 import { TitleBar } from "./TitleBar.js";
@@ -135,6 +137,8 @@ export function Shell({
   showSwitch = true,
 }: ShellProps) {
   const store = useViewStore();
+  // The right panel is named after what it shows (lane fix m3).
+  const showBrief = useView(showsBrief);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   // The open location and follow override apply once, at open; a parent passing a fresh
   // equal `location` object each render must not re-run the open logic.
@@ -310,31 +314,34 @@ export function Shell({
     >
       <IconSprite />
       <SessionContext.Provider value={sessionView}>
-        <DiagnosticsContext.Provider value={diagnostics}>
-          <ViewPortRegistryContext.Provider value={registry}>
-            <ViewDefinitionsContext.Provider value={views}>
-              <LiveRegion>
-                <div className={styles.grid} data-chrome={chrome}>
-                  <header className={styles.title} data-region="title">
-                    <TitleBar onRetry={() => controller.retry()} chrome={chrome} showSwitch={showSwitch} />
-                  </header>
-                  {chrome === "full" ? (
-                    <nav className={styles.outline} aria-label="Outline" data-region="outline">
-                      <Outline hiddenRows={hiddenRows} />
-                    </nav>
-                  ) : null}
-                  <main className={styles.main} data-region="main" tabIndex={-1}>
-                    <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
-                  </main>
-                  <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
-                    <Inspector host={host} />
-                  </aside>
-                </div>
-                <KeyboardLayer root={root} />
-              </LiveRegion>
-            </ViewDefinitionsContext.Provider>
-          </ViewPortRegistryContext.Provider>
-        </DiagnosticsContext.Provider>
+        <ViewerHostContext.Provider value={host}>
+          <DiagnosticsContext.Provider value={diagnostics}>
+            <ViewPortRegistryContext.Provider value={registry}>
+              <ViewDefinitionsContext.Provider value={views}>
+                <LiveRegion>
+                  <div className={styles.grid} data-chrome={chrome}>
+                    <header className={styles.title} data-region="title">
+                      <TitleBar onRetry={() => controller.retry()} chrome={chrome} showSwitch={showSwitch} />
+                    </header>
+                    {chrome === "full" ? (
+                      <nav className={styles.outline} aria-label="Outline" data-region="outline">
+                        <Outline hiddenRows={hiddenRows} />
+                      </nav>
+                    ) : null}
+                    <main className={styles.main} data-region="main" tabIndex={-1}>
+                      <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
+                    </main>
+                    <aside className={styles.inspector} aria-label={showBrief ? "Brief" : "Inspector"} data-region="inspector">
+                      <RightPanel host={host} />
+                    </aside>
+                  </div>
+                  <KeyboardLayer root={root} />
+                  <DecisionAnnouncer />
+                </LiveRegion>
+              </ViewDefinitionsContext.Provider>
+            </ViewPortRegistryContext.Provider>
+          </DiagnosticsContext.Provider>
+        </ViewerHostContext.Provider>
       </SessionContext.Provider>
     </div>
   );

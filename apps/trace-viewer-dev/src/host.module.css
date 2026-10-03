@@ -50,3 +50,36 @@
   font: inherit;
   cursor: pointer;
 }
+
+.embedded {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: #ffffff;
+  font: 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: #16181d;
+}
+
+.embeddedBody {
+  min-height: 0;
+}
+
+.embeddedDock {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 8px 16px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: #676d78;
+}
+
+.dockGlyph {
+  color: #1f5ef0;
+}
