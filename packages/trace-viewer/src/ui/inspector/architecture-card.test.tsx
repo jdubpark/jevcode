@@ -141,6 +141,32 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(within(part()).getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
+  it("a first scan with no components yet shows only the progress box (lane 06 fix I-4)", () => {
+    renderPanel(overviewSnapshot({ components: [], status: { scan: { state: "running", scanned: 3_200, total: 9_800 }, narrator: "pending" } }));
+    expect(screen.getByText("Mapping codebase · 3,200 / 9,800 files")).toBeTruthy();
+    expect(document.querySelector("[data-brief-architecture]")).toBeNull();
+    expect(document.querySelector("[data-map-thumbnail]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open the map" })).toBeNull();
+    expect(document.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("a rescan keeps the map, the counts and Open the map, with a quiet progress line (lane 06 fix I-4)", () => {
+    renderPanel(
+      overviewSnapshot({
+        components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "packages/api", role: "api" }, { rootPath: "packages/db", role: "storage" }],
+        status: { scan: { state: "running", scanned: 3_200, total: 9_800 }, narrator: "ready" },
+      }),
+    );
+    expect(part().querySelectorAll("[data-map-thumbnail] rect[data-thumb-card]")).toHaveLength(3);
+    expect(part().textContent ?? "").toContain("3 components · 2 touched");
+    const line = part().querySelector<HTMLElement>("[data-brief-scan]");
+    expect(line?.textContent).toBe("Mapping codebase · 3,200 / 9,800 files");
+    expect(line?.querySelector("[aria-hidden='true'] > span")?.getAttribute("style")).toContain("width: 33%");
+    expect(within(part()).getByRole("button", { name: "Open the map" })).toBeTruthy();
+    expect(part().querySelector("[role='alert'], [role='status'], [role='progressbar']")).toBeNull();
+    expect(document.querySelector("[role='alert']")).toBeNull();
+  });
+
   it("opens the Map", async () => {
     const user = userEvent.setup();
     const { store } = renderPanel(RULE_ONLY);

@@ -315,16 +315,19 @@ function Architecture({
       </div>
     );
   }
-  if (architecture.scanning !== null) {
-    const { done, total } = architecture.scanning;
-    const share = total > 0 ? Math.min(1, done / total) : 0;
+  const scanning = architecture.scanning;
+  const scanText = scanning === null ? null : `Mapping codebase · ${scanning.done.toLocaleString("en-US")} / ${scanning.total.toLocaleString("en-US")} files`;
+  const scanShare = scanning === null || scanning.total <= 0 ? 0 : Math.min(1, scanning.done / scanning.total);
+  // A first scan has no components yet: the progress box alone. A rescan's progress rows carry the previous components
+  // (spec §5.5), so the map stays and the progress is one quiet line under the counts (lane 06 fix I-4).
+  if (scanText !== null && architecture.componentCount === 0) {
     return (
       <div className={styles.empty}>
         <Icon name="view-map" size={14} />
         <span className={`${styles.emptyText} ${styles.grow}`}>
-          <span className={styles.emptyTitle}>{`Mapping codebase · ${done.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} files`}</span>
+          <span className={styles.emptyTitle}>{scanText}</span>
           <span className={styles.progress} aria-hidden="true">
-            <span style={{ width: `${Math.round(share * 100)}%` }} />
+            <span style={{ width: `${Math.round(scanShare * 100)}%` }} />
           </span>
         </span>
       </div>
@@ -340,6 +343,15 @@ function Architecture({
     <div className={styles.architecture} data-brief-architecture="">
       {overview === null || architecture.componentCount === 0 ? null : <MapThumbnail overview={overview} touched={architecture.touched} />}
       <p className={styles.meta}>{counts}</p>
+      {scanText === null ? null : (
+        <p className={`${styles.quietSmall} ${styles.scanLine}`} data-brief-scan="">
+          <Icon name="clock" size={12} />
+          <span>{scanText}</span>
+          <span className={styles.scanBar} aria-hidden="true">
+            <span style={{ width: `${Math.round(scanShare * 100)}%` }} />
+          </span>
+        </p>
+      )}
       {scan?.state === "failed" ? (
         <p className={styles.quietSmall} title={scan.error === undefined ? undefined : displayUntrusted(scan.error)}>
           Codebase map unavailable

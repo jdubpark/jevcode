@@ -333,6 +333,32 @@
   gap: 6px;
 }
 
+/* A rescan's progress under the counts: icon, words and a short bar, all quiet (lane 06 fix I-4). */
+.scanLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.scanLine > svg {
+  flex: none;
+}
+
+.scanBar {
+  flex: 0 0 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--tv-fill-2);
+  overflow: hidden;
+}
+
+.scanBar > span {
+  display: block;
+  height: 4px;
+  background: var(--tv-ink-3);
+}
+
 .link {
   align-self: flex-start;
   padding: 0;
