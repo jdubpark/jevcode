@@ -96,6 +96,14 @@ describe("displayUntrusted", () => {
     ["tag characters after a letter", "a\u{E0067}\u{E007F}b", "a⟨U+E0067⟩⟨U+E007F⟩b"],
     ["a variation selector after a letter", "a\uFE0Fb", "a⟨U+FE0F⟩b"],
     ["carriage return", "a\rb", "a⟨U+000D⟩b"],
+    // Final review D M-1: private-use code points render as whatever a font puts there (SF Symbols can mimic status
+    // icons), and a lone surrogate is no character at all; jev-router's narrator guard rejects both.
+    ["a BMP private-use code point", "ok \uE000 done", "ok ⟨U+E000⟩ done"],
+    ["the last BMP private-use code point", "\uF8FF ok", "⟨U+F8FF⟩ ok"],
+    ["a plane 15 private-use code point", "a\u{F0000}b", "a⟨U+F0000⟩b"],
+    ["a plane 16 private-use code point (SF Symbols)", "\u{100000} passed", "⟨U+100000⟩ passed"],
+    ["a lone high surrogate", "a\uD800b", "a⟨U+D800⟩b"],
+    ["a lone low surrogate", "a\uDC00b", "a⟨U+DC00⟩b"],
   ])("shows %s as a visible token", (_name, input, expected) => {
     expect(displayUntrusted(input)).toBe(expected);
     expect(displayUntrusted(input, { multiline: true })).toBe(expected);

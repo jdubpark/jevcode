@@ -19,11 +19,13 @@ function graphemes(text: string): string[] {
 
 /**
  * Code points that can hide, reorder or fake text: controls (C0, DEL, C1), format characters (bidi controls, zero-width
- * characters, the soft hyphen, tag characters), line and paragraph separators, and every default-ignorable code point
- * (Hangul fillers, variation selectors). The same class as jev-router's plain-text guard.
+ * characters, the soft hyphen, tag characters), lone surrogates, private-use code points (a font can draw anything there,
+ * such as an SF Symbol that mimics a status icon), line and paragraph separators, and every default-ignorable code point
+ * (Hangul fillers, variation selectors). The same class as jev-router's narrator guard (INVISIBLE in
+ * packages/jev-router/src/narrator/guardrails.ts).
  */
-const UNTRUSTED = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
-const UNTRUSTED_ALL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+const UNTRUSTED = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+const UNTRUSTED_ALL = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
 /**
  * Exactly one RGI emoji (ZWJ sequences, keycaps, tag-sequence flags, VS16 forms), plus at most one trailing U+FE0F.
  * Anything more in the cluster (tag characters, variation selector runs, joiners, CGJ) is smuggled text and is shown.
