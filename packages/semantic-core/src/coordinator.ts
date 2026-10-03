@@ -94,6 +94,9 @@ export class PipelineCoordinator {
   private readonly rebuildDebounceMs: number;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRebuildAtMs = 0;
+  // Records were drained since the last rebuild that returned. Cleared only when rebuild() returns, so a rebuild that
+  // throws partway (a store write failing) is run again by the next flush(), with no new record needed (lane 03 PL-2).
+  private rebuildPending = false;
 
   constructor(options: CoordinatorOptions = {}) {
     this.clock = options.clock ?? (() => Date.now());
@@ -135,8 +138,8 @@ export class PipelineCoordinator {
     if (this.rebuildTimer !== null) {
       clearTimeout(this.rebuildTimer);
       this.rebuildTimer = null;
-      this.rebuildNow();
     }
+    if (this.rebuildPending) this.rebuildNow();
   }
 
   applyLabelResult(result: UnitLabelResult): boolean {
@@ -182,6 +185,7 @@ export class PipelineCoordinator {
   private flushWindow(): void {
     if (this.buffer.length === 0) return;
     const records = this.buffer.splice(0, this.buffer.length);
+    this.rebuildPending = true;
     this.drain(records);
     this.requestRebuild();
   }
@@ -189,6 +193,7 @@ export class PipelineCoordinator {
   // Trailing-edge rebuild debounce: at most one rebuild per burst of flushes;
   // the projection recomputes once a short trailing idle elapses.
   private requestRebuild(): void {
+    this.rebuildPending = true;
     const now = this.clock();
     if (now - this.lastRebuildAtMs >= this.rebuildDebounceMs) {
       this.rebuildNow();
@@ -206,6 +211,7 @@ export class PipelineCoordinator {
   private rebuildNow(): void {
     this.lastRebuildAtMs = this.clock();
     this.rebuild();
+    this.rebuildPending = false;
   }
 
   private drain(records: readonly PipelineRecord[]): void {
