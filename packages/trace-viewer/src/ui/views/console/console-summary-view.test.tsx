@@ -43,21 +43,21 @@ describe("Console summary rows (live)", () => {
       drip: { rowsPerTick: 1, intervalMs: 1_000, manual: true, startAtSeq: firstStory - 1 },
     });
     render(<TraceViewer source={source} initialView="console" pollMs={50} initialFollow={false} />);
-    await waitFor(() => expect(screen.getAllByRole("region", { name: "Session summary" })).toHaveLength(1));
+    await waitFor(() => expect(screen.getAllByRole("group", { name: "Session summary" })).toHaveLength(1));
     // The reader sits on the Console's tab stop while rows and summaries arrive.
     const focused = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[tabindex="0"]');
     if (focused === null) throw new Error("the Console has no tab stop");
     act(() => focused.focus());
     expect(document.activeElement).toBe(focused);
     for (let seq = firstStory + 1; seq <= lastStory; seq += 1) act(() => source.tick());
-    await waitFor(() => expect(screen.getAllByRole("region", { name: "Session summary" })).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole("group", { name: "Session summary" })).toHaveLength(2));
     expect(screen.queryByText("Stale story.")).toBeNull();
     expect(document.activeElement).toBe(focused);
     // The summary rows sit where their story rows arrived.
     const feed = screen.getByRole("feed", { name: "Console" });
     const kinds = Array.from(feed.querySelectorAll("article")).map((article) => article.getAttribute("data-kind"));
     expect(kinds).toEqual(["instruction", "message", "summary", "message", "summary"]);
-    expect(within(feed).getAllByRole("region", { name: "Session summary" }).at(-1)?.textContent).toContain("The agent added the middleware.");
+    expect(within(feed).getAllByRole("group", { name: "Session summary" }).at(-1)?.textContent).toContain("The agent added the middleware.");
     // Each summary row is named by its own sentences, so the two read differently in the feed.
     expect(within(feed).getByRole("article", { name: /^The agent read the server\./ }).getAttribute("data-kind")).toBe("summary");
     expect(within(feed).getByRole("article", { name: /^The agent added the middleware\./ }).getAttribute("data-kind")).toBe("summary");

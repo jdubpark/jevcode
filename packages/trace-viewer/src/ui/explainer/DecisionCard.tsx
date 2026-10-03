@@ -54,8 +54,16 @@ export function DecisionCard({ card, onAnswer, answer = "idle" }: DecisionCardPr
   const why = card.why;
   const whyText = why === null ? null : displayUntrusted(why.text);
   return (
-    // tabIndex -1: the Brief moves focus here when the card that held it was replaced (fix I-2).
-    <section className={styles.card} aria-label={`Decision card: ${title}`} data-status={card.status} data-decision-id={card.decisionId} tabIndex={-1}>
+    // tabIndex -1: the Brief moves focus here when the card that held it was replaced (fix I-2). A named group, not a
+    // region landmark: a long session can show many cards (lane review minor 3).
+    <div
+      role="group"
+      className={styles.card}
+      aria-label={`Decision card: ${title}`}
+      data-status={card.status}
+      data-decision-id={card.decisionId}
+      tabIndex={-1}
+    >
       <div className={styles.cardHead}>
         <Icon name="fork" size={14} className={styles.icon} />
         <button
@@ -154,6 +162,6 @@ export function DecisionCard({ card, onAnswer, answer = "idle" }: DecisionCardPr
           ))}
         </div>
       )}
-    </section>
+    </div>
   );
 }

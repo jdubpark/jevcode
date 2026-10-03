@@ -21,7 +21,8 @@ export function SummaryBlock({
 }): JSX.Element {
   const dispatch = useDispatch();
   return (
-    <section className={styles.summaryRow} aria-label="Session summary">
+    // A named group, not a region landmark: a long session has one summary per story refresh (lane review minor 3).
+    <div role="group" className={styles.summaryRow} aria-label="Session summary">
       <span className={styles.diamond} aria-hidden="true">
         <span>◆</span>
       </span>
@@ -41,6 +42,6 @@ export function SummaryBlock({
         {/* `id` (the row's lineId) names the Console row by its own sentences, so each summary row reads differently. */}
         <StoryBlock {...(id !== undefined ? { id } : { label: "Summary sentences" })} sentences={sentences} />
       </div>
-    </section>
+    </div>
   );
 }

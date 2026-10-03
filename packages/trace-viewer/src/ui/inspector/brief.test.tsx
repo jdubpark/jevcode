@@ -185,7 +185,7 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(now.getByRole("button", { name: "Latest change: Identity linking" })).toBeTruthy();
     // Phase C (lane 07 S-4): the open decision is its card in Now, not a "Needs your decision" link.
     expect(now.queryByRole("button", { name: /Needs your decision/ })).toBeNull();
-    const card = within(now.getByRole("region", { name: "Decision card: Keep ⟨U+202E⟩password login?" }));
+    const card = within(now.getByRole("group", { name: "Decision card: Keep ⟨U+202E⟩password login?" }));
     expect(card.getByText("Needs your decision")).toBeTruthy();
     fireEvent.click(card.getByRole("button", { name: "Keep ⟨U+202E⟩password login?" }));
     const decisionStep = session.steps.find((step) => step.decision?.decisionId === "d1");
@@ -230,7 +230,7 @@ describe("Brief (spec §3.3, E4)", () => {
     const now = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
     expect(now.getByText("Completed")).toBeTruthy();
     expect(now.getByRole("button", { name: "Latest change: Identity linking" })).toBeTruthy();
-    expect(now.queryByRole("region", { name: /^Decision card/ })).toBeNull();
+    expect(now.queryByRole("group", { name: /^Decision card/ })).toBeNull();
     expect(screen.getByText(/^Completed · /)).toBeTruthy();
     const change = within(screen.getByRole("list", { name: "Changes so far" })).getByRole("button");
     expect(change.getAttribute("aria-label")).toBe("Identity linking, 2 files, +41 −12");
@@ -449,10 +449,10 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
     const now = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
     expect(now.getByText("Asked what to do when Redis is down.")).toBeTruthy();
     expect(now.getByText("rule-based")).toBeTruthy();
-    expect(now.getByRole("region", { name: "Decision card: Redis down?" })).toBeTruthy();
-    expect(now.queryByRole("region", { name: "Decision card: Key scheme?" })).toBeNull();
+    expect(now.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy();
+    expect(now.queryByRole("group", { name: "Decision card: Key scheme?" })).toBeNull();
     const decisions = within(screen.getByRole("heading", { name: /^Decisions/ }).parentElement as HTMLElement);
-    expect(decisions.getByRole("region", { name: "Decision card: Key scheme?" })).toBeTruthy();
+    expect(decisions.getByRole("group", { name: "Decision card: Key scheme?" })).toBeTruthy();
     expect(decisions.getByText("Fail open · chosen by you")).toBeTruthy();
   });
 
@@ -466,7 +466,7 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
     renderHarness(<Brief />, foldLive(b, "running"));
     const part = screen.getByRole("heading", { name: /^Decisions/ }).parentElement as HTMLElement;
     expect(screen.getByRole("heading", { name: /^Decisions/ }).textContent).toBe("Decisions · 2");
-    expect(within(part).getAllByRole("region", { name: /^Decision card/ }).map((region) => region.getAttribute("aria-label"))).toEqual([
+    expect(within(part).getAllByRole("group", { name: /^Decision card/ }).map((region) => region.getAttribute("aria-label"))).toEqual([
       "Decision card: Log level?",
       "Decision card: Redis down?",
     ]);
@@ -476,7 +476,7 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
     let settle: () => void = () => undefined;
     const answerDecision = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
     renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
-    const card = within(screen.getByRole("region", { name: "Decision card: Redis down?" }));
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
     fireEvent.click(card.getByRole("button", { name: "Choose Fail open" }));
     expect(answerDecision).toHaveBeenCalledWith({ decisionId: "d1", optionId: "open" });
     expect(card.getByText("Sending answer")).toBeTruthy();
@@ -492,7 +492,7 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
     const user = userEvent.setup();
     const answerDecision = vi.fn(async () => undefined);
     renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
-    const choose = within(screen.getByRole("region", { name: "Decision card: Redis down?" })).getByRole("button", { name: "Choose Fail closed" });
+    const choose = within(screen.getByRole("group", { name: "Decision card: Redis down?" })).getByRole("button", { name: "Choose Fail closed" });
     expect(choose.tabIndex).toBe(0);
     act(() => choose.focus());
     await user.keyboard("{Enter}");
@@ -504,7 +504,7 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
       throw new Error("runtime said no");
     });
     const h = renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
-    const card = within(screen.getByRole("region", { name: "Decision card: Redis down?" }));
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
     fireEvent.click(card.getByRole("button", { name: "Choose Fail open" }));
     await waitFor(() => expect(card.getByText("Could not send the answer. Try again.")).toBeTruthy());
     expect(h.announcements).toContain("Could not send the answer");
@@ -513,7 +513,7 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
 
   it("a read-only host (the trace window) shows the open card without Choose buttons", () => {
     renderHarness(<Brief />, explainedSession());
-    const card = within(screen.getByRole("region", { name: "Decision card: Redis down?" }));
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
     expect(card.getByText("Needs your decision")).toBeTruthy();
     expect(card.queryByRole("button", { name: /^Choose/ })).toBeNull();
   });

@@ -111,7 +111,7 @@ describe("DecisionCard", () => {
     const card = cardOf(session);
     const onAnswer = vi.fn();
     const first = renderHarness(<DecisionCard card={card} onAnswer={onAnswer} />, session);
-    const region = screen.getByRole("region", { name: "Decision card: Redis down?" });
+    const region = screen.getByRole("group", { name: "Decision card: Redis down?" });
     expect(within(region).getByText("Needs your decision")).toBeTruthy();
     expect(within(region).getByText("Fail ⟨U+202E⟩open")).toBeTruthy();
     expect(within(region).getByText("availability: API stays up. · +1")).toBeTruthy();
@@ -132,7 +132,7 @@ describe("DecisionCard", () => {
     const card = cardOf(session);
     const onAnswer = vi.fn();
     const sending = renderHarness(<DecisionCard card={card} onAnswer={onAnswer} answer="sending" />, session);
-    const region = screen.getByRole("region", { name: "Decision card: Redis down?" });
+    const region = screen.getByRole("group", { name: "Decision card: Redis down?" });
     expect(within(region).getByText("Sending answer")).toBeTruthy();
     for (const button of within(region).getAllByRole("button", { name: /^Choose/ })) {
       expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -161,7 +161,7 @@ describe("DecisionCard", () => {
   it("shows who chose what, the why with its chips, and the affected components", () => {
     const { session, note } = scenario(true, true);
     const harness = renderHarness(<DecisionCard card={cardOf(session)} />, session);
-    const region = screen.getByRole("region", { name: "Decision card: Redis down?" });
+    const region = screen.getByRole("group", { name: "Decision card: Redis down?" });
     expect(within(region).getByText("Fail closed · chosen by you")).toBeTruthy();
     expect(within(region).queryByText("Needs your decision")).toBeNull();
     expect(within(region).getByText("Closing keeps limits on.")).toBeTruthy();
@@ -197,12 +197,12 @@ describe("DecisionCard", () => {
 });
 
 describe("SummaryBlock", () => {
-  it("renders a ◆ Summary region whose Brief button clears the selection", () => {
+  it("renders a ◆ Summary group whose Brief button clears the selection", () => {
     const { session, edit } = scenario(false, false);
     const harness = renderHarness(<SummaryBlock sentences={[sentence("The agent added the limiter.", { kind: "step", id: edit })]} />, session, {
       state: { selection: edit },
     });
-    const region = screen.getByRole("region", { name: "Session summary" });
+    const region = screen.getByRole("group", { name: "Session summary" });
     expect(within(region).getByText("◆")).toBeTruthy();
     expect(within(region).queryByText("rule-based")).toBeNull();
     fireEvent.click(within(region).getByRole("button", { name: "Show the Brief" }));
@@ -212,7 +212,23 @@ describe("SummaryBlock", () => {
   it("marks a rule-based summary next to its heading", () => {
     const { session, edit } = scenario(false, false);
     renderHarness(<SummaryBlock sentences={[sentence("Edited 1 file.", { kind: "step", id: edit })]} provenance="rule" />, session);
-    const region = screen.getByRole("region", { name: "Session summary" });
+    const region = screen.getByRole("group", { name: "Session summary" });
     expect(within(region).getAllByText("rule-based")).toHaveLength(1);
+  });
+});
+
+describe("summary and card landmarks (lane review minor 3)", () => {
+  it("names a summary and a decision card as groups, not region landmarks, so a long session adds no landmarks", () => {
+    const { session, edit } = scenario(false, false);
+    renderHarness(
+      <>
+        <SummaryBlock sentences={[sentence("The agent added the limiter.", { kind: "step", id: edit })]} />
+        <DecisionCard card={cardOf(session)} />
+      </>,
+      session,
+    );
+    expect(screen.queryAllByRole("region")).toEqual([]);
+    expect(screen.getByRole("group", { name: "Session summary" })).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy();
   });
 });
