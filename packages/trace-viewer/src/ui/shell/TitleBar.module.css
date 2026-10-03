@@ -47,6 +47,15 @@ button.chip {
   cursor: pointer;
 }
 
+/* Embedded bar: the gaps chip is its icon and count (TitleBar). */
+.chipCompact {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
 .anchor {
   position: relative;
   flex: none;

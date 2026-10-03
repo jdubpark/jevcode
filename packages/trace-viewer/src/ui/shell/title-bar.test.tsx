@@ -295,4 +295,24 @@ describe("TitleBar", () => {
     expect(screen.queryByText(firstLine)).toBeNull();
     expect(screen.getByRole("group", { name: "Follow" })).toBeTruthy();
   });
+
+  it("the embedded bar shows the gaps chip as its icon and count, with the full text as name and tooltip (lane 03 D-6)", () => {
+    const base = foldFixture("oauth");
+    const gaps = Array.from({ length: 160 }, (_, position) => ({ kind: "missing_evidence" as const, atSeq: position + 1, message: "x" }));
+    const session: TraceSession = { ...base, gaps };
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" />, session, { views: [canvas, hybrid] });
+    const chip = screen.getByRole("button", { name: "160 gaps" });
+    expect(chip.textContent).toBe("160");
+    expect(chip.getAttribute("title")).toBe("160 gaps");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    fireEvent.click(chip);
+    expect(screen.getByRole("list", { name: "Gaps" }).children).toHaveLength(160);
+    cleanup();
+
+    // The trace window's full chrome keeps the worded chip.
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    const full = screen.getByRole("button", { name: "160 gaps" });
+    expect(full.textContent).toBe("160 gaps");
+    expect(full.getAttribute("aria-label")).toBeNull();
+  });
 });
