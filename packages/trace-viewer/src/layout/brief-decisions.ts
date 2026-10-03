@@ -63,8 +63,8 @@ function cardOf(session: TraceSession, step: Step, decision: DecisionDetail): Br
 }
 
 /**
- * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones newest first (at most
- * BRIEF_DECIDED_MAX). A decision step sits at its first row, so "newest" is by step order.
+ * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones, the most recently
+ * answered first (at most BRIEF_DECIDED_MAX).
  */
 export function buildBriefDecisions(session: TraceSession): readonly BriefDecisionCard[] {
   const cached = cache.get(session);
@@ -76,7 +76,12 @@ export function buildBriefDecisions(session: TraceSession): readonly BriefDecisi
     if (status === "open") open.push(step);
     else if (status === "answered" || status === "delegated") closed.push(step);
   }
-  const picked = [...open.slice(0, BRIEF_DECISIONS_MAX), ...closed.reverse().slice(0, BRIEF_DECIDED_MAX)];
+  // By when the answer landed, not by when the decision was asked: the card the reader just answered must be one of
+  // those shown. That is the supervisor's answer message (answerSeq), else the step's last row (a delegation or an
+  // answer without a message), so a later-answered card sorts first whatever its step order.
+  const answeredAt = (step: Step): number => step.decision?.answerSeq ?? step.lastSeq;
+  const newestAnswered = closed.sort((a, b) => answeredAt(b) - answeredAt(a));
+  const picked = [...open.slice(0, BRIEF_DECISIONS_MAX), ...newestAnswered.slice(0, BRIEF_DECIDED_MAX)];
   const cards = picked.flatMap((step) => (step.decision === undefined ? [] : [cardOf(session, step, step.decision)]));
   cache.set(session, cards);
   return cards;
