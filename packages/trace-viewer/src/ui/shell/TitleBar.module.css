@@ -244,6 +244,28 @@ button.chip {
 
 .bar[data-chrome="embedded"] {
   height: 36px;
+  container: tv-embedded-bar / inline-size;
+}
+
+/*
+ * A narrow embedded bar (the main window from its 880 px minimum, with a gaps chip) shows the Follow segment and the
+ * Brief toggle as icons. The words stay in the accessibility tree (the buttons' names) and in their tooltips. 760 px
+ * leaves room for the compact gaps chip and an "N new" pill at a 680 px bar (lane 03 D-6, measured in Electron).
+ */
+@container tv-embedded-bar (max-width: 759px) {
+  .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .follow .segment,
+  .toggle {
+    padding: 3px 6px;
+  }
 }
 
 .bar button:focus-visible,
