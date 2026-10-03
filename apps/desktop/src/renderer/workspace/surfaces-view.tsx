@@ -1,9 +1,8 @@
 import type { Spec } from "@json-render/core";
-import { JSONUIProvider, Renderer } from "@json-render/react";
 import type { NormalizedAgentEvent } from "@jevcode/contracts";
 import type { ViewDefinition, ViewProps } from "@jevcode/trace-viewer";
 import { agentEventLabel, displayUntrusted, formatClock } from "@jevcode/trace-viewer/model";
-import { registry } from "@jevcode/ui-catalog";
+import { CatalogSurface } from "@jevcode/ui-catalog";
 import { useEffect, useMemo, useState } from "react";
 
 import type { SessionStatePayload } from "../payload-types.js";
@@ -321,9 +320,7 @@ export function SurfacesView({ active }: ViewProps) {
                   </span>
                 </div>
                 <div className="surface-content">
-                  <JSONUIProvider registry={registry}>
-                    <Renderer spec={surface.spec as unknown as Spec} registry={registry} />
-                  </JSONUIProvider>
+                  <CatalogSurface spec={surface.spec as unknown as Spec} />
                 </div>
               </article>
             ))}

@@ -1,6 +1,7 @@
 export { jevcodeCatalog } from "./catalog.js";
 export type { JevcodeCatalog } from "./catalog.js";
 export { registry, handlers, executeAction } from "./registry.js";
+export { CatalogSurface } from "./catalog-surface.js";
 export {
   dispatchCatalogAction,
   getActionDispatcher,
