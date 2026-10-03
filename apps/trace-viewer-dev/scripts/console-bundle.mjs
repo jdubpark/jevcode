@@ -11,6 +11,10 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(APP, "public", "bundles", "console-10k.json");
 // 5.2 Console steps per unit (message, read, command, edit, reasoning, and a test run every fifth unit).
 const UNITS = Number(process.env.CONSOLE_UNITS ?? 2_100);
+// With CONSOLE_STORY_EVERY=n, an explainer story row after every n-th unit (each with new sentences), so the Console
+// merges a ◆ Summary row per story (lane 07 S-4); 0, the default, writes none.
+const STORY_EVERY = Number(process.env.CONSOLE_STORY_EVERY ?? 0);
+if (!Number.isInteger(STORY_EVERY) || STORY_EVERY < 0) throw new Error("CONSOLE_STORY_EVERY must be a whole number");
 const SESSION_ID = "sess-console-10k";
 const REPO_ID = "repo-console-10k";
 const PROMPT = "Refactor the auth module and keep every test green.";
@@ -28,10 +32,12 @@ const agent = (event) => push("agent_event", { sessionId: SESSION_ID, ...event }
 const fact = (body, factId) => push("evidence_fact", { repoId: REPO_ID, sessionId: SESSION_ID, ...body }, { factId });
 
 agent({ type: "agent_started", prompt: PROMPT });
+let stories = 0;
 for (let unit = 0; unit < UNITS; unit += 1) {
   const dir = `src/module${unit % 97}`;
   const file = `${dir}/part${unit}.ts`;
   agent({ type: "agent_message", role: "assistant", text: `Step ${unit}: updating ${file}, then rerunning the focused tests.` });
+  const messageSeq = rows.length;
   agent({ type: "file_read", path: file });
   agent({ type: "command_started", command: `rg -n "export" ${dir}`, callId: `cmd_${unit}` });
   agent({
@@ -63,6 +69,21 @@ for (let unit = 0; unit < UNITS; unit += 1) {
       `fact_test_${unit}`,
     );
   }
+  if (STORY_EVERY > 0 && unit % STORY_EVERY === STORY_EVERY - 1) {
+    const seq = rows.length + 1;
+    rows.push({
+      seq,
+      type: "explainer",
+      ts: iso(seq),
+      payload: {
+        sessionId: SESSION_ID,
+        kind: "story",
+        basisSeq: seq - 1,
+        sentences: [{ text: `The agent updated ${file} and kept the auth tests green (unit ${unit}).`, citations: [{ kind: "step", id: `step:${messageSeq}` }] }],
+      },
+    });
+    stories += 1;
+  }
 }
 agent({ type: "agent_completed" });
 
@@ -86,4 +107,4 @@ const bundle = TraceBundleSchema.parse({
 });
 mkdirSync(path.dirname(OUT), { recursive: true });
 writeFileSync(OUT, JSON.stringify(bundle), { mode: 0o600 });
-console.log(`console-10k: ${rows.length} rows from ${UNITS} units -> ${OUT}`);
+console.log(`console-10k: ${rows.length} rows from ${UNITS} units, ${stories} story rows -> ${OUT}`);
