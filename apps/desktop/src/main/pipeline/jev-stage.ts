@@ -37,12 +37,6 @@ export interface JevStageDeps {
   resolveSlug?: (files: readonly string[], symbols: readonly string[]) => string | undefined;
   onJevLog?: (log: JevDecisionLog) => void;
   onRedaction?: (count: number) => void;
-  /**
-   * Receives each write (a Jev decision row with its log callback, or a label result) in order instead of running it.
-   * The turn-end sync defers them past the client's awaits and runs them in one transaction (lane 03 D-6). Absent:
-   * each write runs at once.
-   */
-  defer?: (write: () => void) => void;
 }
 
 export interface JevUnitOutcome {
@@ -81,12 +75,10 @@ function titlePatchForUnit(
 
 export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
   const { db, coordinator, client } = deps;
-  const write = deps.defer ?? ((op: () => void) => op());
+  // Each unit's rows are stored as its answers arrive, before the next unit's client call (lane 03 PL-2).
   const record = (log: JevDecisionLog): void => {
-    write(() => {
-      db.upsertJevDecision(log);
-      deps.onJevLog?.(log);
-    });
+    db.upsertJevDecision(log);
+    deps.onJevLog?.(log);
   };
   const snapshot = coordinator.snapshot();
   const outcomes: JevUnitOutcome[] = [];
@@ -264,21 +256,19 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
       const titlePatch = titlePatchForUnit(unit.id, deps.semanticEvents);
       const safeTitlePatch =
         titlePatch !== undefined ? redactText(titlePatch).text : titlePatch;
-      write(() =>
-        coordinator.applyLabelResult({
-          changeUnitId: unit.id,
-          decisionVersion: version,
-          patch: {
-            title: safeTitlePatch ?? unit.title,
-            category: categoryForEventKind(attention.semanticCategory),
-            importance: attention.importance,
-            relevance: attention.relevance,
-            interruption: attention.interruption,
-            uncertainty: undefined,
-            mentalModelChange: attention.mentalModelChange,
-          },
-        }),
-      );
+      coordinator.applyLabelResult({
+        changeUnitId: unit.id,
+        decisionVersion: version,
+        patch: {
+          title: safeTitlePatch ?? unit.title,
+          category: categoryForEventKind(attention.semanticCategory),
+          importance: attention.importance,
+          relevance: attention.relevance,
+          interruption: attention.interruption,
+          uncertainty: undefined,
+          mentalModelChange: attention.mentalModelChange,
+        },
+      });
 
       outcomes.push({
         unitId: unit.id,

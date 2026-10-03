@@ -181,7 +181,7 @@ app.whenReady().then(() => {
     log: (message) => console.log(`[rows] ${message}`),
   });
   rowsAvailable = emitter;
-  // A pipeline batch run in db.transaction (the turn-end sync) reports its rows once, after commit.
+  // Each committed trace row is hinted; rows written inside a db.transaction are reported once, after its commit.
   observeTraceAppends(db, (events) => {
     notifyCommitted(emitter, events);
     for (const event of events) smokeAppends?.record(event.sessionId, event.seq);
