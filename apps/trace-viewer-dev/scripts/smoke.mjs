@@ -281,6 +281,21 @@ async function main() {
           shots += 1;
         }
       }
+      if (view === "map") {
+        // The Brief's architecture card (lane 06 P-4): the right panel with nothing selected.
+        for (const width of WIDTHS) {
+          const file = path.join(SMOKE_DIR, `map-brief-${width}.png`);
+          rmSync(file, { force: true });
+          await chrome(profile, [
+            `--window-size=${width},900`,
+            "--virtual-time-budget=3000",
+            `--screenshot=${file}`,
+            `${ORIGIN}/?bundle=oauth&overview=${MAP_OVERVIEW}&brief=1${locationHash(sessionId, "map")}`,
+          ]);
+          if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
+          shots += 1;
+        }
+      }
       if (view === "map") continue; // screenshots only: the drip and open selftests measure step selection
       if (view === "hybrid") {
         // Spec §1 "found at once": oauth opened in Hybrid at 1440 px with no input (?selftest=open).

@@ -19,6 +19,7 @@ import type { Point, Size, UniformCamera } from "../../../layout/viewport.js";
 import type { OverviewModel } from "../../../model/index.js";
 import type { IconName } from "../../icons/icon-names.js";
 import { Icon } from "../../icons/Icon.js";
+import { useViewerHost } from "../../shell/host-context.js";
 import { useSessionView } from "../../shell/session-context.js";
 import { ZOOM_STEP } from "../../state/keymap.js";
 import { useView, useViewStore } from "../../state/store.js";
@@ -108,7 +109,9 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const overlay = useMemo(() => (session === null ? null : mapOverlayOf(session)), [session]);
   const hubs = useMemo(() => (layout === null ? NO_HUBS : mapHubIds(layout.edges, layout.cards.length)), [layout]);
   const importers = useMemo(() => (layout === null ? NO_COUNTS : mapImporterCounts(layout.edges)), [layout]);
+  const host = useViewerHost();
   const maxFiles = useMemo(() => overview?.snapshot.components.reduce((most, component) => Math.max(most, component.fileCount), 0) ?? 0, [overview]);
+  const onRetry = useMemo(() => (host.rescanOverview === undefined ? undefined : () => host.rescanOverview?.()), [host]);
   const activeId = hoverId ?? selection;
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -496,7 +499,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const laneHeight = layout.bounds.h - 2 * MAP_MARGIN + 10; // down to bounds.h − MAP_MARGIN + 6
   return (
     <section className={styles.root} aria-label="Codebase map">
-      <MapHeader overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId} />
+      <MapHeader overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId} onRetry={onRetry} />
       <div className={styles.stage}>
         {layout.cards.length === 0 ? (
           <p className={styles.stageNote} data-map-empty="">
