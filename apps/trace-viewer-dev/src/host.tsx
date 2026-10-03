@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import type { TraceBundle } from "@jevcode/contracts";
 import {
@@ -170,7 +170,6 @@ function ViewerBody({
     }),
     [test],
   );
-  const [switcher, setSwitcher] = useState<ReactNode>(null);
   const viewer = (
     <TraceViewer
       source={source}
@@ -180,14 +179,12 @@ function ViewerBody({
       initialFollow={selftest ? false : undefined}
       chrome={chrome}
       initialView={view}
-      renderSwitch={chrome === "embedded" ? setSwitcher : undefined}
     />
   );
   return (
     <>
       {chrome === "embedded" ? (
         <div className={styles.embedded}>
-          <div className={styles.embeddedBar}>{switcher}</div>
           <div className={styles.embeddedBody}>{viewer}</div>
           {/* A stand-in for lane 03's prompt dock, so screenshots match the main-window mockup's frame. */}
           <div className={styles.embeddedDock} aria-hidden="true">
