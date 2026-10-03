@@ -22,6 +22,7 @@ import { useAnnounce } from "../shell/LiveRegion.js";
 import { useSessionView } from "../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../state/store.js";
 import type { InspectorTab } from "../state/view-state.js";
+import { ComponentInspector } from "./ComponentInspector.js";
 import { selectionTitle, topFindingOf } from "./finding-copy.js";
 import styles from "./Inspector.module.css";
 import { Evidence } from "./Evidence.js";
@@ -290,11 +291,13 @@ function InspectorBody({ host }: InspectorProps) {
   );
 }
 
-/** Wraps itself in its own boundary (lane ruling): the Shell does not wrap regions. */
+/** Wraps itself in its own boundary (lane ruling): the Shell does not wrap regions. On the Map, a selected component
+ *  takes the Inspector (lane 06 deviation 4); every other case keeps the step, unit or empty-state body. */
 export function Inspector(props: InspectorProps) {
+  const mapComponent = useView((state) => (state.view === "map" ? state.mapSelection : null));
   return (
     <ErrorBoundary region="Inspector">
-      <InspectorBody {...props} />
+      {mapComponent !== null ? <ComponentInspector componentId={mapComponent} /> : <InspectorBody {...props} />}
     </ErrorBoundary>
   );
 }

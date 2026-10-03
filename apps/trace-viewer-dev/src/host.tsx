@@ -15,6 +15,7 @@ import {
 } from "@jevcode/trace-viewer";
 
 import styles from "./host.module.css";
+import { loadOverview, withOverview } from "./overview-sample.js";
 import { PerfHud } from "./perf-hud.js";
 import { createSelftest, selftestDrip, type SelftestResult } from "./selftest.js";
 import { claimStepIdOf, createOpenProbe, type OpenProbeResult } from "./selftest-open.js";
@@ -73,6 +74,12 @@ async function loadBundle(name: string): Promise<Loaded> {
   } catch (error) {
     return { kind: "error", message: `Could not load ${url}: ${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+/** ?overview=<name>: appends one overview_snapshot row to the loaded bundle (dev host only). */
+async function attachOverview(bundle: TraceBundle, name: string): Promise<Loaded> {
+  const snapshot = await loadOverview(name, bundle.session.sessionId);
+  return snapshot === null ? { kind: "error", message: `Unknown overview "${name}"` } : { kind: "ready", bundle: withOverview(bundle, snapshot) };
 }
 
 /**
@@ -219,20 +226,23 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const openProbe = params.get("selftest") === "open";
   const chrome = params.get("chrome") === "embedded" ? "embedded" : "full";
   const view = parseView(params.get("view"));
+  const overviewName = params.get("overview");
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   // Each bundle request (a ?bundle= fetch or a drop) takes a token; only the latest may write.
   const requestToken = useRef(0);
 
   useEffect(() => {
     const token = (requestToken.current += 1);
-    void loadBundle(bundleName).then((next) => {
-      if (requestToken.current === token) setLoaded(next);
-    });
+    void loadBundle(bundleName)
+      .then((next) => (next.kind === "ready" && overviewName !== null ? attachOverview(next.bundle, overviewName) : next))
+      .then((next) => {
+        if (requestToken.current === token) setLoaded(next);
+      });
     return () => {
       // A later token (a drop or a new bundle name) supersedes this fetch.
       if (requestToken.current === token) requestToken.current += 1;
     };
-  }, [bundleName]);
+  }, [bundleName, overviewName]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();

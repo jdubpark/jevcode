@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { brushSeqRange, buildTraceIndex, isKeyExpanded, type TraceIndex } from "../../layout/trace-index.js";
+import { brushSeqRange, buildTraceIndex, emptyTraceIndex, isKeyExpanded, type TraceIndex } from "../../layout/trace-index.js";
 import { buildSession, OAUTH_CLAIM_TEXT, oauthLikeSession, type StepSeed } from "../../test-support/session-builder.js";
 import { initialViewState, locationOf, reduce, selectNewCount, type ViewAction, type ViewState } from "./view-state.js";
 
@@ -330,5 +330,25 @@ describe("Brief pin (spec §3.3, E4) and the opening view", () => {
     expect(initialViewState({ live: false }).view).toBe("hybrid");
     expect(initialViewState({ live: false, location }).view).toBe("canvas");
     expect(initialViewState({ live: false, location, view: "console" }).view).toBe("console");
+  });
+});
+
+describe("map selection (spec §3.4, lane 06 deviation 4)", () => {
+  const index = emptyTraceIndex("sess-map");
+  const onMap = { ...initialViewState({ live: false }), view: "map" as const };
+
+  it("starts empty, and map/select sets and clears the component", () => {
+    expect(initialViewState({ live: false }).mapSelection).toBeNull();
+    const selected = reduce(onMap, { type: "map/select", componentId: "cmp_0123456789ab" }, index);
+    expect(selected.mapSelection).toBe("cmp_0123456789ab");
+    expect(reduce(selected, { type: "map/select", componentId: "cmp_0123456789ab" }, index)).toBe(selected);
+    expect(reduce(selected, { type: "map/select", componentId: null }, index).mapSelection).toBeNull();
+  });
+
+  it("Esc on the Map clears the component before anything else; elsewhere it leaves it", () => {
+    const selected = reduce(onMap, { type: "map/select", componentId: "cmp_0123456789ab" }, index);
+    expect(reduce(selected, { type: "esc" }, index).mapSelection).toBeNull();
+    const elsewhere = { ...selected, view: "hybrid" as const };
+    expect(reduce(elsewhere, { type: "esc" }, index).mapSelection).toBe("cmp_0123456789ab");
   });
 });
