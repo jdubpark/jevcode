@@ -122,11 +122,14 @@ const handlers: Record<AllowedAction, Handler> = {
  */
 function assertOfferedOptions(db: JevcodeDb, sessionId: string, answer: AnswerDecisionParams): void {
   const decision = db.getDecision(answer.decisionId);
-  if (decision === undefined || decision.sessionId !== sessionId || decision.options.length === 0) return;
-  const offered = new Set(decision.options.map((option) => option.id));
+  if (decision === undefined || decision.sessionId !== sessionId) return;
+  // Before the no-options return: DecisionSchema allows a decision with no options, and an empty answer to it would be
+  // marked answered and sent to the agent as a delegation (final review B M-2).
   if (Object.keys(answer.decision).length === 0) {
     throw new IpcError("INVALID_ACTION_PARAMS", `answer_decision: no option named for ${answer.decisionId}`);
   }
+  if (decision.options.length === 0) return;
+  const offered = new Set(decision.options.map((option) => option.id));
   for (const value of Object.values(answer.decision)) {
     if (!offered.has(value)) {
       throw new IpcError(
