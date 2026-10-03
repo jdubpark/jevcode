@@ -43,6 +43,14 @@ function insert(rows, row) {
 
 /** A live bundle (both are open sessions, as the H3 mockups show): endedAt null, lastEventSeq at its last row. */
 function bundleOf(base, rows, state) {
+  // Every added row takes a seq free in the array it joins (final review C M-5); two rows on one seq would fold as one.
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const row of rows) {
+    if (seen.has(row.seq)) duplicates.add(row.seq);
+    seen.add(row.seq);
+  }
+  if (duplicates.size > 0) throw new Error(`the ${state} bundle repeats seqs ${[...duplicates].join(", ")}`);
   return TraceBundleSchema.parse({ ...base, session: { ...base.session, state, endedAt: null, lastEventSeq: rows.at(-1).seq }, rows });
 }
 
@@ -77,17 +85,19 @@ export function buildExplainerBundles(file) {
     { from: tests.id, to: middleware.id, count: 2, examples: ["tests/rate-limit.test.ts → src/middleware/rate-limiter.ts"] },
   ];
   const ts = base.rows[0].ts;
-  const overview = {
-    seq: freeSeq(base.rows, 0), type: "overview_snapshot", ts,
+  /** The overview row on the first seq free in `rows`, the array it is inserted into. */
+  const overviewIn = (rows) => ({
+    seq: freeSeq(rows, 0), type: "overview_snapshot", ts,
     payload: {
       sessionId, repoRoot: "/work/rate-limit", scanId: "scan_shots", partial: false,
       counts: { files: 10, components: components.length, edges: edges.length, languages: ["TypeScript"] },
       components, edges, externals: [], narrative: null, generatedAt: ts,
       status: { scan: { state: "done", scanned: 10, total: 10 }, narrator: "ready" },
     },
-  };
-  const explainer = (after, record) => {
-    const seq = freeSeq(base.rows, after);
+  });
+  /** An explainer row on the first seq after `after` that is free in `rows`, the array it is inserted into. */
+  const explainer = (rows, after, record) => {
+    const seq = freeSeq(rows, after);
     return { seq, type: "explainer", ts: base.rows.find((row) => row.seq > seq)?.ts ?? base.rows.at(-1).ts, payload: { sessionId, ...record } };
   };
   const lastEdit = edits.filter((step) => step.firstSeq < firstDecisionSeq).at(-1) ?? edits[0];
@@ -100,7 +110,7 @@ export function buildExplainerBundles(file) {
   // after the first edits, the why after the answer, a story after the test run, highlights. The Brief keeps both decided
   // cards, newest first, as the H3 mockup shows.
   const full = [...base.rows];
-  insert(full, overview);
+  insert(full, overviewIn(full));
   const plan = messages.find((step) => step.firstSeq > messages[0].firstSeq) ?? messages[0];
   const keyScheme = {
     id: "dec-shots-keys", sessionId, title: "Which key scheme should limits use?", context: "", severity: "recommended",
@@ -118,20 +128,20 @@ export function buildExplainerBundles(file) {
     seq: keyAnswerSeq, type: "decision", ts: rowTs(keyAnswerSeq),
     payload: { ...keyScheme, status: "answered", ts: rowTs(keyAnswerSeq), answer: { decisionId: keyScheme.id, decision: { key_scheme: "per_api_key" }, evidence: [] } },
   });
-  insert(full, explainer(lastEdit.lastSeq, {
+  insert(full, explainer(full, lastEdit.lastSeq, {
     kind: "story", basisSeq: lastEdit.lastSeq,
     sentences: [
       { text: "The agent added a Redis client and a rate-limiter middleware for the public API.", citations: [{ kind: "component", id: middleware.id }, { kind: "component", id: redis.id }] },
     ],
   }));
-  insert(full, explainer(answerSeq, {
+  insert(full, explainer(full, answerSeq, {
     kind: "decision_why", decisionId,
     sentence: {
       text: "Failing open keeps the public API available during a Redis outage, which the agent flagged as a single point of failure.",
       citations: [{ kind: "step", id: policyNote.id }, { kind: "decision", id: decisionId }],
     },
   }));
-  insert(full, explainer(testDone, {
+  insert(full, explainer(full, testDone, {
     kind: "story", basisSeq: testDone,
     sentences: [
       { text: "You chose to fail open, so requests keep flowing when Redis is down.", citations: [{ kind: "decision", id: decisionId }] },
@@ -155,8 +165,8 @@ export function buildExplainerBundles(file) {
 
   // Cut at the open decision: a rule-based story after the edits, then a narrator story just before the question.
   const pending = base.rows.filter((row) => row.seq <= firstDecisionSeq);
-  insert(pending, overview);
-  insert(pending, explainer(lastEdit.lastSeq, {
+  insert(pending, overviewIn(pending));
+  insert(pending, explainer(pending, lastEdit.lastSeq, {
     kind: "story", provenance: "rule", basisSeq: lastEdit.lastSeq,
     sentences: [
       {
@@ -165,7 +175,7 @@ export function buildExplainerBundles(file) {
       },
     ],
   }));
-  insert(pending, explainer(policyNote.lastSeq, {
+  insert(pending, explainer(pending, policyNote.lastSeq, {
     kind: "story", basisSeq: policyNote.lastSeq,
     sentences: [
       { text: "The agent added a Redis-backed limiter as new middleware for the public API.", citations: [{ kind: "component", id: middleware.id }, { kind: "component", id: redis.id }] },
