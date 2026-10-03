@@ -15,6 +15,9 @@ export function showsBrief(state: ViewState): boolean {
   return state.selection === null || state.brief;
 }
 
+/** Whether the Brief toggle can pin the Brief over what holds the panel; the reducer's brief/toggle reads the same rule. */
+export { canToggleBrief } from "../state/view-state.js";
+
 /** What the panel shows: the Brief, a Map component's Inspector or the step and unit Inspector. */
 type PanelContent = "brief" | "component" | "inspector";
 
