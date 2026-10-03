@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RepoOpenedPayload, SessionStatePayload } from "../payload-types.js";
-import { Header } from "./Header.js";
+import { Header, repoDisplayName } from "./Header.js";
 
 const REPO: RepoOpenedPayload = { repoId: "r1", path: "/work/acme-web", gitRoot: "/work/acme-web", branch: "main", baseCommit: "abc" };
 const STARTED = "2026-10-02T10:00:00.000Z";
@@ -12,11 +12,13 @@ function state(overrides: Partial<SessionStatePayload> = {}): SessionStatePayloa
   return { sessionId: "s1", state: "completed", changeUnitCount: 0, decisionCount: 0, ts: "2026-10-02T10:04:12.000Z", ...overrides };
 }
 
-function renderHeader(props: { prompt?: string; sessionState?: SessionStatePayload | null; handlers?: Partial<Record<string, () => void>> } = {}) {
+function renderHeader(
+  props: { repo?: RepoOpenedPayload; prompt?: string; sessionState?: SessionStatePayload | null; handlers?: Partial<Record<string, () => void>> } = {},
+) {
   const noop = (): void => undefined;
   return render(
     <Header
-      repo={REPO}
+      repo={props.repo ?? REPO}
       sessionState={props.sessionState === undefined ? state() : props.sessionState}
       sessionPrompt={props.prompt ?? "Add Google OAuth login"}
       sessionStartedAt={STARTED}
@@ -31,7 +33,10 @@ function renderHeader(props: { prompt?: string; sessionState?: SessionStatePaylo
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("Header breadcrumb (console-main mockup)", () => {
   it("shows the repo name, a slash and the session prompt with the full text as title", () => {
@@ -48,6 +53,49 @@ describe("Header breadcrumb (console-main mockup)", () => {
     const task = document.querySelector(".crumb-task");
     expect(task?.textContent).toBe("fix ⟨U+202E⟩gnp.exe");
     expect(task?.textContent).not.toContain("‮");
+  });
+
+  it("renders the repo path and prompt tooltips through displayUntrusted", () => {
+    renderHeader({ repo: { ...REPO, path: "/work/acme\u202Ebew", gitRoot: "/work/acme\u202Ebew" }, prompt: "fix \u202Egnp.exe" });
+    const repoTitle = document.querySelector(".crumb-repo")?.getAttribute("title") ?? "";
+    const taskTitle = document.querySelector(".crumb-task")?.getAttribute("title") ?? "";
+    expect(repoTitle).toBe("/work/acme⟨U+202E⟩bew");
+    expect(taskTitle).toBe("fix ⟨U+202E⟩gnp.exe");
+  });
+
+  it("names a repository at the file-system root instead of leaving the crumb blank", () => {
+    expect(repoDisplayName({ ...REPO, path: "/", gitRoot: "/" })).toBe("/");
+    expect(repoDisplayName({ ...REPO, gitRoot: "/work/acme-web/" })).toBe("acme-web");
+  });
+
+  it("ticks the chip while the session runs and holds it once the session ends", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(Date.parse(STARTED) + 20_000);
+    const { rerender } = renderHeader({ sessionState: state({ state: "running", ts: STARTED }) });
+    const chip = (): string => document.querySelector(".chip")?.textContent ?? "";
+    expect(chip()).toMatch(/· 20 s$/);
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(chip()).toMatch(/· 23 s$/);
+
+    const noop = (): void => undefined;
+    rerender(
+      <Header
+        repo={REPO}
+        sessionState={state({ state: "completed", ts: "2026-10-02T10:00:30.000Z" })}
+        sessionPrompt="Add Google OAuth login"
+        sessionStartedAt={STARTED}
+        terminalOpen={false}
+        debugOpen={false}
+        onOpenRepo={noop}
+        onToggleTerminal={noop}
+        onToggleDebug={noop}
+        onCloseRepo={noop}
+        onOpenTrace={noop}
+      />,
+    );
+    expect(chip()).toBe("Completed · 30 s");
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(chip()).toBe("Completed · 30 s");
   });
 
   it("shows the state and the elapsed time in a chip", () => {

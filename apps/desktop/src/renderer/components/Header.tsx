@@ -24,7 +24,9 @@ const LIVE_STATES: ReadonlySet<string> = new Set(["starting", "running", "waitin
 
 export function repoDisplayName(repo: RepoOpenedPayload): string {
   const trimmed = repo.gitRoot.replace(/[\\/]+$/, "");
-  return displayUntrusted(trimmed.slice(trimmed.search(/[^\\/]*$/)) || trimmed);
+  // A repository at the file-system root has no basename; show the root itself.
+  const name = trimmed.slice(trimmed.search(/[^\\/]*$/)) || trimmed || repo.gitRoot;
+  return displayUntrusted(name);
 }
 
 function stateChipText(state: SessionStatePayload, startedAt: string | null, now: number): string {
@@ -55,7 +57,7 @@ export function Header(props: HeaderProps) {
       <div className="header-crumb">
         {repo ? (
           <>
-            <span className="crumb-repo" title={repo.path}>
+            <span className="crumb-repo" title={displayUntrusted(repo.path)}>
               {repoDisplayName(repo)}
             </span>
             {prompt.length > 0 ? (
@@ -63,7 +65,7 @@ export function Header(props: HeaderProps) {
                 <span className="crumb-sep" aria-hidden="true">
                   /
                 </span>
-                <span className="crumb-task" title={prompt}>
+                <span className="crumb-task" title={displayUntrusted(prompt, { multiline: true })}>
                   {displayUntrusted(prompt)}
                 </span>
               </>

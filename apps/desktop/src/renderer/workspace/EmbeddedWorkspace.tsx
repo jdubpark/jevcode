@@ -19,7 +19,8 @@ export interface EmbeddedWorkspaceProps {
 
 /**
  * The main window's center column (spec §9, E2): the trace viewer for one
- * session, Console first, in embedded chrome. The viewer's own title bar carries the view switcher beside Review/Live. The parent keys this component
+ * session, Console first, in embedded chrome. The viewer's own title bar
+ * carries the view switcher beside Review/Live. The parent keys this component
  * by session id, so a switch unmounts the viewer (its DataController stops and
  * drops its push subscription) and mounts a fresh one on Console. Source and
  * host are created once per session.
@@ -43,18 +44,16 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
   );
 
   return (
-    <div className="embedded-workspace">
-      <div className="workspace-viewer">
-        <TraceViewer
-          key={props.sessionId}
-          source={source}
-          host={host}
-          chrome="embedded"
-          initialView="console"
-          hostViews={HOST_VIEWS}
-          pollMs={TRACE_LIVE_POLL_MS}
-        />
-      </div>
+    <div className="workspace-viewer">
+      <TraceViewer
+        key={props.sessionId}
+        source={source}
+        host={host}
+        chrome="embedded"
+        initialView="console"
+        hostViews={HOST_VIEWS}
+        pollMs={TRACE_LIVE_POLL_MS}
+      />
     </div>
   );
 }

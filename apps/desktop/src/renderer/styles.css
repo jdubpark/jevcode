@@ -1554,14 +1554,7 @@ button[aria-pressed="true"] {
   }
 }
 
-/* Embedded viewer (spec §3.1): the switcher bar above, the viewer filling the rest. */
-.embedded-workspace {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-}
-
+/* Embedded viewer (spec §3.1): fills the workspace column above the prompt dock. */
 .workspace-viewer {
   position: relative;
   flex: 1;

@@ -151,6 +151,7 @@ describe("PromptDock (spec §3.1, §3.7)", () => {
     render(<Harness bridge={bridge} state="running" pending={[{ id: "i1", mode: "queue", text: "add a sign\u202Eout button" }] as PromptDockProps["pending"]} />);
     const item = screen.getByRole("list", { name: "Queued instructions" }).querySelector("li");
     expect(item?.textContent).toBe("Queued · add a sign⟨U+202E⟩out buttonCancel");
+    expect(item?.querySelector(".dock-queue-text")?.getAttribute("title")).toBe("add a sign⟨U+202E⟩out button");
     expect(screen.getByRole("button", { name: "Cancel queued instruction" }).textContent).toBe("Cancel");
   });
 

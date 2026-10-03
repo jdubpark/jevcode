@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { relativeAge } from "./relative-time.js";
@@ -17,6 +17,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("sidebar rows (console-main mockup)", () => {
@@ -53,6 +54,31 @@ describe("sidebar rows (console-main mockup)", () => {
     const done = screen.getByRole("button", { name: /Rate limit the API/ });
     expect(done.className).not.toContain("on");
     expect(done.textContent).toContain("2 h");
+  });
+
+  it("renders the repo path tooltip through displayUntrusted", async () => {
+    vi.mocked(bridge.api.repo.listRecent).mockResolvedValue([
+      { repoId: "r2", path: "/work/bill\u202Eing", name: "billing", branch: "main", lastOpenedAt: "2026-10-01T10:00:00.000Z" },
+    ]);
+    render(<RecentRepos selectedRepoId={null} onSelect={() => undefined} />);
+    const row = await screen.findByRole("button", { name: /billing/ });
+    expect(row.getAttribute("title")).toBe("/work/bill⟨U+202E⟩ing");
+  });
+
+  it("refreshes session ages on a timer without a new session state", async () => {
+    // Only Date and intervals are fake, so testing-library's findBy* polling still runs.
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const start = Date.parse("2026-10-02T12:00:00.000Z");
+    vi.setSystemTime(start + 50_000);
+    vi.mocked(bridge.api.repo.listSessions).mockResolvedValue([
+      { sessionId: "s1", repoId: "r1", prompt: "Google OAuth login", state: "completed", startedAt: new Date(start).toISOString() },
+    ]);
+    render(<SessionSwitcher repo={REPO} sessionState={null} />);
+    const row = await screen.findByRole("button", { name: /Google OAuth login/ });
+    expect(row.querySelector(".side-meta")?.textContent).toBe("now");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(row.querySelector(".side-meta")?.textContent).toBe("1 m");
+    expect(bridge.api.repo.listSessions).toHaveBeenCalledTimes(1);
   });
 
   it("formats ages", () => {
