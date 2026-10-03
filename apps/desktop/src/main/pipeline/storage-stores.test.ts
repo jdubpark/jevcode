@@ -424,4 +424,35 @@ describe("storage stores: payloads that are already written", () => {
     expect(rowsOf(db, "semantic_event")).toBe(1);
     expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_1"]);
   });
+
+  it("writes and lists a semantic event once when its listener throws after the write (fix wave minor 5)", () => {
+    const { db } = open();
+    let notified = 0;
+    const stores = createStorageStores(db, SESSION, {
+      persistSemanticEvents: true,
+      onSemanticEvent: () => {
+        notified += 1;
+        if (notified === 1) throw new Error("listener failed");
+      },
+    });
+    const event = {
+      id: "sev_2",
+      sessionId: SESSION,
+      kind: "behavior_change" as const,
+      summary: "Changed src/b.ts",
+      changeUnitId: "cu_2",
+      evidence: [],
+      files: ["src/b.ts"],
+      symbols: [],
+      createdAt: TS,
+    };
+
+    expect(() => stores.events.emit(event)).toThrow("listener failed");
+    // The coordinator's next rebuilds emit the same event again.
+    stores.events.emit(event);
+    stores.events.emit(event);
+    expect(rowsOf(db, "semantic_event")).toBe(1);
+    expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_2"]);
+    expect(notified).toBe(1);
+  });
 });
