@@ -211,10 +211,9 @@ app.whenReady().then(() => {
       scan: scanRepo,
       scanPaths,
       extract: extractor.extract,
-      // Lane 03 D-6 Step 1 replaces this direct send with a no-op: D-1's observeTraceAppends already
-      // hints every committed trace row through the coalesced emitter, which also reaches trace windows.
-      emitRowsAvailable: (sessionId, lastSeq) =>
-        sendToRenderer(MainToRendererChannels.traceRowsAvailable, { sessionId, lastSeq }),
+      // D-1's observeTraceAppends hints every committed trace row through the coalesced emitter,
+      // so the stage needs no direct send (a direct send would bypass the 50 ms coalescing).
+      emitRowsAvailable: () => {},
       now: () => Date.now(),
       schedule: {
         setTimeout: (fn, ms) => setTimeout(fn, ms),
