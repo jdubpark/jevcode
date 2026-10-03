@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { memo, useEffect, useState, type JSX } from "react";
 
 import { TRACE_PAYLOADS_MAX, type TraceRow } from "@jevcode/contracts";
 
@@ -51,6 +51,11 @@ export function isExpandable(row: ConsoleRow): boolean {
   }
 }
 
+/** A row whose time runs on the display clock: only these receive `nowT`, so the 1 Hz live tick re-renders only them. */
+export function isRunningRow(row: ConsoleRow): boolean {
+  return (row.kind === "command" && row.running) || (row.kind === "tool" && row.status === "running");
+}
+
 /** Virtualizer estimate before a row is measured. */
 export function estimateConsoleRow(row: ConsoleRow | undefined, expanded: ReadonlySet<string>): number {
   if (row === undefined) return 24;
@@ -65,6 +70,7 @@ export function estimateConsoleRow(row: ConsoleRow | undefined, expanded: Readon
     case "tool":
     case "edit":
     case "finding":
+    case "guardrails":
       return 24;
     case "command":
       return 28 + 18 * row.outputTail.length + (open ? 220 : 0);
@@ -113,6 +119,9 @@ function finishedMeta(exitCode: number | null, ms: number | null): string {
   return [shown, formatDuration(ms)].filter((part) => part !== "").join(" · ");
 }
 
+/** Where the reader's answer to a pending decision stands; the Console keeps it by decision id, outside the row. */
+export type AnswerState = "idle" | "sending" | "sent" | "failed";
+
 export interface ConsoleRowViewProps {
   row: ConsoleRow;
   session: TraceSession;
@@ -120,14 +129,16 @@ export interface ConsoleRowViewProps {
   expanded: boolean;
   /** id of the element that labels the row's article. */
   lineId: string;
-  /** Display-clock now (SessionView.nowT()), for running bars. */
+  /** Display-clock now (SessionView.nowT()) for a running row (isRunningRow); 0 for every other row. */
   nowT: number;
   /** The host offers answerDecision (the main window); the trace window does not. */
   canAnswer: boolean;
+  /** A decision row's answer state; "idle" for every other row. */
+  answer: AnswerState;
   payloads(seqs: readonly number[]): Promise<TraceRow[]>;
   onToggle(): void;
   onOpenDiff(): void;
-  onAnswer(decisionId: string, optionId: string): Promise<void>;
+  onAnswer(decisionId: string, optionId: string): void;
 }
 
 function Chevron({ open, label, onToggle }: { open: boolean; label: string; onToggle(): void }) {
@@ -135,6 +146,7 @@ function Chevron({ open, label, onToggle }: { open: boolean; label: string; onTo
     <button
       type="button"
       className={styles.chev}
+      tabIndex={-1}
       aria-expanded={open}
       aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
       onClick={onToggle}
@@ -278,19 +290,31 @@ function TestsRow({ row, session, index, expanded, lineId, onToggle }: ConsoleRo
   );
 }
 
+/** Spec §3.2: an open decision answerable from the Console. Option buttons stay in the tab order (they are the action). */
 function DecisionBlock({
   row,
   lineId,
   canAnswer,
+  answer,
   onAnswer,
 }: {
   row: Row<"decision">;
   lineId: string;
   canAnswer: boolean;
-  onAnswer(decisionId: string, optionId: string): Promise<void>;
+  answer: AnswerState;
+  onAnswer(decisionId: string, optionId: string): void;
 }) {
-  const [sending, setSending] = useState(false);
   const labels = row.options.map((option) => displayUntrusted(option.label));
+  // Sent stays disabled until the trace shows the decision answered: the runtime rejects a second answer.
+  const locked = answer === "sending" || answer === "sent";
+  const note =
+    answer === "sending"
+      ? "Sending answer"
+      : answer === "sent"
+        ? "Answer sent"
+        : answer === "failed"
+          ? "Could not send the answer. Try again."
+          : "Needs your decision";
   return (
     <div className={styles.decision} data-status={row.status}>
       <p id={lineId} className={styles.question}>
@@ -301,18 +325,17 @@ function DecisionBlock({
         <p className={styles.note}>{row.answer === null ? "Answered" : `→ ${displayUntrusted(row.answer)}`}</p>
       ) : canAnswer ? (
         <>
-          <p className={styles.note}>Needs your decision</p>
+          <p className={styles.note} data-answer={answer}>
+            {note}
+          </p>
           <div className={styles.options} role="group" aria-label="Answer">
             {row.options.map((option, position) => (
               <button
                 key={option.id}
                 type="button"
                 className={styles.option}
-                disabled={sending}
-                onClick={() => {
-                  setSending(true);
-                  void onAnswer(row.decisionId, option.id).finally(() => setSending(false));
-                }}
+                disabled={locked}
+                onClick={() => onAnswer(row.decisionId, option.id)}
               >
                 {labels[position]}
               </button>
@@ -327,7 +350,7 @@ function DecisionBlock({
 }
 
 /** One Console row (spec §3.2). Every agent string goes through displayUntrusted; finding titles come from the viewer. */
-export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
+function ConsoleRowViewImpl(props: ConsoleRowViewProps): JSX.Element {
   const { row, session, index, expanded, lineId, nowT, onToggle } = props;
   switch (row.kind) {
     case "instruction":
@@ -371,7 +394,11 @@ export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
             <span className={`${styles.mono} ${styles.ellipsis}`} title={name}>
               {short}
             </span>
-            {row.args === "" ? null : <span className={`${styles.mono} ${styles.dim} ${styles.ellipsis}`}>{displayUntrusted(row.args)}</span>}
+            {row.args === "" ? null : (
+              <span className={`${styles.mono} ${styles.dim} ${styles.ellipsis}`} title={displayUntrusted(row.args)}>
+                {displayUntrusted(row.args)}
+              </span>
+            )}
           </p>
           <span className={styles.meta}>
             {row.status === "running" ? (
@@ -419,6 +446,7 @@ export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
             <button
               type="button"
               className={`${styles.link} ${styles.mono} ${styles.ellipsis}`}
+              tabIndex={-1}
               title={displayUntrusted(row.path)}
               onClick={props.onOpenDiff}
             >
@@ -434,7 +462,7 @@ export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
     case "tests":
       return <TestsRow {...props} row={row} />;
     case "decision":
-      return <DecisionBlock row={row} lineId={lineId} canAnswer={props.canAnswer} onAnswer={props.onAnswer} />;
+      return <DecisionBlock row={row} lineId={lineId} canAnswer={props.canAnswer} answer={props.answer} onAnswer={props.onAnswer} />;
     case "lifecycle":
       return (
         <div className={styles.rule} data-state={row.state}>
@@ -459,6 +487,18 @@ export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
         </div>
       );
     }
+    case "guardrails":
+      // Spec §7.6.3's Jev review group, as the Hybrid spine labels it: warnings only, so no red.
+      return (
+        <div className={styles.row}>
+          <span className={styles.glyph} aria-hidden="true">
+            <Icon name="shield" size={14} />
+          </span>
+          <p id={lineId} className={styles.flag}>
+            {`Jev review · ${row.findingIds.length} guardrails`}
+          </p>
+        </div>
+      );
     case "summary":
       // Lane 07 (S-4) restyles this row against the approved Phase C mockup.
       return (
@@ -472,3 +512,22 @@ export function ConsoleRowView(props: ConsoleRowViewProps): JSX.Element {
       );
   }
 }
+
+/**
+ * Rows re-render only when what they show can change: buildConsoleRows hands out a new row object whenever the row's
+ * steps or findings change, so `session` and `index` (read only through the row's own ids) are left out, and the
+ * handlers are left out because ConsoleView's handlers act through the row and stable store and host refs.
+ */
+function sameRowProps(a: ConsoleRowViewProps, b: ConsoleRowViewProps): boolean {
+  return (
+    a.row === b.row &&
+    a.expanded === b.expanded &&
+    a.lineId === b.lineId &&
+    a.nowT === b.nowT &&
+    a.canAnswer === b.canAnswer &&
+    a.answer === b.answer
+  );
+}
+
+/** One Console row (spec §3.2), memoized by row identity (sameRowProps). */
+export const ConsoleRowView = memo(ConsoleRowViewImpl, sameRowProps);

@@ -5,6 +5,7 @@ import { TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import {
   buildConsoleRows,
   CONSOLE_TAIL_LINES,
+  consoleNewRowCount,
   consoleRowStepIds,
   type ConsoleRow,
   type ConsoleRowsState,
@@ -170,5 +171,47 @@ describe("buildConsoleRows (spec §3.2, §8.2)", () => {
       if (row.kind !== "instruction") expect(c.rows[i]).toBe(row);
     });
     expect(c.rows.at(-1)).toMatchObject({ kind: "message", text: "two" });
+  });
+
+  it("folds consecutive warning guardrail flag lines into one Jev review row; a critical finding never folds", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const w1 = b.jev({ id: "j1", clamps: ["security_path"] });
+    const w2 = b.jev({ id: "j2", clamps: ["security_path"] });
+    const w3 = b.jev({ id: "j3", clamps: ["security_path"] });
+    const critical = b.jev({ id: "j4", clamps: ["destructive_command"] });
+    const lone = b.jev({ id: "j5", clamps: ["security_path"] });
+    b.agent({ type: "agent_message", role: "assistant", text: "done" });
+    const { session, out } = build(b);
+    const stepAt = (seq: number) => session.steps.find((step) => step.firstSeq === seq)?.id ?? "";
+
+    expect(out.rows.map((row) => row.kind)).toEqual(["instruction", "guardrails", "finding", "finding", "message"]);
+    const fold = rowsOf(out, "guardrails")[0];
+    expect(fold?.stepIds).toEqual([stepAt(w1), stepAt(w2), stepAt(w3)]);
+    expect(fold?.findingIds).toHaveLength(3);
+    for (const seq of [w1, w2, w3]) expect(out.byStep.get(stepAt(seq))).toBe(1);
+    const index = buildTraceIndex(session);
+    const flagged = out.rows[out.byStep.get(stepAt(critical)) ?? -1];
+    expect(flagged?.kind === "finding" ? index.findingsById.get(flagged.findingId as never)?.severity : null).toBe("critical");
+    // One warning after the critical line stays a plain flag line.
+    expect(out.rows[out.byStep.get(stepAt(lone)) ?? -1]).toMatchObject({ kind: "finding", stepId: stepAt(lone) });
+    expect(consoleRowStepIds(fold as ConsoleRow)).toEqual(fold?.stepIds);
+  });
+
+  it("counts the Console rows after a seq for the pill: a read group counts once, a silent Jev step not at all", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const seen = b.agent({ type: "agent_message", role: "assistant", text: "one" });
+    b.agent({ type: "file_read", path: "src/a.ts" });
+    b.agent({ type: "file_read", path: "src/b.ts" });
+    b.jev({ id: "j1", clamps: ["suppress_formatting"] });
+    b.agent({ type: "agent_message", role: "assistant", text: "two" });
+    const { session, out } = build(b, "running");
+    const index = buildTraceIndex(session);
+    // Four model steps arrived after `seen` (two reads, a guardrail, a message); the reader sees two new rows.
+    expect(session.steps.filter((step) => step.firstSeq > seen)).toHaveLength(4);
+    expect(consoleNewRowCount(out, index, seen)).toBe(2);
+    expect(consoleNewRowCount(out, index, b.rows.length)).toBe(0);
+    expect(consoleNewRowCount(out, index, 0)).toBe(out.rows.length);
   });
 });

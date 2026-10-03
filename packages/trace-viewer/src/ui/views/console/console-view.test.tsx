@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceRow } from "@jevcode/contracts";
 
-import { buildTraceIndex } from "../../../layout/trace-index.js";
-import { foldRows, type TraceSession } from "../../../model/index.js";
+import { buildTraceIndex, type TraceIndex } from "../../../layout/trace-index.js";
+import { displayUntrusted, foldRows, type TraceSession } from "../../../model/index.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   createHarness,
@@ -19,9 +19,16 @@ import type { ViewerHost } from "../../shell/host.js";
 import { ViewerHostContext } from "../../shell/host-context.js";
 import { LiveRegion } from "../../shell/LiveRegion.js";
 import { SessionContext, type SessionView } from "../../shell/session-context.js";
-import { ViewStoreContext } from "../../state/store.js";
+import { ViewStoreContext, type ViewStore } from "../../state/store.js";
 import { ViewPortRegistryContext } from "../view-port.js";
 import { ConsoleView } from "./ConsoleView.js";
+
+// A pass-through spy on displayUntrusted: every row renders its agent text through it, so its calls show which rows
+// re-rendered (fix round 1, item 8).
+vi.mock("../../../model/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../model/index.js")>();
+  return { ...actual, displayUntrusted: vi.fn(actual.displayUntrusted) };
+});
 
 const NOW = Date.parse("2026-09-18T09:30:00.000Z");
 
@@ -48,21 +55,44 @@ interface Mounted {
   scroller(): HTMLElement;
 }
 
+/**
+ * Applies a new commit the way the Shell does (Shell.tsx): from the ancestor's layout effect, which runs after the
+ * Console's own layout effects, so the store update lands in a second commit.
+ */
+function SessionApplier({ session, index, store, children }: { session: TraceSession | null; index: TraceIndex; store: ViewStore; children: ReactNode }) {
+  const opened = useRef(session);
+  useLayoutEffect(() => {
+    if (session === null || session === opened.current) return;
+    store.setIndex(index);
+    store.dispatch({
+      type: "session/applied",
+      loadedThroughSeq: session.loadedThroughSeq,
+      terminal: false,
+      loadComplete: true,
+      initialSelection: null,
+      chapterSpineRows: 0,
+    });
+  }, [session, index, store]);
+  return <>{children}</>;
+}
+
 /** The Console inside the providers the Shell gives it; update() applies a new commit the way the Shell does. */
 function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost } = {}): Mounted {
   const h = createHarness(session, options);
   let view: SessionView = h.view;
   const tree = (current: SessionView): ReactElement => (
     <ViewStoreContext.Provider value={h.store}>
-      <SessionContext.Provider value={current}>
-        <ViewerHostContext.Provider value={options.host ?? {}}>
-          <ViewPortRegistryContext.Provider value={h.registry}>
-            <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
-              <ConsoleView active />
-            </LiveRegion>
-          </ViewPortRegistryContext.Provider>
-        </ViewerHostContext.Provider>
-      </SessionContext.Provider>
+      <SessionApplier session={current.session} index={current.index} store={h.store}>
+        <SessionContext.Provider value={current}>
+          <ViewerHostContext.Provider value={options.host ?? {}}>
+            <ViewPortRegistryContext.Provider value={h.registry}>
+              <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+                <ConsoleView active />
+              </LiveRegion>
+            </ViewPortRegistryContext.Provider>
+          </ViewerHostContext.Provider>
+        </SessionContext.Provider>
+      </SessionApplier>
     </ViewStoreContext.Provider>
   );
   const result = render(tree(view));
@@ -71,17 +101,8 @@ function mountConsole(session: TraceSession, options: HarnessOptions & { host?: 
     update(next) {
       const index = buildTraceIndex(next, view.index);
       view = { ...view, session: next, index, summary: next.meta };
-      h.store.setIndex(index);
       act(() => {
         result.rerender(tree(view));
-        h.store.dispatch({
-          type: "session/applied",
-          loadedThroughSeq: next.loadedThroughSeq,
-          terminal: false,
-          loadComplete: true,
-          initialSelection: null,
-          chapterSpineRows: 0,
-        });
       });
     },
     scroller() {
@@ -386,5 +407,152 @@ describe("ConsoleView live clock, Live follow and test runs", () => {
     expect(m.h.store.get().follow).toBe(true);
     // Live keeps moving down with the new rows (jsdom settles the last few px of measurement late, so no exact end).
     expect(scroller.scrollTop).toBeGreaterThan(topBefore);
+  });
+});
+
+describe("ConsoleView fix round 1", () => {
+  function decisionSession(after = 0): TraceBuilder {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "d1", title: "Keep email login?" });
+    for (let i = 0; i < after; i += 1) b.agent({ type: "agent_message", role: "assistant", text: `message ${i}` });
+    return b;
+  }
+  const option = (name: string): HTMLButtonElement => screen.getByRole("button", { name }) as HTMLButtonElement;
+  // The block's own note, not the live region's announcement of the same words.
+  const inFeed = () => within(screen.getByRole("feed", { name: "Console" }));
+
+  it("a double click sends one answer; once sent the block stays disabled with Answer sent until the trace shows it answered", async () => {
+    const b = decisionSession();
+    const answerDecision = vi.fn(async () => undefined);
+    const m = mountConsole(live(b), { host: { answerDecision }, state: { follow: false, loaded: true } });
+    await frames();
+    act(() => {
+      fireEvent.click(option("Option A"));
+      fireEvent.click(option("Option A"));
+    });
+    await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+    expect(option("Option A").disabled).toBe(true);
+    expect(option("Option B").disabled).toBe(true);
+    fireEvent.click(option("Option B"));
+    await frames();
+    expect(answerDecision).toHaveBeenCalledTimes(1);
+    expect(answerDecision).toHaveBeenCalledWith({ decisionId: "d1", optionId: "a" });
+
+    b.decision({ id: "d1", title: "Keep email login?", status: "answered", answer: { decisionId: "d1", decision: { choice: "a" }, evidence: [] } });
+    m.update(live(b));
+    await frames();
+    expect(inFeed().queryByText("Answer sent")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+    expect(screen.getByRole("feed", { name: "Console" }).textContent).toContain("→ Option A");
+  });
+
+  it("a failed answer shows a quiet note in the block and lets the reader answer again", async () => {
+    const answerDecision = vi.fn(async () => {
+      throw new Error("rejected");
+    });
+    const m = mountConsole(live(decisionSession()), { host: { answerDecision }, state: { follow: false, loaded: true } });
+    await frames();
+    fireEvent.click(option("Option B"));
+    await waitFor(() => expect(inFeed().getByText("Could not send the answer. Try again.")).toBeTruthy());
+    expect(m.h.announcements).toContain("Could not send the answer");
+    expect(option("Option B").disabled).toBe(false);
+    fireEvent.click(option("Option B"));
+    await waitFor(() => expect(answerDecision).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps a sent answer's disabled block when the row scrolls out of the virtual range and back", async () => {
+    const answerDecision = vi.fn(async () => undefined);
+    const m = mountConsole(live(decisionSession(80)), { host: { answerDecision }, state: { follow: false, loaded: true } });
+    await frames();
+    fireEvent.click(option("Option A"));
+    await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+    const scroller = m.scroller();
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: 2000 });
+      scroller.scrollTop = 2000;
+      fireEvent.scroll(scroller);
+    });
+    await frames();
+    expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: -2000 });
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+    });
+    await frames();
+    expect(option("Option A").disabled).toBe(true);
+    expect(inFeed().getByText("Answer sent")).toBeTruthy();
+    expect(answerDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one tab stop in the feed: chevrons and edit links leave the tab order, pending decision options stay", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "command_started", command: "ls src" });
+    b.agent({ type: "command_completed", command: "ls src", exitCode: 0, stdout: Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n"), stderr: "" });
+    b.agent({ type: "file_read", path: "src/a.ts" });
+    b.agent({ type: "file_changed", path: "src/a.ts" });
+    b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false });
+    b.decision({ id: "d1", title: "Keep email login?" });
+    mountConsole(live(b), { host: { answerDecision: async () => undefined }, state: { follow: false, loaded: true } });
+    await frames();
+    const feed = screen.getByRole("feed", { name: "Console" });
+    expect(feed.querySelectorAll("button[aria-expanded]").length).toBeGreaterThanOrEqual(2);
+    const stops = Array.from(feed.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]")).filter((node) => node.tabIndex >= 0);
+    expect(stops.filter((node) => node.tagName === "ARTICLE")).toHaveLength(1);
+    expect(stops.filter((node) => node.tagName !== "ARTICLE").map((node) => node.textContent)).toEqual(["Option A", "Option B"]);
+  });
+
+  it("the pill counts new Console rows, not model steps", async () => {
+    const b = messages(60);
+    const first = live(b);
+    const m = mountConsole(first, { state: { follow: false, loaded: true, lastSeenSeq: first.loadedThroughSeq } });
+    await frames();
+    // Two reads (one row), a routine Jev step (no row) and a message (one row): four steps, two rows.
+    b.agent({ type: "file_read", path: "src/a.ts" });
+    b.agent({ type: "file_read", path: "src/b.ts" });
+    b.jev({ id: "j1", clamps: ["suppress_formatting"] });
+    b.agent({ type: "agent_message", role: "assistant", text: "late" });
+    m.update(live(b));
+    await frames();
+    expect(screen.getByRole("button", { name: /new/ }).textContent).toContain("2 new");
+  });
+
+  it("Enter is always the Console's: the port handles any id and never toggles Hybrid's expansion", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const message = b.agent({ type: "agent_message", role: "assistant", text: "hello" });
+    const session = live(b);
+    const m = mountConsole(session, { state: { follow: false, loaded: true } });
+    await frames();
+    const id = session.steps.find((step) => step.firstSeq === message)?.id;
+    if (id === undefined) throw new Error("no message step");
+    let handled = false;
+    act(() => {
+      handled = m.h.registry.get("console")?.toggle?.(id) ?? false;
+    });
+    expect(handled).toBe(true);
+    expect(m.h.store.get().expanded.size).toBe(0);
+  });
+
+  it("re-renders only running rows on the live clock tick", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "agent_message", role: "assistant", text: "a steady message" });
+    b.agent({ type: "command_started", command: "pnpm dev" });
+    const m = mountConsole(live(b), { state: { follow: false, loaded: true } });
+    await frames();
+    let clock = 1_000;
+    m.h.view.nowT = () => clock;
+    const calls = (text: string): number => vi.mocked(displayUntrusted).mock.calls.filter(([value]) => value === text).length;
+    const steady = calls("a steady message");
+    const running = calls("pnpm dev");
+    clock = 9_000;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150));
+    });
+    expect(calls("pnpm dev")).toBeGreaterThan(running);
+    expect(calls("a steady message")).toBe(steady);
   });
 });

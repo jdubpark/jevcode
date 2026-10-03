@@ -17,6 +17,8 @@ export type ConsoleRow =
   | { kind: "decision"; key: string; stepId: string; decisionId: string; question: string; options: { id: string; label: string }[]; status: "pending" | "answered"; answer: string | null }
   | { kind: "lifecycle"; key: string; stepId: string; state: "waiting" | "completed" | "failed" | "interrupted"; text: string }
   | { kind: "finding"; key: string; stepId: string; findingId: string }
+  /** Consecutive warning guardrail-clamp flag lines folded into one "Jev review · n guardrails" line (V-4 fix round 1). */
+  | { kind: "guardrails"; key: string; stepIds: string[]; findingIds: string[] }
   | { kind: "summary"; key: string; sentences: NarrativeSentence[]; provenance?: "rule" | "model" };
 
 export interface ConsoleRowsState {
@@ -29,12 +31,30 @@ export interface ConsoleRowsState {
 export const CONSOLE_TAIL_LINES = 8;
 
 type ReadsRow = Extract<ConsoleRow, { kind: "reads" }>;
+type GuardrailsRow = Extract<ConsoleRow, { kind: "guardrails" }>;
 
-/** The step ids a row stands for: a read group's reads, nothing for a summary, else its one step. */
+/** The step ids a row stands for: a read group's reads, a guardrail fold's steps, nothing for a summary, else its one step. */
 export function consoleRowStepIds(row: ConsoleRow): readonly string[] {
-  if (row.kind === "reads") return row.stepIds;
+  if (row.kind === "reads" || row.kind === "guardrails") return row.stepIds;
   if (row.kind === "summary") return [];
   return [row.stepId];
+}
+
+/**
+ * Rows that arrived after `afterSeq`, counted back from the end (the Console's "N new" pill): a row is new when its
+ * first step starts after it. A read group counts once and a silent Jev step not at all, unlike the step count.
+ */
+export function consoleNewRowCount(state: ConsoleRowsState, index: TraceIndex, afterSeq: number): number {
+  let count = 0;
+  for (let i = state.rows.length - 1; i >= 0; i -= 1) {
+    const row = state.rows[i];
+    const first = row === undefined ? undefined : consoleRowStepIds(row)[0];
+    if (first === undefined) continue;
+    const entry = index.entry(first);
+    if (entry === undefined || entry.firstSeq <= afterSeq) break;
+    count += 1;
+  }
+  return count;
 }
 
 interface StepPiece {
@@ -57,6 +77,7 @@ interface Cache {
   findingsById: ReadonlyMap<FindingId, Finding>;
   pieces: ReadonlyMap<string, CachedPiece>;
   reads: ReadonlyMap<string, ReadsRow>;
+  folds: ReadonlyMap<string, GuardrailsRow>;
 }
 
 /** Per returned state, so ConsoleRowsState keeps the interface shape (deviation 12). */
@@ -223,9 +244,24 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
     for (const id of open.stepIds) byStep.set(id, at);
   };
 
+  // A run of warning guardrail flag lines (no other row between them) folds into one row; a critical one never does.
+  const foldable = (row: ConsoleRow): row is Extract<ConsoleRow, { kind: "finding" }> => {
+    if (row.kind !== "finding") return false;
+    const finding = findingsById.get(row.findingId as FindingId);
+    return finding?.ruleId === "guardrail_clamp" && finding.severity !== "critical";
+  };
+  const runs: { at: number; stepIds: string[]; findingIds: string[] }[] = [];
   const pushFindings = (stepId: string, findings: readonly ConsoleRow[]): void => {
     for (const row of findings) {
+      const run = runs.at(-1);
+      if (foldable(row) && run !== undefined && run.at === rows.length - 1) {
+        if (!run.stepIds.includes(stepId)) run.stepIds.push(stepId);
+        run.findingIds.push(row.findingId);
+        if (!byStep.has(stepId)) byStep.set(stepId, run.at);
+        continue;
+      }
       if (!byStep.has(stepId)) byStep.set(stepId, rows.length);
+      if (foldable(row)) runs.push({ at: rows.length, stepIds: [stepId], findingIds: [row.findingId] });
       rows.push(row);
     }
   };
@@ -266,7 +302,20 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
   }
   closeGroup();
 
+  const folds = new Map<string, GuardrailsRow>();
+  for (const run of runs) {
+    if (run.findingIds.length < 2) continue;
+    const key = `guardrails:${run.findingIds[0] ?? ""}`;
+    const old = cache?.folds.get(key);
+    const row: GuardrailsRow =
+      old !== undefined && sameStrings(old.stepIds, run.stepIds) && sameStrings(old.findingIds, run.findingIds)
+        ? old
+        : { kind: "guardrails", key, stepIds: run.stepIds, findingIds: run.findingIds };
+    folds.set(key, row);
+    rows[run.at] = row;
+  }
+
   const state: ConsoleRowsState = { rows, byStep };
-  CACHE.set(state, { session, findingsById, pieces, reads });
+  CACHE.set(state, { session, findingsById, pieces, reads, folds });
   return state;
 }
