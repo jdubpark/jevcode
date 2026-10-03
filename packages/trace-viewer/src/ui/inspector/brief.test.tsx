@@ -382,6 +382,30 @@ describe("Brief (spec §3.3, E4)", () => {
       expect(document.activeElement).toBe(document.querySelector('[data-region="main"]'));
     });
 
+    it("forgets focus that left the panel for nowhere (a click on empty space): a later switch leaves it alone", async () => {
+      const { h, panel } = setup();
+      const target = focusInPanel(panel);
+      act(() => target.blur());
+      expect(document.activeElement).toBe(document.body);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      act(() => h.store.dispatch({ type: "select", id: null, by: "shell" }));
+      expect(screen.getByRole("heading", { name: "Brief" })).toBeTruthy();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("a focusout fired while the switch removes the focused node (as Chrome may) keeps the handover", () => {
+      const { h, panel } = setup();
+      const target = focusInPanel(panel);
+      act(() => {
+        target.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+        fireEvent.keyDown(target, { code: "Escape", key: "Escape" });
+      });
+      expect(h.store.get().selection).toBeNull();
+      expect(document.activeElement).toBe(brief());
+    });
+
     it("leaves focus alone when it was outside the panel", () => {
       const { h } = setup();
       const main = document.querySelector<HTMLElement>('[data-region="main"]');
