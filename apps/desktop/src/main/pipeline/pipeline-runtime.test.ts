@@ -1857,7 +1857,19 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     db.upsertRepository({ id: "repo-ps", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
     db.createSession({ id: sessionId, repoId: "repo-ps", prompt: "demo" });
     const { emit } = collectEmit();
-    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {} });
+    // The explainer hook (lane 07 S-2) runs only at the end of a pass that completes: a stopped pass never reaches it.
+    let stopRequested = false;
+    let syncsAfterStop = 0;
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      onPipelineSync: () => {
+        if (stopRequested) syncsAfterStop += 1;
+      },
+    });
     const script = quickSmokeScript({ sessionId, repoId: "repo-ps", repoPath: dir, prompt: "demo" });
     try {
       // Without its agent_completed the session keeps running.
@@ -1901,6 +1913,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
         if (seqAtStop === -1) {
           seqAtStop = 0;
           setImmediate(() => {
+            stopRequested = true;
             void runtime.stopSession(sessionId);
             seqAtStop = db.getLatestSeq(sessionId);
           });
@@ -1917,6 +1930,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
 
       expect(seqAtStop).toBeGreaterThan(0);
       expect(interrupt).not.toHaveBeenCalled();
+      expect(syncsAfterStop).toBe(0);
       expect(db.getLatestSeq(sessionId)).toBe(seqAtStop);
       expect(db.getSession(sessionId)?.state).toBe("paused");
     } finally {
@@ -2055,6 +2069,44 @@ describe("PipelineRuntime onPipelineSync", () => {
     expect(last?.decisions).toEqual([]);
     await runtime.stopSession("sess_sync");
     db.close();
+  });
+
+  it("is not called for a pass that throws; the next pass, which completes, calls it once", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const syncs: PipelineSyncSnapshot[] = [];
+    const logs: string[] = [];
+    let armed = false;
+    const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+    db.upsertChangeUnit = ((unit) => {
+      if (armed) {
+        armed = false;
+        throw new Error("disk full");
+      }
+      return upsertChangeUnit(unit);
+    }) as typeof db.upsertChangeUnit;
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: (_repoPath, sync) => void syncs.push(sync), log: (message) => void logs.push(message),
+    });
+    try {
+      await runtime.startSession({ sessionId: "sess_fail", repoId: "repo_fail", repoPath: "/work/fail", prompt: "p", agentMode: "replay" });
+      await runtime.syncAll();
+      const before = syncs.length;
+      runtime.ingestRecord("sess_fail", {
+        type: "file_changed", repoId: "repo_fail", sessionId: "sess_fail", path: "src/a.ts", kind: "modified", ts: "2026-10-02T10:00:00.000Z",
+      });
+      // The pass's flush rebuilds the projection, and its unit write throws.
+      armed = true;
+      await runtime.syncAll();
+      expect(logs.some((message) => message.includes("sync failed") && message.includes("disk full"))).toBe(true);
+      expect(syncs).toHaveLength(before);
+      await runtime.syncAll();
+      expect(syncs).toHaveLength(before + 1);
+      expect(syncs.at(-1)?.changeUnits.flatMap((unit) => unit.files)).toEqual(["src/a.ts"]);
+    } finally {
+      await runtime.stopSession("sess_fail");
+      db.close();
+    }
   });
 
   it("keeps syncing when the hook throws", async () => {
