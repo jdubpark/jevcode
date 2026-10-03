@@ -184,6 +184,17 @@ describe("answer_decision must name one of the decision's options (spec §4.3)",
     memory.close();
   });
 
+  it("rejects an empty answer to a decision with no options (final review B M-2)", async () => {
+    const memory = seeded();
+    memory.upsertDecision({ ...DECISION, id: "dec_no_options", options: [] });
+    const { runtime, calls } = stubRuntime();
+    await expect(
+      dispatchAction(makeDeps(memory, runtime), "answer_decision", { decisionId: "dec_no_options", decision: {} }),
+    ).rejects.toMatchObject({ code: "INVALID_ACTION_PARAMS" } satisfies Partial<IpcError>);
+    expect(calls).toEqual([]);
+    memory.close();
+  });
+
   it("passes a real option through", async () => {
     const memory = seeded();
     const { runtime, calls } = stubRuntime();

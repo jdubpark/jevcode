@@ -8,7 +8,11 @@ import { IpcError } from "../shared/errors.js";
 
 export type SessionStatePayload = z.infer<typeof SessionStatePayloadSchema>;
 
-/** changeUnitCount: the session's change units when the caller already holds them (the pipeline's unit store). */
+/**
+ * changeUnitCount: the session's change units when the caller already holds them (the pipeline's unit store).
+ * Otherwise the counts come from SQL COUNT(*): session:switch must not read and parse every unit and decision of the
+ * session it opens (final review B M-3: 32 ms per listChangeUnits at 2,937 units).
+ */
 export function buildSessionState(
   db: JevcodeDb,
   sessionId: string,
@@ -22,8 +26,8 @@ export function buildSessionState(
   return {
     sessionId,
     state: session.state,
-    changeUnitCount: changeUnitCount ?? db.listChangeUnits(sessionId).length,
-    decisionCount: db.listDecisions(sessionId).length,
+    changeUnitCount: changeUnitCount ?? db.getChangeUnitCount(sessionId),
+    decisionCount: db.getDecisionCount(sessionId),
     ...(agentThreadId !== undefined && agentThreadId !== null
       ? { agentThreadId }
       : {}),

@@ -42,7 +42,8 @@ export interface JevStageDeps {
    * loads every unit, decision, validation and graph row from the database (lane 03 PL-2).
    */
   snapshot?: ReturnType<PipelineCoordinator["snapshot"]>;
-  /** Awaited before each batch and each unit; the sync pass yields to the event loop there once its slice is spent. */
+  /** Awaited before each batch, each unit and each projection row; the sync pass yields to the event loop there once
+   *  its slice is spent, and it throws once the session is stopped. */
   pace?: () => Promise<void>;
 }
 
@@ -247,6 +248,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         }),
         pass: "B",
       };
+      // As in Pass A: a session stopped while project() was in flight writes no row (final review B M-1).
+      await deps.pace?.();
       record(projectionLog);
       logs.push(projectionLog);
 

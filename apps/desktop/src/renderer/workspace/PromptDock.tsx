@@ -168,10 +168,11 @@ export function PromptDock(props: PromptDockProps) {
           <button
             type="button"
             className="dock-mode"
-            aria-label="Instruction timing"
+            // The name carries the current mode, which the label would otherwise hide (final review C M-2).
+            aria-label={`Instruction timing: ${mode === "steer" ? "Steer" : "Queue"}`}
             onClick={() => setMode((current) => (current === "steer" ? "queue" : "steer"))}
           >
-            {mode === "steer" ? "Steer" : "Queue"} ▾
+            {mode === "steer" ? "Steer" : "Queue"} <span aria-hidden="true">▾</span>
           </button>
         )}
         <span className="dock-shortcut">⌘↵ send</span>

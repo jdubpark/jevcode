@@ -10,7 +10,7 @@ import type {
   TraceRow,
 } from "@jevcode/contracts";
 import { isTraceRowType } from "@jevcode/contracts";
-import { NARRATOR_MODEL, NarratorUnavailableError, plainTextViolation } from "@jevcode/jev-router";
+import { NARRATOR_MODEL, NarratorUnavailableError, createNarratorClient, plainTextViolation } from "@jevcode/jev-router";
 import type {
   DecisionWhyInput,
   DescribedComponent,
@@ -761,6 +761,38 @@ describe("session explainer: narrator off, offline or hostile", () => {
     // After a valid answer, schema-invalid answers keep the rule story and never start a backoff.
     const healthy = await run(true);
     expect(healthy.calls).toEqual(triggers);
+  });
+
+  it("neither records nor counts an empty story input as an answer, so the schema brake still holds (final review A M-1)", async () => {
+    const w = new World();
+    const asked: number[] = [];
+    // The real client: it answers an empty input itself (no network) and sends the rest to this provider, which
+    // never returns schema-valid JSON.
+    const client = createNarratorClient({
+      complete: async () => {
+        asked.push(w.now);
+        return { json: undefined, model: NARRATOR_MODEL, stopReason: "end_turn", usage: { inputTokens: 800, outputTokens: 0 } };
+      },
+    });
+    const explainer = createSessionExplainer(w.deps(client));
+    const t0 = w.now;
+    // A unit closes before any step, decision or touched component exists: the story input is empty.
+    const closed = w.unit("u1", ["src/limiter/index.ts"], "validated");
+    explainer.onPipelineSync(w.sync([closed], []));
+    await explainer.idle();
+    expect(w.calls).toEqual([]);
+    expect(w.logs.filter((event) => event.kind === "narrator")).toEqual([]);
+
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    for (const offset of [20_000, 40_000, 60_000, 80_000]) {
+      await w.advance(t0 + offset - w.now, explainer);
+      w.tests(0);
+      explainer.onPipelineSync(w.sync([closed], []));
+      await explainer.idle();
+    }
+    // No valid answer came, so the third schema-invalid one in a row backs off: the trigger at 80 s waits.
+    expect(asked.map((at) => at - t0)).toEqual([20_000, 40_000, 60_000]);
+    expect(w.calls.map((call) => call.error)).toEqual(["schema", "schema", "schema"]);
   });
 
   it("builds every call record through buildNarratorCallRecord, so provider text is capped", async () => {
