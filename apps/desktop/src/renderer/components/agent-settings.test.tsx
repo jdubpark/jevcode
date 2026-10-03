@@ -61,6 +61,17 @@ function note(): string {
 }
 
 describe("AgentSettings: what leaves the machine (spec §10, E15)", () => {
+  it("points aria-controls only at a body that is rendered (final review C M-2)", () => {
+    render(settings(true, "on"));
+    const toggle = screen.getByRole("button", { name: "Agent settings" });
+    // Collapsed: the body is not in the DOM, so the toggle names no id.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(toggle);
+    const controls = toggle.getAttribute("aria-controls") ?? "";
+    expect(document.getElementById(controls)?.contains(screen.getByRole("checkbox", { name: "Explain with a model" }))).toBe(true);
+  });
+
   it("keeps the setting and its note inside the collapsed Agent settings row", () => {
     render(settings(true, "on"));
     expect(screen.queryByRole("checkbox", { name: "Explain with a model" })).toBeNull();

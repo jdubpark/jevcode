@@ -302,11 +302,7 @@ export function SurfacesView({ active }: ViewProps) {
                 <div className="surface-chrome">
                   <div className="surface-heading">
                     <span className={`surface-kind surface-kind-${meta.group}`}>{meta.label}</span>
-                    <span
-                      className="surface-title"
-                      title={displayUntrusted(meta.title)}
-                      aria-label={displayUntrusted(meta.title)}
-                    >
+                    <span className="surface-title" title={displayUntrusted(meta.title)}>
                       {displayUntrusted(meta.title)}
                     </span>
                   </div>

@@ -115,7 +115,9 @@ describe("Surfaces host view (spec E3)", () => {
     expect(titleEl.textContent).toBe(displayUntrusted(title));
     expect(titleEl.textContent).not.toContain("\u202E");
     expect(titleEl.getAttribute("title")).toBe(displayUntrusted(title));
-    expect(titleEl.getAttribute("aria-label")).toBe(displayUntrusted(title));
+    // A generic span takes no name (aria-label is prohibited on it); its text and tooltip carry the title
+    // (final review C M-2).
+    expect(titleEl.hasAttribute("aria-label")).toBe(false);
   });
 
   it("renders command output through displayUntrusted, keeping line breaks", () => {
