@@ -253,6 +253,24 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(onSelect).toHaveBeenCalledWith(session.entities.find((entity) => entity.path === paths[6])?.stepIds.at(-1));
   });
 
+  it("once units exist, lists the edited files no unit holds yet under them (lane triage t3)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add OAuth" });
+    unitRows(b);
+    b.agent({ type: "file_changed", path: "src/loose.ts", callId: "edit_loose" });
+    b.fact({ type: "git_hunk", file: "src/loose.ts", added: 5, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false });
+    const session = foldLive(b, "running");
+    expect(session.chapters.length).toBeGreaterThan(0);
+    expect(session.entities.find((entity) => entity.path === "src/loose.ts")?.chapterIds).toEqual([]);
+    const { onSelect } = renderSession(session);
+    expect(within(screen.getByRole("list", { name: "Changes so far" })).getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByText("1 file edited · not grouped yet")).toBeTruthy();
+    const loose = within(screen.getByRole("list", { name: "Files edited" })).getAllByRole("button");
+    expect(loose.map((row) => row.getAttribute("aria-label"))).toEqual(["src/loose.ts, +5 −1"]);
+    fireEvent.click(loose[0] as HTMLElement);
+    expect(onSelect).toHaveBeenCalledWith(session.entities.find((entity) => entity.path === "src/loose.ts")?.stepIds.at(-1));
+  });
+
   it("gives each rendered Brief its own heading ids", () => {
     const { model } = oauthModel();
     const session = foldFixture("oauth");
