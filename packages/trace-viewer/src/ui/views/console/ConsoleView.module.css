@@ -292,6 +292,15 @@
   color: var(--tv-ink-2);
 }
 
+.members li {
+  padding: 3px 0;
+}
+
+.members button {
+  max-width: 100%;
+  text-align: left;
+}
+
 .chev {
   display: inline-grid;
   place-items: center;

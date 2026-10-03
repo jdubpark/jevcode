@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { Activity, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceRow } from "@jevcode/contracts";
@@ -52,6 +52,8 @@ async function frames(): Promise<void> {
 interface Mounted {
   h: Harness;
   update(next: TraceSession): void;
+  /** Only with `activity`: shows or hides the Console under <Activity>, the way the Shell's ViewSlot does. */
+  setMode(mode: "visible" | "hidden"): void;
   scroller(): HTMLElement;
 }
 
@@ -77,9 +79,10 @@ function SessionApplier({ session, index, store, children }: { session: TraceSes
 }
 
 /** The Console inside the providers the Shell gives it; update() applies a new commit the way the Shell does. */
-function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost } = {}): Mounted {
+function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost; activity?: boolean } = {}): Mounted {
   const h = createHarness(session, options);
   let view: SessionView = h.view;
+  let mode: "visible" | "hidden" = "visible";
   const tree = (current: SessionView): ReactElement => (
     <ViewStoreContext.Provider value={h.store}>
       <SessionApplier session={current.session} index={current.index} store={h.store}>
@@ -87,7 +90,13 @@ function mountConsole(session: TraceSession, options: HarnessOptions & { host?: 
           <ViewerHostContext.Provider value={options.host ?? {}}>
             <ViewPortRegistryContext.Provider value={h.registry}>
               <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
-                <ConsoleView active />
+                {options.activity === true ? (
+                  <Activity mode={mode}>
+                    <ConsoleView active={mode === "visible"} />
+                  </Activity>
+                ) : (
+                  <ConsoleView active />
+                )}
               </LiveRegion>
             </ViewPortRegistryContext.Provider>
           </ViewerHostContext.Provider>
@@ -101,6 +110,12 @@ function mountConsole(session: TraceSession, options: HarnessOptions & { host?: 
     update(next) {
       const index = buildTraceIndex(next, view.index);
       view = { ...view, session: next, index, summary: next.meta };
+      act(() => {
+        result.rerender(tree(view));
+      });
+    },
+    setMode(next) {
+      mode = next;
       act(() => {
         result.rerender(tree(view));
       });
@@ -554,5 +569,85 @@ describe("ConsoleView fix round 1", () => {
     });
     expect(calls("pnpm dev")).toBeGreaterThan(running);
     expect(calls("a steady message")).toBe(steady);
+  });
+});
+
+describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
+  it("a Console hidden under <Activity> repositions to the tail when shown again during a Live drip", async () => {
+    const b = messages(60);
+    const first = live(b);
+    const m = mountConsole(first, { activity: true, state: { follow: true, loaded: true, lastSeenSeq: first.loadedThroughSeq } });
+    await frames();
+    m.setMode("hidden");
+    await frames();
+    for (let i = 0; i < 5; i += 1) b.agent({ type: "agent_message", role: "assistant", text: `dripped ${i}` });
+    m.update(live(b));
+    await frames();
+    const before = layout.scrollCalls.length;
+    m.setMode("visible");
+    await frames();
+    expect(layout.scrollCalls.length).toBeGreaterThan(before);
+  });
+
+  function guardrailSession(): { session: TraceSession; stepIds: string[] } {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const seqs = [b.jev({ id: "j1", clamps: ["security_path"] }), b.jev({ id: "j2", clamps: ["security_path"] })];
+    b.agent({ type: "agent_message", role: "assistant", text: "done" });
+    const session = live(b);
+    const stepIds = seqs.map((seq) => session.steps.find((step) => step.firstSeq === seq)?.id ?? "");
+    return { session, stepIds };
+  }
+
+  it("expands the folded Jev review row to its member flag lines, each selectable", async () => {
+    const { session, stepIds } = guardrailSession();
+    const m = mountConsole(session, { state: { follow: false, loaded: true } });
+    await frames();
+    const feed = within(screen.getByRole("feed", { name: "Console" }));
+    expect(feed.getByText("Jev review · 2 guardrails")).toBeTruthy();
+    expect(feed.queryAllByRole("button", { name: /^Flag:/ })).toHaveLength(0);
+    fireEvent.click(feed.getByRole("button", { name: "Expand guardrails" }));
+    await frames();
+    const members = feed.getAllByRole("button", { name: /^Flag:/ });
+    expect(members).toHaveLength(2);
+    fireEvent.click(members[1] as HTMLElement);
+    expect(m.h.store.get().selection).toBe(stepIds[1]);
+    fireEvent.click(members[0] as HTMLElement);
+    expect(m.h.store.get().selection).toBe(stepIds[0]);
+  });
+
+  it("an Outline or Brief click on the already-selected item reveals it in the Console", async () => {
+    const b = messages(120);
+    const session = live(b);
+    const target = session.steps[100];
+    if (target === undefined) throw new Error("the session is too short");
+    const m = mountConsole(session, { state: { follow: false, loaded: true } });
+    await frames();
+    act(() => m.h.store.dispatch({ type: "select", id: target.id, by: "hybrid" }));
+    await frames();
+    const scroller = m.scroller();
+    act(() => {
+      fireEvent.wheel(scroller, { deltaY: -400 });
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+    });
+    await frames();
+    const before = layout.scrollCalls.length;
+    act(() => m.h.store.dispatch({ type: "select", id: target.id, by: "shell" }));
+    await frames();
+    expect(m.h.store.get().selection).toBe(target.id);
+    expect(layout.scrollCalls.length).toBeGreaterThan(before);
+  });
+
+  it("announces new Console rows as rows, not steps, while Hybrid keeps its wording", async () => {
+    const b = messages(60);
+    const first = live(b);
+    const m = mountConsole(first, { state: { follow: false, loaded: true, lastSeenSeq: first.loadedThroughSeq } });
+    await frames();
+    b.agent({ type: "agent_message", role: "assistant", text: "late" });
+    b.agent({ type: "agent_message", role: "assistant", text: "late 2" });
+    m.update(live(b));
+    await frames();
+    expect(screen.getByRole("button", { name: /2 new/ })).toBeTruthy();
   });
 });

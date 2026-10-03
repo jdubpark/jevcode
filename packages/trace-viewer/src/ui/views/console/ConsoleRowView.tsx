@@ -43,6 +43,7 @@ export function isExpandable(row: ConsoleRow): boolean {
       return row.outputTail.length >= CONSOLE_TAIL_LINES;
     case "reasoning":
     case "reads":
+    case "guardrails":
       return true;
     case "tests":
       return row.failing.length > FAILING_SHOWN;
@@ -70,8 +71,9 @@ export function estimateConsoleRow(row: ConsoleRow | undefined, expanded: Readon
     case "tool":
     case "edit":
     case "finding":
-    case "guardrails":
       return 24;
+    case "guardrails":
+      return 24 + (open ? 24 * row.findingIds.length : 0);
     case "command":
       return 28 + 18 * row.outputTail.length + (open ? 220 : 0);
     case "reads":
@@ -138,6 +140,8 @@ export interface ConsoleRowViewProps {
   payloads(seqs: readonly number[]): Promise<TraceRow[]>;
   onToggle(): void;
   onOpenDiff(): void;
+  /** A member flag line of a folded guardrails row was picked. */
+  onSelectStep?(stepId: string): void;
   onAnswer(decisionId: string, optionId: string): void;
 }
 
@@ -488,7 +492,8 @@ function ConsoleRowViewImpl(props: ConsoleRowViewProps): JSX.Element {
       );
     }
     case "guardrails":
-      // Spec §7.6.3's Jev review group, as the Hybrid spine labels it: warnings only, so no red.
+      // Spec §7.6.3's Jev review group, as the Hybrid spine labels it: warnings only, so no red. Expanded, it lists
+      // the member flag lines; each is selectable and selects its own step.
       return (
         <div className={styles.row}>
           <span className={styles.glyph} aria-hidden="true">
@@ -497,6 +502,31 @@ function ConsoleRowViewImpl(props: ConsoleRowViewProps): JSX.Element {
           <p id={lineId} className={styles.flag}>
             {`Jev review · ${row.findingIds.length} guardrails`}
           </p>
+          <span className={styles.meta}>
+            <Chevron open={expanded} label="guardrails" onToggle={onToggle} />
+          </span>
+          {expanded ? (
+            <ul className={`${styles.detail} ${styles.members}`}>
+              {row.findingIds.map((findingId, position) => {
+                const finding = index.findingsById.get(findingId as FindingId);
+                const label = finding === undefined ? "Finding" : `${FINDING_TITLE[finding.ruleId]} · ${finding.severity}`;
+                const stepId = row.findingStepIds[position] ?? row.stepIds[0] ?? "";
+                return (
+                  <li key={findingId}>
+                    <button
+                      type="button"
+                      className={`${styles.link} ${styles.flag}`}
+                      tabIndex={-1}
+                      aria-label={`Flag: ${label}`}
+                      onClick={() => props.onSelectStep?.(stepId)}
+                    >
+                      {label}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
         </div>
       );
     case "summary":
