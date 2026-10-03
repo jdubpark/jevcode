@@ -30,7 +30,6 @@ import {
   OverviewIndex,
   applyFileChanges,
   hasFileChanges,
-  nextTurn,
   runSliced,
   scanRepoModel,
   type BuiltOverview,
@@ -359,7 +358,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       persistedKey = pending.key;
       const snapshot = pending.snapshot;
       writing = writing.then(async () => {
-        await nextTurn();
+        await slicer.yield();
         if (!disposed) persist(snapshot);
       });
     }
@@ -388,7 +387,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     if (wait === 0) {
       queuedWrites.add(sessionId);
       writing = writing.then(async () => {
-        await nextTurn();
+        await slicer.yield();
         queuedWrites.delete(sessionId);
         writeNow(sessionId);
       });
@@ -587,7 +586,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       buildFailed(repo, error);
       return;
     }
-    await nextTurn();
+    await slicer.yield();
     if (!stale()) publishBuilt(repo, overview);
   }
 
@@ -609,7 +608,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     if (result === null || stale()) return;
     index = result.value;
     // The build's last slice ran up to here; the overview gets a turn of its own.
-    await nextTurn();
+    await slicer.yield();
     if (!stale()) await publishIndex(repo, result.value, stale);
   }
 

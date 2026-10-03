@@ -27,6 +27,7 @@ import {
   type NarrationContext,
   type NarrationSeam,
 } from "./explainer-stage.js";
+import type { MainSlicer } from "./main-slicer.js";
 
 const REPO_ID = "repo_explainer";
 const REPO_ROOT = "/work/fx";
@@ -291,6 +292,32 @@ describe("ExplainerStage scan and rows (spec §6.1, §6.5)", () => {
     await stage.whenIdle();
     expect(h.calls.scan).toBe(1);
     expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+  });
+});
+
+describe("ExplainerStage turns through the main slicer (lane 07 PL-3 review)", () => {
+  it("gives the overview snapshot write, its persist and the published build their turns through the slicer", async () => {
+    // A slicer whose budget is never spent: every yield the stage makes is one of its own steps' turns.
+    const yields: number[] = [];
+    const slicer: MainSlicer = {
+      budgetMs: 20,
+      turns: 0,
+      elapsed: () => 0,
+      spent: () => false,
+      yield: () => {
+        yields.push(yields.length);
+        return new Promise<void>((resolve) => setImmediate(resolve));
+      },
+    };
+    const h = harness({ slicer });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    // In order: the build's turn before its overview, the overview's turn before publishBuilt, and the persist.
+    expect(yields.length).toBeGreaterThanOrEqual(3);
+    // Same rows and state as before: one schema-valid row and the stored overview.
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    expect(h.db.getOverviewState(REPO_ROOT)?.snapshot.components.length).toBeGreaterThan(0);
   });
 });
 
