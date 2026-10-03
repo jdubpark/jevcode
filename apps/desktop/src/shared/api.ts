@@ -156,6 +156,12 @@ export interface JevcodeApi {
     open(sessionId: string): Promise<void>;
     /** Hands a review note to the main window's composer. Trace windows only; never sends an instruction. */
     requestChanges(request: { sessionId: string; selected: string; text: string }): Promise<void>;
+    /** One-way hint: rows up to lastSeq are stored for sessionId (spec §7). Carries no content. */
+    onRowsAvailable(listener: (payload: { sessionId: string; lastSeq: number }) => void): () => void;
+  };
+  overview: {
+    /** "Codebase map unavailable · Retry" (spec §6.6). Main window only; lane 04 (M-6) registers the handler. */
+    rescan(repoRoot: string): Promise<void>;
   };
   on<C extends FromMainChannelName>(
     channel: C,
@@ -346,6 +352,12 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
           selected: request.selected,
           text: request.text,
         });
+      },
+      onRowsAvailable: (listener) => on("trace:rowsAvailable", listener),
+    },
+    overview: {
+      rescan: async (repoRoot) => {
+        await invoke("overview:rescan", { repoRoot });
       },
     },
     on,

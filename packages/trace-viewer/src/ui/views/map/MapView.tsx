@@ -535,7 +535,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
             data-tv-world=""
             data-level={level}
             role="group"
-            aria-label={`Codebase map, ${layout.cards.length.toLocaleString("en-US")} components`}
+            aria-label={`Codebase map, ${layout.cards.length.toLocaleString("en-US")} ${layout.cards.length === 1 ? "component" : "components"}`}
             onKeyDown={onKeyDown}
             onFocus={onCardFocus}
             style={{ width: layout.bounds.w, height: layout.bounds.h }}

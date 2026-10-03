@@ -447,3 +447,19 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
     db.close();
   });
 });
+
+describe("main-window host actions are checked in main (spec §4.3, §10)", () => {
+  it("a trace window cannot answer a decision", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime, calls } = stubRuntime();
+    const handlers = registerAndCapture(makeDeps(db, runtime, state, () => "trace"));
+    await expect(
+      handlers.get(RendererToMainChannels.actionInvoke)!(TRUSTED_EVENT, {
+        action: "answer_decision",
+        params: { decisionId: "dec_1", decision: { decision: "x" } },
+      }),
+    ).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    expect(calls).toEqual([]);
+    db.close();
+  });
+});

@@ -84,7 +84,12 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
       <div className={styles.headRow}>
         <Icon name="view-map" size={16} />
         <span className={styles.headline}>{headline.count}</span>
-        {headline.languages === null ? null : <span className={styles.languages}>{headline.languages}</span>}
+        {/* The row never wraps; in a narrow Map column the languages give way with an ellipsis, so the toggle fits. */}
+        {headline.languages === null ? null : (
+          <span className={styles.languages} title={headline.languages}>
+            {headline.languages}
+          </span>
+        )}
         {sentences === null ? null : (
           <button type="button" className={styles.toggle} aria-expanded={open} aria-controls={open ? narrativeId : undefined} onClick={() => setOpen((value) => !value)}>
             <span>Overview</span>

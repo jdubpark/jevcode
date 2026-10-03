@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   applyPatch,
@@ -326,5 +326,80 @@ describe("applyPatch", () => {
     expect(patched.importance).toBe(0.5);
     expect(patched.title).toBe("t");
     expect(patched.category).toBe("implementation");
+  });
+});
+
+describe("PipelineCoordinator rebuild retry (lane 03 PL-2)", () => {
+  it("rebuilds on the next flush after a rebuild threw, with no new record", () => {
+    const stores = createInMemoryStores();
+    const upsert = stores.units.upsert.bind(stores.units);
+    let throwNext = false;
+    stores.units.upsert = (unit) => {
+      if (throwNext) {
+        throwNext = false;
+        throw new Error("disk full");
+      }
+      upsert(unit);
+    };
+    const coordinator = new PipelineCoordinator({ stores });
+    coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+    throwNext = true;
+    expect(() => coordinator.flush()).toThrow("disk full");
+    expect(stores.units.all()).toHaveLength(0);
+
+    coordinator.flush();
+    expect(stores.units.all().map((unit) => unit.files)).toEqual([["src/a.ts"]]);
+  });
+
+  it("keeps the record whose ingest flushed a window and threw: the next flush writes both records' units", () => {
+    const stores = createInMemoryStores();
+    const upsert = stores.units.upsert.bind(stores.units);
+    let throwNext = false;
+    stores.units.upsert = (unit) => {
+      if (throwNext) {
+        throwNext = false;
+        throw new Error("disk full");
+      }
+      upsert(unit);
+    };
+    const coordinator = new PipelineCoordinator({ stores });
+    coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+    throwNext = true;
+    // Two seconds later: past the 500 ms window, so this ingest flushes a.ts and its rebuild throws.
+    expect(() => coordinator.ingest(hunk("src/b.ts", tsOf(0, 2)))).toThrow("disk full");
+    expect(stores.units.all()).toHaveLength(0);
+
+    coordinator.flush();
+    expect(stores.units.all().flatMap((unit) => unit.files).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("reports a rebuild that throws in the debounce timer instead of letting it escape, and the next flush runs it", () => {
+    vi.useFakeTimers();
+    try {
+      const stores = createInMemoryStores();
+      const upsert = stores.units.upsert.bind(stores.units);
+      let throwNext = false;
+      stores.units.upsert = (unit) => {
+        if (throwNext) {
+          throwNext = false;
+          throw new Error("disk full");
+        }
+        upsert(unit);
+      };
+      const errors: unknown[] = [];
+      const coordinator = new PipelineCoordinator({ stores, clock: () => 0, maxBatchSize: 1, onRebuildError: (error) => errors.push(error) });
+      coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+      // The second record flushes the first window; at clock 0 the rebuild is debounced onto the timer.
+      coordinator.ingest(hunk("src/b.ts", tsOf(1)));
+      throwNext = true;
+      expect(() => vi.advanceTimersByTime(25)).not.toThrow();
+      expect(errors).toHaveLength(1);
+      expect(stores.units.all()).toHaveLength(0);
+
+      coordinator.flush();
+      expect(stores.units.all().flatMap((unit) => unit.files).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

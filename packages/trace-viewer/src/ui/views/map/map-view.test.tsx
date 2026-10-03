@@ -687,6 +687,28 @@ describe("MapView (spec §3.4, E13)", () => {
     }
   });
 
+  it("cuts the languages with an ellipsis, never the Overview toggle, in a narrow Map column (lane 03 fix wave minor 2)", () => {
+    const overview = buildOverviewModel(
+      overviewSnapshot({
+        components: [{ rootPath: "apps/web", name: "web", role: "ui" }],
+        languages: ["TypeScript", "JavaScript", "Markdown"],
+        narrative: { provenance: "model", sentences: [{ text: "web is the app.", citations: [{ kind: "component", id: componentId("apps/web") }] }] },
+      }),
+      1,
+    );
+    renderWithViewer(<MapHeader overview={overview} onSelectComponent={() => undefined} />, { session: null });
+    // The whole list stays readable as the tooltip when the row cuts it.
+    expect(screen.getByText("TypeScript · JavaScript · Markdown").getAttribute("title")).toBe("TypeScript · JavaScript · Markdown");
+    // jsdom has no layout: the row's rules are what keep the toggle whole (the dev-host smoke measures it at 396 px).
+    const css = readFileSync(nodePath.join(nodePath.dirname(fileURLToPath(import.meta.url)), "MapView.module.css"), "utf8");
+    const rule = (selector: string): string => new RegExp(`\\n\\.${selector} \\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+    expect(rule("languages")).toMatch(/min-width: 0;/);
+    expect(rule("languages")).toMatch(/overflow: hidden;/);
+    expect(rule("languages")).toMatch(/text-overflow: ellipsis;/);
+    expect(rule("toggle")).toMatch(/flex: none;/);
+    expect(rule("headline")).toMatch(/flex: none;/);
+  });
+
   it("each header's Overview toggle controls its own narrative, and only while it is open", async () => {
     const user = userEvent.setup();
     const overview = buildOverviewModel(

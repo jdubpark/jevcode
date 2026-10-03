@@ -309,3 +309,12 @@ describe("trace.html", () => {
     expect(entry).not.toMatch(/dangerouslySetInnerHTML/);
   });
 });
+
+describe("runSmoke, workspace phase", () => {
+  it("JEVCODE_SMOKE_WORKSPACE=1 without JEVCODE_SMOKE_REPO fails instead of skipping", () => {
+    const run = harness({ JEVCODE_SMOKE_WORKSPACE: "1" });
+    run.main.emit("did-finish-load");
+    expect(run.err[0]).toMatch(/^SMOKE_FAIL: JEVCODE_SMOKE_WORKSPACE=1 needs JEVCODE_SMOKE_REPO/);
+    expect(run.result).toEqual({ succeeded: 0, failed: 1 });
+  });
+});

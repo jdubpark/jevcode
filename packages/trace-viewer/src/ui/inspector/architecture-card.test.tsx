@@ -103,6 +103,12 @@ describe("Brief architecture part (spec §3.3 item 3)", () => {
     expect(rescanOverview).toHaveBeenCalledTimes(1);
   });
 
+  it("counts one component in the singular", () => {
+    renderPanel(overviewSnapshot({ components: [{ rootPath: "apps/web", role: "ui" }] }));
+    expect(part().textContent ?? "").toContain("1 component · 1 touched");
+    expect(part().textContent ?? "").not.toContain("1 components");
+  });
+
   it("no snapshot: the quiet empty state, no thumbnail and no alert", () => {
     renderPanel(null);
     expect(screen.getByText("Appears here once this repository is scanned.")).toBeTruthy();

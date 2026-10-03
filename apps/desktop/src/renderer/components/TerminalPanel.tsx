@@ -3,6 +3,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 
 import { getBridge } from "../bridge.js";
+import { XTERM_LIGHT_THEME } from "../theme.js";
 
 interface TerminalPanelProps {
   sessionId: string | null;
@@ -19,6 +20,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
   useEffect(() => {
     if (!containerRef.current) return;
     const term = new Terminal({
+      theme: XTERM_LIGHT_THEME,
       convertEol: true,
       scrollback: 5000,
       cursorBlink: true,

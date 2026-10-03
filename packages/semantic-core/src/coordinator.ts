@@ -49,6 +49,8 @@ export interface CoordinatorOptions {
   idleGapMs?: number;
   nowIso?: () => string;
   rebuildDebounceMs?: number;
+  /** A rebuild run by the debounce timer that throws is reported here instead of escaping the timer; the next flush() runs it again. */
+  onRebuildError?: (error: unknown) => void;
 }
 
 export interface PipelineSnapshot {
@@ -94,6 +96,10 @@ export class PipelineCoordinator {
   private readonly rebuildDebounceMs: number;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRebuildAtMs = 0;
+  // Records were drained since the last rebuild that returned. Cleared only when rebuild() returns, so a rebuild that
+  // throws partway (a store write failing) is run again by the next flush(), with no new record needed (lane 03 PL-2).
+  private rebuildPending = false;
+  private readonly onRebuildError: ((error: unknown) => void) | undefined;
 
   constructor(options: CoordinatorOptions = {}) {
     this.clock = options.clock ?? (() => Date.now());
@@ -102,6 +108,7 @@ export class PipelineCoordinator {
     this.idleGapMs = options.idleGapMs ?? DEFAULT_IDLE_GAP_MS;
     this.nowIso = options.nowIso ?? (() => new Date().toISOString());
     this.rebuildDebounceMs = options.rebuildDebounceMs ?? 25;
+    this.onRebuildError = options.onRebuildError;
     const provided = options.stores ?? {};
     const defaults = createInMemoryStores();
     this.stores = {
@@ -123,7 +130,16 @@ export class PipelineCoordinator {
         firstTs !== null && currentTs !== null
           ? currentTs - firstTs >= this.batchWindowMs
           : firstTs === null && currentTs === null && this.clock() - this.bufferStartClock >= this.batchWindowMs;
-      if (overWindow || this.buffer.length >= this.maxBatchSize) this.flushWindow();
+      if (overWindow || this.buffer.length >= this.maxBatchSize) {
+        // Buffered even when the flush's rebuild throws: rebuildPending stays set, so the next flush() drains this
+        // record and runs the rebuild again (lane 03 fix wave I-2). The error still reaches the caller.
+        try {
+          this.flushWindow();
+        } finally {
+          this.buffer.push(record);
+        }
+        return;
+      }
     } else {
       this.bufferStartClock = this.clock();
     }
@@ -135,8 +151,8 @@ export class PipelineCoordinator {
     if (this.rebuildTimer !== null) {
       clearTimeout(this.rebuildTimer);
       this.rebuildTimer = null;
-      this.rebuildNow();
     }
+    if (this.rebuildPending) this.rebuildNow();
   }
 
   applyLabelResult(result: UnitLabelResult): boolean {
@@ -182,6 +198,7 @@ export class PipelineCoordinator {
   private flushWindow(): void {
     if (this.buffer.length === 0) return;
     const records = this.buffer.splice(0, this.buffer.length);
+    this.rebuildPending = true;
     this.drain(records);
     this.requestRebuild();
   }
@@ -189,6 +206,7 @@ export class PipelineCoordinator {
   // Trailing-edge rebuild debounce: at most one rebuild per burst of flushes;
   // the projection recomputes once a short trailing idle elapses.
   private requestRebuild(): void {
+    this.rebuildPending = true;
     const now = this.clock();
     if (now - this.lastRebuildAtMs >= this.rebuildDebounceMs) {
       this.rebuildNow();
@@ -197,7 +215,15 @@ export class PipelineCoordinator {
     if (this.rebuildTimer !== null) return;
     const timer = setTimeout(() => {
       this.rebuildTimer = null;
-      this.rebuildNow();
+      if (this.onRebuildError === undefined) {
+        this.rebuildNow();
+        return;
+      }
+      try {
+        this.rebuildNow();
+      } catch (error) {
+        this.onRebuildError(error);
+      }
     }, this.rebuildDebounceMs);
     timer.unref?.();
     this.rebuildTimer = timer;
@@ -206,6 +232,7 @@ export class PipelineCoordinator {
   private rebuildNow(): void {
     this.lastRebuildAtMs = this.clock();
     this.rebuild();
+    this.rebuildPending = false;
   }
 
   private drain(records: readonly PipelineRecord[]): void {

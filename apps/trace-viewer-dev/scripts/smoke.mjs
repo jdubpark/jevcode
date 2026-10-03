@@ -16,6 +16,11 @@ const WIDTHS = [1440, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
 const MAP_OVERVIEW = "jevcode";
 const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
+/**
+ * The main window's viewer column at its 880 px minimum width (MAIN_WINDOW_MIN_WIDTH): 880 less the sidebar, which
+ * is 200 px below a 1120 px window (apps/desktop styles.css). Measured in Electron (lane 03 fix wave minor 1).
+ */
+const MAIN_COLUMN_AT_MIN = 680;
 
 function parseArgs(argv) {
   const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false };
@@ -151,7 +156,7 @@ function chrome(profile, args) {
  * `<pre id="selftest">` until it holds text, returns it parsed. The view-switch selftest needs it: under
  * `--virtual-time-budget` its paint wait (rAF, then a MessageChannel post) stalls after the third switch.
  */
-async function chromeSelftest(profile, url, timeoutMs, selector = "pre#selftest") {
+async function chromeSelftest(profile, url, timeoutMs, selector = "pre#selftest", windowSize = "1440,900") {
   rmSync(profile, { recursive: true, force: true });
   const browser = spawn(
     CHROME,
@@ -162,7 +167,7 @@ async function chromeSelftest(profile, url, timeoutMs, selector = "pre#selftest"
       "--no-first-run",
       "--no-default-browser-check",
       `--user-data-dir=${profile}`,
-      "--window-size=1440,900",
+      `--window-size=${windowSize}`,
       "--remote-debugging-port=0",
       url,
     ],
@@ -334,7 +339,11 @@ async function main() {
       if (result.selectedTitle !== "Claim contradicts tests") problems.push(`selected ${JSON.stringify(result.selectedTitle)}`);
       if (result.errors.length !== 0) problems.push(`errors ${JSON.stringify(result.errors)}`);
       if (result.cspViolations.length !== 0) problems.push(`csp ${JSON.stringify(result.cspViolations)}`);
-      if (!(result.maxDriftPx <= 1)) problems.push(`drift ${result.maxDriftPx}px`);
+      if (!(result.maxDriftPx <= 1)) {
+        // JEVCODE_SMOKE_DRIFT_SOFT=1 (A/B runs under load): record the drift and go on to the perf step.
+        if (process.env.JEVCODE_SMOKE_DRIFT_SOFT === "1") console.log(`DRIFT_OVER_BUDGET ${result.maxDriftPx}px`);
+        else problems.push(`drift ${result.maxDriftPx}px`);
+      }
       if (problems.length > 0) throw new Error(`${view} selftest: ${problems.join("; ")}`);
       console.log(`${view}: selftest ok (rows ${result.rows}, max drift ${result.maxDriftPx}px)`);
     }
@@ -353,6 +362,47 @@ async function main() {
       console.log(`view switch: ${switchResult.switches} switches, 0 misses`);
     }
     if (options.embedded) {
+      // Real layout of the embedded title bar in the main window at its 880 px minimum, whose viewer column is
+      // MAIN_COLUMN_AT_MIN px wide beside the sidebar, so the bar's < 760 px container query runs (lane 03 D-6; fix wave
+      // minor 1). With both chips (gaps and approximate joins) the bar must not overflow and the Brief toggle must stay
+      // inside it.
+      // Real time over DevTools: under --virtual-time-budget the probe found no bar about one run in six on a loaded
+      // machine (the bundle fetch outlasted the budget), with or without this wave's frame and chip.
+      const bar = await chromeSelftest(
+        path.join(tmp, "chrome-bar"),
+        `${ORIGIN}/?bundle=oauth&chrome=embedded&frame=${MAIN_COLUMN_AT_MIN}&selftest=bar&gaps=3&approx=1${locationHash(sessionId, "console")}`,
+        60_000,
+        "pre#selftest",
+        "880,900",
+      );
+      const barMisses = [];
+      if (bar.barWidth !== MAIN_COLUMN_AT_MIN) barMisses.push(`the bar is ${bar.barWidth} px wide, not ${MAIN_COLUMN_AT_MIN}`);
+      if (bar.gapsChip !== true) barMisses.push("no gaps chip");
+      if (bar.approxChip !== true) barMisses.push("no approximate-joins chip");
+      if (bar.fits !== true) barMisses.push(`horizontal overflow (scrollWidth ${bar.barScrollWidth} > ${bar.barWidth})`);
+      if (bar.briefVisible !== true) barMisses.push("the Brief toggle is not visible inside the bar");
+      if (barMisses.length > 0) throw new Error(`embedded bar at ${MAIN_COLUMN_AT_MIN} px: ${barMisses.join("; ")}`);
+      console.log(
+        `embedded bar at ${MAIN_COLUMN_AT_MIN} px: fits (scrollWidth ${bar.barScrollWidth}), gaps and approximate-joins chips and Brief toggle visible`,
+      );
+      // The Map header in the same column: its Map pane is the column less the 264 px Brief (fix wave minor 2). With
+      // three long language names, as a real repository can give (Electron showed "TypeScript · HTML · Java…"), the
+      // nowrap row cuts the languages and keeps its Overview toggle whole.
+      const head = await chromeSelftest(
+        path.join(tmp, "chrome-maphead"),
+        `${ORIGIN}/?bundle=oauth&overview=${MAP_OVERVIEW}&languages=TypeScript,JavaScript,Markdown&chrome=embedded&frame=${MAIN_COLUMN_AT_MIN}&selftest=maphead${locationHash(sessionId, "map")}`,
+        60_000,
+        "pre#selftest",
+        "880,900",
+      );
+      const headMisses = [];
+      if (head.fits !== true) headMisses.push(`the header row overflows (scrollWidth ${head.rowScrollWidth} > ${head.rowWidth})`);
+      if (head.toggleVisible !== true) headMisses.push("the Overview toggle is not whole inside the header row");
+      if (head.languagesCut !== true) headMisses.push("the long language list is not cut (the check no longer exercises the narrow row)");
+      if (headMisses.length > 0) throw new Error(`Map header at ${MAIN_COLUMN_AT_MIN} px: ${headMisses.join("; ")}`);
+      console.log(
+        `Map header at ${MAIN_COLUMN_AT_MIN} px: row ${head.rowWidth} px fits, languages cut with an ellipsis, Overview toggle whole`,
+      );
       // The main-window frame (spec §9) around the embedded viewer on the Console; a drip opens it in Live, so the
       // right panel shows the Brief (V-6 compares these with console-main-*.png).
       for (const width of WIDTHS) {

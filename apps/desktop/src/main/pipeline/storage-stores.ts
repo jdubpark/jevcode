@@ -53,10 +53,12 @@ class StorageChangeUnitStore implements ChangeUnitStore {
   ) {}
 
   upsert(unit: ChangeUnit): void {
-    const json = JSON.stringify(unit);
+    // Key order ignored: a label write rebuilds the unit from its database row, whose keys come in column order,
+    // while the rebuild writes the projection's order. The stored payload is the same either way (PL-2).
+    const json = canonicalJson(unit);
     if (this.lastJson.get(unit.id) === json) return;
-    this.lastJson.set(unit.id, json);
     this.db.upsertChangeUnit(unit);
+    this.lastJson.set(unit.id, json);
   }
 
   get(id: string): ChangeUnit | undefined {
@@ -69,14 +71,22 @@ class StorageChangeUnitStore implements ChangeUnitStore {
 
   remove(id: string): void {
     const unit = this.db.getChangeUnit(id);
-    if (unit === undefined) return;
-    this.db.upsertChangeUnit({ ...unit, status: "superseded" });
+    if (unit !== undefined) this.supersede(unit);
   }
 
   clear(): void {
-    for (const unit of this.db.listChangeUnits(this.sessionId)) {
-      this.db.upsertChangeUnit({ ...unit, status: "superseded" });
-    }
+    for (const unit of this.db.listChangeUnits(this.sessionId)) this.supersede(unit);
+  }
+
+  // Every rebuild, the coordinator removes each stored unit its projection no longer has, and a
+  // removed unit stays stored as superseded, so it is removed again on every later rebuild. A unit
+  // the database already holds as superseded would be written with an identical payload, so it is
+  // skipped (PL-2: one such row per rebuild before). The write replaces the row upsert() last wrote,
+  // so its cached payload is dropped: a unit the projection brings back unchanged is written again.
+  private supersede(unit: ChangeUnit): void {
+    if (unit.status === "superseded") return;
+    this.lastJson.delete(unit.id);
+    this.db.upsertChangeUnit({ ...unit, status: "superseded" });
   }
 }
 
@@ -93,12 +103,12 @@ class StorageGraphStore implements GraphStore {
     for (const node of nodes) {
       const json = JSON.stringify(node);
       if (this.lastNodes.get(node.id) === json) continue;
-      this.lastNodes.set(node.id, json);
       this.db.upsertGraphNode(this.sessionId, {
         id: node.id,
         nodeType: node.type,
         payload: { label: node.label, ...(node.data ?? {}) },
       });
+      this.lastNodes.set(node.id, json);
     }
   }
 
@@ -106,7 +116,6 @@ class StorageGraphStore implements GraphStore {
     for (const edge of edges) {
       const json = JSON.stringify(edge);
       if (this.lastEdges.get(edge.id) === json) continue;
-      this.lastEdges.set(edge.id, json);
       this.db.upsertGraphEdge(this.sessionId, {
         id: edge.id,
         fromId: edge.from,
@@ -114,6 +123,7 @@ class StorageGraphStore implements GraphStore {
         edgeType: edge.type,
         payload: {},
       });
+      this.lastEdges.set(edge.id, json);
     }
   }
 
@@ -151,19 +161,19 @@ class StorageSemanticEventSink implements SemanticEventSink {
     private readonly persist?: (event: SemanticEvent) => void,
   ) {}
 
+  // Written, then listed and marked, then announced. An event whose write throws is neither listed nor marked, so the
+  // next rebuild writes it and lists it once (PL-2). One whose listener throws is already marked, so no rebuild writes
+  // or lists it again (fix wave minor 5).
   emit(event: SemanticEvent): void {
-    if (!this.byId.has(event.id)) {
-      this.order.push(event.id);
-      this.onEmit?.(event);
-      this.persist?.(event);
-    } else {
-      const previous = this.byId.get(event.id);
-      if (previous !== undefined && previous.changeUnitId !== event.changeUnitId) {
-        this.onEmit?.(event);
-        this.persist?.(event);
-      }
+    const previous = this.byId.get(event.id);
+    if (previous !== undefined && previous.changeUnitId === event.changeUnitId) {
+      this.byId.set(event.id, event);
+      return;
     }
+    this.persist?.(event);
+    if (previous === undefined) this.order.push(event.id);
     this.byId.set(event.id, event);
+    this.onEmit?.(event);
   }
 
   all(): SemanticEvent[] {
@@ -182,7 +192,8 @@ class StorageSemanticEventSink implements SemanticEventSink {
 // validation, failure and decision on each rebuild. Like the change-unit store,
 // these stores write only when the payload differs from the last one written for
 // that id. Only this store writes validation and failure rows, so a private map
-// of the last payload is the database's current row.
+// of the last payload is the database's current row. Each map is set after its
+// write succeeds, so a write that throws is tried again on the next rebuild.
 class StorageValidationStore implements ValidationStore {
   private readonly lastValidationJson = new Map<string, string>();
   private readonly lastFailureJson = new Map<string, string>();
@@ -195,14 +206,13 @@ class StorageValidationStore implements ValidationStore {
   upsertValidation(validation: ValidationResult): void {
     const json = JSON.stringify(validation);
     if (this.lastValidationJson.get(validation.id) === json) return;
-    this.lastValidationJson.set(validation.id, json);
     this.db.upsertValidation(this.sessionId, validation);
+    this.lastValidationJson.set(validation.id, json);
   }
 
   upsertFailure(failure: FailureRecord): void {
     const json = JSON.stringify(failure);
     if (this.lastFailureJson.get(failure.id) === json) return;
-    this.lastFailureJson.set(failure.id, json);
     this.db.upsertFailure(this.sessionId, {
       validationId: failure.validationId,
       file: failure.file,
@@ -210,6 +220,7 @@ class StorageValidationStore implements ValidationStore {
       message: failure.message,
       ts: failure.ts,
     });
+    this.lastFailureJson.set(failure.id, json);
   }
 
   validations(): ValidationResult[] {

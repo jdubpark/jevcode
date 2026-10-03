@@ -26,12 +26,23 @@ const PAGE: TraceRowsPage = {
 };
 
 function fakeBridge() {
+  const hintListeners = new Set<(payload: { sessionId: string; lastSeq: number }) => void>();
   return {
     listSessions: vi.fn<Bridge["listSessions"]>(async () => [SUMMARY]),
     rows: vi.fn<Bridge["rows"]>(async () => PAGE),
     payloads: vi.fn<Bridge["payloads"]>(async () => PAGE.rows),
     open: vi.fn<Bridge["open"]>(async () => undefined),
     requestChanges: vi.fn<Bridge["requestChanges"]>(async () => undefined),
+    onRowsAvailable: vi.fn<Bridge["onRowsAvailable"]>((listener) => {
+      hintListeners.add(listener);
+      return () => {
+        hintListeners.delete(listener);
+      };
+    }),
+    hint(payload: { sessionId: string; lastSeq: number }) {
+      for (const listener of [...hintListeners]) listener(payload);
+    },
+    hintListenerCount: () => hintListeners.size,
   };
 }
 
@@ -145,5 +156,25 @@ describe("createIpcTraceSource", () => {
   it("now() is the wall clock", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_234);
     expect(createIpcTraceSource(fakeBridge(), "s").now()).toBe(1_234);
+  });
+});
+
+describe("createIpcTraceSource push hints (spec §7, E5)", () => {
+  it("passes only its own session's lastSeq to the listener", () => {
+    const bridge = fakeBridge();
+    const source = createIpcTraceSource(bridge, "s");
+    const seen: number[] = [];
+    source.onRowsAvailable?.((lastSeq) => seen.push(lastSeq));
+    bridge.hint({ sessionId: "other", lastSeq: 40 });
+    bridge.hint({ sessionId: "s", lastSeq: 41 });
+    expect(seen).toEqual([41]);
+  });
+
+  it("unsubscribes through the bridge", () => {
+    const bridge = fakeBridge();
+    const off = createIpcTraceSource(bridge, "s").onRowsAvailable?.(() => undefined);
+    expect(bridge.hintListenerCount()).toBe(1);
+    off?.();
+    expect(bridge.hintListenerCount()).toBe(0);
   });
 });

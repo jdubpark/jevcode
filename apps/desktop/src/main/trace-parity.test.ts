@@ -96,6 +96,7 @@ function bridgeOver(
       requestChanges: async () => {
         throw new Error("the parity test never hands off a note");
       },
+      onRowsAvailable: () => () => undefined,
     },
     redactions: () => redactions,
   };

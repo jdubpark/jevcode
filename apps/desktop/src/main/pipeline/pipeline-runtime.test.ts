@@ -7,6 +7,7 @@ import type {
   EvidenceFact,
   NormalizedAgentEvent,
 } from "@jevcode/contracts";
+import { MainToRendererChannels, isTraceRowType } from "@jevcode/contracts";
 import { DegradeClient } from "@jevcode/jev-router";
 import type {
   AttentionInput,
@@ -23,6 +24,9 @@ import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
 import { PlaybackClient, PlaybackLabels, loadPlaybackFixture } from "./playback.js";
 import { PipelineRuntime } from "./pipeline-runtime.js";
+import { observeTraceAppends } from "../rows-available.js";
+import type { ObservedAppend } from "../rows-available.js";
+import { smokeMockScript } from "./smoke-script.js";
 import type { EmitFn, SurfaceRecord } from "./types.js";
 
 const repoRoot = path.resolve(
@@ -1103,11 +1107,12 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
   async function startScripted(
     name: string,
     entries: MockScriptEntry[],
+    sink: { ensure(sessionId: string, cwd: string): void } = { ensure: () => {} },
   ): Promise<{
     db: JevcodeDb;
     runtime: PipelineRuntime;
     sessionId: string;
-    terminal: string[];
+    channels: Map<string, unknown[]>;
   }> {
     const dir = path.join(repoRoot, `apps/desktop/.test-tmp/${name}`);
     rmSync(dir, { recursive: true, force: true });
@@ -1121,20 +1126,14 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       baseCommit: "test",
     });
     db.createSession({ id: sessionId, repoId: "repo-lifecycle", prompt: "demo" });
-    const terminal: string[] = [];
-    const { emit } = collectEmit();
+    const { emit, collected } = collectEmit();
     const runtime = new PipelineRuntime({
       db,
       emit,
       evidence: false,
       jevClient: new DegradeClient(),
       log: () => {},
-      terminal: {
-        data: (_sessionId, data) => {
-          terminal.push(data);
-        },
-        ensure: () => {},
-      },
+      terminal: sink,
     });
     await runtime.startSession({
       sessionId,
@@ -1144,11 +1143,52 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       agentMode: "mock",
       mockScript: { sessionId, repoPath: dir, cwd: dir, prompt: "demo", entries },
     });
-    return { db, runtime, sessionId, terminal };
+    return { db, runtime, sessionId, channels: collected.channels };
   }
 
+  it("agent events never reach the user's shell (spec E7)", async () => {
+    const now = () => new Date().toISOString();
+    const writes: string[] = [];
+    // A sink that still has data(): before D-5 the runtime wrote agent one-liners through it.
+    const sink = {
+      ensure: () => {},
+      data: (_sessionId: string, data: string) => {
+        writes.push(data);
+      },
+    };
+    const sessionId = "sess-shell-separation";
+    const { db, runtime, channels } = await startScripted(
+      "shell-separation",
+      [
+        { kind: "agent", event: { type: "agent_message", sessionId, role: "assistant", text: "Reading the router", ts: now() } },
+        { kind: "agent", event: { type: "command_started", sessionId, command: "pnpm test", ts: now() } },
+        { kind: "agent", event: { type: "command_completed", sessionId, command: "pnpm test", exitCode: 1, stdout: "", stderr: "1 failed", ts: now() } },
+        { kind: "terminal", data: "$ pnpm test\r\n" },
+        { kind: "agent", event: { type: "file_changed", sessionId, path: "src/router.ts", ts: now() } },
+      ],
+      sink,
+    );
+    try {
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "file_changed"),
+        8000,
+        "scripted events stored",
+      );
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+      expect(writes).toEqual([]);
+      expect(channels.get("terminal:data") ?? []).toEqual([]);
+      // The Console still has every event: they are trace rows.
+      expect(db.listAgentEvents(sessionId).map((event) => event.type)).toEqual(
+        expect.arrayContaining(["agent_message", "command_started", "command_completed", "file_changed", "agent_interrupted"]),
+      );
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+
   it("stopping a running session records one agent_interrupted, leaves it paused and releases it by default", async () => {
-    const { db, runtime, sessionId, terminal } = await startScripted("stop-pauses", []);
+    const { db, runtime, sessionId } = await startScripted("stop-pauses", []);
     try {
       await waitFor(
         () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_started"),
@@ -1168,7 +1208,6 @@ describe("PipelineRuntime honest lifecycle (D10)", () => {
       expect(stored?.state).toBe("paused");
       expect(stored?.endedAt).toBeNull();
       expect(stored?.executionClaimTs).not.toBeNull();
-      expect(terminal).toContain("[agent] stopped");
       // teardown defaults to true (repo close, replay CLI, soak).
       expect(runtime.hasSession(sessionId)).toBe(false);
     } finally {
@@ -1392,6 +1431,42 @@ describe("PipelineRuntime evidence provenance (R2)", () => {
       db.close();
     }
   }, 30_000);
+
+  it("starts a mock session from mockScriptFor when the input has no script", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/mock-script-for");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-mock-script-for";
+    db.upsertRepository({ id: "repo-msf", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-msf", prompt: "demo" });
+    const { emit } = collectEmit();
+    const mockScriptFor = vi.fn((input: { sessionId: string; repoPath: string; prompt: string }) => ({
+      sessionId: input.sessionId,
+      repoPath: input.repoPath,
+      cwd: input.repoPath,
+      prompt: input.prompt,
+      entries: [
+        {
+          kind: "agent" as const,
+          event: { type: "agent_message" as const, sessionId: input.sessionId, role: "assistant" as const, text: "from mockScriptFor", ts: new Date().toISOString() },
+        },
+      ],
+    }));
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {}, mockScriptFor });
+    try {
+      await runtime.startSession({ sessionId, repoId: "repo-msf", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await waitFor(
+        () => db.listAgentEvents(sessionId).some((event) => event.type === "agent_message" && event.text === "from mockScriptFor"),
+        8000,
+        "scripted message stored",
+      );
+      expect(mockScriptFor).toHaveBeenCalledTimes(1);
+      await runtime.syncAll();
+      await runtime.stopSession(sessionId);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
 });
 
 describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {
@@ -1454,4 +1529,506 @@ describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {
       db.close();
     }
   });
+});
+
+describe("PipelineRuntime turn-end batch (lane 03 D-6, PL-2)", () => {
+  it("hints each turn-end row once it is committed, the last hint carrying the last row's seq", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/turn-end-batch");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-turn-end";
+    db.upsertRepository({ id: "repo-te", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-te", prompt: "demo" });
+
+    // What index.ts wires: each committed trace row → a hint carrying its seq.
+    const reports: Array<ObservedAppend & { storedSeq: number }> = [];
+    observeTraceAppends(db, (event) => {
+      reports.push({ ...event, storedSeq: db.getLatestSeq(event.sessionId) });
+    });
+    let completionWritten = false;
+    const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+    db.upsertUiSnapshot = ((id, snapshot) => {
+      const stored = upsertUiSnapshot(id, snapshot);
+      if (snapshot.surfaceId === "completion") completionWritten = true;
+      return stored;
+    }) as typeof db.upsertUiSnapshot;
+
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      mockScriptFor: (input) => smokeMockScript(input, { steps: 3, spacingMs: 1 }),
+    });
+    try {
+      await runtime.startSession({ sessionId, repoId: "repo-te", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await waitFor(() => completionWritten, 15_000, "completion surface written");
+      await runtime.syncAll();
+
+      // Every Jev decision row was reported once, as soon as it was stored: nothing holds a turn end's rows back.
+      const jevSeqs = db.listEvents(sessionId).filter((event) => event.type === "jev_decision").map((event) => event.seq);
+      const reported = reports.map((report) => report.seq);
+      expect(jevSeqs.length).toBeGreaterThan(0);
+      expect(jevSeqs.every((seq) => reported.filter((candidate) => candidate === seq).length === 1)).toBe(true);
+      expect(reports.every((report) => report.storedSeq === report.seq)).toBe(true);
+      // The last report carries the session's last trace row.
+      const traceSeqs = db
+        .listEvents(sessionId, { limit: 10_000 })
+        .filter((event) => isTraceRowType(event.type))
+        .map((event) => event.seq);
+      expect(reported.at(-1)).toBe(Math.max(...traceSeqs));
+      await runtime.stopSession(sessionId);
+    } finally {
+      db.close();
+    }
+  }, 30_000);
+});
+
+describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review I-1, I-2)", () => {
+  /**
+   * The smoke script played without its waits. Its records stay 1 s apart, wider than the coordinator's 500 ms batch
+   * window, so each step lands in its own unit however the mock's real-time agent_started falls.
+   */
+  function quickSmokeScript(input: Parameters<typeof smokeMockScript>[0]): ReturnType<typeof smokeMockScript> {
+    const script = smokeMockScript(input, { steps: 3, spacingMs: 1_000 });
+    return { ...script, entries: script.entries.map((entry) => ({ ...entry, delayMs: 1 })) };
+  }
+
+  /** What a session's rows say, keyed by file so two runs of the same script compare. */
+  function rowSummary(db: JevcodeDb, sessionId: string): {
+    jevDecisions: string[];
+    labeledUnits: string[];
+    units: string[];
+    unitSurfaces: string[];
+    completionSnapshots: number;
+    counts: Record<string, number>;
+  } {
+    const units = db.listChangeUnits(sessionId);
+    const fileOf = new Map(units.map((unit) => [unit.id, unit.files.join(",")]));
+    const jevDecisions = new Set<string>();
+    const unitSurfaces = new Set<string>();
+    let completionSnapshots = 0;
+    const counts: Record<string, number> = {};
+    for (const event of db.listEvents(sessionId, { limit: 10_000 })) {
+      counts[event.type] = (counts[event.type] ?? 0) + 1;
+      const payload = JSON.parse(event.payloadJson) as { changeUnitId?: string; pass?: string; surfaceId?: string };
+      if (event.type === "jev_decision") jevDecisions.add(`${fileOf.get(payload.changeUnitId ?? "") ?? "?"} ${payload.pass ?? "?"}`);
+      if (event.type === "ui_snapshot" && payload.surfaceId === "completion") completionSnapshots += 1;
+      else if (event.type === "ui_snapshot") unitSurfaces.add(fileOf.get(payload.changeUnitId ?? "") ?? "?");
+    }
+    const live = units.filter((unit) => unit.status !== "superseded");
+    const labeledUnits = live.map(
+      (unit) => `${unit.files.join(",")} ${unit.category} ${String(unit.importance)} ${String(unit.relevance)}`,
+    );
+    const unitStates = live.map(
+      (unit) => `${unit.files.join(",")} ${unit.status} runs=${unit.validationResults.length} facts=${unit.evidence.length}`,
+    );
+    return {
+      jevDecisions: [...jevDecisions].sort(),
+      labeledUnits: labeledUnits.sort(),
+      units: unitStates.sort(),
+      unitSurfaces: [...unitSurfaces].sort(),
+      completionSnapshots,
+      counts,
+    };
+  }
+
+  /** Rows per type written after seq: what a retry wrote. */
+  function countsAfter(db: JevcodeDb, sessionId: string, seq: number): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const event of db.listEvents(sessionId, { fromSeq: seq, limit: 10_000 })) {
+      counts[event.type] = (counts[event.type] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  interface TurnEndOptions {
+    /** Installs write spies before the session starts. */
+    arm?: (db: JevcodeDb) => void;
+    /** Reads the run before the session stops. */
+    inspect?: (db: JevcodeDb, collected: Collected, sessionId: string) => void;
+    /**
+     * The test ingests the last test result and agent_completed itself, in one tick. The coordinator's 25 ms rebuild
+     * debounce then leaves the rebuild that projects that result to the turn-end pass's flush.
+     */
+    endByHand?: boolean;
+  }
+
+  async function runTurnEnd(
+    name: string,
+    { arm = () => {}, inspect = () => {}, endByHand = false }: TurnEndOptions = {},
+  ): Promise<ReturnType<typeof rowSummary>> {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-rows";
+    db.upsertRepository({ id: "repo-pr", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-pr", prompt: "demo" });
+    arm(db);
+    const { emit, collected } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+    });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-pr", repoPath: dir, prompt: "demo" });
+    const held = endByHand ? script.entries.slice(-2) : [];
+    try {
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-pr",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: endByHand ? { ...script, entries: script.entries.slice(0, -2) } : script,
+      });
+      if (endByHand) {
+        await waitFor(
+          () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 5,
+          15_000,
+          "records before the turn end",
+        );
+        for (const entry of held) {
+          if (entry.kind === "agent") runtime.ingestRecord(sessionId, entry.event);
+          if (entry.kind === "record") runtime.ingestRecord(sessionId, entry.record);
+        }
+      }
+      await waitFor(() => db.getSession(sessionId)?.state === "completed", 15_000, "turn end");
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).some((event) => event.type === "ui_snapshot" && event.payloadJson.includes('"surfaceId":"completion"')),
+        15_000,
+        "completion surface",
+      );
+      // The pass after the turn end, as the next debounce or answer would run it.
+      await runtime.syncAll();
+      inspect(db, collected, sessionId);
+      return rowSummary(db, sessionId);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }
+
+  it("loses no row when a write throws once in a turn-end pass: the next pass writes what it did not", async () => {
+    const clean = await runTurnEnd("pass-rows-clean");
+    let thrown = 0;
+    let seqAtThrow = 0;
+    let retried: Record<string, number> = {};
+    const failing = await runTurnEnd("pass-rows-throw", {
+      arm: (db) => {
+        const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+        db.upsertUiSnapshot = ((id, snapshot) => {
+          if (thrown === 0) {
+            thrown += 1;
+            seqAtThrow = db.getLatestSeq(id);
+            throw new Error("disk full");
+          }
+          return upsertUiSnapshot(id, snapshot);
+        }) as typeof db.upsertUiSnapshot;
+      },
+      inspect: (db, _collected, sessionId) => {
+        retried = countsAfter(db, sessionId, seqAtThrow);
+      },
+    });
+
+    expect(thrown).toBe(1);
+    // Three steps, three units, each answered in pass A and pass B and shown on its own surface.
+    expect(clean.jevDecisions).toHaveLength(6);
+    expect(clean.unitSurfaces).toHaveLength(3);
+    expect(failing.jevDecisions).toEqual(clean.jevDecisions);
+    expect(failing.labeledUnits).toEqual(clean.labeledUnits);
+    expect(failing.unitSurfaces).toEqual(clean.unitSurfaces);
+    expect(clean.completionSnapshots).toBe(1);
+    expect(failing.completionSnapshots).toBe(1);
+    // An upper bound on what was written from the throw on, for the three units: the completion, then one more Jev pass
+    // (two decisions a unit) with each unit's intent and surface. The rerun's labels are the stored ones: no row.
+    expect(retried["ui_snapshot"] ?? 0).toBeLessThanOrEqual(3 + 1);
+    expect(retried["ui_intent"] ?? 0).toBeLessThanOrEqual(3);
+    expect(retried["jev_decision"] ?? 0).toBeLessThanOrEqual(2 * 3);
+    expect(retried["change_unit"] ?? 0).toBe(0);
+  }, 60_000);
+
+  it("retries a coordinator rebuild that threw in the turn-end pass: the next pass writes its units, no new record needed", async () => {
+    const clean = await runTurnEnd("rebuild-retry-clean", { endByHand: true });
+    let armed = false;
+    let thrown = 0;
+    let seqAtThrow = 0;
+    let retried: Record<string, number> = {};
+    const failing = await runTurnEnd("rebuild-retry-throw", {
+      endByHand: true,
+      inspect: (db, _collected, sessionId) => {
+        retried = countsAfter(db, sessionId, seqAtThrow);
+      },
+      arm: (db) => {
+        // Armed when the turn ends, so the throw lands in the turn-end pass's flush.
+        const setSessionState = db.setSessionState.bind(db);
+        db.setSessionState = ((id, state) => {
+          if (state === "completed") armed = true;
+          setSessionState(id, state);
+        }) as typeof db.setSessionState;
+        const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+        db.upsertChangeUnit = ((unit) => {
+          if (armed && thrown === 0) {
+            thrown += 1;
+            seqAtThrow = db.getLatestSeq(unit.sessionId);
+            throw new Error("disk full");
+          }
+          return upsertChangeUnit(unit);
+        }) as typeof db.upsertChangeUnit;
+      },
+    });
+
+    expect(thrown).toBe(1);
+    // The last step's unit carries its test run only once the rebuild that projects it has run.
+    expect(clean.units).toContain("src/module-3.ts validated runs=1 facts=3");
+    expect(failing.units).toEqual(clean.units);
+    expect(failing.labeledUnits).toEqual(clean.labeledUnits);
+    // From the throw on, each of the three units is written at most once by the retried rebuild and once by its label,
+    // and the Jev stage, which the failed pass never reached, runs once.
+    expect(retried["change_unit"] ?? 0).toBeLessThanOrEqual(2 * 3);
+    expect(retried["jev_decision"] ?? 0).toBeLessThanOrEqual(2 * 3);
+  }, 60_000);
+
+  it("sends the Jev debug panel the latest decisions once per pass, not once per decision", async () => {
+    let debug: unknown[] = [];
+    let latest: unknown[] = [];
+    const rows = await runTurnEnd("pass-jev-debug", {
+      inspect: (db, collected, sessionId) => {
+        debug = collected.channels.get(MainToRendererChannels.jevDebug) ?? [];
+        latest = db.latestJevDecisions(sessionId, 50);
+      },
+    });
+
+    // One pass ran the Jev stage (the pass after it found no changed unit) and wrote six decisions.
+    expect(rows.jevDecisions).toHaveLength(6);
+    // A slow pass may also send at a slice that yields (PL-2), but never once per decision; the last send is final.
+    expect(debug.length).toBeGreaterThanOrEqual(1);
+    expect(debug.length).toBeLessThan(rows.jevDecisions.length);
+    expect(debug.at(-1)).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
+  }, 60_000);
+
+  it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
+    const order: string[] = [];
+    let debug: Array<{ decisions: unknown[] }> = [];
+    let latest: unknown[] = [];
+    await runTurnEnd("pass-slices", {
+      inspect: (db, collected, sessionId) => {
+        debug = (collected.channels.get(MainToRendererChannels.jevDebug) ?? []) as Array<{ decisions: unknown[] }>;
+        latest = db.latestJevDecisions(sessionId, 50);
+      },
+      arm: (db) => {
+      // Six Jev decision writes of 8 ms each: a 48 ms stretch without slices.
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (order.length === 0) {
+          order.push("first decision");
+          setImmediate(() => order.push("waiting task"));
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+      const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+      db.upsertUiSnapshot = ((id, snapshot) => {
+        if (snapshot.surfaceId === "completion") order.push("completion");
+        return upsertUiSnapshot(id, snapshot);
+      }) as typeof db.upsertUiSnapshot;
+      },
+    });
+
+    expect(order).toEqual(["first decision", "waiting task", "completion"]);
+    // A slice that yields sends the decisions written so far; the pass's last send carries all of them.
+    expect(debug.length).toBeGreaterThanOrEqual(2);
+    expect(debug[0]?.decisions.length).toBeLessThan(latest.length);
+    expect(debug.at(-1)?.decisions).toEqual(latest);
+  }, 60_000);
+
+  it("ends a pass at its next slice once the session stops: no further rows and no interrupt", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-stopped");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-stopped";
+    db.upsertRepository({ id: "repo-ps", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-ps", prompt: "demo" });
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {} });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-ps", repoPath: dir, prompt: "demo" });
+    try {
+      // Without its agent_completed the session keeps running.
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-ps",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6,
+        15_000,
+        "records",
+      );
+      // A required decision interrupts the agent. After a resume it is still open, so a pass's decision step would
+      // interrupt the agent again.
+      runtime.ingestRecord(sessionId, {
+        id: "dec-stop",
+        sessionId,
+        title: "Fail open or closed?",
+        context: "rate limit",
+        severity: "required",
+        options: [
+          { id: "open", label: "Fail open", description: "serve" },
+          { id: "closed", label: "Fail closed", description: "reject" },
+        ],
+        affectedChangeUnits: [],
+        evidence: [],
+        status: "open",
+      });
+      await runtime.resume(sessionId);
+      const adapter = runtime.getAdapter(sessionId);
+      expect(adapter).not.toBeNull();
+      const interrupt = vi.spyOn(adapter as NonNullable<typeof adapter>, "interrupt");
+      // Six 8 ms Jev writes make the pass yield; the stop runs in that yield.
+      let seqAtStop = -1;
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (seqAtStop === -1) {
+          seqAtStop = 0;
+          setImmediate(() => {
+            void runtime.stopSession(sessionId);
+            seqAtStop = db.getLatestSeq(sessionId);
+          });
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+
+      await runtime.syncAll();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(seqAtStop).toBeGreaterThan(0);
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(db.getLatestSeq(sessionId)).toBe(seqAtStop);
+      expect(db.getSession(sessionId)?.state).toBe("paused");
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 60_000);
+
+  it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-live-rows";
+    db.upsertRepository({ id: "repo-lr", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-lr", prompt: "demo" });
+    // A networked client: each projection answers 20 ms later. At each call, count the first unit's stored rows.
+    const calls: Array<{ unitId: string; firstUnitRows: number }> = [];
+    class DelayedProjectClient extends DegradeClient {
+      override async project(input: ProjectionInput): ReturnType<DegradeClient["project"]> {
+        const firstUnitId = calls[0]?.unitId ?? input.changeUnitId;
+        calls.push({
+          unitId: input.changeUnitId,
+          firstUnitRows: db.listJevDecisions(sessionId).filter((log) => log.changeUnitId === firstUnitId).length,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return super.project(input);
+      }
+    }
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DelayedProjectClient(),
+      log: () => {},
+    });
+    // The smoke script without its agent_completed: the session stays running, so no pass ends the turn.
+    const script = quickSmokeScript({ sessionId, repoId: "repo-lr", repoPath: dir, prompt: "demo" });
+    try {
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-lr",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(() => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6, 15_000, "records");
+      await runtime.syncAll();
+
+      expect(db.getSession(sessionId)?.state).not.toBe("completed");
+      expect(calls).toHaveLength(3);
+      const last = calls.at(-1);
+      expect(last?.unitId).not.toBe(calls[0]?.unitId);
+      // The first unit's pass A and pass B rows were stored before the last unit's call was even made.
+      expect(last?.firstUnitRows).toBe(2);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 60_000);
+});
+
+describe("PipelineRuntime when a coordinator rebuild throws inside an ingest (lane 03 fix wave I-2)", () => {
+  it("still ends the turn on agent_completed, and the next sync writes both records' units", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/ingest-rebuild-throw");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-ingest-throw";
+    const repoId = "repo-it";
+    db.upsertRepository({ id: repoId, path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId, prompt: "demo" });
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({
+      db,
+      emit: collectEmit().emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: (line) => logs.push(line),
+    });
+    let armed = false;
+    let thrown = 0;
+    const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+    db.upsertChangeUnit = ((unit) => {
+      if (armed && thrown === 0) {
+        thrown += 1;
+        throw new Error("disk full");
+      }
+      return upsertChangeUnit(unit);
+    }) as typeof db.upsertChangeUnit;
+    const at = (ms: number): string => new Date(Date.parse("2026-10-02T10:00:00.000Z") + ms).toISOString();
+    try {
+      await runtime.startSession({ sessionId, repoId, repoPath: dir, prompt: "demo", agentMode: "replay" });
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: "src/a.ts", kind: "modified", ts: at(0) });
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: "src/b.ts", kind: "modified", ts: at(100) });
+      armed = true;
+      // Past the coordinator's 500 ms window: this ingest flushes both facts, and that rebuild's unit write throws.
+      runtime.ingestRecord(sessionId, { type: "agent_completed", sessionId, ts: at(2_000) });
+
+      expect(thrown).toBe(1);
+      expect(logs.some((line) => line.includes("disk full") && !line.includes("record dropped"))).toBe(true);
+      expect(db.getSession(sessionId)?.state).toBe("completed");
+      await runtime.syncAll();
+      const files = db
+        .listChangeUnits(sessionId)
+        .filter((unit) => unit.status !== "superseded")
+        .flatMap((unit) => unit.files)
+        .sort();
+      expect(files).toEqual(["src/a.ts", "src/b.ts"]);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 30_000);
 });

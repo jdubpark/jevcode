@@ -1,0 +1,191 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, useReducer } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { composerReducer, initialComposer } from "../components/composer-prefill.js";
+import type { ComposerPrefillPayload } from "../../shared/local-channels.js";
+import type { SessionStatePayload } from "../payload-types.js";
+import { PromptDock, continuesSession, type PromptDockProps } from "./PromptDock.js";
+
+function fakeBridge() {
+  return {
+    agent: {
+      sendInstruction: vi.fn(async (_sessionId: string, _text: string, _mode?: "queue" | "steer") => undefined),
+      resume: vi.fn(async (_sessionId: string) => undefined),
+      interrupt: vi.fn(async (_sessionId: string) => undefined),
+      cancelInstruction: vi.fn(async (_sessionId: string, _instructionId: string) => undefined),
+    },
+    session: { switchTo: vi.fn(async (_sessionId: string) => undefined) },
+  };
+}
+
+function Harness(props: {
+  bridge: ReturnType<typeof fakeBridge>;
+  state: SessionStatePayload["state"] | null;
+  pending?: PromptDockProps["pending"];
+  held?: ComposerPrefillPayload;
+  noteTargetPrompt?: string;
+}) {
+  const [composer, dispatch] = useReducer(composerReducer, "s1", initialComposer);
+  useEffect(() => {
+    if (props.held !== undefined) dispatch({ type: "prefill", payload: props.held });
+  }, [props.held]);
+  return (
+    <PromptDock
+      bridge={props.bridge as unknown as PromptDockProps["bridge"]}
+      sessionId="s1"
+      state={props.state}
+      composer={composer}
+      dispatch={dispatch}
+      pending={props.pending ?? []}
+      noteTargetPrompt={props.noteTargetPrompt}
+    />
+  );
+}
+
+const input = (): HTMLTextAreaElement => screen.getByLabelText("Guide the agent") as HTMLTextAreaElement;
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("PromptDock (spec §3.1, §3.7)", () => {
+  it("Cmd+Enter steers the running agent with the trimmed text and clears the draft", async () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" />);
+    fireEvent.change(input(), { target: { value: "  add a test for the 429 path  " } });
+    fireEvent.keyDown(input(), { key: "Enter", metaKey: true });
+    await waitFor(() => expect(bridge.agent.sendInstruction).toHaveBeenCalledWith("s1", "add a test for the 429 path", "steer"));
+    await waitFor(() => expect(input().value).toBe(""));
+  });
+
+  it("Enter alone keeps typing: nothing is sent", () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" />);
+    fireEvent.change(input(), { target: { value: "line one" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(bridge.agent.sendInstruction).not.toHaveBeenCalled();
+    expect(input().value).toBe("line one");
+  });
+
+  it("the timing toggle queues instead of steering", async () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" />);
+    fireEvent.click(screen.getByRole("button", { name: "Instruction timing" }));
+    expect(screen.getByRole("button", { name: "Instruction timing" }).textContent).toContain("Queue");
+    fireEvent.change(input(), { target: { value: "then update the docs" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+    await waitFor(() => expect(bridge.agent.sendInstruction).toHaveBeenCalledWith("s1", "then update the docs", "queue"));
+  });
+
+  it("a finished session continues: the text is queued, then the agent resumes", async () => {
+    expect(["completed", "paused", "failed"].map((state) => continuesSession(state as SessionStatePayload["state"]))).toEqual([true, true, true]);
+    expect(continuesSession("running")).toBe(false);
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="completed" />);
+    fireEvent.change(input(), { target: { value: "also handle Retry-After" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(bridge.agent.resume).toHaveBeenCalledWith("s1"));
+    expect(bridge.agent.sendInstruction).toHaveBeenCalledWith("s1", "also handle Retry-After", "queue");
+    expect(bridge.agent.sendInstruction.mock.invocationCallOrder[0]).toBeLessThan(bridge.agent.resume.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("lists queued instructions above the prompt line, each cancellable", () => {
+    const bridge = fakeBridge();
+    render(
+      <Harness
+        bridge={bridge}
+        state="running"
+        pending={[
+          { id: "i1", mode: "queue", text: "then update the docs" },
+          { id: "i2", mode: "steer", text: "stop touching the cache" },
+        ] as PromptDockProps["pending"]}
+      />,
+    );
+    const queue = screen.getByRole("list", { name: "Queued instructions" });
+    expect(queue.textContent).toContain("then update the docs");
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancel queued instruction" })[1]!);
+    expect(bridge.agent.cancelInstruction).toHaveBeenCalledWith("s1", "i2");
+  });
+
+  it("Cmd+L focuses the prompt line from anywhere", () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" />);
+    expect(document.activeElement).not.toBe(input());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "l", metaKey: true, bubbles: true }));
+    });
+    expect(document.activeElement).toBe(input());
+  });
+
+  it("a failed send keeps the draft and shows the error", async () => {
+    const bridge = fakeBridge();
+    bridge.agent.sendInstruction.mockRejectedValueOnce(new Error("session s1 is not running"));
+    render(<Harness bridge={bridge} state="running" />);
+    fireEvent.change(input(), { target: { value: "keep me" } });
+    fireEvent.keyDown(input(), { key: "Enter", ctrlKey: true });
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("session s1 is not running");
+    expect(input().value).toBe("keep me");
+  });
+
+  it("Pause interrupts a running agent and Resume resumes a paused one", async () => {
+    const bridge = fakeBridge();
+    const { rerender } = render(<Harness bridge={bridge} state="running" />);
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(bridge.agent.interrupt).toHaveBeenCalledWith("s1"));
+    rerender(<Harness bridge={bridge} state="paused" />);
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(bridge.agent.resume).toHaveBeenCalledWith("s1"));
+  });
+
+  it("shows a status chip that names a decision the agent waits on", () => {
+    render(<Harness bridge={fakeBridge()} state="waiting_decision" />);
+    const chip = document.querySelector(".dock-status");
+    expect(chip?.className).toContain("dock-status-waiting_decision");
+    expect(chip?.textContent).toContain("Needs your decision");
+  });
+
+  it("queued items read 'Queued · text' with a text Cancel that keeps its accessible name", () => {
+    const bridge = fakeBridge();
+    render(<Harness bridge={bridge} state="running" pending={[{ id: "i1", mode: "queue", text: "add a sign\u202Eout button" }] as PromptDockProps["pending"]} />);
+    const item = screen.getByRole("list", { name: "Queued instructions" }).querySelector("li");
+    expect(item?.textContent).toBe("Queued · add a sign⟨U+202E⟩out buttonCancel");
+    expect(item?.querySelector(".dock-queue-text")?.getAttribute("title")).toBe("add a sign⟨U+202E⟩out button");
+    expect(screen.getByRole("button", { name: "Cancel queued instruction" }).textContent).toBe("Cancel");
+  });
+
+  describe("a trace note held for another session", () => {
+    const HELD: ComposerPrefillPayload = { sessionId: "s2", text: "check the retry path" };
+
+    it("Switch moves to that session and Dismiss drops the notice", async () => {
+      const bridge = fakeBridge();
+      render(<Harness bridge={bridge} state="running" held={HELD} />);
+      const notice = await screen.findByRole("status");
+      expect(notice.textContent).toContain("Trace note for another session");
+      fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+      await waitFor(() => expect(bridge.session.switchTo).toHaveBeenCalledWith("s2"));
+    });
+
+    it("names the other session through displayUntrusted, with its whole prompt as the tooltip (fix wave minor 6)", async () => {
+      const prompt = `Fix the \u202Elogin ${"z".repeat(120)} flow`;
+      render(<Harness bridge={fakeBridge()} state="running" held={HELD} noteTargetPrompt={prompt} />);
+      const target = (await screen.findByRole("status")).querySelector(".dock-note-target") as HTMLElement;
+      expect(target.textContent).not.toContain("\u202E");
+      expect(target.textContent).toContain("⟨U+202E⟩");
+      expect(target.textContent?.length).toBeLessThan(prompt.length);
+      expect(target.getAttribute("title")).toBe(`Fix the ⟨U+202E⟩login ${"z".repeat(120)} flow`);
+    });
+
+    it("Dismiss removes the notice without switching or touching the draft", async () => {
+      const bridge = fakeBridge();
+      render(<Harness bridge={bridge} state="running" held={HELD} />);
+      await screen.findByRole("status");
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(bridge.session.switchTo).not.toHaveBeenCalled();
+      expect(input().value).toBe("");
+    });
+  });
+});

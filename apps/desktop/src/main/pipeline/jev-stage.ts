@@ -37,6 +37,13 @@ export interface JevStageDeps {
   resolveSlug?: (files: readonly string[], symbols: readonly string[]) => string | undefined;
   onJevLog?: (log: JevDecisionLog) => void;
   onRedaction?: (count: number) => void;
+  /**
+   * The coordinator snapshot the caller took just before this call, if any; otherwise the stage reads one. Each read
+   * loads every unit, decision, validation and graph row from the database (lane 03 PL-2).
+   */
+  snapshot?: ReturnType<PipelineCoordinator["snapshot"]>;
+  /** Awaited before each batch and each unit; the sync pass yields to the event loop there once its slice is spent. */
+  pace?: () => Promise<void>;
 }
 
 export interface JevUnitOutcome {
@@ -75,7 +82,12 @@ function titlePatchForUnit(
 
 export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
   const { db, coordinator, client } = deps;
-  const snapshot = coordinator.snapshot();
+  // Each unit's rows are stored as its answers arrive, before the next unit's client call (lane 03 PL-2).
+  const record = (log: JevDecisionLog): void => {
+    db.upsertJevDecision(log);
+    deps.onJevLog?.(log);
+  };
+  const snapshot = deps.snapshot ?? coordinator.snapshot();
   const outcomes: JevUnitOutcome[] = [];
   const logs: JevDecisionLog[] = [];
 
@@ -123,6 +135,7 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
   }
 
   for (const batch of chunkAttentionBatch(snapshot.units)) {
+    await deps.pace?.();
     const inputs = batch.map((unit) =>
       attentionInputFromChangeUnit(
         redactedUnits.get(unit.id) ?? unit,
@@ -133,6 +146,7 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
     const started = Date.now();
     const results = await client.attention(inputs);
     for (let i = 0; i < batch.length; i += 1) {
+      await deps.pace?.();
       const unit = batch[i];
       const input = inputs[i];
       const result = results[i];
@@ -165,9 +179,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
           }),
           pass: "A",
         };
-        db.upsertJevDecision(log);
+        record(log);
         logs.push(log);
-        deps.onJevLog?.(log);
         outcomes.push({
           unitId: unit.id,
           version,
@@ -194,9 +207,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         }),
         pass: "A",
       };
-      db.upsertJevDecision(attentionLog);
+      record(attentionLog);
       logs.push(attentionLog);
-      deps.onJevLog?.(attentionLog);
 
       if (!attention.shouldSurface) {
         outcomes.push({
@@ -235,9 +247,8 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
         }),
         pass: "B",
       };
-      db.upsertJevDecision(projectionLog);
+      record(projectionLog);
       logs.push(projectionLog);
-      deps.onJevLog?.(projectionLog);
 
       if (intent.renderMode === "suppressed") {
         outcomes.push({

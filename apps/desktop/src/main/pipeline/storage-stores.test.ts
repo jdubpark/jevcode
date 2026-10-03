@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
+import type { ChangeUnit, Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
 import { PipelineCoordinator } from "@jevcode/semantic-core";
 import type { FailureRecord, PipelineStores } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
@@ -211,5 +211,248 @@ describe("storage stores under the coordinator: one long bucket", () => {
     // adds a unit for its failing test file, and the next pass reaches the unit it failed.
     // Attaching runs bucket-wide rewrote every unit on every rebuild (steps * (steps + 1) / 2).
     expect(rowsOf(db, "change_unit")).toBeLessThanOrEqual(3 * steps);
+  });
+});
+
+// PL-2: every rebuild, the coordinator removes each stored unit that its projection no longer has,
+// and a removed unit stays stored as superseded, so later rebuilds remove it again. The store wrote
+// it on every remove, past the dedupe: one identical change_unit row per later rebuild (80-82 per
+// evidence smoke run).
+describe("storage stores: a change unit that leaves the projection", () => {
+  const hunk = (file: string, ms: number): EvidenceFact => ({
+    type: "git_hunk",
+    repoId: "repo_stores",
+    sessionId: SESSION,
+    ts: new Date(ms).toISOString(),
+    file,
+    added: 4,
+    removed: 1,
+    isFormattingOnly: false,
+    isConfigOnly: false,
+    isLockfile: false,
+  });
+
+  function changeUnitRows(db: JevcodeDb): { id: string; status: string; payloadJson: string }[] {
+    return db
+      .listEvents(SESSION, { limit: 10_000 })
+      .filter((event) => event.type === "change_unit")
+      .map((event) => {
+        const unit = JSON.parse(event.payloadJson) as ChangeUnit;
+        return { id: unit.id, status: unit.status, payloadJson: event.payloadJson };
+      });
+  }
+
+  it("is written superseded once while its payload is unchanged, however many rebuilds follow", () => {
+    const { db, stores } = open();
+    const base = Date.parse(TS);
+    let now = base;
+    const coordinator = new PipelineCoordinator({ stores, clock: () => now });
+    const ingest = (fact: EvidenceFact): void => {
+      now += 5_000;
+      coordinator.ingest(fact);
+      coordinator.flush();
+    };
+    // Hunks more than the 2 min idle gap apart fall in separate buckets, and a unit's id names its
+    // bucket. A late hunk that sorts between two buckets shifts the later bucket's index, so that
+    // bucket's unit leaves the projection under its old id.
+    ingest(hunk("src/a.ts", base));
+    ingest(hunk("src/b.ts", base + 10 * 60_000));
+    const before = new Set(stores.units.all().map((unit) => unit.id));
+    ingest(hunk("src/c.ts", base + 5 * 60_000));
+    for (let step = 0; step < 5; step += 1) ingest(hunk(`src/d${step}.ts`, base + 11 * 60_000 + step * 1_000));
+
+    const rows = changeUnitRows(db);
+    const left = [...before].filter((id) => stores.units.get(id)?.status === "superseded");
+    expect(left).toHaveLength(1);
+    expect(rows.filter((row) => row.id === left[0]).map((row) => row.status)).toEqual(["detected", "superseded"]);
+    // No unit is ever written twice in a row with the same payload.
+    const last = new Map<string, string>();
+    for (const row of rows) {
+      expect(last.get(row.id)).not.toBe(row.payloadJson);
+      last.set(row.id, row.payloadJson);
+    }
+  });
+
+  it("is written again when the projection brings it back with its earlier payload", () => {
+    const { db, stores } = open();
+    const unit: ChangeUnit = {
+      id: "cu_back",
+      sessionId: SESSION,
+      title: "Changed 1 file: src/a.ts",
+      category: "implementation",
+      status: "detected",
+      files: ["src/a.ts"],
+      symbols: [],
+      interfacesChanged: [],
+      schemaChanges: [],
+      dependencyChanges: [],
+      relatedDecisions: [],
+      validationResults: [],
+      evidence: ["fact_1"],
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    stores.units.upsert(unit);
+    stores.units.remove(unit.id);
+    stores.units.remove(unit.id);
+    stores.units.upsert(unit);
+
+    expect(changeUnitRows(db).map((row) => row.status)).toEqual(["detected", "superseded", "detected"]);
+    expect(stores.units.get(unit.id)?.status).toBe("detected");
+  });
+});
+
+// PL-2 (D-6 review I-1): a store remembers a payload only once its row is written, so a write
+// that throws is tried again by the next rebuild instead of being skipped as already written.
+describe("storage stores: a write that throws", () => {
+  const unit: ChangeUnit = {
+    id: "cu_retry",
+    sessionId: SESSION,
+    title: "Changed 1 file: src/a.ts",
+    category: "implementation",
+    status: "detected",
+    files: ["src/a.ts"],
+    symbols: [],
+    interfacesChanged: [],
+    schemaChanges: [],
+    dependencyChanges: [],
+    relatedDecisions: [],
+    validationResults: [],
+    evidence: ["fact_1"],
+    createdAt: TS,
+    updatedAt: TS,
+  };
+  const cases = [
+    {
+      name: "change unit",
+      type: "change_unit",
+      method: "upsertChangeUnit",
+      write: (stores: PipelineStores) => stores.units.upsert(unit),
+    },
+    {
+      name: "validation",
+      type: "validation",
+      method: "upsertValidation",
+      write: (stores: PipelineStores) => stores.validations.upsertValidation(validation()),
+    },
+    {
+      name: "graph node",
+      type: "graph_node",
+      method: "upsertGraphNode",
+      write: (stores: PipelineStores) =>
+        stores.graph.upsertNodes([{ id: "node_1", sessionId: SESSION, type: "File", label: "src/a.ts" }]),
+    },
+  ] as const;
+
+  it.each(cases)("is written by the next upsert of the same payload: $name", ({ type, method, write }) => {
+    const { db, stores } = open();
+    const original = db[method].bind(db) as (...args: unknown[]) => unknown;
+    let calls = 0;
+    (db as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      return original(...args);
+    };
+    expect(() => write(stores)).toThrow("disk full");
+    expect(rowsOf(db, type)).toBe(0);
+
+    write(stores);
+    expect(rowsOf(db, type)).toBe(1);
+    write(stores);
+    expect(rowsOf(db, type)).toBe(1);
+  });
+});
+
+// PL-2 fix round 1. A label write rebuilds its unit from the database row, whose key order differs from the
+// projection's; the same payload must not be written again for that. A semantic event whose write threw is retried
+// by the next rebuild and must then be listed once.
+describe("storage stores: payloads that are already written", () => {
+  it("does not write a change unit again when only its key order differs", () => {
+    const { db, stores } = open();
+    const unit: ChangeUnit = {
+      id: "cu_order",
+      sessionId: SESSION,
+      title: "Changed 1 file: src/a.ts",
+      category: "implementation",
+      status: "validated",
+      files: ["src/a.ts"],
+      symbols: [],
+      interfacesChanged: [],
+      schemaChanges: [],
+      dependencyChanges: [],
+      relatedDecisions: [],
+      validationResults: ["val_1"],
+      evidence: ["fact_1"],
+      createdAt: TS,
+      updatedAt: TS,
+      importance: 0.2,
+    };
+    stores.units.upsert(unit);
+    const { importance, ...rest } = unit;
+    stores.units.upsert({ importance, ...rest });
+    expect(rowsOf(db, "change_unit")).toBe(1);
+
+    stores.units.upsert({ ...unit, importance: 0.3 });
+    expect(rowsOf(db, "change_unit")).toBe(2);
+  });
+
+  it("lists a semantic event once after its write threw and the next rebuild wrote it", () => {
+    const { db } = open();
+    const stores = createStorageStores(db, SESSION, { persistSemanticEvents: true });
+    const event = {
+      id: "sev_1",
+      sessionId: SESSION,
+      kind: "behavior_change" as const,
+      summary: "Changed src/a.ts",
+      changeUnitId: "cu_1",
+      evidence: [],
+      files: ["src/a.ts"],
+      symbols: [],
+      createdAt: TS,
+    };
+    const appendSemanticEvent = db.appendSemanticEvent.bind(db);
+    let calls = 0;
+    db.appendSemanticEvent = ((sessionId, value) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      return appendSemanticEvent(sessionId, value);
+    }) as typeof db.appendSemanticEvent;
+
+    expect(() => stores.events.emit(event)).toThrow("disk full");
+    stores.events.emit(event);
+    stores.events.emit(event);
+    expect(rowsOf(db, "semantic_event")).toBe(1);
+    expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_1"]);
+  });
+
+  it("writes and lists a semantic event once when its listener throws after the write (fix wave minor 5)", () => {
+    const { db } = open();
+    let notified = 0;
+    const stores = createStorageStores(db, SESSION, {
+      persistSemanticEvents: true,
+      onSemanticEvent: () => {
+        notified += 1;
+        if (notified === 1) throw new Error("listener failed");
+      },
+    });
+    const event = {
+      id: "sev_2",
+      sessionId: SESSION,
+      kind: "behavior_change" as const,
+      summary: "Changed src/b.ts",
+      changeUnitId: "cu_2",
+      evidence: [],
+      files: ["src/b.ts"],
+      symbols: [],
+      createdAt: TS,
+    };
+
+    expect(() => stores.events.emit(event)).toThrow("listener failed");
+    // The coordinator's next rebuilds emit the same event again.
+    stores.events.emit(event);
+    stores.events.emit(event);
+    expect(rowsOf(db, "semantic_event")).toBe(1);
+    expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_2"]);
+    expect(notified).toBe(1);
   });
 });

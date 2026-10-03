@@ -4,6 +4,7 @@ import { Activity, useLayoutEffect, useRef, useState, type ReactElement, type Re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceRow } from "@jevcode/contracts";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ROWS_RELEASED_MARK } from "../../../source.js";
 import { buildTraceIndex, type TraceIndex } from "../../../layout/trace-index.js";
@@ -26,6 +27,12 @@ import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionV
 import { ViewStoreContext, type ViewStore } from "../../state/store.js";
 import { ViewPortRegistryContext } from "../view-port.js";
 import { ConsoleView } from "./ConsoleView.js";
+
+// A pass-through spy on useVirtualizer: the options the Console passes are part of its contract (D-6 guard below).
+vi.mock("@tanstack/react-virtual", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-virtual")>();
+  return { ...actual, useVirtualizer: vi.fn(actual.useVirtualizer) };
+});
 
 // A pass-through spy on displayUntrusted: every row renders its agent text through it, so its calls show which rows
 // re-rendered (fix round 1, item 8).
@@ -927,5 +934,16 @@ describe("title bar count timing (lane fix round 2, minor c)", () => {
     await frames();
     expect(pills()).toHaveLength(2);
     for (const text of pills()) expect(text).toContain("3 new");
+  });
+});
+
+describe("Console row measurement (lane 03 D-6)", () => {
+  it("measures rows in a frame after the ResizeObserver delivery, so a follow re-layout never loops the observer", async () => {
+    vi.mocked(useVirtualizer).mockClear();
+    mountConsole(live(messages(3)), { state: { follow: true, loaded: true } });
+    await frames();
+    const calls = vi.mocked(useVirtualizer).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [options] of calls) expect(options.useAnimationFrameWithResizeObserver).toBe(true);
   });
 });
