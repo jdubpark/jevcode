@@ -271,6 +271,22 @@ describe("decisions and Jev", () => {
     expect(stepAt(fold(b), first)).toMatchObject({ tMs: 0, endTMs: 5_000, durationMs: 5_000 });
   });
 
+  it("a supervisor message before a re-emit of an answered decision stays an instruction (R25: only an open decision takes an answer)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    const answered = { decisionId: "dec-1", decision: { q: "a" }, evidence: [] };
+    const decided = b.decision({ id: "dec-1", status: "answered", answer: answered });
+    const steer = b.agent({ type: "agent_message", role: "user", text: "Also add tests." });
+    // The rebuild that follows the steer re-emits the answered decision.
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    const session = fold(b);
+    expect(stepAt(session, steer)).toMatchObject({ kind: "instruction", seqs: [steer] });
+    expect(stepAt(session, asked).seqs).not.toContain(steer);
+    expect(stepAt(session, asked).decision?.answerSeq).toBeUndefined();
+    expect(stepAt(session, asked).decision?.decidedSeq).toBe(decided);
+  });
+
   it("records the row that decided a decision as decidedSeq; re-emits keep it, and reopening clears it (final review D I-1)", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
