@@ -13,6 +13,7 @@ import type { JevClient } from "@jevcode/jev-router";
 import type { JevcodeDb } from "@jevcode/storage";
 
 import type { FromMainChannelName, FromMainPayload } from "../../shared/ipc-registry.js";
+import type { MainSlicer } from "./main-slicer.js";
 import type { MockAgentScript } from "./mock-agent-adapter.js";
 import type { ModelSelector } from "./model-selection.js";
 
@@ -52,6 +53,12 @@ export interface PipelineRuntimeOptions {
    * repo's explainer stage. Errors are logged, never thrown.
    */
   onPipelineSync?: (repoPath: string, sync: PipelineSyncSnapshot) => void;
+  /**
+   * The main process's shared slicer (main-slicer.ts): sync passes yield through it, as the session explainer does,
+   * so one event-loop turn runs at most one budget of their work. index.ts passes one instance to both; without
+   * one the runtime makes its own.
+   */
+  slicer?: MainSlicer;
 }
 
 export interface SessionStartOptions {

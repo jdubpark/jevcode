@@ -35,6 +35,7 @@ import {
   type HighlightEntry,
 } from "./explainer-session-rules.js";
 import type { ExplainerLogEvent } from "./explainer-stage.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import { buildNarratorCallRecord } from "./narrator-call-log.js";
 import type { PipelineSyncSnapshot } from "./types.js";
 
@@ -43,16 +44,16 @@ import type { PipelineSyncSnapshot } from "./types.js";
 // onPipelineSync returns at once; folds run on syncChain, narrator calls one at a time on narration.
 
 const FOLD_PAGE = 2_000;
-/**
+/*
  * Spec §6.1 caps a main-process block at 50 ms (lane 07 PL-3). A pass can append rows for every change unit (the
- * Jev stage logs each changed unit), so one sync can bring thousands of rows. The fold works in slices of about this
- * long: it folds rows, settles them with an incremental finalize, which re-derives only what those rows changed, and
- * yields. A slice stops folding once its folding time, plus the settle that time predicts, reaches this length.
+ * Jev stage logs each changed unit), so one sync can bring thousands of rows. The fold works in slices of the main
+ * slicer's per-turn budget, which the pipeline's sync pass shares (main-slicer.ts): it folds rows, settles them with
+ * an incremental finalize, which re-derives only what those rows changed, and yields through the slicer. A slice
+ * stops folding once the turn's time so far, plus the settle its folding predicts, reaches the budget.
  */
-export const FOLD_SLICE_MS = 20;
 /** The first guess of a settle's time per ms of folding; each settle measures it again. */
 const SETTLE_RATIO_START = 3;
-/** A slice folds for at least this share of FOLD_SLICE_MS, so a settle's fixed cost cannot shrink slices to a row. */
+/** A slice folds for at least this share of the budget, so a settle's fixed cost cannot shrink slices to a row. */
 const MIN_FOLD_SHARE = 0.1;
 const CLOSED_UNIT: ReadonlySet<ChangeUnit["status"]> = new Set<ChangeUnit["status"]>(["validated", "failed"]);
 
@@ -80,7 +81,9 @@ export interface SessionExplainerDeps {
   recordCall?(record: NarratorCallRecord): void;
   /** Minimum time between story narrations; default STORY_MIN_INTERVAL_MS. */
   storyIntervalMs?: number;
-  /** The length of a fold slice, folding and settling; default FOLD_SLICE_MS. 0 settles and yields after every row. */
+  /** The main process's shared slicer (main-slicer.ts); index.ts passes the pipeline's. Default: an own instance. */
+  slicer?: MainSlicer;
+  /** The length of a fold slice, folding and settling; default the slicer's budget. 0 settles and yields after every row. */
   foldSliceMs?: number;
 }
 
@@ -128,10 +131,6 @@ interface Tracked {
 /** Process-wide, so call record ids stay unique across explainer instances (one per repo). */
 let recordSeq = 0;
 
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -174,7 +173,8 @@ function storyTextOf(sentences: readonly NarrativeSentence[], provenance: "rule"
 
 export function createSessionExplainer(deps: SessionExplainerDeps): SessionExplainer {
   const interval = deps.storyIntervalMs ?? STORY_MIN_INTERVAL_MS;
-  const sliceMs = deps.foldSliceMs ?? FOLD_SLICE_MS;
+  const slicer = deps.slicer ?? createMainSlicer();
+  const sliceMs = deps.foldSliceMs ?? slicer.budgetMs;
   let narrator = deps.narrator;
   let tracked: Tracked | null = null;
   let disposed = false;
@@ -192,10 +192,9 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
   let failures = 0;
   let retryAt = 0;
-  // How long a fold slice folds before it settles (advance): its share of sliceMs, from the time a settle takes per ms
-  // of folding. A settle that took longer than predicted raises the ratio at once; a shorter one lowers it by half.
+  // The time a settle takes per ms of folding (advance). A settle that took longer than predicted raises it at once;
+  // a shorter one lowers it by half.
   let settleRatio = SETTLE_RATIO_START;
-  const foldBudget = (): number => sliceMs * Math.max(1 / (1 + settleRatio), MIN_FOLD_SHARE);
   // Lane 05's schema brake: schema-valid answers so far, and schema-invalid ones since the last valid one.
   let validAnswers = 0;
   let invalidStreak = 0;
@@ -265,29 +264,33 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   }
 
   /**
-   * Folds the rows after the cursor, read 2,000 per page (spec §6.1), in slices (FOLD_SLICE_MS, PL-3): once a slice's
-   * folding plus its predicted settle reaches sliceMs, and at the end of each full page, it settles the rows folded
-   * so far with an incremental finalize and yields. So no block folds or finalizes more than a slice's rows, however
-   * many rows the pass appended. A settle's session is discarded: the session is the last finalize's, which
-   * incremental equals fresh (S-3) makes deep-equal to one finalize of every row. Null when the explainer was
-   * disposed (the app quit closes the database next) or the session switched during a yield.
+   * Folds the rows after the cursor, read 2,000 per page (spec §6.1), in slices (PL-3): once the turn's time so far
+   * plus the settle its folding predicts reaches sliceMs, and at the end of each full page, it settles the rows folded
+   * so far with an incremental finalize and yields through the main slicer. So no turn folds or finalizes more than a
+   * slice's rows, however many rows the pass appended. A settle's session is discarded: the session is the last
+   * finalize's, which incremental equals fresh (S-3) makes deep-equal to one finalize of every row. Null when the
+   * explainer was disposed (the app quit closes the database next) or the session switched during a yield.
    */
   async function advance(t: Tracked): Promise<TraceSession | null> {
-    let sliceStart = performance.now();
-    let budget = foldBudget();
+    let foldStart = performance.now();
     let unsettled = false;
+    const sliceEnds = (): boolean => {
+      const turn = slicer.elapsed();
+      if (turn >= sliceMs) return true;
+      const folded = performance.now() - foldStart;
+      return folded >= sliceMs * MIN_FOLD_SHARE && turn + settleRatio * folded >= sliceMs;
+    };
     const pause = async (): Promise<boolean> => {
       if (unsettled) {
         const settleStart = performance.now();
         finalize(t.fold, { live: true });
-        const folded = Math.max(settleStart - sliceStart, 0.5);
+        const folded = Math.max(settleStart - foldStart, 0.5);
         const measured = (performance.now() - settleStart) / folded;
         settleRatio = Math.max(measured, (settleRatio + measured) / 2);
-        budget = foldBudget();
       }
       unsettled = false;
-      await yieldToEventLoop();
-      sliceStart = performance.now();
+      await slicer.yield();
+      foldStart = performance.now();
       return current(t);
     };
     for (;;) {
@@ -304,7 +307,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
           accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
           unsettled = true;
         }
-        if (performance.now() - sliceStart >= budget && !(await pause())) return null;
+        if (sliceEnds() && !(await pause())) return null;
       }
       if (events.length < FOLD_PAGE) break;
       if (!(await pause())) return null;
@@ -683,9 +686,9 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       if (drainQueued) return;
       drainQueued = true;
       syncChain = syncChain.then(async () => {
-        // The hook runs inside the pipeline's sync pass (after its last slice check): fold in a task of our own, so
-        // the fold's first slice never extends the pass's last one (PL-3).
-        await yieldToEventLoop();
+        // The hook runs inside the pipeline's sync pass (after its last slice check): the fold starts in a turn the
+        // main slicer gives it, so its first slice never extends the pass's last one (PL-3).
+        await slicer.yield();
         drainQueued = false;
         const batch = [...pendingSyncs.values()];
         pendingSyncs.clear();
