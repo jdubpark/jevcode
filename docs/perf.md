@@ -595,8 +595,8 @@ list and read it again only when `JevcodeDb.projectionVersion` shows a row of th
 
 - **The coordinator's rebuild re-projects the whole session.** At the turn end `coordinator.flush` takes 64–66 ms at
   1,459 units and 156–184 ms at 2,937 units, in one block. Mid-session the same rebuild runs inside
-  `coordinator.ingest` (the debounce) and gives the session's longest blocks: gaps of 459 ms at 1,459 units and 881 ms at
-  2,937 units in the soak, where 10 records are ingested between yields. Follow-up: an incremental projection (cluster
+  `coordinator.ingest` (the debounce) and gives the session's longest blocks: gaps of 451–464 ms at 1,459 units and
+  855–882 ms at 2,937 units in the soak, where 10 records are ingested between yields. Follow-up: an incremental projection (cluster
   only the facts since the last rebuild and re-project the units they touch), or run `clusterSession` and
   `projectGraph` in a worker thread and apply the result in sliced writes.
 - **The Jev debug panel's read.** `emitJevDebug` reads `latestJevDecisions(50)`, which orders every `jev_decision` row
