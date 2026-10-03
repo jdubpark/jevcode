@@ -12,6 +12,7 @@ import {
   NarratorUnavailableError,
   guardDecisionWhy,
   guardSessionStory,
+  isEmptySessionStoryInput,
   type NarratorClient,
   type NarratorResult,
   type SessionStoryInput,
@@ -648,7 +649,9 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     const input = deepFreeze(sessionStoryInput(session, sync.decisions, t.highlights, t.sources));
     const key = JSON.stringify(input);
     const client = narrator;
-    const canCall = client !== null && deps.now() >= retryAt;
+    // An empty input is no call: the client would answer it without the provider, and that answer must neither be
+    // recorded nor count toward the schema brake's valid answers (final review A M-1). The rule story stands in.
+    const canCall = client !== null && deps.now() >= retryAt && !isEmptySessionStoryInput(input);
     t.unitsAtStory = t.seenUnits.size;
     // Spec §6.1: a story whose input equals the last narrated input is skipped.
     if (key === t.storyKey && (t.storyAsked || !canCall)) return;

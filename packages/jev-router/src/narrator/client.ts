@@ -24,6 +24,7 @@ import {
   SESSION_STORY_SYSTEM_PROMPT,
   buildDecisionWhyState,
   buildSessionStoryState,
+  isEmptySessionStoryInput,
 } from "./session.js";
 import { NARRATOR_MAX_BATCH, NARRATOR_MODEL, NARRATOR_TIMEOUT_MS } from "./types.js";
 import type {
@@ -195,9 +196,7 @@ export function createNarratorClient(transport: NarratorTransport, options: Narr
       );
     },
     sessionStory(input, call) {
-      if (input.recentSteps.length === 0 && input.decisions.length === 0 && input.touchedComponents.length === 0) {
-        return Promise.resolve(emptyResult<NarrativeSentence[]>([], model));
-      }
+      if (isEmptySessionStoryInput(input)) return Promise.resolve(emptyResult<NarrativeSentence[]>([], model));
       const keyed = buildSessionStoryState(input);
       return ask<NarrativeSentence[]>(
         {
