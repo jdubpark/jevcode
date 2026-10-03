@@ -35,7 +35,7 @@ const child = spawn(electron, ["."], {
     JEVCODE_SMOKE_WORKSPACE: "1",
     JEVCODE_SMOKE_REPO: repo,
     JEVCODE_SMOKE_SHOTS: shots,
-    // 80 steps = 321 agent rows 150 ms apart: enough append samples for a p95 (docs/perf.md, ≥ 300).
+    // 80 steps = 321 agent events and 160 evidence facts, 150 ms apart: enough append samples for a p95 (docs/perf.md, ≥ 300).
     JEVCODE_SMOKE_STEPS: process.env.JEVCODE_SMOKE_STEPS ?? "80",
     JEVCODE_DB: path.join(tmp, "smoke.db"),
     JEVC_AGENT: "mock",
