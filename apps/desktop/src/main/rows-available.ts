@@ -167,74 +167,31 @@ export interface ObservedAppend {
 }
 
 /**
- * Wraps db.appendEvent and db.transaction on this instance. Every typed helper (appendAgentEvent, upsertDecision, …)
- * calls this.appendEvent, so all trace rows pass here. A row written outside db.transaction is reported at once, as a
- * batch of one. Rows written inside db.transaction(fn) are reported together, in seq order, after the outermost
- * transaction commits; a rolled-back transaction (or a nested one whose error fn caught) reports none of its rows.
- * Telemetry and other non-trace rows are not reported, and a throwing listener never fails the write.
+ * Wraps db.appendEvent on this instance. Every typed helper (appendAgentEvent,
+ * upsertDecision, …) calls this.appendEvent, so all trace rows pass here after
+ * their transaction commits. Telemetry and other non-trace rows are not
+ * reported, and a throwing listener never fails the write.
  */
 export function observeTraceAppends(
-  db: Pick<JevcodeDb, "appendEvent" | "transaction">,
-  onAppends: (events: readonly ObservedAppend[]) => void,
+  db: Pick<JevcodeDb, "appendEvent">,
+  onAppend: (event: ObservedAppend) => void,
 ): () => void {
-  const target = db as { appendEvent: JevcodeDb["appendEvent"]; transaction: JevcodeDb["transaction"] };
+  const target = db as { appendEvent: JevcodeDb["appendEvent"] };
   const prior = target.appendEvent;
-  const priorTransaction = target.transaction;
   const bound = prior.bind(db);
-  const boundTransaction = priorTransaction.bind(db);
-  let depth = 0;
-  let pending: ObservedAppend[] = [];
-  const report = (events: readonly ObservedAppend[]): void => {
-    if (events.length === 0) return;
-    try {
-      onAppends(events);
-    } catch {
-      // A hint is advisory; the 1 s poll still delivers the rows.
-    }
-  };
   const observed = (sessionId: string, type: EventStoreType, payload: unknown): StoredEvent => {
     const stored = bound(sessionId, type, payload);
     if (stored.sessionId.length > 0 && isTraceRowType(stored.type)) {
-      const event = { sessionId: stored.sessionId, seq: stored.seq, type: stored.type };
-      if (depth > 0) pending.push(event);
-      else report([event]);
+      try {
+        onAppend({ sessionId: stored.sessionId, seq: stored.seq, type: stored.type });
+      } catch {
+        // A hint is advisory; the 1 s poll still delivers the row.
+      }
     }
     return stored;
   };
-  const observedTransaction = <T>(fn: () => T): T => {
-    const mark = pending.length;
-    depth += 1;
-    let result: T;
-    try {
-      result = boundTransaction(fn);
-    } catch (error) {
-      // Rolled back (to its savepoint when nested): its rows do not exist.
-      pending.length = mark;
-      depth -= 1;
-      throw error;
-    }
-    depth -= 1;
-    if (depth === 0) {
-      const committed = pending;
-      pending = [];
-      report(committed);
-    }
-    return result;
-  };
   target.appendEvent = observed;
-  target.transaction = observedTransaction;
   return () => {
     if (target.appendEvent === observed) target.appendEvent = prior;
-    if (target.transaction === observedTransaction) target.transaction = priorTransaction;
   };
-}
-
-/** One hint per session for a committed batch, carrying its highest seq (the emitter coalesces across batches). */
-export function notifyCommitted(
-  emitter: Pick<RowsAvailableEmitter, "notify">,
-  events: readonly ObservedAppend[],
-): void {
-  const last = new Map<string, number>();
-  for (const event of events) last.set(event.sessionId, Math.max(last.get(event.sessionId) ?? 0, event.seq));
-  for (const [sessionId, seq] of last) emitter.notify(sessionId, seq);
 }

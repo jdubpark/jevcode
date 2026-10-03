@@ -285,20 +285,6 @@ export class JevcodeDb {
     };
   }
 
-  /**
-   * Runs fn in one transaction on the writer connection and returns its result: every write inside commits together,
-   * or none does when fn throws. Writes are synchronous (better-sqlite3), so fn must not await. A write's own
-   * transaction inside fn becomes a savepoint, so an error the caller catches inside fn undoes only that write.
-   */
-  transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
-  }
-
-  /** True while a transaction is open on the writer connection (inside transaction(fn)). */
-  get inTransaction(): boolean {
-    return this.db.inTransaction;
-  }
-
   // ------------------------------------------------------------------
   // Event store
   // ------------------------------------------------------------------

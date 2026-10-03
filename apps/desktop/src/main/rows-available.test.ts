@@ -6,7 +6,6 @@ import {
   ROWS_AVAILABLE_CHANNEL,
   ROWS_AVAILABLE_MIN_INTERVAL_MS,
   createRowsAvailableEmitter,
-  notifyCommitted,
   observeTraceAppends,
   rowsAvailableTargets,
 } from "./rows-available.js";
@@ -332,7 +331,7 @@ describe("observeTraceAppends", () => {
   it("reports every committed trace-row append with its seq, including the typed helpers", () => {
     const db = seeded();
     const seen: Array<{ sessionId: string; seq: number; type: string }> = [];
-    observeTraceAppends(db, (events) => seen.push(...events));
+    observeTraceAppends(db, (event) => seen.push(event));
     db.appendAgentEvent("sess_a", message("one"));
     db.appendAgentEvent("sess_a", message("two"));
     expect(seen).toEqual([
@@ -345,7 +344,7 @@ describe("observeTraceAppends", () => {
   it("ignores rows the trace never reads and appends that fail", () => {
     const db = seeded();
     const seen: unknown[] = [];
-    observeTraceAppends(db, (events) => seen.push(...events));
+    observeTraceAppends(db, (event) => seen.push(event));
     db.appendTelemetry("agent_event_count", {}, "sess_a");
     expect(() => db.appendAgentEvent("sess_missing", { ...message("x"), sessionId: "sess_missing" })).toThrow();
     expect(seen).toEqual([]);
@@ -362,76 +361,10 @@ describe("observeTraceAppends", () => {
     db.close();
   });
 
-  it("reports a transaction's rows once, after commit, in seq order (D-6 turn-end batch)", () => {
-    const db = seeded();
-    const batches: Array<{ seqs: number[]; inTransaction: boolean }> = [];
-    observeTraceAppends(db, (events) => batches.push({ seqs: events.map((event) => event.seq), inTransaction: db.inTransaction }));
-    db.appendAgentEvent("sess_a", message("before"));
-    const result = db.transaction(() => {
-      db.appendAgentEvent("sess_a", message("one"));
-      db.appendTelemetry("agent_event_count", {}, "sess_a");
-      db.appendAgentEvent("sess_a", message("two"));
-      expect(batches).toHaveLength(1);
-      return "done";
-    });
-    expect(result).toBe("done");
-    expect(batches).toEqual([
-      { seqs: [1], inTransaction: false },
-      { seqs: [2, 4], inTransaction: false },
-    ]);
-    db.close();
-  });
-
-  it("reports nothing for a rolled-back transaction, and keeps the rows of one whose caught write failed", () => {
-    const db = seeded();
-    const seen: number[][] = [];
-    observeTraceAppends(db, (events) => seen.push(events.map((event) => event.seq)));
-    expect(() =>
-      db.transaction(() => {
-        db.appendAgentEvent("sess_a", message("rolled back"));
-        throw new Error("escaped the batch");
-      }),
-    ).toThrow("escaped the batch");
-    expect(seen).toEqual([]);
-    expect(db.listEvents("sess_a")).toHaveLength(0);
-
-    db.transaction(() => {
-      db.appendAgentEvent("sess_a", message("kept one"));
-      // A write whose error the batch catches undoes only itself (its savepoint).
-      expect(() => db.appendAgentEvent("sess_missing", { ...message("bad"), sessionId: "sess_missing" })).toThrow();
-      try {
-        db.transaction(() => {
-          db.appendAgentEvent("sess_a", message("inner, rolled back"));
-          throw new Error("caught inside");
-        });
-      } catch {
-        // caught by the batch
-      }
-      db.appendAgentEvent("sess_a", message("kept two"));
-    });
-    const texts = db.listAgentEvents("sess_a").map((event) => (event.type === "agent_message" ? event.text : event.type));
-    expect(texts).toEqual(["kept one", "kept two"]);
-    expect(seen).toEqual([db.listEvents("sess_a").map((event) => event.seq)]);
-    db.close();
-  });
-
-  it("notifyCommitted sends one hint per session carrying the batch's highest seq", () => {
-    const notes: Array<[string, number]> = [];
-    notifyCommitted({ notify: (sessionId, seq) => notes.push([sessionId, seq]) }, [
-      { sessionId: "s1", seq: 4, type: "change_unit" },
-      { sessionId: "s2", seq: 2, type: "agent_event" },
-      { sessionId: "s1", seq: 9, type: "jev_decision" },
-    ]);
-    expect(notes).toEqual([
-      ["s1", 9],
-      ["s2", 2],
-    ]);
-  });
-
   it("stops reporting after dispose", () => {
     const db = seeded();
     const seen: unknown[] = [];
-    const dispose = observeTraceAppends(db, (events) => seen.push(...events));
+    const dispose = observeTraceAppends(db, (event) => seen.push(event));
     dispose();
     db.appendAgentEvent("sess_a", message("after"));
     expect(seen).toEqual([]);
