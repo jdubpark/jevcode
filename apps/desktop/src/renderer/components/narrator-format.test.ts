@@ -23,7 +23,7 @@ const base: NarratorCallRecord = {
 
 describe("narrator-format", () => {
   it.each([
-    ["on", "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent."],
+    ["on", "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions and the first README paragraph (redacted). File contents are never sent."],
     ["off_setting", "Rule-based labels only. Nothing leaves this machine."],
     ["off_no_key", "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine."],
     ["off_env", "JEVCODE_NARRATOR=off, so labels stay rule-based. Nothing leaves this machine."],

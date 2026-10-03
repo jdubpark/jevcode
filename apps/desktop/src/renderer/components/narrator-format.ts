@@ -4,7 +4,7 @@ import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narr
 export function narratorSettingNote(availability: NarratorAvailability): string {
   switch (availability) {
     case "on":
-      return "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent.";
+      return "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions and the first README paragraph (redacted). File contents are never sent.";
     case "off_setting":
       return "Rule-based labels only. Nothing leaves this machine.";
     case "off_no_key":
