@@ -8,6 +8,7 @@ import {
   languageForPath,
   type TreeSitterBackend,
 } from "./parser.js";
+import type { ImportScan } from "./tree-sitter.js";
 
 export interface ParseService {
   parseFile(filePath: string, source: string): Promise<SymbolInfo[]>;
@@ -36,20 +37,29 @@ export function createInlineParseService(): ParseService {
   };
 }
 
+type TaskOp = "symbols" | "imports";
+
 interface TaskItem {
   id: number;
+  op: TaskOp;
   filePath: string;
   source: string;
-  resolve: (symbols: SymbolInfo[]) => void;
+  resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  promise: Promise<SymbolInfo[]>;
+  promise: Promise<unknown>;
 }
 
 interface WorkerResponse {
   id: number;
   filePath: string;
   symbols?: SymbolInfo[];
+  imports?: ImportScan;
   error?: string;
+}
+
+/** Same-file merging applies per operation: an import scan never merges into a symbol parse. */
+function taskKey(op: TaskOp, filePath: string): string {
+  return `${op}\u0000${filePath}`;
 }
 
 export interface AnalysisPoolOptions {
@@ -101,11 +111,14 @@ export class AnalysisPool implements ParseService {
       }
       this.tasks.delete(response.id);
       this.taskWorker.delete(response.id);
-      if (this.inflightByFile.get(task.filePath) === response.id) {
-        this.inflightByFile.delete(task.filePath);
+      const key = taskKey(task.op, task.filePath);
+      if (this.inflightByFile.get(key) === response.id) {
+        this.inflightByFile.delete(key);
       }
       if (response.error !== undefined) {
         task.reject(new Error(response.error));
+      } else if (task.op === "imports") {
+        task.resolve(response.imports ?? { specifiers: [], exports: [] });
       } else {
         task.resolve(response.symbols ?? []);
       }
@@ -137,8 +150,9 @@ export class AnalysisPool implements ParseService {
       const task = this.tasks.get(runningId);
       this.tasks.delete(runningId);
       if (task !== undefined) {
-        if (this.inflightByFile.get(task.filePath) === runningId) {
-          this.inflightByFile.delete(task.filePath);
+        const key = taskKey(task.op, task.filePath);
+        if (this.inflightByFile.get(key) === runningId) {
+          this.inflightByFile.delete(key);
         }
         task.reject(error);
       }
@@ -163,6 +177,7 @@ export class AnalysisPool implements ParseService {
       this.taskWorker.set(id, idle);
       idle.postMessage({
         id: item.id,
+        op: item.op,
         filePath: item.filePath,
         source: item.source,
       });
@@ -170,11 +185,21 @@ export class AnalysisPool implements ParseService {
   }
 
   parseFile(filePath: string, source: string): Promise<SymbolInfo[]> {
+    return this.enqueue("symbols", filePath, source) as Promise<SymbolInfo[]>;
+  }
+
+  /** Import specifiers and exported names of one file, parsed in a worker (codebase map, spec §5.1). */
+  extractImports(filePath: string, source: string): Promise<ImportScan> {
+    return this.enqueue("imports", filePath, source) as Promise<ImportScan>;
+  }
+
+  private enqueue(op: TaskOp, filePath: string, source: string): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error("analysis pool disposed"));
     if (this.workers.length === 0) {
       return Promise.reject(new Error("no analysis workers available"));
     }
-    const inflightId = this.inflightByFile.get(filePath);
+    const key = taskKey(op, filePath);
+    const inflightId = this.inflightByFile.get(key);
     if (inflightId !== undefined && this.queue.includes(inflightId)) {
       const item = this.tasks.get(inflightId);
       if (item !== undefined) {
@@ -190,19 +215,20 @@ export class AnalysisPool implements ParseService {
     const id = this.nextId++;
     const item: TaskItem = {
       id,
+      op,
       filePath,
       source,
       resolve: () => {},
       reject: () => {},
-      promise: Promise.resolve([]),
+      promise: Promise.resolve(undefined),
     };
-    item.promise = new Promise<SymbolInfo[]>((resolve, reject) => {
+    item.promise = new Promise<unknown>((resolve, reject) => {
       item.resolve = resolve;
       item.reject = reject;
     });
     this.tasks.set(id, item);
     this.queue.push(id);
-    this.inflightByFile.set(filePath, id);
+    this.inflightByFile.set(key, id);
     this.dispatch();
     return item.promise;
   }

@@ -1,6 +1,9 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { openDb, openTraceReader } from "../packages/storage/dist/index.js";
@@ -17,6 +20,9 @@ import { compileSkeleton } from "../packages/ui-compiler/dist/index.js";
 import { PipelineRuntime } from "../apps/desktop/dist/main/pipeline/pipeline-runtime.js";
 import { buildTraceBundle, writeTraceBundle } from "../apps/desktop/dist/main/trace-bundle.js";
 import { createTraceService, readAllRows } from "../apps/desktop/dist/main/trace-service.js";
+import { FILES_SETTLE_MS, createExplainerStage } from "../apps/desktop/dist/main/pipeline/explainer-stage.js";
+import { scanPaths, scanRepo } from "../packages/codebase-map/dist/node/index.js";
+import { createImportExtractor } from "../packages/evidence-engine/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = path.join(root, "fixtures", "oauth");
@@ -42,6 +48,55 @@ const TRACE_READ_RUNS = 5;
 const TRACE_PAGE_SAMPLES = 300;
 const SESSION_ID = "sess-soak-0001";
 const REPO_ID = "repo-soak";
+// Console-explainer M-8 (spec §11 ingest guard). JEVCODE_SOAK_EXPLAINER=1 runs the explainer
+// stage beside the pipeline on a generated repo (narrator off). Each file_changed fact rewrites
+// one of EXPLAINER_REBUILD_TARGETS generated files (asynchronously, as the agent's process would)
+// and reports that path to the stage, so its settle and rebuild run on real content changes.
+// JEVCODE_SOAK_YIELD_EVERY=N yields to the event loop every N records, so the scan and rebuilds
+// compete with ingestion (guard B uses 10). JEVCODE_SOAK_PAUSE_EVERY=N pauses ingestion for
+// longer than the stage's 500 ms settle every N records, so rebuilds run between records; with
+// the explainer on, pauses start once its first scan finished, so a pause never hides the scan
+// from ingestMs, which leaves the pauses out. The JSON reports the first record that paused
+// (`firstPauseAt`); JEVCODE_SOAK_PAUSE_FROM=<that record> gives an explainer-off base run the
+// same pauses. Unset, the ingest loop is unchanged.
+const EXPLAINER = process.env["JEVCODE_SOAK_EXPLAINER"] === "1";
+const EXPLAINER_FILES = Number(process.env["JEVCODE_SOAK_EXPLAINER_FILES"] ?? 5_000);
+const YIELD_EVERY = Number(process.env["JEVCODE_SOAK_YIELD_EVERY"] ?? 0);
+const PAUSE_EVERY = Number(process.env["JEVCODE_SOAK_PAUSE_EVERY"] ?? 0);
+const PAUSE_FROM = Number(process.env["JEVCODE_SOAK_PAUSE_FROM"] ?? 0);
+const PAUSE_MS = FILES_SETTLE_MS + 100;
+const EXPLAINER_REBUILD_TARGETS = 200;
+for (const [name, value, min] of [
+  ["JEVCODE_SOAK_EXPLAINER_FILES", EXPLAINER_FILES, 1],
+  ["JEVCODE_SOAK_YIELD_EVERY", YIELD_EVERY, 0],
+  ["JEVCODE_SOAK_PAUSE_EVERY", PAUSE_EVERY, 0],
+  ["JEVCODE_SOAK_PAUSE_FROM", PAUSE_FROM, 0],
+]) {
+  assert(Number.isInteger(value) && value >= min, `${name} must be an integer >= ${min}, got ${process.env[name]}`);
+}
+
+/** The source of generated file `index`; `version` > 0 adds an export, so the content hash changes. */
+function explainerSource(index, version = 0) {
+  const next = String((index + 1) % 100).padStart(3, "0");
+  const edit = version > 0 ? `export const edit${index} = ${version};\n` : "";
+  return `import { z } from "zod";\nimport { value } from "./file-${next}.js";\nexport const v${index} = z.string().parse(value);\n${edit}`;
+}
+
+function explainerPath(index) {
+  return `src/mod-${String(Math.floor(index / 100)).padStart(3, "0")}/file-${String(index % 100).padStart(3, "0")}.ts`;
+}
+
+/** `fileCount` small TS files in modules of 100 under src/, in a fresh `git init` directory. */
+function makeExplainerRepo(fileCount) {
+  const root = mkdtempSync(path.join(tmpdir(), "jevcode-soak-map-"));
+  for (let index = 0; index < fileCount; index += 1) {
+    const file = path.join(root, explainerPath(index));
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, explainerSource(index));
+  }
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  return root;
+}
 
 function nowIso(offsetMs) {
   return new Date(Date.UTC(2026, 8, 19, 9, 0, 0) + offsetMs).toISOString();
@@ -432,6 +487,43 @@ async function main() {
     return result;
   };
 
+  let explainer = null;
+  let extractor = null;
+  let explainerRepo = null;
+  let explainerRows = 0;
+  let ingesting = false;
+  let scansDone = 0;
+  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0 };
+  if (EXPLAINER) {
+    explainerRepo = makeExplainerRepo(EXPLAINER_FILES);
+    extractor = createImportExtractor();
+  }
+  // Every file_changed fact lands on one of a fixed set of generated files spread over the repo,
+  // rewritten with a new version (skipped while its previous rewrite is still in flight).
+  const targets = Array.from(
+    { length: Math.min(EXPLAINER_REBUILD_TARGETS, EXPLAINER_FILES) },
+    (_, n) => Math.floor((n * EXPLAINER_FILES) / Math.min(EXPLAINER_REBUILD_TARGETS, EXPLAINER_FILES)),
+  );
+  const versions = new Map();
+  const rewriting = new Map();
+  let changeCount = 0;
+  const forwardFileChange = () => {
+    const index = targets[changeCount % targets.length];
+    changeCount += 1;
+    const rel = explainerPath(index);
+    if (!rewriting.has(rel)) {
+      const version = (versions.get(rel) ?? 0) + 1;
+      versions.set(rel, version);
+      if (ingesting) duringIngest.rewrites += 1;
+      const done = writeFile(path.join(explainerRepo, rel), explainerSource(index, version))
+        .catch((error) => console.warn(`soak: WARN rewrite of ${rel} failed: ${error.message}`))
+        .finally(() => rewriting.delete(rel));
+      rewriting.set(rel, done);
+    }
+    if (ingesting) duringIngest.changes += 1;
+    explainer?.onFilesChanged([rel]);
+  };
+
   const runtime = new PipelineRuntime({
     db,
     emit: (channel, payload) => {
@@ -455,6 +547,7 @@ async function main() {
     jevClient: new DegradeClient(),
     evidence: false,
     log: () => {},
+    onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => paths.forEach(forwardFileChange) : undefined,
   });
 
   await runtime.startSession({
@@ -465,12 +558,59 @@ async function main() {
     agentMode: "replay",
   });
 
+  if (EXPLAINER) {
+    explainer = createExplainerStage({
+      db,
+      repoRoot: explainerRepo,
+      sessionId: () => SESSION_ID,
+      scan: scanRepo,
+      scanPaths,
+      extract: extractor.extract,
+      emitRowsAvailable: () => {
+        explainerRows += 1;
+        if (ingesting) duringIngest.rows += 1;
+      },
+      now: () => Date.now(),
+      schedule: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle) },
+      log: (event) => {
+        if (event.kind === "scan") scansDone += 1;
+        if (!ingesting) return;
+        if (event.kind === "scan") duringIngest.scansDone += 1;
+        if (event.kind === "snapshot") duringIngest.snapshots += 1;
+      },
+      explainWithModel: () => false,
+    });
+    explainer.onRepoOpened();
+    explainer.onSessionStarted(SESSION_ID);
+  }
+
   const records = buildStream();
   console.log(`soak: ${records.length} generated records`);
 
+  // Event loop delay over the ingest window: with a synchronous loop the max is the loop itself.
+  // The histogram's first tick only starts its clock, so it ticks once before ingestion starts.
+  const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+  loopDelay.enable();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  ingesting = true;
+  let pausedMs = 0;
+  let firstPauseAt = null;
   const ingestStarted = Date.now();
   let burstIndex = 0;
   for (const record of records) {
+    if (YIELD_EVERY > 0 && burstIndex > 0 && burstIndex % YIELD_EVERY === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    if (PAUSE_EVERY > 0 && burstIndex > 0 && burstIndex % PAUSE_EVERY === 0 && burstIndex >= PAUSE_FROM) {
+      if (EXPLAINER && scansDone === 0) {
+        duringIngest.pausesBeforeScan += 1;
+      } else {
+        firstPauseAt ??= burstIndex;
+        // Only the planned pause leaves ingestMs; a late timer (a blocked loop) still counts.
+        await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+        pausedMs += PAUSE_MS;
+      }
+    }
     if (burstIndex % 400 === 0) {
       setLock(true);
     }
@@ -482,11 +622,29 @@ async function main() {
     runtime.ingestPipelineRecord(SESSION_ID, record);
   }
   setLock(false);
-  const ingestMs = Date.now() - ingestStarted;
+  const ingestMs = Date.now() - ingestStarted - pausedMs;
+  ingesting = false;
+  // One more tick, so a loop that never yielded records its whole block as one delay.
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  loopDelay.disable();
+  const toMs = (ns) => Number((ns / 1e6).toFixed(1));
+  const eventLoopDelayMs = {
+    p50: toMs(loopDelay.percentile(50)),
+    p99: toMs(loopDelay.percentile(99)),
+    max: toMs(loopDelay.max),
+    samples: loopDelay.count,
+  };
 
   const syncStarted = Date.now();
   await runtime.syncAll();
   const syncMs = Date.now() - syncStarted;
+  if (explainer !== null) {
+    await explainer.whenIdle();
+    explainer.dispose();
+    await Promise.allSettled([...rewriting.values()]);
+    await extractor.dispose();
+    rmSync(explainerRepo, { recursive: true, force: true });
+  }
 
   const generativeCount = manager.getGenerative().length;
   assert(generativeCount <= 1, `generative surfaces ${generativeCount} > 1`);
@@ -606,6 +764,12 @@ async function main() {
         units: db.listChangeUnits(SESSION_ID).length,
         jevDecisions: db.listJevDecisions(SESSION_ID).length,
         profile: PROFILE,
+        pauseEvery: PAUSE_EVERY,
+        pauseFrom: PAUSE_FROM,
+        firstPauseAt,
+        pausedMs,
+        eventLoopDelayMs,
+        explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, yieldEvery: YIELD_EVERY, duringIngest } : null,
         traceReadMs,
         traceReadRunsMs,
         traceRows: trace.rows.length,

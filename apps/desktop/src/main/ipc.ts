@@ -34,6 +34,7 @@ import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { openRepoByPath } from "./repo-service.js";
+import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import {
   buildSessionState,
   startSession,
@@ -72,6 +73,8 @@ export interface IpcDeps {
   senderKind(webContentsId: number): SenderKind;
   /** trace:open and trace:requestChanges (trace-window-ipc.ts). */
   traceWindows: TraceWindowIpcDeps;
+  /** The codebase-map explainer stage for the open repo (console-explainer spec §6). */
+  explainer?: ExplainerRegistry;
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
@@ -163,6 +166,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     });
   }
 
+  /**
+   * Spec §6.6: explainer problems never affect repo or agent work, so a throw from the explainer
+   * (its stage, a narration seam or a status listener) is logged and the handler goes on.
+   */
+  function toExplainer(what: string, call: (explainer: ExplainerRegistry) => void): void {
+    if (deps.explainer === undefined) return;
+    try {
+      call(deps.explainer);
+    } catch (error) {
+      deps.log(`explainer ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   handle(RendererToMainLocalChannels.repoBrowse, async () => {
     const requestedPath = await deps.requestRepoPath();
     if (!requestedPath) return null;
@@ -170,6 +186,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.state.repo = repo;
     deps.state.info = info;
     deps.state.session = session;
+    toExplainer("repoOpened", (explainer) => explainer.repoOpened(repo.gitRoot));
     const payload = repoOpenedPayload(repo);
     emitRepoOpened(payload);
     emitRecentRepos(deps.db);
@@ -182,6 +199,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.state.repo = repo;
     deps.state.info = info;
     deps.state.session = session;
+    toExplainer("repoOpened", (explainer) => explainer.repoOpened(repo.gitRoot));
     const payload = repoOpenedPayload(repo);
     emitRepoOpened(payload);
     emitRecentRepos(deps.db);
@@ -200,9 +218,22 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     if (activeSessionId !== undefined && deps.runtime.hasSession(activeSessionId)) {
       await deps.runtime.stopSession(activeSessionId);
     }
+    const closedRoot = deps.state.repo?.gitRoot;
+    if (closedRoot !== undefined) toExplainer("repoClosed", (explainer) => explainer.repoClosed(closedRoot));
     deps.state.repo = null;
     deps.state.info = null;
     deps.state.session = null;
+    return null;
+  });
+
+  // overview:rescan (spec §6.6 Retry; interfaces §8.3). Only the open repo may be rescanned,
+  // so a renderer cannot start a scan of another directory.
+  handle(RendererToMainChannels.overviewRescan, ({ repoRoot }) => {
+    const openRoot = deps.state.repo?.gitRoot;
+    if (openRoot === undefined || repoRoot !== openRoot) {
+      throw new IpcError("NO_ACTIVE_SESSION", "overview:rescan: repoRoot is not the open repo");
+    }
+    toExplainer("rescan", (explainer) => explainer.rescan(repoRoot));
     return null;
   });
 
@@ -266,6 +297,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       reasoningEffort,
       approvalMode,
     });
+    toExplainer("sessionStarted", (explainer) => explainer.sessionStarted(info.gitRoot, active.id));
     deps.state.session = deps.db.getSession(active.id) ?? null;
     sendToRenderer(
       MainToRendererChannels.sessionState,

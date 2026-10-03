@@ -7148,8 +7148,10 @@ OUT=~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b
 cd ~/Projects/jevcode-ce-04
 uptime > $OUT/load.txt
 for i in 1 2 3; do
-  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=200 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
-  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=200 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=20000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
+  # Head first: its pauses start once its scan finished (firstPauseAt); the base pauses on the same records.
+  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=20000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
+  FROM=$(node -e 'const m=/"firstPauseAt": (\d+)/.exec(require("fs").readFileSync(process.argv[1],"utf8")); console.log(m ? m[1] : 1000000000)' $OUT/head-$i.log)
+  JEVCODE_SOAK_EVENTS=2000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=$FROM perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
   uptime >> $OUT/load.txt
 done
 echo CE04_SOAK_B_DONE >> $OUT/load.txt
@@ -7157,9 +7159,50 @@ EOF
 nohup zsh ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b.sh > /dev/null 2>&1 &
 ```
 
-Wait for `CE04_SOAK_B_DONE`, then run the Step 5 median command with `soak-b` in place of `soak-a`.
+Wait for `CE04_SOAK_B_DONE`, then run the Step 5 median command with `soak-b` in place of `soak-a`, and the same for the event loop delay:
 
-Expected: `ratio` ≤ `1.100`. A miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or `buildOverview`; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
+```bash
+node -e 'const fs=require("fs");const d=process.argv[1];const get=(w,k)=>[1,2,3].map(i=>{const t=fs.readFileSync(`${d}/${w}-${i}.log`,"utf8");const at=t.indexOf("\"eventLoopDelayMs\"");return Number(new RegExp(`"${k}": ([\\d.]+)`).exec(t.slice(at))[1]);});const med=a=>[...a].sort((x,y)=>x-y)[1];for(const k of ["p99","max"]){const b=get("base",k),h=get("head",k);console.log(k,JSON.stringify({base:b,head:h,ratio:(med(h)/med(b)).toFixed(3)}));}' ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-b
+```
+
+Expected:
+
+- `ratio` (ingestMs) ≤ `1.100`.
+- Event loop delay gates, medians of the 3 runs: head `eventLoopDelayMs.p99` ≤ 1.10 × base, and head `eventLoopDelayMs.max` ≤ 1.25 × base. An absolute gate would measure the pipeline, not the stage: in the 2026-10-02 runs under load the pipeline alone (explainer off) blocked the loop for up to 0.59 s at 600 events, 2.48 s at 2,000 events and 7.5 s at 4,000 events. The stage can add at most one block to a delay sample, and head and base maxima stayed within 0.97-1.10 of each other (p99 within 1.03-1.05).
+- What each gate can and cannot catch. At about 130 samples the p99 is roughly the 2nd-largest sample, so the p99 gate catches a single stage block of about 450-600 ms or more, and loses sensitivity as the sample count grows (the 99th percentile then sits below more outliers). The max gate (≤ 1.25 × base) reacts only to a stage block over about 3 s, or to one that lands back to back with the pipeline's own longest block; a smaller single block hides inside the pipeline's maximum. Neither gate bounds a stage block of tens or hundreds of milliseconds. The ≤ 50 ms main-thread bound for the stage rests on the stage rows in `explainer-overview.bench.ts`, not on this soak.
+- `explainer.duringIngest.scansDone`: with ingestion saturating the loop (yield every 10 records), a 20,000-file scan does not finish within 2,000 events (nor within 4,000), so this 20,000-file run covers ingestion under the running scan and `firstPauseAt` stays null. It cannot show rebuilds during ingestion; the required smaller-repo pair below does.
+
+**Required: smaller-repo pair (3 + 3, alternating).** The scan of a 1,000-file repo finishes while 4,000 events ingest, so this pair runs the stage's rebuild and snapshot path against live ingestion. Same build for head and base, the same relative gates, plus a coverage gate.
+
+```bash
+mkdir -p ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c
+cat > ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c.sh <<'EOF'
+#!/bin/zsh
+OUT=~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c
+cd ~/Projects/jevcode-ce-04
+uptime > $OUT/load.txt
+for i in 1 2 3; do
+  # Head first: its pauses start once its scan finished (firstPauseAt); the base pauses on the same records.
+  JEVCODE_SOAK_EVENTS=4000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=1000 perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/head-$i.log 2>&1 || echo "head $i exited $?" >> $OUT/errors.txt
+  FROM=$(node -e 'const m=/"firstPauseAt": (\d+)/.exec(require("fs").readFileSync(process.argv[1],"utf8")); console.log(m ? m[1] : 1000000000)' $OUT/head-$i.log)
+  JEVCODE_SOAK_EVENTS=4000 JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=$FROM perl -e 'alarm 900; exec @ARGV' node scripts/soak.mjs > $OUT/base-$i.log 2>&1 || echo "base $i exited $?" >> $OUT/errors.txt
+  uptime >> $OUT/load.txt
+done
+echo CE04_SOAK_C_DONE >> $OUT/load.txt
+EOF
+nohup zsh ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c.sh > /dev/null 2>&1 &
+```
+
+Wait for `CE04_SOAK_C_DONE`, then run the ingest ratio (the Step 5 median command), the event loop delay command above, and the coverage check, each with `soak-c` in place of `soak-b`:
+
+```bash
+node -e 'const fs=require("fs");const d=process.argv[1];const get=(w,k)=>[1,2,3].map(i=>Number(new RegExp(`"${k}": (\\d+)`).exec(fs.readFileSync(`${d}/${w}-${i}.log`,"utf8"))[1]));const med=a=>[...a].sort((x,y)=>x-y)[1];const b=get("base","ingestMs"),h=get("head","ingestMs");console.log(JSON.stringify({base:b,head:h,ratio:(med(h)/med(b)).toFixed(3)}))' ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c
+node -e 'const fs=require("fs");const d=process.argv[1];for(const i of [1,2,3]){const t=fs.readFileSync(`${d}/head-${i}.log`,"utf8");const at=t.indexOf("\"duringIngest\"");const g=k=>Number(new RegExp(`"${k}": (\\d+)`).exec(t.slice(at))[1]);console.log(i,JSON.stringify({scansDone:g("scansDone"),snapshots:g("snapshots"),rows:g("rows")}));}' ~/Projects/jevcode-ce-04/.superpowers/ce-04/soak-c
+```
+
+Expected: ingest `ratio` ≤ `1.100`; event loop delay p99 ≤ 1.10 × base and max ≤ 1.25 × base (medians of 3); `errors.txt` absent; and `duringIngest.snapshots` ≥ 1 in every head run (and `scansDone` ≥ 1). A head run with `snapshots` = 0 means the rebuild path never ran against live ingestion: the run does not count, and the pair is repeated at `JEVCODE_SOAK_EXPLAINER_FILES=500` or with more events until it does.
+
+A ratio miss means the scan competes with ingestion on the main thread: profile a head run with `node --cpu-prof scripts/soak.mjs` and look for main-thread time in `scanRepo` (hashing, UTF-8 decode) or the explainer stage; lowering `READ_CONCURRENCY` or yielding between read batches are the first levers.
 
 - [ ] **Step 7: Record the results in `docs/perf.md`**
 
@@ -7175,7 +7218,7 @@ Spec §11 budgets for the explainer stage. Bench: `pnpm --filter jevcode-desktop
 | Rule-based map visible after repo open, 5,000 files | ≤ 2 s | <mean> ms mean of 5 (min <min>, max <max>), <date>, load <load> | <PASS or FAIL> | bench, row 1 |
 | Full scan and map, 20,000 files | ≤ 20 s | <mean> ms mean of 3 (min <min>, max <max>), <date> | <PASS or FAIL> | bench, row 2 |
 | M1b soak ratio with the explainer on (5,000-file repo), against `<w0>` | ≤ 1.10 | base <b1>/<b2>/<b3> ms, median <bm>; head <h1>/<h2>/<h3> ms, median <hm>; ratio <ratio> | <PASS or FAIL> | guard A |
-| Ingestion under a running 20,000-file scan (2,000 events, yield every 200) | ≤ 1.10 | off <o1>/<o2>/<o3> ms, median <om>; on <n1>/<n2>/<n3> ms, median <nm>; ratio <ratio> | <PASS or FAIL> | guard B |
+| Ingestion under a running 20,000-file scan and its rebuilds (2,000 events, yield every 10, pause every 100) | ≤ 1.10 | off <o1>/<o2>/<o3> ms, median <om>; on <n1>/<n2>/<n3> ms, median <nm>; ratio <ratio> | <PASS or FAIL> | guard B |
 
 The rule-based map row measures scan, import extraction, componentize and snapshot assembly; the row write and push hint add under 10 ms. Guard A's ingest loop is synchronous, so it measures the stage's cost on the ingest path (the `file_changed` hook); guard B yields every 200 records so the scan's I/O, hashing and worker parsing overlap ingestion.
 ```

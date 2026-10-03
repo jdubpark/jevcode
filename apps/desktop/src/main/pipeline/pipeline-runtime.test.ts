@@ -1393,3 +1393,65 @@ describe("PipelineRuntime evidence provenance (R2)", () => {
     }
   }, 30_000);
 });
+
+describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {
+  async function startWithHook(name: string, hook: (repoPath: string, paths: readonly string[]) => void) {
+    const dir = path.join(repoRoot, `apps/desktop/.test-tmp/${name}`);
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = `sess-${name}`;
+    const repoId = `repo-${name}`;
+    db.upsertRepository({ id: repoId, path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId, prompt: "demo" });
+    const runtime = new PipelineRuntime({
+      db,
+      emit: collectEmit().emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      onRepoFilesChanged: hook,
+    });
+    await runtime.startSession({ sessionId, repoId, repoPath: dir, prompt: "demo", agentMode: "replay" });
+    const ts = "2026-10-02T10:00:00.000Z";
+    runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: "src/a.ts", kind: "modified", ts });
+    runtime.ingestRecord(sessionId, {
+      type: "git_hunk",
+      repoId,
+      sessionId,
+      file: "src/b.ts",
+      added: 1,
+      removed: 0,
+      isFormattingOnly: false,
+      isConfigOnly: false,
+      isLockfile: false,
+      ts,
+    });
+    return { db, runtime, sessionId, dir };
+  }
+
+  it("forwards file_changed facts with the session's repo path", async () => {
+    const calls: [string, string[]][] = [];
+    const { db, runtime, sessionId, dir } = await startWithHook("explainer-hook", (repoPath, paths) => {
+      calls.push([repoPath, [...paths]]);
+    });
+    try {
+      expect(calls).toEqual([[dir, ["src/a.ts"]]]);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  });
+
+  it("keeps ingesting when the hook throws", async () => {
+    const { db, runtime, sessionId } = await startWithHook("explainer-hook-throws", () => {
+      throw new Error("boom");
+    });
+    try {
+      expect(db.listEvents(sessionId).filter((event) => event.type === "evidence_fact")).toHaveLength(2);
+      expect(runtime.getIngestFailures(sessionId)).toBe(0);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  });
+});
