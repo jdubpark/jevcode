@@ -62,11 +62,15 @@ export function rowIndexOfSelection(
   return -1;
 }
 
-/** j/k order: one entry per row that shows a step (a read group stands for its first read); flag lines are skipped. */
+/**
+ * j/k order: one entry per row that shows a step (a read group stands for its first read); flag lines are skipped, since
+ * their step has a row of its own. A folded Jev review row stands for its first guardrail step, which has no other row,
+ * so the keyboard reaches it and Enter expands it (E M-3).
+ */
 export function consoleReadingOrder(rows: readonly ConsoleRow[]): SelectionId[] {
   const order: SelectionId[] = [];
   for (const row of rows) {
-    if (row.kind === "finding" || row.kind === "guardrails" || row.kind === "summary") continue;
+    if (row.kind === "finding" || row.kind === "summary") continue;
     const first = consoleRowStepIds(row)[0];
     if (first !== undefined) order.push(first as SelectionId);
   }
