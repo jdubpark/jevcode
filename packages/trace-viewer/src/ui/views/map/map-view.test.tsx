@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import nodePath from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -21,6 +25,7 @@ import { buildSession } from "../../../test-support/session-builder.js";
 import { Brief } from "../../inspector/Brief.js";
 import { Inspector } from "../../inspector/Inspector.js";
 import { KeyboardLayer } from "../../shell/KeyboardLayer.js";
+import { MapEdges } from "./MapEdges.js";
 import { MapHeader } from "./MapHeader.js";
 import { planMapFit } from "./map-camera.js";
 import { MapView } from "./MapView.js";
@@ -500,6 +505,20 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(note?.getAttribute("title")).toBe("git ls-files ⟨U+202E⟩failed");
     expect(document.querySelectorAll("[data-map-card]")).toHaveLength(1);
     expect(document.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("a lit edge that lane 07 also emphasizes keeps its accent (lane 06 fix, minor 4)", () => {
+    const layout = layoutMap(buildOverviewModel(WEB_API_DB, 1), { level: "card" });
+    const key = `${componentId("packages/api")}>${componentId("packages/db")}`;
+    renderWithViewer(<MapEdges layout={layout} hubs={new Set()} activeId={componentId("packages/api")} emphasized={new Set([key])} />, { session: null });
+    const path = document.querySelector(`[data-map-edge="${key}"]`);
+    expect(path?.hasAttribute("data-lit")).toBe(true);
+    expect(path?.hasAttribute("data-emphasized")).toBe(true);
+    // The two selectors weigh the same, so the stroke of the later rule wins: it must be the lit (accent) one.
+    const css = readFileSync(nodePath.join(nodePath.dirname(fileURLToPath(import.meta.url)), "MapView.module.css"), "utf8");
+    const strokes = [...css.matchAll(/^\.edge\[data-(lit|emphasized)\] \{([^}]*)\}/gm)].filter((rule) => /\bstroke:/.test(rule[2] ?? ""));
+    expect(strokes.map((rule) => rule[1])).toEqual(["emphasized", "lit"]);
+    expect(strokes.at(-1)?.[2]).toContain("stroke: var(--tv-accent)");
   });
 
   it("draws a two-way import as one line with the summed weight, lit from either end", async () => {

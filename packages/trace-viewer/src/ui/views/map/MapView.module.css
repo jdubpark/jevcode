@@ -326,16 +326,18 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* Emphasized (both ends touched this session, lane 07's overlay) comes first: a selected or hovered card's edges keep
+   their accent when they are emphasized too. The two selectors weigh the same, so source order decides. */
+.edge[data-emphasized] {
+  stroke: var(--tv-ink-3);
+}
+
 .edge[data-lit] {
   stroke: var(--tv-accent);
 }
 
 .edge[data-dim] {
   opacity: 0.22;
-}
-
-.edge[data-emphasized] {
-  stroke: var(--tv-ink-3);
 }
 
 .card {
