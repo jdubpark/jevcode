@@ -811,9 +811,7 @@ export class PipelineRuntime {
           this.opts.db.setExecutionClaim(session.sessionId, null);
           this.emitAgentState(session);
           this.emitSessionState(session.sessionId);
-          void this.syncSession(session).then(() => {
-            this.emitCompletionSurface(session);
-          });
+          void this.syncSession(session, { completing: true });
         }
         break;
       case "agent_failed":
@@ -864,9 +862,7 @@ export class PipelineRuntime {
       this.opts.db.setExecutionClaim(session.sessionId, null);
       this.emitAgentState(session);
       this.emitSessionState(session.sessionId);
-      void this.syncSession(session).then(() => {
-        this.emitCompletionSurface(session);
-      });
+      void this.syncSession(session, { completing: true });
       return;
     }
     if (
@@ -932,7 +928,8 @@ export class PipelineRuntime {
     }, SYNC_DEBOUNCE_MS);
   }
 
-  private syncSession(session: ActiveSession): Promise<void> {
+  /** completing: the turn ended; the completion surface joins the sync's write batch (lane 03 D-6). */
+  private syncSession(session: ActiveSession, options: { completing?: boolean } = {}): Promise<void> {
     // Serialize syncs per session: the 600ms debounce, answerDecision, and
     // completion paths can all request a sync nearly simultaneously, and a
     // concurrent second pass would re-derive the same Jev calls and emit
@@ -940,14 +937,30 @@ export class PipelineRuntime {
     if (session.stopping) {
       return session.syncChain;
     }
-    session.syncChain = session.syncChain.then(() => this.runSync(session));
+    const completing = options.completing === true;
+    session.syncChain = session.syncChain.then(() => this.runSync(session, completing));
     return session.syncChain;
   }
 
-  private async runSync(session: ActiveSession): Promise<void> {
+  /**
+   * One sync pass. Its writes run in two transactions, split at the Jev client's awaits (better-sqlite3 transactions
+   * are synchronous): the coordinator flush before them, then, after the last await, the deferred Jev decision and
+   * label writes (trace rows), the surfaces' ui_intent/ui_snapshot rows and telemetry, and on completion the
+   * completion surface. Each commit reports its trace rows once, so one push hint carries the batch's last seq
+   * (observeTraceAppends). Before lane 03 D-6 every write committed alone, about 490 commits at a turn end.
+   *
+   * Errors: no write in the batch had its own handler; any throw escaped to the catch below and ended the pass with
+   * the earlier rows already committed. Inside the transaction such an escaping error now rolls the batch back
+   * (allowed by the D-6 ruling). Rows deferred before an escaping client error are still written, as before.
+   */
+  private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
+    const deferred: Array<() => void> = [];
+    const runDeferred = (): void => {
+      for (const write of deferred.splice(0)) write();
+    };
     try {
-      session.coordinator.flush();
+      this.opts.db.transaction(() => session.coordinator.flush());
       const snapshot = session.coordinator.snapshot();
       const ctx = this.buildUiContext(session, snapshot);
       const changedUnits = snapshot.units.filter((unit) => {
@@ -960,8 +973,9 @@ export class PipelineRuntime {
           previous.version !== version
         );
       });
+      let result: Awaited<ReturnType<typeof runJevStage>> | null = null;
       if (changedUnits.length > 0) {
-        const result = await runJevStage({
+        const stage = runJevStage({
           db: this.opts.db,
           coordinator: session.coordinator,
           client: session.client,
@@ -978,14 +992,35 @@ export class PipelineRuntime {
           onRedaction: (count) => {
             this.recordTelemetry(session, "redaction", { count });
           },
+          defer: (write) => deferred.push(write),
         });
-        this.syncOutcomes(session, result, ctx);
+        try {
+          result = await stage;
+        } catch (error) {
+          // Units answered before the client failed were written before the deferral; keep them.
+          this.opts.db.transaction(runDeferred);
+          throw error;
+        }
       }
-      this.emitDecisions(session, ctx);
-      this.emitValidations(session);
+      const outcomes = result;
+      this.opts.db.transaction(() => {
+        runDeferred();
+        if (outcomes !== null) this.syncOutcomes(session, outcomes, ctx);
+        this.emitDecisions(session, ctx);
+        this.emitValidations(session);
+        if (completing) this.emitCompletionSurface(session);
+      });
       this.emitSessionState(session.sessionId);
     } catch (error) {
       this.log(`sync failed for ${session.sessionId}: ${String(error)}`);
+      // As before, a turn end shows its completion surface even when the sync failed.
+      if (completing) {
+        try {
+          this.emitCompletionSurface(session);
+        } catch (surfaceError) {
+          this.log(`completion surface failed for ${session.sessionId}: ${String(surfaceError)}`);
+        }
+      }
     }
   }
 

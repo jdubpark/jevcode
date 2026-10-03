@@ -23,7 +23,7 @@ import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import { SMOKE_SCRIPT_DEFAULTS, smokeMockScript } from "./pipeline/smoke-script.js";
 import type { TerminalSink } from "./pipeline/types.js";
-import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
+import { createRowsAvailableEmitter, notifyCommitted, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
 import type { RowsAvailableEmitter } from "./rows-available.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
@@ -181,9 +181,10 @@ app.whenReady().then(() => {
     log: (message) => console.log(`[rows] ${message}`),
   });
   rowsAvailable = emitter;
-  observeTraceAppends(db, (event) => {
-    emitter.notify(event.sessionId, event.seq);
-    smokeAppends?.record(event.sessionId, event.seq);
+  // A pipeline batch run in db.transaction (the turn-end sync) reports its rows once, after commit.
+  observeTraceAppends(db, (events) => {
+    notifyCommitted(emitter, events);
+    for (const event of events) smokeAppends?.record(event.sessionId, event.seq);
   });
 
   // Crash recovery: any session left running/paused by a dead process is
