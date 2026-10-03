@@ -504,6 +504,80 @@ describe("clustering: passing-run attachment (SPEC 6.3)", () => {
     const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
     expect(unit?.validationResults).toEqual([validationAt(result, tsOf(0, 0))]);
   });
+
+  it("red to green: a unit whose latest run failed also gets the next passing run", () => {
+    const result = run([
+      seq({ fact: hunk("tests/foo.test.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({
+        fact: testResult(tsOf(0, 10), {
+          passed: 0,
+          failed: 1,
+          failures: [{ file: "tests/foo.test.ts", testName: "foo works", message: "boom" }],
+        }),
+        factId: "red",
+        seq: 2,
+        batchId: 1,
+      }),
+      seq({ fact: hunk("src/foo.ts", tsOf(0, 20)), factId: "f3", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 1 }), factId: "green", seq: 4, batchId: 3 }),
+    ]);
+    const red = validationAt(result, tsOf(0, 10));
+    const green = validationAt(result, tsOf(0, 30));
+    const testUnit = result.units.find((unit) => unit.files.includes("tests/foo.test.ts"));
+    const fooUnit = result.units.find((unit) => unit.files.includes("src/foo.ts"));
+    expect(testUnit?.id).not.toBe(fooUnit?.id);
+    expect(testUnit?.validationResults).toEqual([red, green]);
+    expect(testUnit?.evidence).toContain("green");
+    expect(fooUnit?.validationResults).toContain(green);
+  });
+
+  it("red to green across buckets: a unit reached only through a failure gets the next passing run", () => {
+    // The test file was written in an earlier bucket, so only the failure ties it to R1.
+    const result = run([
+      seq({ fact: hunk("tests/foo.test.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({
+        fact: testResult(tsOf(5, 0), {
+          failed: 1,
+          failures: [{ file: "tests/foo.test.ts", testName: "foo works", message: "boom" }],
+        }),
+        factId: "red",
+        seq: 2,
+        batchId: 600,
+      }),
+      seq({ fact: hunk("src/foo.ts", tsOf(5, 10)), factId: "f3", seq: 3, batchId: 620 }),
+      seq({ fact: testResult(tsOf(5, 20), { passed: 1 }), factId: "green", seq: 4, batchId: 640 }),
+    ]);
+    const testUnit = result.units.find((unit) => unit.files.includes("tests/foo.test.ts"));
+    expect(testUnit?.files).toEqual(["tests/foo.test.ts"]);
+    // R1 reaches the unit through its failure, which is listed after the run attachments.
+    expect([...(testUnit?.validationResults ?? [])].sort()).toEqual(
+      [validationAt(result, tsOf(5, 0)), validationAt(result, tsOf(5, 20))].sort(),
+    );
+  });
+
+  it("flaky rerun: a pass with no edit reaches the units the failing run reached, once", () => {
+    const result = run([
+      seq({ fact: hunk("src/a.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 2, failed: 1 }), factId: "fail", seq: 2, batchId: 1 }),
+      seq({ fact: testResult(tsOf(0, 20), { passed: 3 }), factId: "rerun", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 3 }), factId: "again", seq: 4, batchId: 3 }),
+    ]);
+    const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    expect(unit?.validationResults).toEqual([validationAt(result, tsOf(0, 10)), validationAt(result, tsOf(0, 20))]);
+    expect(unit?.evidence).not.toContain("again");
+  });
+
+  it("counts the previous run per command: a new command's first run reaches the units changed before it", () => {
+    const result = run([
+      seq({ fact: hunk("src/a.ts", tsOf(0, 0)), factId: "f1", seq: 1, batchId: 0 }),
+      seq({ fact: testResult(tsOf(0, 10), { passed: 3, command: "pnpm test:unit" }), factId: "unit", seq: 2, batchId: 1 }),
+      seq({ fact: testResult(tsOf(0, 20), { passed: 1, command: "pnpm test:e2e" }), factId: "e2e", seq: 3, batchId: 2 }),
+      seq({ fact: testResult(tsOf(0, 30), { passed: 1, command: " pnpm test:e2e " }), factId: "e2e2", seq: 4, batchId: 3 }),
+    ]);
+    const unit = result.units.find((candidate) => candidate.files.includes("src/a.ts"));
+    expect(unit?.validationResults).toEqual([validationAt(result, tsOf(0, 10)), validationAt(result, tsOf(0, 20))]);
+    expect(unit?.evidence).not.toContain("e2e2");
+  });
 });
 
 describe("clustering: command evidence and decisions", () => {

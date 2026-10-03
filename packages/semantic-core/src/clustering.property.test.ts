@@ -91,18 +91,29 @@ describe("clustering property tests", () => {
     );
   });
 
-  it("attaches passing runs the same way whatever the fact order within a bucket", () => {
-    // Runs mixed among the file facts. Shuffling moves every fact's ts and seq but keeps
-    // its batch window. Each run has its own command, so it can be recognized after its
-    // ts (and so its validation id) changes.
-    type Spec = FactSpec | { run: number; batch: number };
+  it("attaches test runs the same way whatever the fact order within a bucket", () => {
+    // Passing and failing runs of two commands mixed among the file facts, so a run can
+    // follow a failure of its own or the other command. Shuffling moves every fact's ts
+    // and seq but keeps its batch window. A run's passed count is its index, so a run can
+    // be recognized after its ts (and so its validation id) changes.
+    interface RunSpec {
+      run: number;
+      batch: number;
+      command: string;
+      failed: boolean;
+      failFile: string | null;
+    }
+    type Spec = FactSpec | RunSpec;
+    const runArb = fc.record({
+      batch: fc.integer({ min: 0, max: 3 }),
+      command: fc.constantFrom("pnpm test:unit", "pnpm test:e2e"),
+      failed: fc.boolean(),
+      failFile: fc.option(fc.constantFrom(...FILE_ALPHABET, "tests/stale.test.ts"), { nil: null }),
+    });
     const specArb = fc
-      .tuple(
-        bucketSpecArb,
-        fc.array(fc.integer({ min: 0, max: 3 }), { minLength: 1, maxLength: 4 }),
-      )
-      .chain(([files, runBatches]) => {
-        const specs: Spec[] = [...files, ...runBatches.map((batch, run) => ({ run, batch }))];
+      .tuple(bucketSpecArb, fc.array(runArb, { minLength: 1, maxLength: 5 }))
+      .chain(([files, runs]) => {
+        const specs: Spec[] = [...files, ...runs.map((spec, run) => ({ ...spec, run }))];
         return fc.record({
           forward: fc.constant(specs),
           shuffled: fc.shuffledSubarray(specs, { minLength: specs.length, maxLength: specs.length }),
@@ -112,7 +123,15 @@ describe("clustering property tests", () => {
       const facts: SequencedFact[] = specs.map((spec, index) => ({
         fact:
           "run" in spec
-            ? testResult(tsOf(0, index), { passed: 1, command: `pnpm test -- run-${spec.run}` })
+            ? testResult(tsOf(0, index), {
+                command: spec.command,
+                passed: spec.run + 1,
+                failed: spec.failed ? 1 : 0,
+                failures:
+                  spec.failed && spec.failFile !== null
+                    ? [{ file: spec.failFile, testName: "case", message: "boom" }]
+                    : [],
+              })
             : factFor(spec, tsOf(0, index)),
         factId: `f${index}`,
         seq: index + 1,
@@ -125,10 +144,12 @@ describe("clustering property tests", () => {
         semanticEvents: [],
         decisions: [],
       });
-      const commandById = new Map(result.validations.map((validation) => [validation.id, validation.command]));
+      const runById = new Map(
+        result.validations.map((validation) => [validation.id, `${validation.command}#${validation.passed}`]),
+      );
       return result.units
         .map((unit) => {
-          const runs = unit.validationResults.map((id) => commandById.get(id) ?? id).sort();
+          const runs = unit.validationResults.map((id) => runById.get(id) ?? id).sort();
           return `${[...unit.files].sort().join("|")}:${unit.status}:${runs.join(",")}`;
         })
         .sort();
@@ -137,7 +158,7 @@ describe("clustering property tests", () => {
       fc.property(specArb, ({ forward, shuffled }) => {
         expect(project(shuffled)).toEqual(project(forward));
       }),
-      { numRuns: 200 },
+      { numRuns: 300 },
     );
   });
 
