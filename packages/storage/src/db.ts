@@ -268,6 +268,8 @@ export class JevcodeDb {
    * variable number of placeholders keeps calling this.db.prepare.
    */
   private readonly statements: { prepare(sql: string): BetterSqlite3.Statement };
+  /** Per event type, the rows of that type this connection applied to the projections (projectionVersion). */
+  private readonly projectionWrites = new Map<EventStoreType, number>();
 
   constructor(dbPath: string, db: BetterSqlite3.Database) {
     this.dbPath = dbPath;
@@ -369,6 +371,16 @@ export class JevcodeDb {
       .prepare("SELECT COUNT(*) AS n FROM events WHERE sessionId = ?")
       .get(sessionId) as { n: number };
     return row.n;
+  }
+
+  /**
+   * A count that moves whenever this connection applies a row of `type` to its projection tables (appendEvent, a
+   * rebuild), whichever session it belongs to. A reader that keeps a projection list, such as the pipeline's
+   * change-unit store, reads it again only when the count has moved (lane 07 PL-3). Writes from another connection
+   * are not counted.
+   */
+  projectionVersion(type: EventStoreType): number {
+    return this.projectionWrites.get(type) ?? 0;
   }
 
   getLatestSeq(sessionId: string): number {
@@ -1145,6 +1157,8 @@ export class JevcodeDb {
   // ------------------------------------------------------------------
 
   private applyProjection(event: StoredEvent): void {
+    // Counted before the write: a write that throws only makes a reader read again.
+    this.projectionWrites.set(event.type, (this.projectionWrites.get(event.type) ?? 0) + 1);
     switch (event.type) {
       case "agent_event":
         this.applyAgentEvent(event);
