@@ -262,6 +262,12 @@ export function projectGraph(input: GraphInput): GraphProjection {
     }
   }
 
+  // Parsed once per projection: the lookup below runs for every agent event against every unit.
+  const unitWindows = input.units.map((unit) => ({
+    id: unit.id,
+    start: Date.parse(unit.createdAt),
+    end: Date.parse(unit.updatedAt),
+  }));
   for (const event of input.agentEvents) {
     // Keyed by callId when present: two calls of one type at the same ts are
     // two nodes. Legacy events keep the type + ts key (and its collapse).
@@ -277,7 +283,7 @@ export function projectGraph(input: GraphInput): GraphProjection {
       event.type,
       callId !== undefined ? { ts: event.ts, callId } : { ts: event.ts },
     );
-    const windowUnit = findUnitContainingTs(event.ts, input.units);
+    const windowUnit = findUnitContainingTs(event.ts, unitWindows);
     if (windowUnit !== null) {
       const unitNode = unitNodeIds.get(windowUnit) ?? "";
       addEdge("EVIDENCED_BY", unitNode, eventNode);
@@ -299,14 +305,18 @@ export function projectGraph(input: GraphInput): GraphProjection {
   return { nodes, edges };
 }
 
-function findUnitContainingTs(ts: string, units: readonly ChangeUnit[]): string | null {
+interface UnitWindow {
+  id: string;
+  start: number;
+  end: number;
+}
+
+function findUnitContainingTs(ts: string, windows: readonly UnitWindow[]): string | null {
   const ms = Date.parse(ts);
   if (!Number.isFinite(ms)) return null;
-  for (const unit of units) {
-    const start = Date.parse(unit.createdAt);
-    const end = Date.parse(unit.updatedAt);
+  for (const { id, start, end } of windows) {
     if (Number.isFinite(start) && Number.isFinite(end) && ms >= start && ms <= end) {
-      return unit.id;
+      return id;
     }
   }
   return null;
