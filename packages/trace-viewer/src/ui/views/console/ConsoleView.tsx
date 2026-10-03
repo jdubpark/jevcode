@@ -318,11 +318,12 @@ export function ConsoleView({ active }: ViewProps) {
     [store],
   );
   useRegisterViewPort("console", port);
-  // The title bar reads newCount() through the port: tell it when the count changes.
+  // The title bar reads newCount() through the port. It renders before the Console in a commit, so it may have read the
+  // previous rows: tell it whenever the rows or the count change, not only when the Console's own count changes.
   const registry = useContext(ViewPortRegistryContext);
   useLayoutEffect(() => {
     if (active) registry?.notify();
-  }, [newCount, active, registry]);
+  }, [built, newCount, active, registry]);
 
   // Opening (or showing) the Console: a following Console starts at the tail, a reviewing one at its selection.
   // The reset lives in the cleanup: under <Activity mode="hidden"> React runs cleanups but never the body of an
