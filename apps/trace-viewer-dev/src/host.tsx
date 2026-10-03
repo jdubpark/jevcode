@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import type { TraceBundle } from "@jevcode/contracts";
 import {
@@ -11,6 +11,7 @@ import {
   type DripOptions,
   type StaticBundleSource,
   type ViewerHost,
+  type ViewKind,
 } from "@jevcode/trace-viewer";
 
 import styles from "./host.module.css";
@@ -34,6 +35,13 @@ export function parseDrip(value: string | null): DripOptions | undefined {
   if (start === undefined) return { rowsPerTick: rows, intervalMs: interval };
   if (!Number.isInteger(start)) return undefined;
   return { rowsPerTick: rows, intervalMs: interval, startAtSeq: start };
+}
+
+const VIEW_KIND = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** `?view=console` etc.: the opening view when the hash names none (TraceViewerProps.initialView). */
+export function parseView(value: string | null): ViewKind | undefined {
+  return value !== null && VIEW_KIND.test(value) ? value : undefined;
 }
 
 /** Spec §10 live tick run: "starting at lastSeq − 2000" is `?drip=20,1000,-2000`. */
@@ -77,12 +85,16 @@ function Viewer({
   hash,
   selftest,
   openProbe,
+  chrome,
+  view,
 }: {
   bundle: TraceBundle;
   drip: DripOptions | undefined;
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  chrome: "full" | "embedded";
+  view: ViewKind | undefined;
 }) {
   const [source, setSource] = useState<StaticBundleSource | null>(null);
   useEffect(() => {
@@ -97,7 +109,18 @@ function Viewer({
     };
   }, [bundle, drip, selftest]);
   if (source === null) return null;
-  return <ViewerBody source={source} bundle={bundle} drip={drip} hash={hash} selftest={selftest} openProbe={openProbe} />;
+  return (
+    <ViewerBody
+      source={source}
+      bundle={bundle}
+      drip={drip}
+      hash={hash}
+      selftest={selftest}
+      openProbe={openProbe}
+      chrome={chrome}
+      view={view}
+    />
+  );
 }
 
 function ViewerBody({
@@ -107,6 +130,8 @@ function ViewerBody({
   hash,
   selftest,
   openProbe,
+  chrome,
+  view,
 }: {
   source: StaticBundleSource;
   bundle: TraceBundle;
@@ -114,6 +139,8 @@ function ViewerBody({
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  chrome: "full" | "embedded";
+  view: ViewKind | undefined;
 }) {
   const [result, setResult] = useState<SelftestResult | null>(null);
   const [test] = useState(() =>
@@ -143,15 +170,35 @@ function ViewerBody({
     }),
     [test],
   );
+  const [switcher, setSwitcher] = useState<ReactNode>(null);
+  const viewer = (
+    <TraceViewer
+      source={source}
+      host={host}
+      location={location}
+      pollMs={selftest ? 100 : (drip?.intervalMs ?? 1_000)}
+      initialFollow={selftest ? false : undefined}
+      chrome={chrome}
+      initialView={view}
+      renderSwitch={chrome === "embedded" ? setSwitcher : undefined}
+    />
+  );
   return (
     <>
-      <TraceViewer
-        source={source}
-        host={host}
-        location={location}
-        pollMs={selftest ? 100 : (drip?.intervalMs ?? 1_000)}
-        initialFollow={selftest ? false : undefined}
-      />
+      {chrome === "embedded" ? (
+        <div className={styles.embedded}>
+          <div className={styles.embeddedBar}>{switcher}</div>
+          <div className={styles.embeddedBody}>{viewer}</div>
+          {/* A stand-in for lane 03's prompt dock, so screenshots match the main-window mockup's frame. */}
+          <div className={styles.embeddedDock} aria-hidden="true">
+            <span className={styles.dockGlyph}>›</span>
+            <span>Message the agent · Enter for a new line</span>
+            <span>⌘↵ send</span>
+          </div>
+        </div>
+      ) : (
+        viewer
+      )}
       {selftest ? (
         <pre id="selftest" className={styles.result}>
           {result === null ? "" : JSON.stringify(result)}
@@ -173,6 +220,8 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const perf = params.get("perf") === "1";
   const selftest = params.get("selftest") === "drip";
   const openProbe = params.get("selftest") === "open";
+  const chrome = params.get("chrome") === "embedded" ? "embedded" : "full";
+  const view = parseView(params.get("view"));
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   // Each bundle request (a ?bundle= fetch or a drop) takes a token; only the latest may write.
   const requestToken = useRef(0);
@@ -223,9 +272,11 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
           hash={hash}
           selftest={selftest}
           openProbe={openProbe}
+          chrome={chrome}
+          view={view}
         />
       ) : null}
-      {perf ? <PerfHud autorun={params.get("perfrun") === "1"} /> : null}
+      {perf ? <PerfHud autorun={params.get("perfrun") === "1"} consoleRun={params.get("perfrun") === "console"} /> : null}
     </div>
   );
 }
