@@ -399,7 +399,7 @@ function focusIsLost(doc: Document, root: HTMLElement): boolean {
  * A decision card that held focus can disappear under it: its Choose button is disabled while the answer is on its way,
  * and once the trace shows the decision answered the card moves from Now to Decisions (a new element). Remember which
  * card held focus and, when focus is lost after a commit, move it to that decision's card (a tabIndex -1 region), else
- * to the Decisions heading (lane 07 S-4 fix I-2). Focus that left on purpose (a click elsewhere) is forgotten.
+ * to the Decisions heading (lane 07 S-4 fix I-2). Focus that left on purpose (a click elsewhere, or a press outside the Brief) is forgotten.
  */
 function useDecisionFocusRepair(root: RefObject<HTMLElement | null>, headingId: string): void {
   const held = useRef<string | null>(null);
@@ -419,11 +419,17 @@ function useDecisionFocusRepair(root: RefObject<HTMLElement | null>, headingId: 
         if (target.isConnected && !(target instanceof HTMLButtonElement && target.disabled)) held.current = null;
       });
     };
+    // A press outside the Brief is the reader leaving on purpose, even when a disabled Choose still looks focused.
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!(event.target instanceof Node) || !node.contains(event.target)) held.current = null;
+    };
     doc.addEventListener("focusin", onFocusIn);
     doc.addEventListener("focusout", onFocusOut);
+    doc.addEventListener("pointerdown", onPointerDown, true);
     return () => {
       doc.removeEventListener("focusin", onFocusIn);
       doc.removeEventListener("focusout", onFocusOut);
+      doc.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, [root]);
   useLayoutEffect(() => {
