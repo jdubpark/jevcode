@@ -1,0 +1,46 @@
+{
+  "input": {
+    "decisionId": "dec_redis_policy",
+    "title": "What should the API do when Redis is unavailable?",
+    "options": [
+      {
+        "id": "fail_open",
+        "label": "Fail open"
+      },
+      {
+        "id": "fail_closed",
+        "label": "Fail closed"
+      }
+    ],
+    "answer": "Fail open",
+    "nearby": [
+      {
+        "id": "step:14",
+        "kind": "message",
+        "text": "Redis is a single point of failure here; if it goes down every request would be rejected."
+      },
+      {
+        "id": "step:8",
+        "kind": "step",
+        "text": "Plan:\n- add limiter middleware\n- decide the Redis outage policy\n- add tests"
+      },
+      {
+        "id": "step:16",
+        "kind": "message",
+        "text": "Continuing with fail-open behavior and a warning log."
+      }
+    ],
+    "chosenBy": "developer"
+  },
+  "output": {
+    "sentences": [
+      {
+        "text": "Failing open keeps the public API available during a Redis outage, which the agent flagged as a single point of failure.",
+        "cite": [
+          "n1",
+          "d1"
+        ]
+      }
+    ]
+  }
+}

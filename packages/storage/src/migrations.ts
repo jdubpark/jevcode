@@ -338,6 +338,22 @@ const v5: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [v1, v2, v3, v4, v5];
+// Lane 07 PL-3: the Jev debug panel reads a session's latest decisions (latestJevDecisions: WHERE sessionId = ?
+// ORDER BY seq DESC LIMIT n). The only index was (sessionId, ts), so SQLite sorted every row of the session: 39-59 ms
+// in main at 2,937 change units. This index serves the filter and the order.
+const v6: Migration = {
+  version: 6,
+  up: (db) => {
+    // v1 creates jev_decisions. A database without it (the hand-built older schemas in the upgrade tests) has
+    // nothing to index.
+    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jev_decisions'").get();
+    if (table === undefined) return;
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_jev_decisions_session_seq ON jev_decisions (sessionId, seq);
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [v1, v2, v3, v4, v5, v6];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

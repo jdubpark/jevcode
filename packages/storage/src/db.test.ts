@@ -20,7 +20,7 @@ import {
   defaultDbPath,
   openDb,
 } from "./index.js";
-import { makeOverviewSnapshot } from "./fixtures.js";
+import { makeJevLog, makeOverviewSnapshot } from "./fixtures.js";
 import { openTempDb, tempDbPath } from "./test-utils.js";
 
 describe("openDb", () => {
@@ -165,7 +165,7 @@ describe("openDb", () => {
     db.close();
   });
 
-  it("upgrades a v4 database built by migrations 1-4 to v5 without touching its rows", () => {
+  it("upgrades a v4 database built by migrations 1-4 through v5 without touching its rows", () => {
     const dbPath = tempDbPath();
     const TS0 = "2026-09-01T00:00:00.000Z";
     const v4 = new Database(dbPath);
@@ -202,8 +202,9 @@ describe("openDb", () => {
     v4.close();
 
     const db = openDb({ dbPath });
-    expect(LATEST_SCHEMA_VERSION).toBe(5);
-    expect(db.schemaVersion()).toBe(5);
+    // v5 and every later migration (v6, lane 07 PL-3: an index only) apply.
+    expect(LATEST_SCHEMA_VERSION).toBeGreaterThanOrEqual(5);
+    expect(db.schemaVersion()).toBe(LATEST_SCHEMA_VERSION);
 
     const raw = new Database(dbPath);
     const columns = (table: string) =>
@@ -227,7 +228,7 @@ describe("openDb", () => {
       ["updated_at", 0, 1],
     ]);
     expect(raw.prepare("SELECT version FROM schema_version ORDER BY version").all()).toEqual(
-      [1, 2, 3, 4, 5].map((version) => ({ version })),
+      MIGRATIONS.map((migration) => ({ version: migration.version })),
     );
     raw.close();
 
@@ -244,9 +245,54 @@ describe("openDb", () => {
     db.close();
 
     const reopened = openDb({ dbPath });
-    expect(reopened.schemaVersion()).toBe(5);
+    expect(reopened.schemaVersion()).toBe(LATEST_SCHEMA_VERSION);
     expect(reopened.getComponentText("/work/v4", "cmp_0123456789ab", "1".repeat(40))?.purpose).toBe("Core logic.");
     reopened.close();
+  });
+
+  it("upgrades a v5 database to v6: an index the latest-Jev-decisions read uses for its filter and order (PL-3)", () => {
+    const dbPath = tempDbPath();
+    const TS0 = "2026-10-01T00:00:00.000Z";
+    const query = "SELECT payloadJson FROM jev_decisions WHERE sessionId = ? ORDER BY seq DESC LIMIT ?";
+    const plan = (raw: Database.Database): string[] =>
+      (raw.prepare(`EXPLAIN QUERY PLAN ${query}`).all("sess_v5", 50) as { detail: string }[]).map((row) => row.detail);
+    const v5 = new Database(dbPath);
+    v5.exec("CREATE TABLE schema_version (version INTEGER NOT NULL, appliedAt TEXT NOT NULL)");
+    for (const migration of MIGRATIONS) {
+      if (migration.version > 5) continue;
+      v5.transaction(() => {
+        migration.up(v5);
+        v5.prepare("INSERT INTO schema_version (version, appliedAt) VALUES (?, ?)").run(migration.version, TS0);
+      })();
+    }
+    // At v5 the read sorts every row of the session.
+    expect(plan(v5).some((detail) => detail.includes("TEMP B-TREE"))).toBe(true);
+    v5.close();
+
+    const db = openDb({ dbPath });
+    expect(db.schemaVersion()).toBe(6);
+    db.upsertRepository({ id: "repo_v5", path: "/work/v5", gitRoot: "/work/v5" });
+    db.createSession({ id: "sess_v5", repoId: "repo_v5" });
+    for (const id of ["jev_a", "jev_b", "jev_c"]) {
+      db.upsertJevDecision(makeJevLog({ id, sessionId: "sess_v5", ts: TS0 }));
+    }
+    // Same rows and order as before the index: the latest by seq first.
+    expect(db.latestJevDecisions("sess_v5", 2).map((log) => log.id)).toEqual(["jev_c", "jev_b"]);
+    db.close();
+
+    const raw = new Database(dbPath);
+    const indexColumns = (raw.prepare("PRAGMA index_info(idx_jev_decisions_session_seq)").all() as { name: string }[]).map(
+      (column) => column.name,
+    );
+    expect(indexColumns).toEqual(["sessionId", "seq"]);
+    expect(plan(raw).join(" | ")).toContain("USING INDEX idx_jev_decisions_session_seq");
+    expect(plan(raw).some((detail) => detail.includes("TEMP B-TREE"))).toBe(false);
+    // Idempotent: running v6 again changes nothing.
+    MIGRATIONS.find((migration) => migration.version === 6)?.up(raw);
+    expect(
+      raw.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = 'idx_jev_decisions_session_seq'").get(),
+    ).toEqual({ n: 1 });
+    raw.close();
   });
 });
 

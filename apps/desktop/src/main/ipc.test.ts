@@ -15,6 +15,7 @@ import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
+import { RendererToMainLocalChannels } from "../shared/local-channels.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
@@ -237,6 +238,7 @@ describe("explainer wiring (console-explainer M-6)", () => {
       repoOpened: (repoRoot) => void calls.push(`open ${repoRoot}`),
       repoClosed: (repoRoot) => void calls.push(`close ${repoRoot}`),
       sessionStarted: (repoRoot, sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
+      sessionSwitched: (repoRoot) => void calls.push(`switch ${repoRoot}`),
       filesChanged: () => {},
       rescan: (repoRoot) => void calls.push(`rescan ${repoRoot}`),
       setNarrator: () => {},
@@ -270,6 +272,18 @@ describe("explainer wiring (console-explainer M-6)", () => {
     const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
     await handlers.get(RendererToMainChannels.sessionStart)!(TRUSTED_EVENT, { repoId: "repo_a", prompt: "go" });
     expect(calls).toEqual(["session /a sess_a"]);
+    db.close();
+  });
+
+  it("session:switch tells the explainer the open repo's session changed (lane 07 fix I-2)", async () => {
+    const { db, state } = seedRepoAndSession();
+    db.createSession({ id: "sess_b", repoId: "repo_a", prompt: "other", state: "completed" });
+    const { runtime } = stubRuntime();
+    const { registry, calls } = explainerSpy();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
+    await handlers.get(RendererToMainLocalChannels.sessionSwitch)!(TRUSTED_EVENT, { sessionId: "sess_b" });
+    expect(state.session?.id).toBe("sess_b");
+    expect(calls).toEqual(["switch /a"]);
     db.close();
   });
 

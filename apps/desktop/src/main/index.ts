@@ -18,6 +18,7 @@ import {
 } from "./ipc.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
+import { createMainSlicer } from "./pipeline/main-slicer.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
@@ -26,7 +27,7 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
 import type { RowsAvailableEmitter } from "./rows-available.js";
 import { sweepStaleSessions } from "./session-recovery.js";
-import { runShutdown } from "./shutdown.js";
+import { quitSteps, runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
@@ -214,6 +215,9 @@ app.whenReady().then(() => {
   const eventsDb = db;
   const extractor = createImportExtractor();
   importExtractor = extractor;
+  // Lane 07 PL-3: one slicer for the main process's long work. Sync passes, the session explainer's fold and the
+  // overview rebuild all yield through it, so one event-loop turn runs at most one budget of their work.
+  const mainSlicer = createMainSlicer();
   const explainerRegistry = createExplainerRegistry((repoRoot) => {
     // Lane 05 (R4): the narration seam starts from the switch's current client; the subscription
     // below forwards every later change to the open repo's stage.
@@ -243,6 +247,7 @@ app.whenReady().then(() => {
       narration: createNarrationSeamFactory(narratorOptions),
       initialNarrator: narratorOptions.initialNarrator,
       recordNarratorCall: narratorOptions.recordNarratorCall,
+      slicer: mainSlicer,
     });
   }, (message) => console.error(`[explainer] ${message}`));
   explainer = explainerRegistry;
@@ -257,6 +262,9 @@ app.whenReady().then(() => {
     mockScriptFor: SMOKE_WORKSPACE
       ? (input) => smokeMockScript(input, { steps: SMOKE_STEPS, spacingMs: SMOKE_SCRIPT_DEFAULTS.spacingMs })
       : undefined,
+    // Lane 07 (S-2): story, decision why and highlight triggers for the open repo's stage.
+    onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
+    slicer: mainSlicer,
   });
 
   const instructionRouter = new InstructionRouter({
@@ -355,7 +363,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  const stopping = { rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
+  const stopping = { runtime, rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
   rowsAvailable = null;
   explainer = null;
   importExtractor = null;
@@ -363,17 +371,7 @@ app.on("will-quit", () => {
   traceReader = null;
   db = null;
   runtime = null;
-  // The stage writes rows and overview_state, so it stops before the database closes. A step
-  // that throws is logged and the rest still run.
-  runShutdown(
-    [
-      { name: "rows available", run: () => stopping.rowsAvailable?.dispose() },
-      { name: "explainer", run: () => stopping.explainer?.dispose() },
-      { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
-      { name: "terminals", run: () => stopping.terminals?.disposeAll() },
-      { name: "trace reader", run: () => stopping.traceReader?.close() },
-      { name: "database", run: () => stopping.db?.close() },
-    ],
-    (message) => console.error(`[quit] ${message}`),
-  );
+  // The pipeline's sessions, then the stage (it writes rows and overview_state), stop before the database closes.
+  // A step that throws is logged and the rest still run (quitSteps, shutdown.ts).
+  runShutdown(quitSteps(stopping), (message) => console.error(`[quit] ${message}`));
 });

@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { OVERVIEW_SNAPSHOT_MAX_BYTES, OverviewSnapshotSchema, type OverviewSnapshot } from "@jevcode/contracts";
+import { OVERVIEW_SNAPSHOT_MAX_BYTES, OverviewSnapshotSchema, type ChangeUnit, type ExplainerRecord, type OverviewSnapshot } from "@jevcode/contracts";
 import { componentIdFor, languageOf, type ScannedFile, type WorkspaceManifest } from "@jevcode/codebase-map";
 import type { ScanOptions, scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import type { extractImports } from "@jevcode/evidence-engine";
+import { createFakeNarratorClient, type SessionStoryInput } from "@jevcode/jev-router";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,7 @@ import {
   type NarrationContext,
   type NarrationSeam,
 } from "./explainer-stage.js";
+import type { MainSlicer } from "./main-slicer.js";
 
 const REPO_ID = "repo_explainer";
 const REPO_ROOT = "/work/fx";
@@ -290,6 +292,32 @@ describe("ExplainerStage scan and rows (spec §6.1, §6.5)", () => {
     await stage.whenIdle();
     expect(h.calls.scan).toBe(1);
     expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+  });
+});
+
+describe("ExplainerStage turns through the main slicer (lane 07 PL-3 review)", () => {
+  it("gives the overview snapshot write, its persist and the published build their turns through the slicer", async () => {
+    // A slicer whose budget is never spent: every yield the stage makes is one of its own steps' turns.
+    const yields: number[] = [];
+    const slicer: MainSlicer = {
+      budgetMs: 20,
+      turns: 0,
+      elapsed: () => 0,
+      spent: () => false,
+      yield: () => {
+        yields.push(yields.length);
+        return new Promise<void>((resolve) => setImmediate(resolve));
+      },
+    };
+    const h = harness({ slicer });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    // In order: the build's turn before its overview, the overview's turn before publishBuilt, and the persist.
+    expect(yields.length).toBeGreaterThanOrEqual(3);
+    // Same rows and state as before: one schema-valid row and the stored overview.
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    expect(h.db.getOverviewState(REPO_ROOT)?.snapshot.components.length).toBeGreaterThan(0);
   });
 });
 
@@ -696,6 +724,7 @@ describe("createExplainerRegistry", () => {
           onSessionStarted: () => {},
           onFilesChanged: () => {},
           onPipelineSync: () => {},
+          onSessionSwitched: () => {},
           rescan: () => {},
           setNarrator: () => {},
           status: () => ({ phase: "idle", done: 0, total: 0, error: null }),
@@ -734,6 +763,7 @@ describe("createExplainerRegistry", () => {
         onSessionStarted: (sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
         onFilesChanged: (paths) => void calls.push(`files ${repoRoot} ${paths.join(",")}`),
         onPipelineSync: () => {},
+        onSessionSwitched: () => void calls.push(`switch ${repoRoot}`),
         rescan: () => void calls.push(`rescan ${repoRoot}`),
         setNarrator: () => {},
         status: () => ({ phase: "idle", done: 0, total: 0, error: null }),
@@ -745,7 +775,9 @@ describe("createExplainerRegistry", () => {
     registry.sessionStarted("/a", "s1");
     registry.filesChanged("/b", ["x.ts"]);
     registry.rescan("/b");
+    registry.sessionSwitched("/b");
     registry.filesChanged("/a", ["x.ts"]);
+    registry.sessionSwitched("/a");
     registry.repoOpened("/b");
     registry.rescan("/b");
     registry.repoClosed("/a");
@@ -755,6 +787,7 @@ describe("createExplainerRegistry", () => {
       "open /a",
       "session /a s1",
       "files /a x.ts",
+      "switch /a",
       "dispose /a",
       "open /b",
       "rescan /b",
@@ -1268,5 +1301,65 @@ describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
       [SESSION_2, "done", 3],
     ]);
     expect(snapshotRows(h.db, SESSION)).toHaveLength(0);
+  });
+});
+
+describe("ExplainerStage session explainer (lane 07 S-2)", () => {
+  it("hands pipeline syncs to the session explainer and forwards setNarrator to it", async () => {
+    const h = harness({ initialNarrator: null });
+    const ts = "2026-10-02T10:00:00.000Z";
+    const file = "packages/core/src/index.ts";
+    h.db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "p", ts });
+    h.db.appendEvent(SESSION, "overview_snapshot", {
+      sessionId: SESSION, repoRoot: REPO_ROOT, scanId: "scan_1", partial: false,
+      counts: { files: 1, components: 1, edges: 0, languages: ["TypeScript"] },
+      components: [{
+        id: CORE, rootPath: "packages/core", name: "@fx/core", fileCount: 1, files: [file], language: "TypeScript",
+        roleGuess: "domain", role: "domain", purpose: null, provenance: "rule", contentHash: "a".repeat(40),
+        externalDeps: [], entryPoints: [], importsAnalyzed: true,
+      }],
+      edges: [], externals: [], narrative: null, generatedAt: ts,
+    });
+    const unit: ChangeUnit = {
+      id: "u1", sessionId: SESSION, title: "Unit", category: "implementation", status: "validated",
+      files: [`${REPO_ROOT}/${file}`], symbols: [], interfacesChanged: [], schemaChanges: [], dependencyChanges: [], relatedDecisions: [],
+      validationResults: [], evidence: [], createdAt: ts, updatedAt: ts,
+    };
+    h.db.upsertChangeUnit(unit);
+    const stage = start(h);
+    const narrator = createFakeNarratorClient({
+      sessionStory: [
+        (input: unknown) => [{ text: "The agent changed core.", citations: [{ kind: "step", id: (input as SessionStoryInput).recentSteps.at(-1)?.id ?? "" }] }],
+      ],
+    });
+    stage.setNarrator(narrator);
+    stage.onPipelineSync({ sessionId: SESSION, lastSeq: h.db.getSession(SESSION)?.lastEventSeq ?? 0, changeUnits: [unit], decisions: [] });
+
+    const explainerRows = (): ExplainerRecord[] =>
+      h.db.listEvents(SESSION).filter((event) => event.type === "explainer").map((event) => JSON.parse(event.payloadJson) as ExplainerRecord);
+    await vi.waitFor(() => expect(explainerRows().map((row) => row.kind)).toEqual(["highlights", "story"]));
+    expect(explainerRows()[0]).toMatchObject({ kind: "highlights", components: [{ id: CORE, state: "changed", unitIds: ["u1"] }] });
+    expect(explainerRows()[1]).toMatchObject({ kind: "story", provenance: "model" });
+    expect(narrator.calls.map((call) => call.method)).toEqual(["sessionStory"]);
+    expect(h.hints.at(-1)?.[0]).toBe(SESSION);
+  });
+
+  it("runs the sync of a session that was not open once a session switch opens it (lane fix I-2)", async () => {
+    let open = "sess_other";
+    const h = harness({ initialNarrator: null, sessionId: () => open });
+    const ts = "2026-10-02T10:00:00.000Z";
+    h.db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "p", ts });
+    h.db.appendAgentEvent(SESSION, { type: "agent_completed", sessionId: SESSION, ts });
+    const stage = start(h);
+    const explainerRows = (): ExplainerRecord[] =>
+      h.db.listEvents(SESSION).filter((event) => event.type === "explainer").map((event) => JSON.parse(event.payloadJson) as ExplainerRecord);
+    stage.onPipelineSync({ sessionId: SESSION, lastSeq: h.db.getSession(SESSION)?.lastEventSeq ?? 0, changeUnits: [], decisions: [] });
+    await flush();
+    expect(explainerRows()).toEqual([]);
+
+    open = SESSION;
+    stage.onSessionSwitched();
+    await vi.waitFor(() => expect(explainerRows().map((row) => row.kind)).toEqual(["story"]));
+    expect(explainerRows()[0]).toMatchObject({ kind: "story", provenance: "rule" });
   });
 });

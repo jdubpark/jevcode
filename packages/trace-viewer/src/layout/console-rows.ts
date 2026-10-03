@@ -1,6 +1,7 @@
 import type { NarrativeSentence } from "@jevcode/contracts";
 
-import { agentEventLabel, type Finding, type FindingId, type Step, type StepId, type TraceSession, type Turn } from "../model/index.js";
+import { agentEventLabel, type Finding, type FindingId, type Step, type StepId, type StoryModel, type TraceSession, type Turn } from "../model/index.js";
+import { mergeSummaryRows } from "./console-summary.js";
 import { anchoredFindings } from "./tone.js";
 import type { TraceIndex } from "./trace-index.js";
 
@@ -25,6 +26,10 @@ export interface ConsoleRowsState {
   rows: readonly ConsoleRow[];
   /** Step id → the row that shows it: its own row, its read group, or the finding row of a Jev step. */
   byStep: ReadonlyMap<string, number>;
+  /** The step rows without summary rows; the next incremental call builds on these (internal, lane 07 deviation 5). */
+  base?: ConsoleRowsState;
+  /** session.explainer.stories this state merged (internal). */
+  stories?: readonly StoryModel[];
 }
 
 /** Output lines a command row shows before it is expanded (spec §3.2). */
@@ -40,18 +45,24 @@ export function consoleRowStepIds(row: ConsoleRow): readonly string[] {
   return [row.stepId];
 }
 
+/** The seq a row arrived at: its first step's first seq, or a summary's story row seq (key `summary:<seq>`). */
+function arrivalSeq(row: ConsoleRow, index: TraceIndex): number | undefined {
+  if (row.kind === "summary") return Number(row.key.slice("summary:".length));
+  const first = consoleRowStepIds(row)[0];
+  return first === undefined ? undefined : index.entry(first)?.firstSeq;
+}
+
 /**
  * Rows that arrived after `afterSeq`, counted back from the end (the Console's "N new" pill): a row is new when its
- * first step starts after it. A read group counts once and a silent Jev step not at all, unlike the step count.
+ * first step starts after it, a ◆ Summary when its story row does (a row the reader scrolls past like any other). A read
+ * group counts once and a silent Jev step not at all, unlike the step count.
  */
 export function consoleNewRowCount(state: ConsoleRowsState, index: TraceIndex, afterSeq: number): number {
   let count = 0;
   for (let i = state.rows.length - 1; i >= 0; i -= 1) {
     const row = state.rows[i];
-    const first = row === undefined ? undefined : consoleRowStepIds(row)[0];
-    if (first === undefined) continue;
-    const entry = index.entry(first);
-    if (entry === undefined || entry.firstSeq <= afterSeq) break;
+    const seq = row === undefined ? undefined : arrivalSeq(row, index);
+    if (seq === undefined || seq <= afterSeq) break;
     count += 1;
   }
   return count;
@@ -223,11 +234,38 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * The Console rows of a session (spec §8.2). Pure and React-free. With `prev` (the state this function returned for
- * an earlier commit of the same session), steps whose objects did not change keep their row objects; the result
+ * The Console rows of a session (spec §8.2): the step rows, with a `summary` row per story refresh merged where its
+ * story row arrived (phase C, console-summary.ts). Pure and React-free. With `prev` (the state this function returned
+ * for an earlier commit of the same session), steps whose objects did not change keep their row objects; the result
  * always equals a fresh build.
  */
 export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?: ConsoleRowsState): ConsoleRowsState {
+  const base = buildStepRows(session, index, prev?.base ?? prev);
+  const stories = session.explainer.stories;
+  // Without stories the merge returns `base` itself, which is `prev` when nothing changed.
+  if (prev?.base !== undefined && prev.stories === stories) {
+    if (prev.base === base) return prev;
+    // A commit that left every step row as it was (a why or highlights row): the merge would give the same rows. A new
+    // state object, so the Console still treats it as a commit (its append measure), over the same rows.
+    if (sameRowObjects(prev.base, base)) return { rows: prev.rows, byStep: prev.byStep, base, stories };
+  }
+  return mergeSummaryRows(base, stories);
+}
+
+/** The same row, or an instruction row rebuilt with the same content (buildStepRows rebuilds those every commit). */
+function sameRow(a: ConsoleRow, b: ConsoleRow | undefined): boolean {
+  if (a === b) return true;
+  return (
+    a.kind === "instruction" && b?.kind === "instruction" && a.key === b.key && a.stepId === b.stepId && a.text === b.text && a.mode === b.mode
+  );
+}
+
+function sameRowObjects(a: ConsoleRowsState, b: ConsoleRowsState): boolean {
+  return a.rows.length === b.rows.length && a.byStep.size === b.byStep.size && a.rows.every((row, i) => sameRow(row, b.rows[i]));
+}
+
+/** The step rows (V-3's builder): incremental against `prev`, the step rows of an earlier commit. */
+function buildStepRows(session: TraceSession, index: TraceIndex, prev?: ConsoleRowsState): ConsoleRowsState {
   const findingsById = index.findingsById;
   const cache = prev === undefined ? undefined : CACHE.get(prev);
   if (prev !== undefined && cache !== undefined && cache.session === session && cache.findingsById === findingsById) return prev;

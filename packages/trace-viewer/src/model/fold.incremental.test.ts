@@ -215,9 +215,78 @@ describe("incremental finalize: identity and work", () => {
     const large = work(1_000);
     // The drip re-emits cu_7 and adds cu_new1: two chapters, two new steps (the edit its hunk
     // joins, the message), one new entity. cu_new1 cites no shared run, so no other chapter or step
-    // is touched, however long the session. The signal rules categorize only the two new steps.
+    // is touched, however long the session. The signal rules categorize only the two new steps, and
+    // the turn's plan and claim marks read only them.
     expect(large).toEqual(small);
-    expect(large).toEqual({ steps: 2, stepFields: 2, chapters: 2, validationOnly: 2, entities: 1, signalSteps: 2 });
+    expect(large).toEqual({ steps: 2, stepFields: 2, chapters: 2, validationOnly: 2, entities: 1, signalSteps: 2, marks: 2 });
+  });
+
+  /** The work of the finalize after `append`, on a soak-shaped session of `units` units in one turn. */
+  const appendWork = (units: number, append: (b: TraceBuilder) => void) => {
+    const { state, rows } = soakState(units);
+    finalize(state, { live: true, nowMs: NOW });
+    const b = new TraceBuilder();
+    for (const row of rows) b.rows.push(row);
+    append(b);
+    accumulateAll(state, b.rows.slice(rows.length));
+    finalize(state, { live: true, nowMs: NOW });
+    return lastFinalizeWork(state as FoldState);
+  };
+
+  it("a turn end re-derives the steps the end can change, not every step of the turn (PL-3)", () => {
+    const end = (b: TraceBuilder): void => {
+      b.agent({ type: "agent_completed" });
+    };
+    const small = appendWork(100, end);
+    const large = appendWork(1_000, end);
+    // The soak session is one turn whose runs all have results and whose claims were all observed, so
+    // closing it changes no earlier step: only agent_completed's lifecycle step is derived and marked.
+    expect(large).toEqual(small);
+    expect(large).toEqual({ steps: 1, stepFields: 1, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 1, marks: 1 });
+  });
+
+  it("a new turn re-derives the steps the previous turn's end can change (PL-3)", () => {
+    const steer = (b: TraceBuilder): void => {
+      b.agent({ type: "agent_started", prompt: "Steer: keep it small" });
+    };
+    const small = appendWork(100, steer);
+    const large = appendWork(1_000, steer);
+    // The earlier turn stops being the last one: no step of it is open or lacks evidence, so only the
+    // new turn's instruction step is derived and marked.
+    expect(large).toEqual(small);
+    expect(large).toEqual({ steps: 1, stepFields: 1, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 1, marks: 1 });
+  });
+});
+
+describe("incremental finalize: turn state (PL-3)", () => {
+  it("a turn end and a later turn still re-derive open steps, unpaired starts and missing evidence", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Fix the bug" });
+    b.agent({ type: "agent_message", role: "assistant", text: "Plan:\n- build\n- test" });
+    b.agent({ type: "command_started", command: "pnpm build", callId: "build" });
+    b.agent({ type: "command_started", command: "pnpm test", callId: "t1" });
+    b.agent({ type: "command_completed", command: "pnpm test", exitCode: 0, stdout: "", stderr: "", callId: "t1" });
+    b.agent({ type: "file_changed", path: "src/a.ts", callId: "edit_a" });
+    b.agent({ type: "agent_message", role: "assistant", text: "All tests pass." });
+    // A later claim: the turn's claim mark moves to it.
+    b.agent({ type: "agent_message", role: "assistant", text: "Everything works." });
+    const beforeEnd = b.rows.length;
+    b.agent({ type: "agent_completed" });
+    const beforeNext = b.rows.length;
+    b.agent({ type: "agent_started", prompt: "Again" });
+    b.agent({ type: "agent_message", role: "assistant", text: "Working" });
+    const meta = testMeta({ lastEventSeq: b.rows.length });
+    const ended = foldRows(meta, b.rows.slice(0, beforeNext), { live: true, nowMs: NOW });
+    // Closing the turn: the test run without a result and the unobserved claim lack evidence.
+    expect(ended.gaps.filter((gap) => gap.kind === "missing_evidence")).toHaveLength(2);
+    expect(ended.turns[0]?.claimStepId).toBe(ended.steps.find((step) => step.text === "Everything works.")?.id);
+    expect(ended.turns[0]?.planStepId).toBe(ended.steps.find((step) => step.text?.startsWith("Plan") === true)?.id);
+    const next = foldRows(meta, b.rows, { live: true, nowMs: NOW });
+    // A later turn: the build that never finished is unpaired, and no longer running.
+    expect(next.gaps.filter((gap) => gap.kind === "unpaired")).toHaveLength(1);
+    expect(next.steps.find((step) => step.target === "pnpm build")?.status).toBe("unknown");
+    checkIncremental(meta, b.rows, [beforeEnd, beforeNext], () => ({ live: true, nowMs: NOW }));
+    checkIncremental(meta, b.rows, b.rows.map((_, index) => index + 1), () => ({ live: true, nowMs: NOW }));
   });
 });
 

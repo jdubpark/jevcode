@@ -260,6 +260,9 @@ function ViewerBody({
   }, [mapHeadRun]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
   const showBrief = useMemo(() => new URLSearchParams(window.location.search).get("brief") === "1", []);
+  // ?answer=1 (screenshots only): a host that answers decisions, so pending cards and blocks show their Choose buttons
+  // as in the main window (the answer goes nowhere; the bundle never changes).
+  const answerStub = useMemo(() => new URLSearchParams(window.location.search).get("answer") === "1", []);
   const host = useMemo<ViewerHost>(
     () => ({
       onLocation: (next) => history.replaceState(null, "", locationToHash(next)),
@@ -274,9 +277,10 @@ function ViewerBody({
             },
           }
         : {}),
+      ...(answerStub ? { answerDecision: () => undefined } : {}),
       ...(test === null ? {} : test.host),
     }),
-    [test, showBrief],
+    [test, showBrief, answerStub],
   );
   const viewer = (
     <TraceViewer

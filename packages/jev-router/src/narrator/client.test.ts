@@ -233,18 +233,6 @@ describe("failures", () => {
     await expect(createNarratorClient(offline).describeComponents(SAMPLE_BRIEFS)).rejects.toMatchObject({ reason: "offline" });
     await expect(createNarratorClient(broken).describeComponents(SAMPLE_BRIEFS)).rejects.toMatchObject({ reason: "unavailable", message: "boom" });
   });
-
-  it("keeps sessionStory and decisionWhy for lane 07 (reason unsupported)", async () => {
-    const { transport, requests } = capturing(() => answer({}));
-    const client = createNarratorClient(transport);
-    await expect(
-      client.sessionStory({ prompt: "p", recentSteps: [], decisions: [], tests: null, touchedComponents: [] }),
-    ).rejects.toMatchObject({ reason: "unsupported" });
-    await expect(
-      client.decisionWhy({ decisionId: "d", title: "t", options: [], answer: "a", nearby: [] }),
-    ).rejects.toMatchObject({ reason: "unsupported" });
-    expect(requests).toEqual([]);
-  });
 });
 
 describe("createFakeNarratorClient", () => {

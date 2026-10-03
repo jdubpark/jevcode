@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { foldRows, KIND_META, type TraceSession } from "../../model/index.js";
+import { sentence } from "../../test-support/explainer-fixtures.js";
+import { componentOf, overviewSnapshot } from "../../test-support/overview-builder.js";
 import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
 import { FINDING_TITLE } from "./finding-copy.js";
@@ -340,5 +342,51 @@ describe("Inspector", () => {
       state: { selection: chapter?.id ?? null, selectionNote: { from: "unit:gone", to: chapter?.id ?? "unit:x" } },
     });
     expect(screen.getByText(`Regrouped into “${chapter?.title ?? ""}”`)).toBeTruthy();
+  });
+});
+
+describe("Inspector decision explanation (phase C)", () => {
+  function decisionSession(options: { why: boolean; narrator?: "off" }) {
+    const choices = [
+      { id: "open", label: "Fail open", description: "", tradeoffs: [{ dimension: "availability", consequence: "API stays up." }] },
+      { id: "closed", label: "Fail closed", description: "" },
+    ];
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add a limiter" });
+    const note = b.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure." });
+    b.agent({ type: "file_changed", path: "src/middleware/rate-limiter.ts" });
+    b.unit({ id: "u1", files: ["src/middleware/rate-limiter.ts"] });
+    b.overview(
+      overviewSnapshot({
+        components: [{ rootPath: "src/middleware", files: ["src/middleware/rate-limiter.ts"], name: "middleware" }],
+        ...(options.narrator === undefined ? {} : { status: { scan: { state: "done", scanned: 1, total: 1 }, narrator: options.narrator } }),
+      }),
+    );
+    const decision = b.decision({ id: "d1", status: "open", affectedChangeUnits: ["u1"], options: choices });
+    b.decision({ id: "d1", status: "answered", affectedChangeUnits: ["u1"], options: choices, answer: { decisionId: "d1", decision: { policy: "open" }, evidence: [] } });
+    if (options.why) {
+      b.explainer({ kind: "decision_why", decisionId: "d1", sentence: sentence("Failing open keeps the API up.", { kind: "step", id: `step:${note}` }) });
+    }
+    return { session: foldRows(testMeta(), b.rows, { live: false }), decisionStepId: `step:${decision}` as const };
+  }
+
+  it("shows option tradeoffs, the why with a citation chip and the affected components", () => {
+    const { session, decisionStepId } = decisionSession({ why: true });
+    const h = renderHarness(<Inspector host={{}} />, session, { state: { selection: decisionStepId } });
+    expect(within(section("Decision")).getByTitle("availability: API stays up.").textContent).toBe("availability API stays up.");
+    expect(within(section("Why")).getByText("Failing open keeps the API up.")).toBeTruthy();
+    expect(within(section("Why")).getByRole("button", { name: /^Open Redis is a single/ })).toBeTruthy();
+    expect(within(section("Components")).getByText("middleware")).toBeTruthy();
+    fireEvent.click(within(section("Components")).getByRole("button", { name: "Open middleware on the Map" }));
+    expect(h.store.get().view).toBe("map");
+    expect(h.store.get().mapSelection).toBe(componentOf({ rootPath: "src/middleware" }).id);
+  });
+
+  it("an answered decision without a why says the narrator state quietly", () => {
+    const { session, decisionStepId } = decisionSession({ why: false, narrator: "off" });
+    renderHarness(<Inspector host={{}} />, session, { state: { selection: decisionStepId } });
+    const why = within(section("Why"));
+    expect(why.getByText("Descriptions off")).toBeTruthy();
+    expect(why.queryByRole("alert")).toBeNull();
   });
 });

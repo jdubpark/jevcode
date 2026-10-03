@@ -23,11 +23,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
 import { PlaybackClient, PlaybackLabels, loadPlaybackFixture } from "./playback.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import { PipelineRuntime } from "./pipeline-runtime.js";
 import { observeTraceAppends } from "../rows-available.js";
 import type { ObservedAppend } from "../rows-available.js";
 import { smokeMockScript } from "./smoke-script.js";
-import type { EmitFn, SurfaceRecord } from "./types.js";
+import type { EmitFn, PipelineSyncSnapshot, SurfaceRecord } from "./types.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1654,11 +1655,13 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
      * debounce then leaves the rebuild that projects that result to the turn-end pass's flush.
      */
     endByHand?: boolean;
+    /** The main slicer to share (index.ts passes one to the runtime and the explainer stage). */
+    slicer?: MainSlicer;
   }
 
   async function runTurnEnd(
     name: string,
-    { arm = () => {}, inspect = () => {}, endByHand = false }: TurnEndOptions = {},
+    { arm = () => {}, inspect = () => {}, endByHand = false, slicer }: TurnEndOptions = {},
   ): Promise<ReturnType<typeof rowSummary>> {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
     rmSync(dir, { recursive: true, force: true });
@@ -1672,6 +1675,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       db,
       emit,
       evidence: false,
+      ...(slicer !== undefined ? { slicer } : {}),
       jevClient: new DegradeClient(),
       log: () => {},
     });
@@ -1811,6 +1815,54 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(debug.at(-1)).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
   }, 60_000);
 
+  it("reads the change units and the graph again only after one of their rows was written (lane 07 PL-3)", async () => {
+    // A turn end read the change units seven times (the rebuild twice, each pass's snapshot and session state) and
+    // the graph once per snapshot, each an O(session) read and parse.
+    const trail: string[] = [];
+    let recording = true;
+    const rows = await runTurnEnd("pass-projection-reads", {
+      arm: (db) => {
+        const append = db.appendEvent.bind(db);
+        db.appendEvent = (sessionId, type, payload) => {
+          const stored = append(sessionId, type, payload);
+          if (recording && (type === "change_unit" || type === "graph_node" || type === "graph_edge")) trail.push(`write ${type}`);
+          return stored;
+        };
+        const reads: [keyof JevcodeDb & ("listChangeUnits" | "listGraphNodes" | "listGraphEdges"), string][] = [
+          ["listChangeUnits", "change_unit"],
+          ["listGraphNodes", "graph_node"],
+          ["listGraphEdges", "graph_edge"],
+        ];
+        for (const [method, type] of reads) {
+          const read = db[method].bind(db) as (sessionId: string) => unknown[];
+          (db as unknown as Record<string, (sessionId: string) => unknown[]>)[method] = (sessionId) => {
+            if (recording) trail.push(`read ${type}`);
+            return read(sessionId);
+          };
+        }
+      },
+      inspect: () => {
+        recording = false;
+      },
+    });
+    expect(rows.completionSnapshots).toBe(1);
+    for (const type of ["change_unit", "graph_node", "graph_edge"]) {
+      const own = trail.filter((entry) => entry.endsWith(` ${type}`));
+      expect(own.filter((entry) => entry.startsWith("read")).length).toBeGreaterThan(0);
+      // Every read after the first follows a write of its kind.
+      const repeated = own.filter((entry, index) => entry.startsWith("read") && index > 0 && own[index - 1]?.startsWith("read") === true);
+      expect({ type, repeated: repeated.length }).toEqual({ type, repeated: 0 });
+    }
+  }, 60_000);
+
+  it("yields through the main slicer it is given, the one index.ts shares with the session explainer (PL-3)", async () => {
+    const slicer = createMainSlicer();
+    const rows = await runTurnEnd("pass-shared-slicer", { slicer });
+    expect(rows.completionSnapshots).toBe(1);
+    // Every pass's first check comes after its flush, outside a slicer turn, so each pass yields through it.
+    expect(slicer.turns).toBeGreaterThan(0);
+  }, 60_000);
+
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
     const order: string[] = [];
     let debug: Array<{ decisions: unknown[] }> = [];
@@ -1857,7 +1909,19 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     db.upsertRepository({ id: "repo-ps", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
     db.createSession({ id: sessionId, repoId: "repo-ps", prompt: "demo" });
     const { emit } = collectEmit();
-    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {} });
+    // The explainer hook (lane 07 S-2) runs only at the end of a pass that completes: a stopped pass never reaches it.
+    let stopRequested = false;
+    let syncsAfterStop = 0;
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      onPipelineSync: () => {
+        if (stopRequested) syncsAfterStop += 1;
+      },
+    });
     const script = quickSmokeScript({ sessionId, repoId: "repo-ps", repoPath: dir, prompt: "demo" });
     try {
       // Without its agent_completed the session keeps running.
@@ -1901,6 +1965,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
         if (seqAtStop === -1) {
           seqAtStop = 0;
           setImmediate(() => {
+            stopRequested = true;
             void runtime.stopSession(sessionId);
             seqAtStop = db.getLatestSeq(sessionId);
           });
@@ -1917,6 +1982,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
 
       expect(seqAtStop).toBeGreaterThan(0);
       expect(interrupt).not.toHaveBeenCalled();
+      expect(syncsAfterStop).toBe(0);
       expect(db.getLatestSeq(sessionId)).toBe(seqAtStop);
       expect(db.getSession(sessionId)?.state).toBe("paused");
     } finally {
@@ -1924,6 +1990,88 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       db.close();
     }
   }, 60_000);
+
+  it("after shutdown, a pass parked at a slicer yield when the database closes wakes and writes nothing (will-quit)", async () => {
+    // PL-3 review: will-quit closed the database without stopping the runtime's sessions, so a pass waiting at a
+    // slicer yield woke against the closed database.
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-quit");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-quit";
+    db.upsertRepository({ id: "repo-pq", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-pq", prompt: "demo" });
+    const { emit } = collectEmit();
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: (message) => logs.push(message) });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-pq", repoPath: dir, prompt: "demo" });
+    let closed = false;
+    try {
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-pq",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6,
+        15_000,
+        "records",
+      );
+      // Slow Jev writes make the pass yield; the app quits in that yield: the runtime shuts down, the database closes.
+      let quit = false;
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (!quit) {
+          quit = true;
+          setImmediate(() => {
+            runtime.shutdown();
+            db.close();
+            closed = true;
+          });
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+      await runtime.syncAll();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(closed).toBe(true);
+      expect(logs.filter((message) => message.includes("sync failed") || message.includes("not open"))).toEqual([]);
+    } finally {
+      if (!closed) {
+        await runtime.stopSession(sessionId);
+        db.close();
+      }
+    }
+  }, 60_000);
+
+  it("after shutdown, no debounced coordinator rebuild fires against the closed database (lane 07 fix wave)", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/quit-rebuild");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-quit-rebuild";
+    const repoId = "repo-qr";
+    db.upsertRepository({ id: repoId, path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId, prompt: "demo" });
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({ db, emit: collectEmit().emit, evidence: false, jevClient: new DegradeClient(), log: (line) => logs.push(line) });
+    const at = (ms: number): string => new Date(Date.parse("2026-10-02T10:00:00.000Z") + ms).toISOString();
+    await runtime.startSession({ sessionId, repoId, repoPath: dir, prompt: "demo", agentMode: "replay" });
+    // Each fact is past the coordinator's 500 ms window of the one before. The second flush comes within the 25 ms
+    // rebuild debounce of the first, so the coordinator puts that rebuild on its timer.
+    for (const [index, file] of ["src/a.ts", "src/b.ts", "src/c.ts"].entries()) {
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: file, kind: "modified", ts: at(index * 1_000) });
+    }
+    // will-quit: the runtime shuts down, then the database closes.
+    runtime.shutdown();
+    db.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.filter((line) => line.includes("rebuild failed") || line.includes("not open"))).toEqual([]);
+  }, 30_000);
 
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
@@ -2031,4 +2179,91 @@ describe("PipelineRuntime when a coordinator rebuild throws inside an ingest (la
       db.close();
     }
   }, 30_000);
+});
+
+describe("PipelineRuntime onPipelineSync", () => {
+  it("hands every finished sync to the hook with the session's units, decisions and lastSeq", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const syncs: (PipelineSyncSnapshot & { repoPath: string })[] = [];
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: (repoPath, sync) => void syncs.push({ repoPath, ...sync }), log: () => undefined,
+    });
+    await runtime.startSession({
+      sessionId: "sess_sync", repoId: "repo_sync", repoPath: "/work/sync", prompt: "p", agentMode: "mock",
+      mockScript: { sessionId: "sess_sync", repoPath: "/work/sync", cwd: "/work/sync", prompt: "p", entries: [] },
+    });
+    runtime.ingestRecord("sess_sync", { type: "agent_message", sessionId: "sess_sync", role: "assistant", text: "hello", ts: "2026-10-02T10:00:00.000Z" });
+    await runtime.syncAll();
+    const last = syncs.at(-1);
+    expect(last?.sessionId).toBe("sess_sync");
+    expect(last?.repoPath).toBe("/work/sync");
+    expect(last?.lastSeq).toBe(db.getSession("sess_sync")?.lastEventSeq);
+    expect(last?.changeUnits).toEqual([]);
+    expect(last?.decisions).toEqual([]);
+    await runtime.stopSession("sess_sync");
+    db.close();
+  });
+
+  it("is not called for a pass that throws; the next pass, which completes, calls it once", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const syncs: PipelineSyncSnapshot[] = [];
+    const logs: string[] = [];
+    let armed = false;
+    const upsertChangeUnit = db.upsertChangeUnit.bind(db);
+    db.upsertChangeUnit = ((unit) => {
+      if (armed) {
+        armed = false;
+        throw new Error("disk full");
+      }
+      return upsertChangeUnit(unit);
+    }) as typeof db.upsertChangeUnit;
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: (_repoPath, sync) => void syncs.push(sync), log: (message) => void logs.push(message),
+    });
+    try {
+      await runtime.startSession({ sessionId: "sess_fail", repoId: "repo_fail", repoPath: "/work/fail", prompt: "p", agentMode: "replay" });
+      await runtime.syncAll();
+      const before = syncs.length;
+      runtime.ingestRecord("sess_fail", {
+        type: "file_changed", repoId: "repo_fail", sessionId: "sess_fail", path: "src/a.ts", kind: "modified", ts: "2026-10-02T10:00:00.000Z",
+      });
+      // The pass's flush rebuilds the projection, and its unit write throws.
+      armed = true;
+      await runtime.syncAll();
+      expect(logs.some((message) => message.includes("sync failed") && message.includes("disk full"))).toBe(true);
+      expect(syncs).toHaveLength(before);
+      await runtime.syncAll();
+      expect(syncs).toHaveLength(before + 1);
+      expect(syncs.at(-1)?.changeUnits.flatMap((unit) => unit.files)).toEqual(["src/a.ts"]);
+    } finally {
+      await runtime.stopSession("sess_fail");
+      db.close();
+    }
+  });
+
+  it("keeps syncing when the hook throws", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const logs: string[] = [];
+    let calls = 0;
+    const runtime = new PipelineRuntime({
+      db, emit: () => undefined, evidence: false, jevClient: new DegradeClient(),
+      onPipelineSync: () => {
+        calls += 1;
+        throw new Error("explainer broke");
+      },
+      log: (message) => void logs.push(message),
+    });
+    await runtime.startSession({
+      sessionId: "sess_throw", repoId: "repo_throw", repoPath: "/work/throw", prompt: "p", agentMode: "mock",
+      mockScript: { sessionId: "sess_throw", repoPath: "/work/throw", cwd: "/work/throw", prompt: "p", entries: [] },
+    });
+    await expect(runtime.syncAll()).resolves.toBeUndefined();
+    await expect(runtime.syncAll()).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(logs.some((message) => message.includes("explainer hook failed"))).toBe(true);
+    await runtime.stopSession("sess_throw");
+    db.close();
+  });
 });

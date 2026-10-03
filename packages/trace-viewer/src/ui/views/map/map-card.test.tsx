@@ -43,7 +43,7 @@ function renderCard(level: MapLevel, rootPath = MAIN, overrides: Partial<MapCard
   if (component === undefined) throw new Error("no component");
   const box: MapCardBox = { id: component.id, band: "api", x: 0, y: 0, w: 140, h: 76 };
   const props: MapCardProps = {
-    box, component, level, selected: false, tabStop: true, maxFiles: 122, hubImporters: null, state: null, onSelect: () => undefined, onHover: () => undefined, ...overrides,
+    box, component, level, selected: false, tabStop: true, maxFiles: 122, hubImporters: null, states: null, onSelect: () => undefined, onHover: () => undefined, ...overrides,
   };
   return render(<MapCard {...props} />);
 }
@@ -106,10 +106,16 @@ describe("MapCard content by level (revised Map mockup)", () => {
   });
 
   it("a session state mark takes the place of the count", () => {
-    renderCard("card", MAIN, { state: "changed" });
+    renderCard("card", MAIN, { states: ["changed"] });
     expect(q("[data-state='changed']")).not.toBeNull();
     expect(q("[data-map-count]")).toBeNull();
     expect(q("button")?.getAttribute("aria-label")).toContain("changed in this session");
+  });
+
+  it("draws every mark of a card in the given order and names them all", () => {
+    renderCard("card", MAIN, { states: ["new", "decision", "failing"] });
+    expect([...document.querySelectorAll("[data-state]")].map((node) => node.getAttribute("data-state"))).toEqual(["new", "decision", "failing"]);
+    expect(q("button")?.getAttribute("aria-label")).toContain("new in this session and touched by a decision and failing test");
   });
 
   it("Review Focus 2: a hostile purpose, name and package render as plain text on the detail card", () => {

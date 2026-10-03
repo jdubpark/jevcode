@@ -66,6 +66,11 @@
   flex: none;
 }
 
+/* The Decisions heading takes focus when a decided card that should hold it is gone (lane 07 S-4 fix I-2). */
+.partTitle:focus {
+  outline: none;
+}
+
 /* Rows are 26 px hit targets around 18 px text; the negative margins keep the mockup's text rhythm. */
 .now {
   display: flex;
@@ -118,7 +123,6 @@
 
 .item:focus-visible,
 .change:focus-visible,
-.decision:focus-visible,
 .link:focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 1px;
@@ -205,40 +209,6 @@
   color: var(--tv-ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.decision {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--tv-accent-soft);
-  color: var(--tv-ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.question {
-  display: flex;
-  gap: 8px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-
-.question > svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-.ask {
-  margin-left: 22px;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--tv-accent-ink);
 }
 
 .changes {
