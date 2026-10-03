@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 
 import type { TraceRow } from "@jevcode/contracts";
 
-import { buildConsoleRows, consoleRowStepIds, type ConsoleRow, type ConsoleRowsState } from "../../../layout/console-rows.js";
+import { buildConsoleRows, consoleNewRowCount, consoleRowStepIds, type ConsoleRow, type ConsoleRowsState } from "../../../layout/console-rows.js";
 import type { SelectionId, TraceIndex } from "../../../layout/trace-index.js";
 import { buildSearchIndex, type SearchIndex, type TraceSession } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
@@ -12,11 +12,10 @@ import { useAnnounce } from "../../shell/LiveRegion.js";
 import { searchMatches } from "../../shell/Outline/outline-rows.js";
 import { useDiagnostics, useSessionView } from "../../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../../state/store.js";
-import { selectNewCount } from "../../state/view-state.js";
 import { extendRange, revealAlign, spineVirtualOptions } from "../hybrid/spine/scroll-sync.js";
 import { NewBadge } from "../shared/NewBadge.js";
 import { useRegisterViewPort, type ViewPort, type ViewProps, type ZoomPort } from "../view-port.js";
-import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable } from "./ConsoleRowView.js";
+import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable, isRunningRow, type AnswerState } from "./ConsoleRowView.js";
 import styles from "./ConsoleView.module.css";
 
 const EMPTY_ROWS: ConsoleRowsState = { rows: [], byStep: new Map() };
@@ -60,11 +59,11 @@ export function rowIndexOfSelection(
   return -1;
 }
 
-/** j/k order: one entry per row that shows a step (a read group stands for its first read); finding rows are skipped. */
+/** j/k order: one entry per row that shows a step (a read group stands for its first read); flag lines are skipped. */
 export function consoleReadingOrder(rows: readonly ConsoleRow[]): SelectionId[] {
   const order: SelectionId[] = [];
   for (const row of rows) {
-    if (row.kind === "finding" || row.kind === "summary") continue;
+    if (row.kind === "finding" || row.kind === "guardrails" || row.kind === "summary") continue;
     const first = consoleRowStepIds(row)[0];
     if (first !== undefined) order.push(first as SelectionId);
   }
@@ -87,10 +86,8 @@ export function ConsoleView({ active }: ViewProps) {
   const selection = useView((state) => state.selection);
   const expanded = useView((state) => state.expanded);
   const search = useView((state) => state.search);
-  const focusRev = useView((state) => state.focusRev);
   const focusBy = useView((state) => state.focusBy);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
-  const newCount = useView((state) => selectNewCount(state, index));
   const [, rerender] = useReducer((n: number) => n + 1, 0);
 
   const previous = useRef<ConsoleRowsState | undefined>(undefined);
@@ -109,6 +106,8 @@ export function ConsoleView({ active }: ViewProps) {
   const fetchPayloads = useCallback((seqs: readonly number[]): Promise<TraceRow[]> => payloadsRef.current(seqs), []);
 
   const matches = useMemo(() => new Set<string>(search?.matchIds ?? []), [search]);
+  // The pill counts new Console rows, not model steps (silent Jev steps make no row; reads are grouped).
+  const newCount = consoleNewRowCount(built, index, lastSeenSeq);
   const selectedIndex = rowIndexOfSelection(built, session, index, selection);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -270,11 +269,11 @@ export function ConsoleView({ active }: ViewProps) {
       },
       captureCamera: () => null,
       focusSelected: () => focusRowRef.current(store.get().selection),
+      // Enter is always the Console's: it never falls back to toggling Hybrid's expansion of the step.
       toggle: (id) => {
         const at = rowIndexOfSelection(builtRef.current, live.current.session, live.current.index, id);
         const row = builtRef.current.rows[at];
-        if (row === undefined || !isExpandable(row)) return false;
-        store.dispatch({ type: "expand/toggle", key: expandKey(row) });
+        if (row !== undefined && isExpandable(row)) store.dispatch({ type: "expand/toggle", key: expandKey(row) });
         return true;
       },
       zoom: NO_ZOOM,
@@ -297,18 +296,27 @@ export function ConsoleView({ active }: ViewProps) {
   }, [active, rows.length === 0]);
 
   // A selection written elsewhere (keys, search, another view, the Brief) reveals its row. A Console click never
-  // scrolls, and a data rebuild never moves the reader: a commit that brings a new session and keeps the selection
-  // (a live brush sliding with the tail bumps focusRev) reveals nothing.
-  const lastReveal = useRef({ rev: focusRev, selection, session });
+  // scrolls, and a data rebuild never moves the reader. Only a change of the selected id reveals: focusRev also moves
+  // when a live brush slides with the tail, from the Shell's session/applied in a later commit than the rebuild, and
+  // that bump must not pull a following Console back to the old tail (V-4 fix round 1).
+  const lastSelection = useRef(selection);
   useLayoutEffect(() => {
-    const before = lastReveal.current;
-    lastReveal.current = { rev: focusRev, selection, session };
-    if (before.rev === focusRev) return;
+    const before = lastSelection.current;
+    lastSelection.current = selection;
+    if (before === selection || selection === null) return;
     if (!active || focusBy === "console") return;
-    if (before.selection === selection && before.session !== session) return;
-    const target = selectedIndex >= 0 ? selectedIndex : selection !== null && selection === index.tailStepId ? rows.length - 1 : -1;
+    const target = selectedIndex >= 0 ? selectedIndex : selection === index.tailStepId ? rows.length - 1 : -1;
     if (target >= 0) reveal(target);
-  }, [focusRev, focusBy, active, selectedIndex, selection, session]);
+  }, [focusBy, active, selectedIndex, selection]);
+
+  // Live turning on (the pill, G, the title bar) goes to the tail; the reader's own scroll there is already at it.
+  const wasFollowing = useRef(follow);
+  useLayoutEffect(() => {
+    const before = wasFollowing.current;
+    wasFollowing.current = follow;
+    if (!follow || before || !active || rows.length === 0) return;
+    virtualizer.scrollToIndex(rows.length - 1, { align: "end", behavior: "auto" });
+  }, [follow, active]);
 
   // Selftest drift (viewer spec §10 "Anchor drift"): the top row must not move when rows arrive under a reviewing reader.
   useLayoutEffect(() => {
@@ -344,6 +352,9 @@ export function ConsoleView({ active }: ViewProps) {
     if (event.key === "Enter") {
       event.preventDefault();
       dispatch({ type: "search/next", dir: event.shiftKey ? -1 : 1 });
+      // A single match is already selected, so the selection does not change: reveal it anyway.
+      const id = store.get().selection;
+      if (id !== null) port.reveal(id, { animate: false });
     } else if (event.key === "Escape") {
       event.preventDefault();
       dispatch({ type: "esc" });
@@ -355,15 +366,41 @@ export function ConsoleView({ active }: ViewProps) {
     const id = consoleRowStepIds(row)[0];
     if (id !== undefined) dispatch({ type: "select", id: id as SelectionId, by: "console" });
   };
-  const answer = async (decisionId: string, optionId: string): Promise<void> => {
-    if (host.answerDecision === undefined) return;
+  // Answer state lives here, by decision id, so it survives the row scrolling out of the virtual range. A decision with
+  // an answer sending or sent takes no second answer (the runtime would reject it) until the trace shows it answered.
+  const [answers, setAnswers] = useState<ReadonlyMap<string, AnswerState>>(() => new Map());
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
+  const pendingAnswers = useRef(new Set<string>());
+  const answer = useCallback((decisionId: string, optionId: string): void => {
+    const send = hostRef.current.answerDecision;
+    if (send === undefined || pendingAnswers.current.has(decisionId) || answersRef.current.get(decisionId) === "sent") return;
+    pendingAnswers.current.add(decisionId);
+    const mark = (state: AnswerState): void => setAnswers((current) => new Map(current).set(decisionId, state));
+    mark("sending");
+    let sent: Promise<void>;
     try {
-      await host.answerDecision({ decisionId, optionId });
-      announce("Answer sent");
-    } catch {
-      announce("Could not send the answer");
+      sent = Promise.resolve(send({ decisionId, optionId }));
+    } catch (error) {
+      sent = Promise.reject(error);
     }
-  };
+    sent.then(
+      () => {
+        pendingAnswers.current.delete(decisionId);
+        mark("sent");
+        announceRef.current("Answer sent");
+      },
+      () => {
+        pendingAnswers.current.delete(decisionId);
+        mark("failed");
+        announceRef.current("Could not send the answer");
+      },
+    );
+  }, []);
 
   if (session === null) {
     return (
@@ -453,8 +490,9 @@ export function ConsoleView({ active }: ViewProps) {
                   index={index}
                   expanded={expanded.has(expandKey(row))}
                   lineId={lineId}
-                  nowT={now}
+                  nowT={isRunningRow(row) ? now : 0}
                   canAnswer={host.answerDecision !== undefined}
+                  answer={row.kind === "decision" ? (answers.get(row.decisionId) ?? "idle") : "idle"}
                   payloads={fetchPayloads}
                   onToggle={() => dispatch({ type: "expand/toggle", key: expandKey(row) })}
                   onOpenDiff={() => {
