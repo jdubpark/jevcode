@@ -1786,7 +1786,13 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
 
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
     const order: string[] = [];
+    let debug: Array<{ decisions: unknown[] }> = [];
+    let latest: unknown[] = [];
     await runTurnEnd("pass-slices", {
+      inspect: (db, collected, sessionId) => {
+        debug = (collected.channels.get(MainToRendererChannels.jevDebug) ?? []) as Array<{ decisions: unknown[] }>;
+        latest = db.latestJevDecisions(sessionId, 50);
+      },
       arm: (db) => {
       // Six Jev decision writes of 8 ms each: a 48 ms stretch without slices.
       const upsertJevDecision = db.upsertJevDecision.bind(db);
@@ -1810,6 +1816,86 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     });
 
     expect(order).toEqual(["first decision", "waiting task", "completion"]);
+    // A slice that yields sends the decisions written so far; the pass's last send carries all of them.
+    expect(debug.length).toBeGreaterThanOrEqual(2);
+    expect(debug[0]?.decisions.length).toBeLessThan(latest.length);
+    expect(debug.at(-1)?.decisions).toEqual(latest);
+  }, 60_000);
+
+  it("ends a pass at its next slice once the session stops: no further rows and no interrupt", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-stopped");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-stopped";
+    db.upsertRepository({ id: "repo-ps", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-ps", prompt: "demo" });
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, jevClient: new DegradeClient(), log: () => {} });
+    const script = quickSmokeScript({ sessionId, repoId: "repo-ps", repoPath: dir, prompt: "demo" });
+    try {
+      // Without its agent_completed the session keeps running.
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-ps",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6,
+        15_000,
+        "records",
+      );
+      // A required decision interrupts the agent. After a resume it is still open, so a pass's decision step would
+      // interrupt the agent again.
+      runtime.ingestRecord(sessionId, {
+        id: "dec-stop",
+        sessionId,
+        title: "Fail open or closed?",
+        context: "rate limit",
+        severity: "required",
+        options: [
+          { id: "open", label: "Fail open", description: "serve" },
+          { id: "closed", label: "Fail closed", description: "reject" },
+        ],
+        affectedChangeUnits: [],
+        evidence: [],
+        status: "open",
+      });
+      await runtime.resume(sessionId);
+      const adapter = runtime.getAdapter(sessionId);
+      expect(adapter).not.toBeNull();
+      const interrupt = vi.spyOn(adapter as NonNullable<typeof adapter>, "interrupt");
+      // Six 8 ms Jev writes make the pass yield; the stop runs in that yield.
+      let seqAtStop = -1;
+      const upsertJevDecision = db.upsertJevDecision.bind(db);
+      db.upsertJevDecision = ((log) => {
+        if (seqAtStop === -1) {
+          seqAtStop = 0;
+          setImmediate(() => {
+            void runtime.stopSession(sessionId);
+            seqAtStop = db.getLatestSeq(sessionId);
+          });
+        }
+        const until = performance.now() + 8;
+        while (performance.now() < until) {
+          // a slow write
+        }
+        return upsertJevDecision(log);
+      }) as typeof db.upsertJevDecision;
+
+      await runtime.syncAll();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(seqAtStop).toBeGreaterThan(0);
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(db.getLatestSeq(sessionId)).toBe(seqAtStop);
+      expect(db.getSession(sessionId)?.state).toBe("paused");
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
   }, 60_000);
 
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
