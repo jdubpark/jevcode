@@ -236,6 +236,7 @@ describe("decisions and Jev", () => {
       ],
       decidedBy: "supervisor",
       answerSeq: message,
+      decidedSeq: answer,
     });
     expect(session.chapters[0]?.decisionIds).toEqual(["decision:dec-oauth-0001"]);
     // The answer is absorbed into the decision step (R25): no instruction step of its own.
@@ -268,6 +269,61 @@ describe("decisions and Jev", () => {
     b.agent({ type: "agent_message", role: "assistant", text: "b", ts: TraceBuilder.at(30) });
     b.decision({ id: "dec-1", status: "delegated" });
     expect(stepAt(fold(b), first)).toMatchObject({ tMs: 0, endTMs: 5_000, durationMs: 5_000 });
+  });
+
+  it("drops a message answer when the decision reopens, as decidedSeq is dropped (review minor)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    const message = b.agent({ type: "agent_message", role: "user", text: "Use A." });
+    b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBe(message);
+    b.decision({ id: "dec-1", status: "open" });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
+    // Answered again without a message: no answerSeq comes back.
+    const again = b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "b" }, evidence: [] } });
+    expect(stepAt(fold(b), asked).decision).toMatchObject({ decidedSeq: again });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
+  });
+
+  it("a supervisor message before a re-emit of an answered decision stays an instruction (R25: only an open decision takes an answer)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    const answered = { decisionId: "dec-1", decision: { q: "a" }, evidence: [] };
+    const decided = b.decision({ id: "dec-1", status: "answered", answer: answered });
+    const steer = b.agent({ type: "agent_message", role: "user", text: "Also add tests." });
+    // The rebuild that follows the steer re-emits the answered decision.
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    const session = fold(b);
+    expect(stepAt(session, steer)).toMatchObject({ kind: "instruction", seqs: [steer] });
+    expect(stepAt(session, asked).seqs).not.toContain(steer);
+    expect(stepAt(session, asked).decision?.answerSeq).toBeUndefined();
+    expect(stepAt(session, asked).decision?.decidedSeq).toBe(decided);
+  });
+
+  it("records the row that decided a decision as decidedSeq; re-emits keep it, and reopening clears it (final review D I-1)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBeUndefined();
+    const viewer = b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    const delegated = b.decision({ id: "dec-2", status: "delegated" });
+    b.decision({ id: "dec-1", status: "answered", affectedChangeUnits: ["cu_1"], answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    const session = fold(b);
+    // Answered in the viewer: no message, so no answerSeq; the re-emit adds a row but not a decision.
+    expect(stepAt(session, asked).decision).toMatchObject({ status: "answered", decidedSeq: viewer });
+    expect(stepAt(session, asked).decision?.answerSeq).toBeUndefined();
+    expect(stepAt(session, asked).lastSeq).toBeGreaterThan(viewer);
+    // A decision first seen closed is decided by that row.
+    expect(stepAt(session, delegated).decision?.decidedSeq).toBe(delegated);
+
+    const reopened = b.decision({ id: "dec-1", status: "open" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBeUndefined();
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
+    const again = b.decision({ id: "dec-1", status: "delegated" });
+    expect(stepAt(fold(b), asked).decision?.decidedSeq).toBe(again);
+    expect(again).toBeGreaterThan(reopened);
   });
 
   it("reads a decision running while open and unknown once expired (spec §6.6 Status)", () => {
@@ -308,6 +364,23 @@ describe("decisions and Jev", () => {
     expect(fold(b).turns.map((turn) => [turn.trigger, turn.outcome])).toEqual([
       ["initial", "waiting"],
       ["resume", "unknown"],
+    ]);
+  });
+
+  it("a re-emit of an answered decision does not mark its turn as stopped on a decision (review minor)", () => {
+    const b = new TraceBuilder();
+    const answered = { decisionId: "dec-1", decision: { k: "a" }, evidence: [] };
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "dec-1" });
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    b.agent({ type: "agent_started", prompt: "continue with A" });
+    // The rebuild re-emits dec-1 inside the second turn, which then ends with no terminal row: a steer, not a resume.
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    b.agent({ type: "agent_started", prompt: "Stop and add tests" });
+    expect(fold(b).turns.map((turn) => [turn.trigger, turn.outcome])).toEqual([
+      ["initial", "waiting"],
+      ["resume", "interrupted"],
+      ["steer", "unknown"],
     ]);
   });
 

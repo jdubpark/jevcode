@@ -97,18 +97,26 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   state.pendingAnswer = null;
   setDecisionUnits(state, decision.id, decision.affectedChangeUnits);
   const closes = decision.status === "answered" || decision.status === "delegated";
-  if (closes) turn.decisionAnswered = true;
   const existing = state.chapters.decisionSteps.get(decision.id);
+  // The turn stopped on a decision only when this row closes an open one or creates one already closed. A re-emit of a
+  // closed decision in a later turn says nothing about that turn (it would read "waiting" and its successor "resume").
+  if (closes && (existing === undefined || existing.status === "running")) turn.decisionAnswered = true;
   if (existing !== undefined) {
     const answerSeq = existing.decision?.answerSeq;
+    const decidedSeq = existing.decision?.decidedSeq;
     // Only the row that closes the decision ends its wait; the Jev projection pass re-emits
     // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
     const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(state, existing, ctx, false);
     existing.decision = decisionDetail(decision, existing.decision);
-    if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    // Both stay only while the decision stays answered or delegated: a reopening row drops them, and the next close sets
+    // them again. The first closing row decides; a re-emit of the closed decision keeps that seq (final review D I-1).
+    if (closes && answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
+    if (closes) existing.decision.decidedSeq = decidedSeq ?? ctx.seq;
     let end: { t: number; sourceTs: string } = ctx;
-    if (closes && answer !== null) {
+    // R25: the message answers only a decision this row closes. A re-emit of an already answered decision after a
+    // steer leaves the steer an instruction and the decision's answerSeq as it was.
+    if (closing && closes && answer !== null) {
       removeStep(state, answer.step);
       existing.seqs.push(...answer.step.seqs);
       existing.seqs.sort((a, b) => a - b);
@@ -139,6 +147,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     target: decision.id,
   });
   step.decision = decisionDetail(decision);
+  if (closes) step.decision.decidedSeq = ctx.seq;
   state.chapters.decisionOrder.set(decision.id, state.chapters.decisionSteps.size);
   state.chapters.decisionSteps.set(decision.id, step);
   state.changes.decisionIds.add(decision.id);

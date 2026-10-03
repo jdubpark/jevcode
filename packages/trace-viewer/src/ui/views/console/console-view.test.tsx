@@ -9,6 +9,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ROWS_RELEASED_MARK } from "../../../source.js";
 import { buildTraceIndex, type TraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, foldRows, type TraceSession } from "../../../model/index.js";
+import { sentence } from "../../../test-support/explainer-fixtures.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   createHarness,
@@ -498,6 +499,71 @@ describe("ConsoleView fix round 1", () => {
     expect(screen.getByRole("feed", { name: "Console" }).textContent).toContain("→ Option A");
   });
 
+  describe("focus when the answered row removes the focused option (E M-2)", () => {
+    const decisionArticle = (): HTMLElement => {
+      const node = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[data-kind="decision"]');
+      if (node === null) throw new Error("no decision row");
+      return node;
+    };
+    const answered = (b: TraceBuilder): void => {
+      b.decision({ id: "d1", title: "Keep email login?", status: "answered", answer: { decisionId: "d1", decision: { choice: "a" }, evidence: [] } });
+    };
+
+    it.each([
+      ["from the row's tab stop (keyboard)", true],
+      ["straight on the option (pointer or screen reader)", false],
+    ])("moves focus to the decision's row, not <body>: %s", async (_name, viaRow) => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      if (viaRow) act(() => decisionArticle().focus());
+      act(() => option("Option A").focus());
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+      expect(document.activeElement).toBe(decisionArticle());
+      expect(decisionArticle().tabIndex).toBe(0);
+    });
+
+    it("leaves focus alone when the reader pressed outside the row while the disabled option still held focus (review minor)", async () => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      // A pointer Choose: the option takes focus, then it is disabled while the answer is on its way.
+      act(() => option("Option A").focus());
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      // A press on empty, non-focusable space outside the Console: the reader left, though no focus event says so.
+      fireEvent.pointerDown(document.body);
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+      expect(screen.getByRole("feed", { name: "Console" }).contains(document.activeElement)).toBe(false);
+    });
+
+    it("leaves focus alone when the reader had already left the option for nowhere", async () => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      act(() => decisionArticle().focus());
+      act(() => option("Option A").focus());
+      // A click on empty space: no focusin anywhere, and the option is still in the document and enabled.
+      act(() => option("Option A").blur());
+      await frames();
+      expect(document.activeElement).toBe(document.body);
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+
   it("a failed answer shows a quiet note in the block and lets the reader answer again", async () => {
     const answerDecision = vi.fn(async () => {
       throw new Error("rejected");
@@ -537,19 +603,23 @@ describe("ConsoleView fix round 1", () => {
     expect(answerDecision).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps one tab stop in the feed: chevrons and edit links leave the tab order, pending decision options stay", async () => {
+  it("keeps one tab stop in the feed: chevrons, edit links, summary chips and the Brief link leave the tab order, pending decision options stay", async () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     b.agent({ type: "command_started", command: "ls src" });
     b.agent({ type: "command_completed", command: "ls src", exitCode: 0, stdout: Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n"), stderr: "" });
-    b.agent({ type: "file_read", path: "src/a.ts" });
+    const read = b.agent({ type: "file_read", path: "src/a.ts" });
     b.agent({ type: "file_changed", path: "src/a.ts" });
     b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false });
+    // A summary row: its citation chips and its Brief link are buttons, one of each per sentence and row (E M-1).
+    b.explainer({ kind: "story", sentences: [sentence("The agent read a.ts.", { kind: "step", id: `step:${read}` })], basisSeq: b.rows.length });
     b.decision({ id: "d1", title: "Keep email login?" });
     mountConsole(live(b), { host: { answerDecision: async () => undefined }, state: { follow: false, loaded: true } });
     await frames();
     const feed = screen.getByRole("feed", { name: "Console" });
     expect(feed.querySelectorAll("button[aria-expanded]").length).toBeGreaterThanOrEqual(2);
+    expect(within(feed).getByRole("button", { name: "Show the Brief" })).toBeTruthy();
+    expect(within(feed).getAllByRole("button", { name: /^Open / }).length).toBeGreaterThan(0);
     const stops = Array.from(feed.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]")).filter((node) => node.tabIndex >= 0);
     expect(stops.filter((node) => node.tagName === "ARTICLE")).toHaveLength(1);
     expect(stops.filter((node) => node.tagName !== "ARTICLE").map((node) => node.textContent)).toEqual(["Option A", "Option B"]);
@@ -650,6 +720,66 @@ describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
     expect(m.h.store.get().selection).toBe(stepIds[1]);
     fireEvent.click(members[0] as HTMLElement);
     expect(m.h.store.get().selection).toBe(stepIds[0]);
+  });
+
+  it("j/k reach the folded Jev review row by its first step and Enter expands it, with no pointer (E M-3)", async () => {
+    const { session, stepIds } = guardrailSession();
+    const m = mountConsole(session, { state: { view: "console", follow: false, loaded: true }, keys: true });
+    await frames();
+    const press = (code: string, key: string): void => {
+      act(() => {
+        fireEvent.keyDown(document.body, { code, key });
+      });
+    };
+    const order = session.steps.filter((step) => step.kind === "instruction" || step.kind === "message").map((step) => step.id);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(order[0]);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(stepIds[0]);
+    await frames();
+    const feed = within(screen.getByRole("feed", { name: "Console" }));
+    const row = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[data-kind="guardrails"]');
+    expect(row?.hasAttribute("data-selected")).toBe(true);
+    press("Enter", "Enter");
+    await frames();
+    expect(feed.getByRole("button", { name: "Collapse guardrails" }).getAttribute("aria-expanded")).toBe("true");
+    expect(feed.getAllByRole("button", { name: /^Flag:/ })).toHaveLength(2);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(order[1]);
+    press("KeyK", "k");
+    expect(m.h.store.get().selection).toBe(stepIds[0]);
+  });
+
+  it("j/k from a guardrail member picked with the pointer move to the neighbouring rows, not to the ends (review minor)", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.agent({ type: "agent_message", role: "assistant", text: "before" });
+    const seqs = [b.jev({ id: "j1", clamps: ["security_path"] }), b.jev({ id: "j2", clamps: ["security_path"] })];
+    b.agent({ type: "agent_message", role: "assistant", text: "after" });
+    b.agent({ type: "agent_message", role: "assistant", text: "last" });
+    const session = live(b);
+    const stepAtSeq = (seq: number): string => session.steps.find((step) => step.firstSeq === seq)?.id ?? "";
+    const [before, after] = ["before", "after"].map((text) => session.steps.find((step) => step.text === text)?.id);
+    const m = mountConsole(session, { state: { view: "console", follow: false, loaded: true }, keys: true });
+    await frames();
+    const feed = within(screen.getByRole("feed", { name: "Console" }));
+    fireEvent.click(feed.getByRole("button", { name: "Expand guardrails" }));
+    await frames();
+    const pickSecond = (): void => {
+      fireEvent.click(feed.getAllByRole("button", { name: /^Flag:/ })[1] as HTMLElement);
+      expect(m.h.store.get().selection).toBe(stepAtSeq(seqs[1] ?? 0));
+    };
+    const press = (code: string, key: string): void => {
+      act(() => {
+        fireEvent.keyDown(document.body, { code, key });
+      });
+    };
+    pickSecond();
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(after);
+    pickSecond();
+    press("KeyK", "k");
+    expect(m.h.store.get().selection).toBe(before);
   });
 
   it("an Outline or Brief click on the already-selected item reveals it in the Console", async () => {

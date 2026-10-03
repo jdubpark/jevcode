@@ -28,8 +28,10 @@ function iconOf(session: TraceSession, citation: Citation, stepId: string | null
 /**
  * Citation chips (spec §3.3). A chip only selects what it names or opens the Map; it never runs an action. A citation
  * this trace cannot resolve, a fact citation among them (lane 07 alignment note), is plain text with no action.
+ * `tabbable={false}` takes the chips out of the tab order (tabIndex -1) where a roving region keeps one tab stop: the
+ * Console feed (E M-1). They stay buttons with their names. Default true (the Brief, the Inspector).
  */
-export function CitationChips({ citations }: { citations: readonly Citation[] }): JSX.Element | null {
+export function CitationChips({ citations, tabbable = true }: { citations: readonly Citation[]; tabbable?: boolean }): JSX.Element | null {
   const { session } = useSessionView();
   const dispatch = useDispatch();
   if (session === null || citations.length === 0) return null;
@@ -56,7 +58,15 @@ export function CitationChips({ citations }: { citations: readonly Citation[] })
           dispatch({ type: "map/select", componentId: target.componentId });
         };
         return (
-          <button key={key} type="button" className={styles.chip} title={target.full} aria-label={`Open ${target.full}`} onClick={open}>
+          <button
+            key={key}
+            type="button"
+            className={styles.chip}
+            title={target.full}
+            aria-label={`Open ${target.full}`}
+            {...(tabbable ? {} : { tabIndex: -1 })}
+            onClick={open}
+          >
             {icon}
             <span className={styles.chipLabel}>{target.label}</span>
           </button>

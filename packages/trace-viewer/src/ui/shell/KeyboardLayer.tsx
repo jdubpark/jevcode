@@ -103,7 +103,8 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
       const port = registry.get(state.view);
       switch (command.cmd) {
         case "item": {
-          let next = nextInOrder(port?.readingOrder() ?? [], state.selection, command.dir, view.index);
+          const entryOf = port?.readingEntry?.bind(port);
+          let next = nextInOrder(port?.readingOrder() ?? [], state.selection, command.dir, view.index, entryOf);
           if (next === null && view.session !== null) {
             next = adjacentStep(view.session, view.index, state.selection, command.dir);
           }

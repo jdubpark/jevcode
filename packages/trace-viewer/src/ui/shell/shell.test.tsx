@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createStaticBundleSource } from "../../sources/static-bundle.js";
@@ -338,6 +338,10 @@ describe("Shell", () => {
     }
     expect(screen.getByRole("complementary", { name: "Brief" })).toBeTruthy();
     expect(screen.queryByRole("complementary", { name: "Inspector" })).toBeNull();
+    // One "Brief" landmark: the Brief inside the panel is not a second, nested one (E M-5).
+    const panel = screen.getByRole("complementary", { name: "Brief" });
+    expect(within(panel).queryByRole("region", { name: "Brief" })).toBeNull();
+    expect(screen.getAllByRole("heading", { name: "Brief" })).toHaveLength(1);
   });
 });
 

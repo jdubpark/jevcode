@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type React from "react";
 
-import { componentDetails, DETAIL_LINKS_SHOWN, listBarPx, type MapLink } from "../../layout/map-details.js";
+import { componentDetails, DETAIL_LINKS_SHOWN, listBarPx, type ComponentDecision, type MapLink } from "../../layout/map-details.js";
 import { displayUntrusted, truncateMiddle } from "../../model/index.js";
 import { DiffBar } from "../graphics/DiffBar.js";
 import type { IconName } from "../icons/icon-names.js";
@@ -12,8 +12,17 @@ import { useViewStore } from "../state/store.js";
 import styles from "./ComponentInspector.module.css";
 import base from "./Inspector.module.css";
 
+/** A decision row's quiet status word: open, answered, delegated or expired. */
+const DECISION_STATUS_WORD: Readonly<Record<ComponentDecision["status"], string>> = {
+  open: "open",
+  answered: "answered",
+  delegated: "delegated",
+  expired: "expired",
+};
+
 /** The Inspector for a Map component (spec §3.4): purpose with provenance, files, imports both ways, packages, this
- *  session's changes and the overview sentences that cite it. Every repo and narrator string goes through displayUntrusted. */
+ *  session's changes and the decisions touching it, and the overview sentences that cite it. Every repo, agent and
+ *  narrator string goes through displayUntrusted. */
 export function ComponentInspector({ componentId }: { componentId: string }): React.JSX.Element {
   const view = useSessionView();
   const store = useViewStore();
@@ -135,7 +144,7 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
             <span>This session</span>
           </h3>
           {details.changes.length === 0 ? (
-            <p className={styles.quiet}>No changes in this session</p>
+            details.decisions.length === 0 ? <p className={styles.quiet}>No changes in this session</p> : null
           ) : (
             details.changes.map((change) => (
               <button
@@ -153,6 +162,26 @@ export function ComponentInspector({ componentId }: { componentId: string }): Re
               </button>
             ))
           )}
+          {/* Spec §3.4: the decisions touching the component, as the same quiet rows; one opens the decision's step. */}
+          {details.decisions.map((decision) => {
+            const title = displayUntrusted(decision.title);
+            const status = DECISION_STATUS_WORD[decision.status];
+            return (
+              <button
+                key={decision.decisionId}
+                type="button"
+                className={styles.change}
+                data-component-decision={decision.decisionId}
+                title={title}
+                aria-label={`Decision: ${title}, ${status}`}
+                onClick={() => store.dispatch({ type: "select", id: decision.stepId, by: "shell" })}
+              >
+                <Icon name="fork" size={12} />
+                <span className={styles.rowName}>{title}</span>
+                <span className={styles.count}>{status}</span>
+              </button>
+            );
+          })}
         </section>
         {details.citations.length === 0 ? null : (
           <section className={styles.section} aria-label="Cited in the overview">
