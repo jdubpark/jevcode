@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { Decision, ValidationResult } from "@jevcode/contracts";
+import type { Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
+import { PipelineCoordinator } from "@jevcode/semantic-core";
 import type { FailureRecord, PipelineStores } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
@@ -123,5 +124,56 @@ describe("storage stores: unchanged re-upserts append no rows", () => {
     stores.decisions.upsert(answered);
     expect(rowsOf(db, "decision")).toBe(3);
     expect(stores.decisions.get("dec_1")?.status).toBe("answered");
+  });
+});
+
+// PL-1: an agent that keeps working never leaves its idle bucket. Each step edits one file
+// and runs the tests; the trace must grow by a bounded number of rows per step, not by one
+// row per earlier run or unit.
+describe("storage stores under the coordinator: one long bucket", () => {
+  it("writes each passing run once and a bounded number of change-unit rows per step", () => {
+    const { db, stores } = open();
+    let now = Date.parse(TS);
+    const coordinator = new PipelineCoordinator({ stores, clock: () => now });
+    const ingest = (fact: EvidenceFact): void => {
+      now = Date.parse(fact.ts);
+      coordinator.ingest(fact);
+    };
+    const iso = (ms: number): string => new Date(ms).toISOString();
+    const base = Date.parse(TS);
+    const steps = 40;
+    for (let step = 0; step < steps; step += 1) {
+      const t = base + step * 900;
+      const common = { repoId: "repo_stores", sessionId: SESSION } as const;
+      ingest({
+        ...common,
+        type: "git_hunk",
+        ts: iso(t),
+        file: `src/module-${step}.ts`,
+        added: 4,
+        removed: 1,
+        isFormattingOnly: false,
+        isConfigOnly: false,
+        isLockfile: false,
+      });
+      ingest({
+        ...common,
+        type: "test_result",
+        ts: iso(t + 450),
+        runner: "vitest",
+        command: "pnpm test",
+        passed: 3,
+        failed: 0,
+        skipped: 0,
+        failures: [],
+      });
+    }
+    now += 10_000;
+    coordinator.flush();
+
+    expect(rowsOf(db, "validation")).toBe(steps);
+    // A step changes the edited file's unit, then gives that unit the new run. Before
+    // PL-1 every rebuild rewrote every unit (steps * (steps + 1) / 2 rows).
+    expect(rowsOf(db, "change_unit")).toBeLessThanOrEqual(3 * steps);
   });
 });
