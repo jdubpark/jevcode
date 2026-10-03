@@ -384,11 +384,14 @@ describe("componentForPath", () => {
     components: [{ rootPath: "packages/viewer" }, { rootPath: "packages/viewer/src/ui" }, { rootPath: "." , name: "config" }],
   });
 
-  it("picks the longest root, strips the repo root and './', and falls back to '.'", () => {
+  it("picks the longest root, strips the repo root and './', and falls back to '.' for a root-level path", () => {
     expect(componentForPath(overview, "packages/viewer/src/ui/Map.tsx")).toBe(componentId("packages/viewer/src/ui"));
     expect(componentForPath(overview, "/work/repo/packages/viewer/src/model/fold.ts")).toBe(componentId("packages/viewer"));
     expect(componentForPath(overview, "./packages/viewer/package.json")).toBe(componentId("packages/viewer"));
     expect(componentForPath(overview, "tsconfig.json")).toBe(componentId("."));
+    expect(componentForPath(overview, "/work/repo/tsconfig.json")).toBe(componentId("."));
+    // "." holds root-level files only (lane 06 fix I-3): an unclaimed nested path is not its.
+    expect(componentForPath(overview, "docs/a.md")).toBeUndefined();
     expect(componentForPath(model({ components: [{ rootPath: "packages/viewer" }] }), "docs/a.md")).toBeUndefined();
   });
 });

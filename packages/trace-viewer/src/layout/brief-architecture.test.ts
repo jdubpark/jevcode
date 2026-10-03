@@ -31,6 +31,19 @@ describe("briefArchitecture (spec §3.3 item 3, §8.4)", () => {
     });
   });
 
+  it('counts a nested file no component claims as touching "(other)" when there is one, never the root-level "." (lane 06 fix I-3)', () => {
+    const withRoot = overviewSnapshot({
+      components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: ".", name: "config", role: "config", files: ["package.json"] }],
+    });
+    // docs/notes.md is nested and unclaimed: it is not a repo-root file, so "config" stays untouched.
+    expect(briefArchitecture(buildSession({ steps, overview: withRoot }))?.touched).toEqual([componentId("apps/web")]);
+    const withOther = overviewSnapshot({
+      components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "(other)", name: "other", role: "domain", files: ["packages/db/src/users.ts"] }],
+    });
+    // packages/db/src/sessions.ts is past "(other)"'s file list but still one of its groups' files.
+    expect(briefArchitecture(buildSession({ steps, overview: withOther }))?.touched).toEqual([componentId("(other)"), componentId("apps/web")]);
+  });
+
   it("carries the narrator's sentences when there are some", () => {
     const narrated = overviewSnapshot({
       components: [{ rootPath: "apps/web", role: "ui" }],
