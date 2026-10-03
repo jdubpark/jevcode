@@ -19,9 +19,9 @@ import {
 import { compareFindings, resolveStableId, type StableId, type TraceSession } from "../../model/index.js";
 import { IconSprite } from "../icons/IconSprite.js";
 import { selectionTitle } from "../inspector/finding-copy.js";
-import { RightPanel } from "../inspector/RightPanel.js";
+import { RightPanel, showsBrief } from "../inspector/RightPanel.js";
 import type { ViewerLocation } from "../state/location.js";
-import { useViewStore } from "../state/store.js";
+import { useView, useViewStore } from "../state/store.js";
 import { locationOf } from "../state/view-state.js";
 import base from "../tokens/base.module.css";
 import { tokenStyle } from "../tokens/tokens.js";
@@ -136,6 +136,8 @@ export function Shell({
   showSwitch = true,
 }: ShellProps) {
   const store = useViewStore();
+  // The right panel is named after what it shows (lane fix m3).
+  const showBrief = useView(showsBrief);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   // The open location and follow override apply once, at open; a parent passing a fresh
   // equal `location` object each render must not re-run the open logic.
@@ -328,7 +330,7 @@ export function Shell({
                     <main className={styles.main} data-region="main" tabIndex={-1}>
                       <ViewSlot views={views} keepHiddenMounted={KEEP_HIDDEN} />
                     </main>
-                    <aside className={styles.inspector} aria-label="Inspector" data-region="inspector">
+                    <aside className={styles.inspector} aria-label={showBrief ? "Brief" : "Inspector"} data-region="inspector">
                       <RightPanel host={host} />
                     </aside>
                   </div>

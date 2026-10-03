@@ -42,7 +42,8 @@ describe("Shell", () => {
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Outline" })).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "Inspector" })).toBeTruthy();
+    // The right panel is named after what it shows (lane fix m3): the Brief until a selection opens the Inspector.
+    expect(screen.getByRole("complementary", { name: /^(Brief|Inspector)$/ })).toBeTruthy();
     const root = container.querySelector<HTMLElement>("[data-trace-viewer]");
     expect(root?.style.getPropertyValue("--tv-accent")).toBe("#2F6BFF");
     expect(root?.style.getPropertyValue("--tv-ink-3")).toBe("#676D78");
@@ -300,5 +301,16 @@ describe("Shell", () => {
     expect(list).toHaveLength(50);
     expect(list[0]).toBe("e10");
     expect(list.at(-1)).toBe("e59");
+  });
+
+  it("names the right panel after what it shows: Inspector for a selection, Brief once Esc clears it (lane fix m3)", async () => {
+    render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} />);
+    // A finished session opens with its top finding selected (viewer spec §7.8), so the Inspector shows.
+    expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeTruthy();
+    for (let i = 0; i < 4 && screen.queryByRole("complementary", { name: "Brief" }) === null; i += 1) {
+      fireEvent.keyDown(document.body, { code: "Escape", key: "Escape" });
+    }
+    expect(screen.getByRole("complementary", { name: "Brief" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Inspector" })).toBeNull();
   });
 });

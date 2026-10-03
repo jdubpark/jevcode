@@ -319,4 +319,57 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(h.store.get().brief).toBe(true);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
   });
+
+  describe("focus when the panel switches under it (lane fix I-5)", () => {
+    function setup() {
+      const session = foldFixture("oauth");
+      const step = session.steps.find((item) => item.chapterIds.length === 0 && item.findingIds.length === 0);
+      if (step === undefined) throw new Error("oauth has no step outside a chapter");
+      const h = renderHarness(
+        <KeyedPanel>
+          <RightPanel host={{}} />
+        </KeyedPanel>,
+        session,
+      );
+      act(() => h.store.dispatch({ type: "select", id: step.id, by: "shell" }));
+      const panel = document.querySelector<HTMLElement>('[data-region="inspector"]');
+      if (panel === null) throw new Error("no panel");
+      return { h, panel };
+    }
+    const focusInPanel = (panel: HTMLElement): HTMLElement => {
+      const target = panel.querySelector<HTMLElement>("button, [tabindex]");
+      if (target === null) throw new Error("nothing focusable in the panel");
+      act(() => target.focus());
+      expect(panel.contains(document.activeElement)).toBe(true);
+      return target;
+    };
+    const brief = (): HTMLElement | null => document.querySelector<HTMLElement>("[data-brief]");
+
+    it("Esc clearing a selection with focus in the Inspector moves focus to the Brief, not <body>", () => {
+      const { h, panel } = setup();
+      const target = focusInPanel(panel);
+      fireEvent.keyDown(target, { code: "Escape", key: "Escape" });
+      expect(h.store.get().selection).toBeNull();
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(brief());
+    });
+
+    it("Shift+B with focus in the panel keeps focus: into the Brief, then back to the view's tab stop", () => {
+      const { panel } = setup();
+      const target = focusInPanel(panel);
+      fireEvent.keyDown(target, { code: "KeyB", key: "B", shiftKey: true });
+      expect(document.activeElement).toBe(brief());
+      fireEvent.keyDown(document.activeElement ?? document.body, { code: "KeyB", key: "B", shiftKey: true });
+      expect(brief()).toBeNull();
+      expect(document.activeElement).toBe(document.querySelector('[data-region="main"]'));
+    });
+
+    it("leaves focus alone when it was outside the panel", () => {
+      const { h } = setup();
+      const main = document.querySelector<HTMLElement>('[data-region="main"]');
+      act(() => main?.focus());
+      act(() => h.store.dispatch({ type: "select", id: null, by: "shell" }));
+      expect(document.activeElement).toBe(main);
+    });
+  });
 });
