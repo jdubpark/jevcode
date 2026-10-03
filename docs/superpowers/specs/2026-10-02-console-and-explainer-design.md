@@ -264,11 +264,11 @@ Caps: 200 components (beyond that the smallest are grouped into "other"), 1,000 
 
 ### 6.1 Placement and schedule
 
-The stage runs in `apps/desktop/src/main/pipeline`, beside the UI stage. Its work runs in a worker or off the hot path, and it never blocks agent event ingestion.
+The stage runs in `apps/desktop/src/main/pipeline`, beside the UI stage. Its work runs in a worker (import parsing) or off the hot path (async I/O with yields), and it never blocks agent event ingestion.
 
 | Work | When | Bound |
 |---|---|---|
-| Repo scan | Repo open, or first session start | Background worker. Progress is visible in the Brief ("Mapping codebase · 3,200 / 9,800 files"). |
+| Repo scan | Repo open, or first session start | On main's event loop with async I/O (lstat, read and hash with bounded concurrency) and yields between files; import parsing runs in the worker pool. Progress is visible in the Brief ("Mapping codebase · 3,200 / 9,800 files"). |
 | Snapshot rebuild | After watcher changes settle (500 ms) | Only dirty components are recomputed. |
 | `describeComponents` | After a snapshot with uncached components. A new component is described at once. A changed component (new content hash) is described again only after that hash has held for 60 s; until then it keeps its last text and role (§6.4). | Batches of 20, at most 2 in flight. Components that failed schema never share a batch with fresh ones (§6.6). |
 | `overviewNarrative` | After the first full description pass. After that, it runs again when a component is added, removed or re-roled, when at least max(3, 10%) of components have a new content hash since the last narrative, or when the stored narrative cites something that is gone. It waits for pending descriptions, except components that already failed schema. | One in flight, and at most one call per 2 minutes. |

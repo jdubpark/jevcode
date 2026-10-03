@@ -329,6 +329,8 @@ Spec §11 budgets for the explainer stage. Bench: `pnpm --filter jevcode-desktop
 | Snapshot row size | ≤ 512 KB | The limit is enforced when the row is appended (storage). This repo's snapshot is about 71-73 KB | PASS | storage append check |
 | Narrator first purposes after scan (≤ 200 components) | ≤ 30 s | NOT MEASURED: no ANTHROPIC_API_KEY on the build machine; run `packages/jev-router/src/narrator/narrator.live.test.ts` with a key | NOT MEASURED | live test |
 
+Known limit: under saturated ingest the scan reads 110-120 files/s (the throughput measured under guard B conditions, described below), because file reads run on main's event loop and each read waits for loop turns between ingest chunks. Follow-up: move the file reads (lstat, read, hash) into the worker pool so the scan no longer competes with ingest for loop turns. Spec §6.1 states the placement.
+
 Bench load caveat: the 2026-10-03 bench ran at a load average of 58 on a shared machine, so its rows are conservative for latency but do not replace a quiet-machine run.
 
 Smoke run under load, not the budget measurement (2026-10-02, shared machine under heavy multi-lane load): the bench at 1,000 and 2,000 files (2 iterations each) averaged 304 ms and 417 ms; the soak with `JEVCODE_SOAK_EVENTS=300`, explainer on 500 files, finished without `SOAK_FAIL` at 238 ms ingest (explainer off: 237 ms; with `JEVCODE_SOAK_YIELD_EVERY=50`: 269 ms) and reported `explainer.rows` 1. These runs only show that the bench and the switches work.
