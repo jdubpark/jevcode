@@ -1635,6 +1635,15 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     };
   }
 
+  /** Rows per type written after seq: what a retry wrote. */
+  function countsAfter(db: JevcodeDb, sessionId: string, seq: number): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const event of db.listEvents(sessionId, { fromSeq: seq, limit: 10_000 })) {
+      counts[event.type] = (counts[event.type] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   interface TurnEndOptions {
     /** Installs write spies before the session starts. */
     arm?: (db: JevcodeDb) => void;
@@ -1707,16 +1716,22 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
   it("loses no row when a write throws once in a turn-end pass: the next pass writes what it did not", async () => {
     const clean = await runTurnEnd("pass-rows-clean");
     let thrown = 0;
+    let seqAtThrow = 0;
+    let retried: Record<string, number> = {};
     const failing = await runTurnEnd("pass-rows-throw", {
       arm: (db) => {
         const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
         db.upsertUiSnapshot = ((id, snapshot) => {
           if (thrown === 0) {
             thrown += 1;
+            seqAtThrow = db.getLatestSeq(id);
             throw new Error("disk full");
           }
           return upsertUiSnapshot(id, snapshot);
         }) as typeof db.upsertUiSnapshot;
+      },
+      inspect: (db, _collected, sessionId) => {
+        retried = countsAfter(db, sessionId, seqAtThrow);
       },
     });
 
@@ -1729,20 +1744,25 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(failing.unitSurfaces).toEqual(clean.unitSurfaces);
     expect(clean.completionSnapshots).toBe(1);
     expect(failing.completionSnapshots).toBe(1);
-    // An upper bound on what the retry writes: one more Jev pass over the units and the ui_intent written before the
-    // throw. Labels, surfaces and the completion are not written twice.
-    expect(failing.counts["change_unit"]).toBeLessThanOrEqual(clean.counts["change_unit"] ?? 0);
-    expect(failing.counts["ui_snapshot"]).toBeLessThanOrEqual(clean.counts["ui_snapshot"] ?? 0);
-    expect(failing.counts["ui_intent"]).toBeLessThanOrEqual((clean.counts["ui_intent"] ?? 0) + 1);
-    expect(failing.counts["jev_decision"]).toBeLessThanOrEqual(2 * (clean.counts["jev_decision"] ?? 0));
+    // An upper bound on what was written from the throw on, for the three units: the completion, then one more Jev pass
+    // (two decisions a unit) with each unit's intent and surface. The rerun's labels are the stored ones: no row.
+    expect(retried["ui_snapshot"] ?? 0).toBeLessThanOrEqual(3 + 1);
+    expect(retried["ui_intent"] ?? 0).toBeLessThanOrEqual(3);
+    expect(retried["jev_decision"] ?? 0).toBeLessThanOrEqual(2 * 3);
+    expect(retried["change_unit"] ?? 0).toBe(0);
   }, 60_000);
 
   it("retries a coordinator rebuild that threw in the turn-end pass: the next pass writes its units, no new record needed", async () => {
     const clean = await runTurnEnd("rebuild-retry-clean", { endByHand: true });
     let armed = false;
     let thrown = 0;
+    let seqAtThrow = 0;
+    let retried: Record<string, number> = {};
     const failing = await runTurnEnd("rebuild-retry-throw", {
       endByHand: true,
+      inspect: (db, _collected, sessionId) => {
+        retried = countsAfter(db, sessionId, seqAtThrow);
+      },
       arm: (db) => {
         // Armed when the turn ends, so the throw lands in the turn-end pass's flush.
         const setSessionState = db.setSessionState.bind(db);
@@ -1754,6 +1774,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
         db.upsertChangeUnit = ((unit) => {
           if (armed && thrown === 0) {
             thrown += 1;
+            seqAtThrow = db.getLatestSeq(unit.sessionId);
             throw new Error("disk full");
           }
           return upsertChangeUnit(unit);
@@ -1766,7 +1787,10 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(clean.units).toContain("src/module-3.ts validated runs=1 facts=3");
     expect(failing.units).toEqual(clean.units);
     expect(failing.labeledUnits).toEqual(clean.labeledUnits);
-    expect(failing.counts["change_unit"]).toBeLessThanOrEqual(clean.counts["change_unit"] ?? 0);
+    // From the throw on, each of the three units is written at most once by the retried rebuild and once by its label,
+    // and the Jev stage, which the failed pass never reached, runs once.
+    expect(retried["change_unit"] ?? 0).toBeLessThanOrEqual(2 * 3);
+    expect(retried["jev_decision"] ?? 0).toBeLessThanOrEqual(2 * 3);
   }, 60_000);
 
   it("sends the Jev debug panel the latest decisions once per pass, not once per decision", async () => {
