@@ -4,8 +4,7 @@ export type NarratorFailureReason =
   | "offline"
   | "auth"
   | "unavailable"
-  | "aborted"
-  | "unsupported";
+  | "aborted";
 
 /** Thrown for every call that did not produce an answer; callers back off on it (spec §6.6). */
 export class NarratorUnavailableError extends Error {

@@ -30,11 +30,14 @@ export interface OverviewNarrativeInput {
   edges: { from: string; to: string; count: number }[];
 }
 
+export type SessionDecisionStatus = "open" | "answered" | "delegated" | "expired";
+
 export interface SessionStoryInput {
   prompt: string;
   recentSteps: { id: string; headline: string }[];
-  decisions: { id: string; title: string; status: string }[];
-  tests: { passed: number; failed: number } | null;
+  decisions: { id: string; title: string; status: SessionDecisionStatus; answer: string | null }[];
+  /** `stepId` is the latest test step; the model cites it as `t1`. */
+  tests: { passed: number; failed: number; stepId: string } | null;
   touchedComponents: { id: string; name: string }[];
 }
 
@@ -43,6 +46,7 @@ export interface DecisionWhyInput {
   title: string;
   options: { id: string; label: string }[];
   answer: string;
+  chosenBy: "developer" | "agent";
   nearby: { id: string; kind: "message" | "step"; text: string }[];
 }
 
