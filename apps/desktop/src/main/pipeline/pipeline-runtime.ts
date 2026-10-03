@@ -737,6 +737,12 @@ export class PipelineRuntime {
       .filter((unit) => changeUnitId === undefined || unit.id === changeUnitId);
     for (const unit of units) {
       const validated: ChangeUnit = { ...unit, status: "validated" };
+      // Written to the database directly, not through the coordinator's StorageChangeUnitStore: this is intentional
+      // (final review A M-2), so do not route it through the store. The write appends its change_unit row, so no row
+      // is lost, and it moves the database's change_unit projection version, so the store's cached list
+      // (ChangeUnitList) reads this unit again on its next call. The store's lastJson keeps the unit as the projection
+      // last wrote it, which only decides whether the store's own next write of that unit is skipped
+      // (storage-stores.test.ts covers both reads).
       this.opts.db.upsertChangeUnit(validated);
       this.opts.emit(MainToRendererChannels.changeUnitUpsert, {
         sessionId,
