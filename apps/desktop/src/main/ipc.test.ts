@@ -287,6 +287,41 @@ describe("explainer wiring (console-explainer M-6)", () => {
     db.close();
   });
 
+  it("session:switch sends the session's unit and decision counts without reading every row (final review B M-3)", async () => {
+    const { db, state } = seedRepoAndSession();
+    db.createSession({ id: "sess_b", repoId: "repo_a", prompt: "other", state: "completed" });
+    const ts = "2026-10-03T00:00:00.000Z";
+    for (const id of ["cu_1", "cu_2"]) {
+      db.upsertChangeUnit({
+        id, sessionId: "sess_b", title: id, category: "implementation", status: "validated", files: ["src/a.ts"], symbols: [],
+        interfacesChanged: [], schemaChanges: [], dependencyChanges: [], relatedDecisions: [], validationResults: [],
+        evidence: [], createdAt: ts, updatedAt: ts,
+      });
+    }
+    db.upsertDecision({
+      id: "dec_1", sessionId: "sess_b", title: "Fail open?", context: "", severity: "required",
+      options: [{ id: "yes", label: "Yes", description: "" }], affectedChangeUnits: [], evidence: [], status: "open", ts,
+    });
+    const listUnits = vi.spyOn(db, "listChangeUnits");
+    const listDecisions = vi.spyOn(db, "listDecisions");
+    const send = vi.fn();
+    setMainWindow({ isDestroyed: () => false, webContents: { send } } as unknown as Parameters<typeof setMainWindow>[0]);
+    try {
+      const { runtime } = stubRuntime();
+      const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: explainerSpy().registry });
+      await handlers.get(RendererToMainLocalChannels.sessionSwitch)!(TRUSTED_EVENT, { sessionId: "sess_b" });
+      expect(send).toHaveBeenCalledWith(
+        "session:state",
+        expect.objectContaining({ sessionId: "sess_b", state: "completed", changeUnitCount: 2, decisionCount: 1 }),
+      );
+      expect(listUnits).not.toHaveBeenCalled();
+      expect(listDecisions).not.toHaveBeenCalled();
+    } finally {
+      setMainWindow(null);
+      db.close();
+    }
+  });
+
   it("overview:rescan forwards the root from the main window and is denied to trace windows", async () => {
     const { db, state } = seedRepoAndSession();
     const { runtime } = stubRuntime();

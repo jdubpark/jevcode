@@ -12,7 +12,8 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(APP, "../..");
 const DEFAULT_PORT = 4179;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const WIDTHS = [1440, 1000];
+/** Screenshot widths (console-explainer spec §12: 1440, 1180 and 1000 px). */
+const WIDTHS = [1440, 1180, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
 const MAP_OVERVIEW = "jevcode";
 const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
@@ -94,10 +95,34 @@ function killChrome(child, profile) {
 function killAllChrome() {
   for (const [child, profile] of [...liveChrome]) killChrome(child, profile);
 }
-process.on("exit", killAllChrome);
+
+/** The detached `vite preview` (its own process group) and the run's tmp dir, while they exist. */
+const owned = { preview: null, tmp: null };
+
+/**
+ * Stops what this run started: Chrome, the preview's whole process group (pnpm and vite under it), then removes the
+ * tmp dir. Synchronous, so the exit handler and a signal can run it: a run stopped by Ctrl-C must not leave the preview
+ * on its --strictPort port, where the next run would fail (final review C M-4).
+ */
+function cleanUp() {
+  killAllChrome();
+  const preview = owned.preview;
+  owned.preview = null;
+  if (preview?.pid !== undefined) {
+    try {
+      process.kill(-preview.pid, "SIGTERM");
+    } catch {
+      // The preview server already exited.
+    }
+  }
+  const tmp = owned.tmp;
+  owned.tmp = null;
+  if (tmp !== null) rmSync(tmp, { recursive: true, force: true });
+}
+process.on("exit", cleanUp);
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
-    killAllChrome();
+    cleanUp();
     process.exit(1);
   });
 }
@@ -149,7 +174,7 @@ function chrome(profile, args) {
       check();
     });
     child.on("error", (error) => finish(error));
-    child.on("exit", (code) => finish(code === 0 ? undefined : new Error(`chrome exited ${code}: ${stderr}`)));
+    child.on("exit", (code) => finish(code === 0 ? undefined : new Error(`chrome exited ${code}: ${stderr.slice(-2048)}`)));
     const timer = setTimeout(() => finish(new Error(`chrome gave no result within 90 s: ${stderr.slice(-2048)}`)), 90_000);
   });
 }
@@ -246,8 +271,8 @@ async function main() {
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME}; set CHROME_PATH`);
   if (!options.skipBuild) run("pnpm", ["-r", "build"]);
   const tmp = mkdtempSync(path.join(os.tmpdir(), "tv-smoke-"));
+  owned.tmp = tmp;
   const profile = path.join(tmp, "chrome-profile");
-  let preview;
   try {
     run("pnpm", ["--filter", "jevcode-desktop", "replay", path.join(REPO, "fixtures", "oauth"), path.join(tmp, "oauth")]);
     const bundles = path.join(APP, "public", "bundles");
@@ -261,7 +286,7 @@ async function main() {
       run("node", [path.join(APP, "scripts", "explainer-bundle.mjs"), path.join(tmp, "rate-limit", "trace.json")]);
     }
     run("pnpm", ["--filter", "jevcode-trace-viewer-dev", "build"]);
-    preview = spawn(
+    owned.preview = spawn(
       "pnpm",
       ["--filter", "jevcode-trace-viewer-dev", "exec", "vite", "preview", "--port", String(options.port), "--strictPort"],
       { cwd: REPO, stdio: "ignore", detached: true },
@@ -494,14 +519,7 @@ async function main() {
     }
     console.log(`SMOKE_OK ${shots} screenshots`);
   } finally {
-    if (preview?.pid !== undefined) {
-      try {
-        process.kill(-preview.pid, "SIGTERM");
-      } catch {
-        // The preview server already exited.
-      }
-    }
-    rmSync(tmp, { recursive: true, force: true });
+    cleanUp();
   }
 }
 

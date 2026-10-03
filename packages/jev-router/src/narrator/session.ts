@@ -20,6 +20,14 @@ export const SESSION_LIMITS = {
   nearbyChars: 600,
 } as const;
 
+/**
+ * True when a story input has nothing to narrate: no step, decision or touched component. The client answers such
+ * an input itself, with no provider call, so a caller must not count or record that answer as one (final review A M-1).
+ */
+export function isEmptySessionStoryInput(input: SessionStoryInput): boolean {
+  return input.recentSteps.length === 0 && input.decisions.length === 0 && input.touchedComponents.length === 0;
+}
+
 export const SESSION_STORY_MAX_SENTENCES = 6;
 export const SESSION_STORY_MAX_TOKENS = 1024;
 export const DECISION_WHY_MAX_TOKENS = 512;

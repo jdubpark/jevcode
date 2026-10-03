@@ -6,7 +6,7 @@ import type { NarratorAvailability } from "../../shared/narrator-log.js";
 import { DEFAULT_AGENT_PREFERENCES } from "../../shared/prefs.js";
 import { AgentSettings } from "./AgentSettings.js";
 
-const NOTE_ON = "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent.";
+const NOTE_ON = "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, earlier component descriptions, and session text (the task prompt, step headlines, decision titles, options and answers, and short agent messages). Package descriptions, README and session text are sent after secrets are redacted. File contents are never sent.";
 const NOTE_OFF = "Rule-based labels only. Nothing leaves this machine.";
 const NOTE_NO_KEY = "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine.";
 
@@ -61,6 +61,17 @@ function note(): string {
 }
 
 describe("AgentSettings: what leaves the machine (spec §10, E15)", () => {
+  it("points aria-controls only at a body that is rendered (final review C M-2)", () => {
+    render(settings(true, "on"));
+    const toggle = screen.getByRole("button", { name: "Agent settings" });
+    // Collapsed: the body is not in the DOM, so the toggle names no id.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.hasAttribute("aria-controls")).toBe(false);
+    fireEvent.click(toggle);
+    const controls = toggle.getAttribute("aria-controls") ?? "";
+    expect(document.getElementById(controls)?.contains(screen.getByRole("checkbox", { name: "Explain with a model" }))).toBe(true);
+  });
+
   it("keeps the setting and its note inside the collapsed Agent settings row", () => {
     render(settings(true, "on"));
     expect(screen.queryByRole("checkbox", { name: "Explain with a model" })).toBeNull();

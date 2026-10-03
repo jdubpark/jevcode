@@ -247,6 +247,9 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
   let status: ExplainerStatus = { phase: "idle", done: 0, total: 0, error: null };
   const dirty = new Set<string>();
   const written = new Map<string, { key: string; at: number }>();
+  // Sessions whose pipeline synced while another session was open: only these get a catch-up snapshot row on switch-back,
+  // so browsing a finished session never appends today's map to its history (final review B M-4 follow-up).
+  const syncedAway = new Set<string>();
   const writeTimers = new Map<string, unknown>();
   // Every scan and rebuild of this stage shares one bound, so overlapping scans cannot flood the pool.
   const extract: typeof deps.extract = limitConcurrency(deps.extract, EXTRACT_CONCURRENCY);
@@ -760,6 +763,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     },
     onPipelineSync(sync) {
       if (disposed) return;
+      if (sync.sessionId !== deps.sessionId()) syncedAway.add(sync.sessionId);
       // Spec §6.1: the stage never blocks ingestion, and its errors never reach the runtime.
       try {
         sessionExplainer.onPipelineSync(sync);
@@ -769,6 +773,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     },
     onSessionSwitched() {
       if (disposed) return;
+      // Spec §5.5: a session switched back to gets the current snapshot when a rebuild ran while it was not open (only
+      // the open session gets rebuild rows). Deduped by the key written to that session; in a turn of its own, so the
+      // switch's IPC handler appends nothing (final review B M-4).
+      const current = deps.sessionId();
+      if (current !== null && syncedAway.delete(current)) requestWriteForCurrentSession(true);
       try {
         sessionExplainer.onSessionSwitched();
       } catch (error) {
