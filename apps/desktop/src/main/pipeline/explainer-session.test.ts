@@ -1095,6 +1095,45 @@ describe("session explainer: fold slices (PL-3)", () => {
     return { units, decisions: [decision] };
   };
 
+  it("folds up to the last row stored when the fold starts, so rows appended meanwhile wait for the next sync", async () => {
+    // Review minor (PL-3): under sustained ingest the fold kept chasing new rows and wrote no story or highlights.
+    const w = new World();
+    const { units, decisions } = longSession(w);
+    // More than a page (2,000 rows): the fold reads on while its pages come back full.
+    for (let i = 0; i < 2_100; i += 1) w.agent({ type: "agent_message", role: "assistant", text: `Backlog ${i}.` });
+    const stored = w.db.getLatestSeq(SESSION);
+    const narrator = new ScriptedNarrator(w);
+    const explainer = createSessionExplainer({ ...w.deps(narrator, 0), foldSliceMs: 0 });
+    const cap = 4_000;
+    let appended = 0;
+    let appending = true;
+    // One more agent row every event-loop turn while the fold runs (capped, so a fold that chases them still ends).
+    const append = (): void => {
+      if (!appending || appended >= cap) return;
+      w.agent({ type: "agent_message", role: "assistant", text: `Meanwhile ${appended}.` });
+      appended += 1;
+      setImmediate(append);
+    };
+    setImmediate(append);
+    explainer.onPipelineSync(w.sync(units, decisions));
+    await explainer.idle();
+    const appendedDuringFold = appended;
+    appending = false;
+    const highlights = w.rows("highlights");
+    expect(highlights).toHaveLength(1);
+    // The fold stopped at the rows stored when it started (a few turns after the sync), not at the appender's cap.
+    expect(highlights[0]?.record.kind === "highlights" ? highlights[0].record.basisSeq : 0).toBeLessThan(stored + 10);
+    expect(appendedDuringFold).toBeLessThan(cap);
+    // The next sync folds the rest: a new test run triggers a story whose recent steps are the rows appended meanwhile.
+    w.tests(0);
+    explainer.onPipelineSync(w.sync(units, decisions));
+    await explainer.idle();
+    expect(w.logs.filter((event) => event.kind === "error")).toEqual([]);
+    const lastStory = narrator.storyCalls.at(-1)?.input;
+    const seqOf = (id: string): number => Number(id.replace("step:", ""));
+    expect(Math.max(...(lastStory?.recentSteps ?? []).map((step) => seqOf(step.id)))).toBeGreaterThan(stored + appendedDuringFold);
+  });
+
   it("settles and yields between slices of one sync's rows, and writes the rows one unsliced fold writes", async () => {
     const run = async (foldSliceMs: number): Promise<{ rows: ExplainerRecord[]; turns: number; slicerTurns: number }> => {
       const w = new World();

@@ -269,10 +269,13 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
    * plus the settle its folding predicts reaches sliceMs, and at the end of each full page, it settles the rows folded
    * so far with an incremental finalize and yields through the main slicer. So no turn folds or finalizes more than a
    * slice's rows, however many rows the pass appended. A settle's session is discarded: the session is the last
-   * finalize's, which incremental equals fresh (S-3) makes deep-equal to one finalize of every row. Null when the
-   * explainer was disposed (the app quit closes the database next) or the session switched during a yield.
+   * finalize's, which incremental equals fresh (S-3) makes deep-equal to one finalize of every row. It folds up to
+   * the last row stored when it starts: under sustained ingest it would otherwise chase new rows across its yields and
+   * write no story or highlights; the next sync folds the rest. Null when the explainer was disposed (the app quit
+   * closes the database next) or the session switched during a yield.
    */
   async function advance(t: Tracked): Promise<TraceSession | null> {
+    const until = deps.db.getLatestSeq(t.sessionId);
     let foldStart = performance.now();
     let unsettled = false;
     const sliceEnds = (): boolean => {
@@ -296,7 +299,12 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     };
     for (;;) {
       const events = deps.db.listEvents(t.sessionId, { fromSeq: t.cursor, limit: FOLD_PAGE });
+      let reached = false;
       for (const event of events) {
+        if (event.seq > until) {
+          reached = true;
+          break;
+        }
         t.cursor = event.seq;
         if (isTraceRowType(event.type)) {
           const payload = JSON.parse(event.payloadJson) as unknown;
@@ -310,7 +318,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
         }
         if (sliceEnds() && !(await pause())) return null;
       }
-      if (events.length < FOLD_PAGE) break;
+      if (reached || events.length < FOLD_PAGE || t.cursor >= until) break;
       if (!(await pause())) return null;
     }
     const state = deps.db.getSession(t.sessionId)?.state;
