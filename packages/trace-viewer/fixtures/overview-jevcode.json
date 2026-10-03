@@ -1,0 +1,2682 @@
+{
+  "sessionId": "fixture",
+  "repoRoot": "/fixture/jevcode",
+  "scanId": "fixture-9f2ba74",
+  "partial": false,
+  "counts": {
+    "files": 721,
+    "totalFiles": 721,
+    "components": 22,
+    "edges": 54,
+    "languages": [
+      "TypeScript",
+      "JSON",
+      "CSS",
+      "JavaScript",
+      "HTML",
+      "YAML",
+      "Markdown"
+    ]
+  },
+  "components": [
+    {
+      "id": "cmp_f1dc43a02c16",
+      "rootPath": "apps/desktop/src/renderer",
+      "name": "desktop renderer",
+      "fileCount": 25,
+      "files": [
+        "apps/desktop/src/renderer/App.tsx",
+        "apps/desktop/src/renderer/bridge.ts",
+        "apps/desktop/src/renderer/components/AgentSettings.tsx",
+        "apps/desktop/src/renderer/components/DebugPanel.tsx",
+        "apps/desktop/src/renderer/components/Header.tsx",
+        "apps/desktop/src/renderer/components/RecentRepos.tsx",
+        "apps/desktop/src/renderer/components/SessionSwitcher.tsx",
+        "apps/desktop/src/renderer/components/StatusBar.tsx",
+        "apps/desktop/src/renderer/components/TaskPrompt.tsx",
+        "apps/desktop/src/renderer/components/TerminalPanel.tsx",
+        "apps/desktop/src/renderer/components/WorkspaceHost.tsx",
+        "apps/desktop/src/renderer/components/composer-prefill.test.ts",
+        "apps/desktop/src/renderer/components/composer-prefill.ts",
+        "apps/desktop/src/renderer/index.html",
+        "apps/desktop/src/renderer/main.tsx",
+        "apps/desktop/src/renderer/payload-types.ts",
+        "apps/desktop/src/renderer/styles.css",
+        "apps/desktop/src/renderer/trace-open-error.test.ts",
+        "apps/desktop/src/renderer/trace-open-error.ts",
+        "apps/desktop/src/renderer/trace.html",
+        "apps/desktop/src/renderer/trace/host.test.ts",
+        "apps/desktop/src/renderer/trace/host.ts",
+        "apps/desktop/src/renderer/trace/ipc-source.test.ts",
+        "apps/desktop/src/renderer/trace/ipc-source.ts",
+        "apps/desktop/src/renderer/trace/main.tsx"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "ui",
+      "role": "ui",
+      "purpose": "Main window: workspace, composer, surfaces and the embedded trace viewer.",
+      "provenance": "model",
+      "contentHash": "498ce1fc387a40c0a12eb551a9b7668408502cc4",
+      "externalDeps": [
+        {
+          "name": "react",
+          "count": 9
+        },
+        {
+          "name": "vitest",
+          "count": 4
+        },
+        {
+          "name": "@xterm/xterm",
+          "count": 2
+        },
+        {
+          "name": "react-dom",
+          "count": 2
+        },
+        {
+          "name": "@json-render/core",
+          "count": 1
+        },
+        {
+          "name": "@json-render/react",
+          "count": 1
+        },
+        {
+          "name": "zod",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_d310ea320463",
+      "rootPath": "apps/trace-viewer-dev",
+      "name": "trace-viewer-dev",
+      "fileCount": 25,
+      "files": [
+        "apps/trace-viewer-dev/.gitignore",
+        "apps/trace-viewer-dev/index.html",
+        "apps/trace-viewer-dev/package.json",
+        "apps/trace-viewer-dev/scripts/smoke.mjs",
+        "apps/trace-viewer-dev/scripts/spike-electron.cjs",
+        "apps/trace-viewer-dev/spike.html",
+        "apps/trace-viewer-dev/src/host.module.css",
+        "apps/trace-viewer-dev/src/host.tsx",
+        "apps/trace-viewer-dev/src/main.tsx",
+        "apps/trace-viewer-dev/src/overview-sample.ts",
+        "apps/trace-viewer-dev/src/perf-hud.tsx",
+        "apps/trace-viewer-dev/src/selftest-canvas.ts",
+        "apps/trace-viewer-dev/src/selftest-open.ts",
+        "apps/trace-viewer-dev/src/selftest.ts",
+        "apps/trace-viewer-dev/src/spike/CanvasHarness.tsx",
+        "apps/trace-viewer-dev/src/spike/OverviewHarness.tsx",
+        "apps/trace-viewer-dev/src/spike/SwitchHarness.tsx",
+        "apps/trace-viewer-dev/src/spike/main.tsx",
+        "apps/trace-viewer-dev/src/spike/measure.ts",
+        "apps/trace-viewer-dev/src/spike/spike.module.css",
+        "apps/trace-viewer-dev/src/spike/synthetic.ts",
+        "apps/trace-viewer-dev/src/vite-env.d.ts",
+        "apps/trace-viewer-dev/tsconfig.json",
+        "apps/trace-viewer-dev/vite.config.ts",
+        "apps/trace-viewer-dev/vite.spike.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "ui",
+      "role": "ui",
+      "purpose": "Dev host that loads trace bundles into the viewer for smoke tests.",
+      "provenance": "model",
+      "contentHash": "56b55fd589ea556847bf5c26a98050c0c919d1eb",
+      "externalDeps": [
+        {
+          "name": "react",
+          "count": 7
+        },
+        {
+          "name": "react-dom",
+          "count": 2
+        },
+        {
+          "name": "vite",
+          "count": 2
+        },
+        {
+          "name": "@vitejs/plugin-react",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "apps/trace-viewer-dev/src/main.tsx"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_03cac6d3205d",
+      "rootPath": "packages/trace-viewer/src/ui",
+      "name": "trace-viewer ui",
+      "fileCount": 157,
+      "files": [
+        "packages/trace-viewer/src/ui/graphics/ClaimVsObserved.tsx",
+        "packages/trace-viewer/src/ui/graphics/DiffBar.tsx",
+        "packages/trace-viewer/src/ui/graphics/DurationBar.tsx",
+        "packages/trace-viewer/src/ui/graphics/FlowGlyph.tsx",
+        "packages/trace-viewer/src/ui/graphics/ForkGlyph.tsx",
+        "packages/trace-viewer/src/ui/graphics/Graphic.tsx",
+        "packages/trace-viewer/src/ui/graphics/TableGlyph.tsx",
+        "packages/trace-viewer/src/ui/graphics/TestDots.tsx",
+        "packages/trace-viewer/src/ui/graphics/bars.test.tsx",
+        "packages/trace-viewer/src/ui/graphics/glyphs.test.tsx",
+        "packages/trace-viewer/src/ui/graphics/graphics.module.css",
+        "packages/trace-viewer/src/ui/graphics/scales.test.ts",
+        "packages/trace-viewer/src/ui/graphics/scales.ts",
+        "packages/trace-viewer/src/ui/icons/Icon.tsx",
+        "packages/trace-viewer/src/ui/icons/IconSprite.tsx",
+        "packages/trace-viewer/src/ui/icons/icon-names.ts",
+        "packages/trace-viewer/src/ui/icons/icons.test.tsx",
+        "packages/trace-viewer/src/ui/icons/kind-icons.ts",
+        "packages/trace-viewer/src/ui/icons/paths.ts",
+        "packages/trace-viewer/src/ui/inspector/ComponentInspector.module.css",
+        "packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx",
+        "packages/trace-viewer/src/ui/inspector/Evidence.tsx",
+        "packages/trace-viewer/src/ui/inspector/Inspector.module.css",
+        "packages/trace-viewer/src/ui/inspector/Inspector.tsx",
+        "packages/trace-viewer/src/ui/inspector/Raw.tsx",
+        "packages/trace-viewer/src/ui/inspector/Summary.tsx",
+        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx",
+        "packages/trace-viewer/src/ui/inspector/evidence-raw.test.tsx",
+        "packages/trace-viewer/src/ui/inspector/finding-copy.ts",
+        "packages/trace-viewer/src/ui/inspector/inspector.test.tsx",
+        "packages/trace-viewer/src/ui/inspector/review-note.test.ts",
+        "packages/trace-viewer/src/ui/inspector/review-note.ts",
+        "packages/trace-viewer/src/ui/shell/ErrorBoundary.tsx",
+        "packages/trace-viewer/src/ui/shell/KeyboardLayer.tsx",
+        "packages/trace-viewer/src/ui/shell/LiveRegion.tsx",
+        "packages/trace-viewer/src/ui/shell/Outline/Outline.module.css",
+        "packages/trace-viewer/src/ui/shell/Outline/Outline.tsx",
+        "packages/trace-viewer/src/ui/shell/Outline/outline-rows.test.ts",
+        "packages/trace-viewer/src/ui/shell/Outline/outline-rows.ts",
+        "packages/trace-viewer/src/ui/shell/Outline/outline.test.tsx",
+        "packages/trace-viewer/src/ui/shell/Shell.module.css",
+        "packages/trace-viewer/src/ui/shell/Shell.tsx",
+        "packages/trace-viewer/src/ui/shell/ShortcutSheet.tsx",
+        "packages/trace-viewer/src/ui/shell/TitleBar.module.css",
+        "packages/trace-viewer/src/ui/shell/TitleBar.tsx",
+        "packages/trace-viewer/src/ui/shell/TraceViewer.tsx",
+        "packages/trace-viewer/src/ui/shell/ViewSlot.tsx",
+        "packages/trace-viewer/src/ui/shell/ViewSwitch.tsx",
+        "packages/trace-viewer/src/ui/shell/data-controller.test.ts",
+        "packages/trace-viewer/src/ui/shell/data-controller.ts",
+        "packages/trace-viewer/src/ui/shell/embedded.test.tsx",
+        "packages/trace-viewer/src/ui/shell/host.ts",
+        "packages/trace-viewer/src/ui/shell/keyboard.test.tsx",
+        "packages/trace-viewer/src/ui/shell/perf.ts",
+        "packages/trace-viewer/src/ui/shell/regions.ts",
+        "packages/trace-viewer/src/ui/shell/session-context.ts",
+        "packages/trace-viewer/src/ui/shell/shell.test.tsx",
+        "packages/trace-viewer/src/ui/shell/title-bar.test.tsx",
+        "packages/trace-viewer/src/ui/shell/use-popover.test.tsx",
+        "packages/trace-viewer/src/ui/shell/use-popover.ts",
+        "packages/trace-viewer/src/ui/state/keymap.test.ts",
+        "packages/trace-viewer/src/ui/state/keymap.ts",
+        "packages/trace-viewer/src/ui/state/location.test.ts",
+        "packages/trace-viewer/src/ui/state/location.ts",
+        "packages/trace-viewer/src/ui/state/store.test.tsx",
+        "packages/trace-viewer/src/ui/state/store.ts",
+        "packages/trace-viewer/src/ui/state/view-state.property.test.ts",
+        "packages/trace-viewer/src/ui/state/view-state.test.ts",
+        "packages/trace-viewer/src/ui/state/view-state.ts",
+        "packages/trace-viewer/src/ui/tokens/base.module.css",
+        "packages/trace-viewer/src/ui/tokens/contrast.ts",
+        "packages/trace-viewer/src/ui/tokens/tokens.test.ts",
+        "packages/trace-viewer/src/ui/tokens/tokens.ts",
+        "packages/trace-viewer/src/ui/viewport/controller.test.ts",
+        "packages/trace-viewer/src/ui/viewport/controller.ts",
+        "packages/trace-viewer/src/ui/views/canvas/CanvasRuler.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/CanvasView.module.css",
+        "packages/trace-viewer/src/ui/views/canvas/CanvasView.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/EdgeLayer.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/Frame.module.css",
+        "packages/trace-viewer/src/ui/views/canvas/Frame.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/Minimap.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/Overlay.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/Toolbar.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/World.module.css",
+        "packages/trace-viewer/src/ui/views/canvas/World.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/canvas-camera.test.ts",
+        "packages/trace-viewer/src/ui/views/canvas/canvas-camera.ts",
+        "packages/trace-viewer/src/ui/views/canvas/canvas-port.test.ts",
+        "packages/trace-viewer/src/ui/views/canvas/canvas-port.ts",
+        "packages/trace-viewer/src/ui/views/canvas/canvas-view.test.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/chrome.module.css",
+        "packages/trace-viewer/src/ui/views/canvas/chrome.test.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/frame-content.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/frame-label.test.ts",
+        "packages/trace-viewer/src/ui/views/canvas/frame-label.ts",
+        "packages/trace-viewer/src/ui/views/canvas/frame.test.tsx",
+        "packages/trace-viewer/src/ui/views/canvas/spike-rulings.ts",
+        "packages/trace-viewer/src/ui/views/canvas/world.test.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/HybridView.module.css",
+        "packages/trace-viewer/src/ui/views/hybrid/HybridView.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/hybrid-crash.test.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/hybrid-port.test.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/hybrid-port.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/hybrid-view.test.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/Brush.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/Overview.module.css",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/Overview.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/OverviewCanvas.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/Pins.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/overview.test.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/paint.test.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/overview/paint.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/Spine.module.css",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/Spine.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/ClaimFinding.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/DestructiveFinding.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/FindingBody.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/GuardrailFinding.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/RecoveryFinding.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/TestsFinding.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/findings/findings.test.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/rows/GroupRows.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/rows/SelectionFrame.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/rows/SeparatorRows.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/rows/StepRow.tsx",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/scroll-sync.test.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/scroll-sync.ts",
+        "packages/trace-viewer/src/ui/views/hybrid/spine/spine.test.tsx",
+        "packages/trace-viewer/src/ui/views/map/MapCard.tsx",
+        "packages/trace-viewer/src/ui/views/map/MapEdges.tsx",
+        "packages/trace-viewer/src/ui/views/map/MapHeader.tsx",
+        "packages/trace-viewer/src/ui/views/map/MapView.module.css",
+        "packages/trace-viewer/src/ui/views/map/MapView.tsx",
+        "packages/trace-viewer/src/ui/views/map/map-camera.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-camera.ts",
+        "packages/trace-viewer/src/ui/views/map/map-card.test.tsx",
+        "packages/trace-viewer/src/ui/views/map/map-edge-pairs.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-edge-pairs.ts",
+        "packages/trace-viewer/src/ui/views/map/map-fixture.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-nav.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-nav.ts",
+        "packages/trace-viewer/src/ui/views/map/map-text.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-text.ts",
+        "packages/trace-viewer/src/ui/views/map/map-view.test.tsx",
+        "packages/trace-viewer/src/ui/views/map/overlay.ts",
+        "packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.module.css",
+        "packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.tsx",
+        "packages/trace-viewer/src/ui/views/registry.ts",
+        "packages/trace-viewer/src/ui/views/shared/LevelControl.tsx",
+        "packages/trace-viewer/src/ui/views/shared/NewBadge.tsx",
+        "packages/trace-viewer/src/ui/views/shared/Ruler.tsx",
+        "packages/trace-viewer/src/ui/views/shared/ruler-ticks.ts",
+        "packages/trace-viewer/src/ui/views/shared/shared.module.css",
+        "packages/trace-viewer/src/ui/views/shared/shared.test.tsx",
+        "packages/trace-viewer/src/ui/views/view-port.ts",
+        "packages/trace-viewer/src/ui/views/view-switch.test.tsx"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "ui",
+      "role": "ui",
+      "purpose": "Trace viewer views, Inspector, shell and keyboard layer.",
+      "provenance": "model",
+      "contentHash": "e1cf03bd98d123771dbd82d28b09322b04469a2c",
+      "externalDeps": [
+        {
+          "name": "react",
+          "count": 78
+        },
+        {
+          "name": "vitest",
+          "count": 47
+        },
+        {
+          "name": "@testing-library/react",
+          "count": 27
+        },
+        {
+          "name": "@testing-library/user-event",
+          "count": 5
+        },
+        {
+          "name": "fast-check",
+          "count": 4
+        },
+        {
+          "name": "@tanstack/react-virtual",
+          "count": 2
+        },
+        {
+          "name": "react-dom",
+          "count": 1
+        },
+        {
+          "name": "zod",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_846ce170a650",
+      "rootPath": "packages/ui-catalog",
+      "name": "ui-catalog",
+      "fileCount": 36,
+      "files": [
+        "packages/ui-catalog/package.json",
+        "packages/ui-catalog/src/actions.ts",
+        "packages/ui-catalog/src/catalog-validation.test.ts",
+        "packages/ui-catalog/src/catalog-validation.ts",
+        "packages/ui-catalog/src/catalog.test.ts",
+        "packages/ui-catalog/src/catalog.ts",
+        "packages/ui-catalog/src/components.test.tsx",
+        "packages/ui-catalog/src/components/ActionButtons.tsx",
+        "packages/ui-catalog/src/components/ArchitectureDelta.tsx",
+        "packages/ui-catalog/src/components/BehaviorDelta.tsx",
+        "packages/ui-catalog/src/components/ChangeOverview.tsx",
+        "packages/ui-catalog/src/components/CodeDiff.tsx",
+        "packages/ui-catalog/src/components/Decision.tsx",
+        "packages/ui-catalog/src/components/DependencyDelta.tsx",
+        "packages/ui-catalog/src/components/ExecutionTimeline.tsx",
+        "packages/ui-catalog/src/components/FailureAnalysis.tsx",
+        "packages/ui-catalog/src/components/SchemaDelta.tsx",
+        "packages/ui-catalog/src/components/Terminal.tsx",
+        "packages/ui-catalog/src/components/TestMatrix.tsx",
+        "packages/ui-catalog/src/components/architecture-layout.test.ts",
+        "packages/ui-catalog/src/components/architecture-layout.ts",
+        "packages/ui-catalog/src/components/p1.test.tsx",
+        "packages/ui-catalog/src/index.ts",
+        "packages/ui-catalog/src/registry.tsx",
+        "packages/ui-catalog/src/streaming/spec-patch.test.tsx",
+        "packages/ui-catalog/src/streaming/spec-patch.ts",
+        "packages/ui-catalog/src/streaming/useSpecPatchStream.ts",
+        "packages/ui-catalog/src/surface/SurfaceManager.test.ts",
+        "packages/ui-catalog/src/surface/SurfaceManager.ts",
+        "packages/ui-catalog/src/surface/useSurfaceManager.test.tsx",
+        "packages/ui-catalog/src/surface/useSurfaceManager.ts",
+        "packages/ui-catalog/src/test/react-flow-polyfills.ts",
+        "packages/ui-catalog/src/zod-jitless.test.ts",
+        "packages/ui-catalog/src/zod-jitless.ts",
+        "packages/ui-catalog/tsconfig.json",
+        "packages/ui-catalog/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "ui",
+      "role": "ui",
+      "purpose": "Generative UI components rendered from json-render specs.",
+      "provenance": "model",
+      "contentHash": "68511526309180304a1bb6b448eb05aa6454a672",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 10
+        },
+        {
+          "name": "react",
+          "count": 7
+        },
+        {
+          "name": "@json-render/react",
+          "count": 6
+        },
+        {
+          "name": "@json-render/core",
+          "count": 5
+        },
+        {
+          "name": "@testing-library/react",
+          "count": 4
+        },
+        {
+          "name": "zod",
+          "count": 2
+        },
+        {
+          "name": "@xyflow/react",
+          "count": 1
+        },
+        {
+          "name": "diff2html",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/ui-catalog/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_3018d1c5d93a",
+      "rootPath": "packages/ui-compiler",
+      "name": "ui-compiler",
+      "fileCount": 10,
+      "files": [
+        "packages/ui-compiler/package.json",
+        "packages/ui-compiler/src/compile.test.ts",
+        "packages/ui-compiler/src/compile.ts",
+        "packages/ui-compiler/src/golden-specs.test.ts",
+        "packages/ui-compiler/src/index.ts",
+        "packages/ui-compiler/src/payload.ts",
+        "packages/ui-compiler/src/skeleton.test.ts",
+        "packages/ui-compiler/src/skeleton.ts",
+        "packages/ui-compiler/tsconfig.json",
+        "packages/ui-compiler/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "ui",
+      "role": "ui",
+      "purpose": "Compiles surface decisions into json-render UI specs.",
+      "provenance": "model",
+      "contentHash": "01f7037fac404b7502382eeea6e6ae572254bc52",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 4
+        },
+        {
+          "name": "zod",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/ui-compiler/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_f12bdb7b5a14",
+      "rootPath": "apps/desktop/src/main",
+      "name": "desktop main",
+      "fileCount": 69,
+      "files": [
+        "apps/desktop/src/main/actions.test.ts",
+        "apps/desktop/src/main/actions.ts",
+        "apps/desktop/src/main/git.test.ts",
+        "apps/desktop/src/main/git.ts",
+        "apps/desktop/src/main/index.ts",
+        "apps/desktop/src/main/ipc.test.ts",
+        "apps/desktop/src/main/ipc.ts",
+        "apps/desktop/src/main/pipeline/action-dispatcher.test.ts",
+        "apps/desktop/src/main/pipeline/action-dispatcher.ts",
+        "apps/desktop/src/main/pipeline/demo-e2e.test.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.ts",
+        "apps/desktop/src/main/pipeline/explainer-overview.bench.ts",
+        "apps/desktop/src/main/pipeline/explainer-overview.test.ts",
+        "apps/desktop/src/main/pipeline/explainer-overview.ts",
+        "apps/desktop/src/main/pipeline/explainer-stage.test.ts",
+        "apps/desktop/src/main/pipeline/explainer-stage.ts",
+        "apps/desktop/src/main/pipeline/instruction-router.test.ts",
+        "apps/desktop/src/main/pipeline/instruction-router.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.test.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.ts",
+        "apps/desktop/src/main/pipeline/mock-agent-adapter.test.ts",
+        "apps/desktop/src/main/pipeline/mock-agent-adapter.ts",
+        "apps/desktop/src/main/pipeline/model-auto-runtime.test.ts",
+        "apps/desktop/src/main/pipeline/model-resolution.test.ts",
+        "apps/desktop/src/main/pipeline/model-resolution.ts",
+        "apps/desktop/src/main/pipeline/model-selection.ts",
+        "apps/desktop/src/main/pipeline/pipeline-runtime.test.ts",
+        "apps/desktop/src/main/pipeline/pipeline-runtime.ts",
+        "apps/desktop/src/main/pipeline/playback.ts",
+        "apps/desktop/src/main/pipeline/redactor.bench.ts",
+        "apps/desktop/src/main/pipeline/redactor.test.ts",
+        "apps/desktop/src/main/pipeline/redactor.ts",
+        "apps/desktop/src/main/pipeline/repo-context.ts",
+        "apps/desktop/src/main/pipeline/resume-budget.test.ts",
+        "apps/desktop/src/main/pipeline/runtime-instruction-deliverer.ts",
+        "apps/desktop/src/main/pipeline/storage-stores.ts",
+        "apps/desktop/src/main/pipeline/types.ts",
+        "apps/desktop/src/main/pipeline/ui-stage.test.ts",
+        "apps/desktop/src/main/pipeline/ui-stage.ts",
+        "apps/desktop/src/main/replay/cli-entry.test.ts",
+        "apps/desktop/src/main/replay/cli-entry.ts",
+        "apps/desktop/src/main/repo-service.test.ts",
+        "apps/desktop/src/main/repo-service.ts",
+        "apps/desktop/src/main/scrollback.test.ts",
+        "apps/desktop/src/main/scrollback.ts",
+        "apps/desktop/src/main/session-guard.test.ts",
+        "apps/desktop/src/main/session-recovery.test.ts",
+        "apps/desktop/src/main/session-recovery.ts",
+        "apps/desktop/src/main/session-service.ts",
+        "apps/desktop/src/main/shutdown.test.ts",
+        "apps/desktop/src/main/shutdown.ts",
+        "apps/desktop/src/main/smoke.test.ts",
+        "apps/desktop/src/main/smoke.ts",
+        "apps/desktop/src/main/state.ts",
+        "apps/desktop/src/main/terminal-manager.ts",
+        "apps/desktop/src/main/trace-allowlist.test.ts",
+        "apps/desktop/src/main/trace-allowlist.ts",
+        "apps/desktop/src/main/trace-bundle.test.ts",
+        "apps/desktop/src/main/trace-bundle.ts",
+        "apps/desktop/src/main/trace-ipc.test.ts",
+        "apps/desktop/src/main/trace-ipc.ts",
+        "apps/desktop/src/main/trace-parity.test.ts",
+        "apps/desktop/src/main/trace-service.test.ts",
+        "apps/desktop/src/main/trace-service.ts",
+        "apps/desktop/src/main/trace-window-ipc.test.ts",
+        "apps/desktop/src/main/trace-window-ipc.ts",
+        "apps/desktop/src/main/trace-window.test.ts",
+        "apps/desktop/src/main/trace-window.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "api",
+      "role": "api",
+      "purpose": "Electron main process: IPC handlers, sessions and the event pipeline.",
+      "provenance": "model",
+      "contentHash": "0c6a2c0dcecc483b28c94e5ca3d9b4342f6218d4",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 33
+        },
+        {
+          "name": "electron",
+          "count": 7
+        },
+        {
+          "name": "@fx/core",
+          "count": 6
+        },
+        {
+          "name": "zod",
+          "count": 4
+        },
+        {
+          "name": "better-sqlite3",
+          "count": 3
+        },
+        {
+          "name": "node-pty",
+          "count": 2
+        },
+        {
+          "name": "@app/api.js",
+          "count": 1
+        },
+        {
+          "name": "@bench/pkg-${pad((pkg + 1) % packages, 2)}",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_27ce274f853f",
+      "rootPath": "apps/desktop",
+      "name": "desktop shell",
+      "fileCount": 25,
+      "files": [
+        "apps/desktop/package.json",
+        "apps/desktop/scripts/native-abi.mjs",
+        "apps/desktop/scripts/replay.mjs",
+        "apps/desktop/src/index.ts",
+        "apps/desktop/src/preload/index.ts",
+        "apps/desktop/src/preload/stubs/node-crypto.ts",
+        "apps/desktop/src/shared/api.test.ts",
+        "apps/desktop/src/shared/api.ts",
+        "apps/desktop/src/shared/bridge.ts",
+        "apps/desktop/src/shared/errors.ts",
+        "apps/desktop/src/shared/ipc-registry.test.ts",
+        "apps/desktop/src/shared/ipc-registry.ts",
+        "apps/desktop/src/shared/local-channels.ts",
+        "apps/desktop/src/shared/prefs-ipc.test.ts",
+        "apps/desktop/src/shared/prefs.test.ts",
+        "apps/desktop/src/shared/prefs.ts",
+        "apps/desktop/src/test-utils/fake-codex.cjs",
+        "apps/desktop/tsconfig.build.json",
+        "apps/desktop/tsconfig.json",
+        "apps/desktop/tsconfig.preload.json",
+        "apps/desktop/tsconfig.web.json",
+        "apps/desktop/vite-node-stub-plugin.ts",
+        "apps/desktop/vite.config.ts",
+        "apps/desktop/vite.preload.config.ts",
+        "apps/desktop/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "api",
+      "role": "api",
+      "purpose": "Preload bridge, shared IPC types and the app build config.",
+      "provenance": "model",
+      "contentHash": "d44c00ebd3912b7e57a1eb5136f938b6a58e0d1b",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 5
+        },
+        {
+          "name": "zod",
+          "count": 3
+        },
+        {
+          "name": "vite",
+          "count": 2
+        },
+        {
+          "name": "@vitejs/plugin-react",
+          "count": 1
+        },
+        {
+          "name": "electron",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "apps/desktop/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_99a2f6525f7f",
+      "rootPath": "packages/agent-codex",
+      "name": "agent-codex",
+      "fileCount": 22,
+      "files": [
+        "packages/agent-codex/package.json",
+        "packages/agent-codex/src/auth.ts",
+        "packages/agent-codex/src/codex-adapter.test.ts",
+        "packages/agent-codex/src/codex-adapter.ts",
+        "packages/agent-codex/src/delivery-queue.test.ts",
+        "packages/agent-codex/src/fallback.test.ts",
+        "packages/agent-codex/src/fallback.ts",
+        "packages/agent-codex/src/index.ts",
+        "packages/agent-codex/src/jsonl.test.ts",
+        "packages/agent-codex/src/jsonl.ts",
+        "packages/agent-codex/src/no-strip.test.ts",
+        "packages/agent-codex/src/stall-watchdog.test.ts",
+        "packages/agent-codex/test/fixtures/documented-happy-path.jsonl",
+        "packages/agent-codex/test/fixtures/documented-tool-rich.jsonl",
+        "packages/agent-codex/test/fixtures/fake-codex-stall.cjs",
+        "packages/agent-codex/test/fixtures/fake-codex-transcript.cjs",
+        "packages/agent-codex/test/fixtures/fake-codex.cjs",
+        "packages/agent-codex/test/fixtures/recorded-credits-error.jsonl",
+        "packages/agent-codex/test/fixtures/recorded-unauthorized.jsonl",
+        "packages/agent-codex/test/fixtures/transcript-fallback.txt",
+        "packages/agent-codex/tsconfig.json",
+        "packages/agent-codex/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "agent",
+      "role": "agent",
+      "purpose": "Runs Codex as a child process and normalizes its JSON events.",
+      "provenance": "model",
+      "contentHash": "e39e173ba682eb0f6c13997db7c22c6683efe370",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 7
+        },
+        {
+          "name": "node-pty",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/agent-codex/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_4cf1fb937bae",
+      "rootPath": "packages/agent-core",
+      "name": "agent-core",
+      "fileCount": 15,
+      "files": [
+        "packages/agent-core/package.json",
+        "packages/agent-core/src/adapter.ts",
+        "packages/agent-core/src/events.test.ts",
+        "packages/agent-core/src/events.ts",
+        "packages/agent-core/src/index.ts",
+        "packages/agent-core/src/instruction-queue.test.ts",
+        "packages/agent-core/src/instruction-queue.ts",
+        "packages/agent-core/src/lifecycle.test.ts",
+        "packages/agent-core/src/lifecycle.ts",
+        "packages/agent-core/src/serial-queue.test.ts",
+        "packages/agent-core/src/serial-queue.ts",
+        "packages/agent-core/src/serializer.test.ts",
+        "packages/agent-core/src/serializer.ts",
+        "packages/agent-core/tsconfig.json",
+        "packages/agent-core/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "agent",
+      "role": "agent",
+      "purpose": "Agent adapter interface and session lifecycle shared by adapters.",
+      "provenance": "model",
+      "contentHash": "9491c55a3eec7a20c84bed96991fc5e95daab9b2",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 6
+        }
+      ],
+      "entryPoints": [
+        "packages/agent-core/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_b66601070199",
+      "rootPath": "packages/jev-router",
+      "name": "jev-router",
+      "fileCount": 30,
+      "files": [
+        "packages/jev-router/package.json",
+        "packages/jev-router/src/batch.test.ts",
+        "packages/jev-router/src/batch.ts",
+        "packages/jev-router/src/degrade.test.ts",
+        "packages/jev-router/src/degrade.ts",
+        "packages/jev-router/src/guardrails.test.ts",
+        "packages/jev-router/src/guardrails.ts",
+        "packages/jev-router/src/index.ts",
+        "packages/jev-router/src/logging.test.ts",
+        "packages/jev-router/src/logging.ts",
+        "packages/jev-router/src/mapping.test.ts",
+        "packages/jev-router/src/mapping.ts",
+        "packages/jev-router/src/model-policy.test.ts",
+        "packages/jev-router/src/model-policy.ts",
+        "packages/jev-router/src/patterns.ts",
+        "packages/jev-router/src/policy.test.ts",
+        "packages/jev-router/src/policy.ts",
+        "packages/jev-router/src/questions.ts",
+        "packages/jev-router/src/selection.test.ts",
+        "packages/jev-router/src/selection.ts",
+        "packages/jev-router/src/state.parser.test.ts",
+        "packages/jev-router/src/state.test.ts",
+        "packages/jev-router/src/state.ts",
+        "packages/jev-router/src/testing/inputs.ts",
+        "packages/jev-router/src/types.ts",
+        "packages/jev-router/src/typesafe-client.test.ts",
+        "packages/jev-router/src/typesafe-client.ts",
+        "packages/jev-router/tsconfig.build.json",
+        "packages/jev-router/tsconfig.json",
+        "packages/jev-router/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "agent",
+      "role": "agent",
+      "purpose": "Routes Jev questions to the model through a typed client with guardrails.",
+      "provenance": "model",
+      "contentHash": "78440d7782491234032d2631cb19e80aafab3d5d",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 12
+        },
+        {
+          "name": "@typesafe-ai/sdk",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/jev-router/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_de23360922b6",
+      "rootPath": "packages/contracts",
+      "name": "contracts",
+      "fileCount": 36,
+      "files": [
+        "packages/contracts/package.json",
+        "packages/contracts/src/agent-events.test.ts",
+        "packages/contracts/src/agent-events.ts",
+        "packages/contracts/src/agent.ts",
+        "packages/contracts/src/browser-safety.test.ts",
+        "packages/contracts/src/canonical-json.test.ts",
+        "packages/contracts/src/canonical-json.ts",
+        "packages/contracts/src/evidence.test.ts",
+        "packages/contracts/src/evidence.ts",
+        "packages/contracts/src/id.test.ts",
+        "packages/contracts/src/id.ts",
+        "packages/contracts/src/index.ts",
+        "packages/contracts/src/ipc.test.ts",
+        "packages/contracts/src/ipc.ts",
+        "packages/contracts/src/jev.test.ts",
+        "packages/contracts/src/jev.ts",
+        "packages/contracts/src/json-render.ts",
+        "packages/contracts/src/model.test.ts",
+        "packages/contracts/src/model.ts",
+        "packages/contracts/src/node.test.ts",
+        "packages/contracts/src/node.ts",
+        "packages/contracts/src/overview.test.ts",
+        "packages/contracts/src/overview.ts",
+        "packages/contracts/src/security.test.ts",
+        "packages/contracts/src/security.ts",
+        "packages/contracts/src/semantic.test.ts",
+        "packages/contracts/src/semantic.ts",
+        "packages/contracts/src/trace.test.ts",
+        "packages/contracts/src/trace.ts",
+        "packages/contracts/src/ui/actions.ts",
+        "packages/contracts/src/ui/components.ts",
+        "packages/contracts/src/ui/index.ts",
+        "packages/contracts/src/ui/skeleton.ts",
+        "packages/contracts/tsconfig.build.json",
+        "packages/contracts/tsconfig.json",
+        "packages/contracts/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Zod schemas and types for events, IPC and trace bundles.",
+      "provenance": "model",
+      "contentHash": "013d795dcaced0e4175491d3bbd226357206c276",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 14
+        },
+        {
+          "name": "zod",
+          "count": 13
+        },
+        {
+          "name": "fast-check",
+          "count": 2
+        }
+      ],
+      "entryPoints": [
+        "packages/contracts/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_44240dbada3f",
+      "rootPath": "packages/semantic-core",
+      "name": "semantic-core",
+      "fileCount": 23,
+      "files": [
+        "packages/semantic-core/package.json",
+        "packages/semantic-core/src/categories.ts",
+        "packages/semantic-core/src/clustering.bench.ts",
+        "packages/semantic-core/src/clustering.property.test.ts",
+        "packages/semantic-core/src/clustering.test.ts",
+        "packages/semantic-core/src/clustering.ts",
+        "packages/semantic-core/src/coordinator.test.ts",
+        "packages/semantic-core/src/coordinator.ts",
+        "packages/semantic-core/src/events.test.ts",
+        "packages/semantic-core/src/events.ts",
+        "packages/semantic-core/src/fixtures.test.ts",
+        "packages/semantic-core/src/graph.test.ts",
+        "packages/semantic-core/src/graph.ts",
+        "packages/semantic-core/src/ids.test.ts",
+        "packages/semantic-core/src/ids.ts",
+        "packages/semantic-core/src/index.ts",
+        "packages/semantic-core/src/persistence.ts",
+        "packages/semantic-core/src/test-helpers.ts",
+        "packages/semantic-core/src/validation.test.ts",
+        "packages/semantic-core/src/validation.ts",
+        "packages/semantic-core/tsconfig.build.json",
+        "packages/semantic-core/tsconfig.json",
+        "packages/semantic-core/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Groups evidence into change units, decisions and validations.",
+      "provenance": "model",
+      "contentHash": "20d4f546421f0a9e9d74bff0f9d1c305c046551c",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 10
+        },
+        {
+          "name": "${specifier}",
+          "count": 1
+        },
+        {
+          "name": "fast-check",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/semantic-core/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_7773132844d4",
+      "rootPath": "packages/evidence-engine",
+      "name": "evidence-engine",
+      "fileCount": 39,
+      "files": [
+        "packages/evidence-engine/package.json",
+        "packages/evidence-engine/src/collectors/commands.test.ts",
+        "packages/evidence-engine/src/collectors/commands.ts",
+        "packages/evidence-engine/src/collectors/dependencies.test.ts",
+        "packages/evidence-engine/src/collectors/dependencies.ts",
+        "packages/evidence-engine/src/collectors/file-watcher.test.ts",
+        "packages/evidence-engine/src/collectors/file-watcher.ts",
+        "packages/evidence-engine/src/collectors/git.test.ts",
+        "packages/evidence-engine/src/collectors/git.ts",
+        "packages/evidence-engine/src/collectors/revert.test.ts",
+        "packages/evidence-engine/src/collectors/revert.ts",
+        "packages/evidence-engine/src/collectors/symbols.test.ts",
+        "packages/evidence-engine/src/collectors/symbols.ts",
+        "packages/evidence-engine/src/collectors/tests.test.ts",
+        "packages/evidence-engine/src/collectors/tests.ts",
+        "packages/evidence-engine/src/destructive.test.ts",
+        "packages/evidence-engine/src/destructive.ts",
+        "packages/evidence-engine/src/diff.test.ts",
+        "packages/evidence-engine/src/diff.ts",
+        "packages/evidence-engine/src/hunks.test.ts",
+        "packages/evidence-engine/src/hunks.ts",
+        "packages/evidence-engine/src/imports.test.ts",
+        "packages/evidence-engine/src/imports.ts",
+        "packages/evidence-engine/src/index.ts",
+        "packages/evidence-engine/src/no-strip.test.ts",
+        "packages/evidence-engine/src/sink.ts",
+        "packages/evidence-engine/src/symbol-diff.test.ts",
+        "packages/evidence-engine/src/symbol-diff.ts",
+        "packages/evidence-engine/src/worker/node-tree-sitter.d.ts",
+        "packages/evidence-engine/src/worker/parse-service.test.ts",
+        "packages/evidence-engine/src/worker/parse-service.ts",
+        "packages/evidence-engine/src/worker/parse-worker.ts",
+        "packages/evidence-engine/src/worker/parser.test.ts",
+        "packages/evidence-engine/src/worker/parser.ts",
+        "packages/evidence-engine/src/worker/tree-sitter.ts",
+        "packages/evidence-engine/src/worker/worker-options.d.ts",
+        "packages/evidence-engine/tsconfig.build.json",
+        "packages/evidence-engine/tsconfig.json",
+        "packages/evidence-engine/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Watches the repo and parses files into evidence facts.",
+      "provenance": "model",
+      "contentHash": "f158a52490d96d4980e5102d6b47464b56bda8ff",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 16
+        },
+        {
+          "name": "@scope/pkg",
+          "count": 1
+        },
+        {
+          "name": "chokidar",
+          "count": 1
+        },
+        {
+          "name": "lib",
+          "count": 1
+        },
+        {
+          "name": "node-tree-sitter",
+          "count": 1
+        },
+        {
+          "name": "pkg",
+          "count": 1
+        },
+        {
+          "name": "react",
+          "count": 1
+        },
+        {
+          "name": "side-effect",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/evidence-engine/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_c13abffb8548",
+      "rootPath": "packages/codebase-map",
+      "name": "codebase-map",
+      "fileCount": 28,
+      "files": [
+        "packages/codebase-map/package.json",
+        "packages/codebase-map/src/core/componentize.property.test.ts",
+        "packages/codebase-map/src/core/componentize.test.ts",
+        "packages/codebase-map/src/core/componentize.ts",
+        "packages/codebase-map/src/core/edges.test.ts",
+        "packages/codebase-map/src/core/edges.ts",
+        "packages/codebase-map/src/core/index.ts",
+        "packages/codebase-map/src/core/lint-boundary.test.ts",
+        "packages/codebase-map/src/core/manifest.test.ts",
+        "packages/codebase-map/src/core/manifest.ts",
+        "packages/codebase-map/src/core/paths.test.ts",
+        "packages/codebase-map/src/core/paths.ts",
+        "packages/codebase-map/src/core/roles.test.ts",
+        "packages/codebase-map/src/core/roles.ts",
+        "packages/codebase-map/src/core/sha1.test.ts",
+        "packages/codebase-map/src/core/sha1.ts",
+        "packages/codebase-map/src/core/skip.test.ts",
+        "packages/codebase-map/src/core/snapshot.property.test.ts",
+        "packages/codebase-map/src/core/snapshot.test.ts",
+        "packages/codebase-map/src/core/snapshot.ts",
+        "packages/codebase-map/src/core/types.ts",
+        "packages/codebase-map/src/node/index.ts",
+        "packages/codebase-map/src/node/scan.test.ts",
+        "packages/codebase-map/src/node/scan.ts",
+        "packages/codebase-map/src/node/test-support/fixture-repos.ts",
+        "packages/codebase-map/tsconfig.build.json",
+        "packages/codebase-map/tsconfig.json",
+        "packages/codebase-map/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Cuts the repository into components, edges and roles for the Map.",
+      "provenance": "model",
+      "contentHash": "a8014e56f62759e0e36a03dd7ca16d01bd302248",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 13
+        },
+        {
+          "name": "fast-check",
+          "count": 3
+        },
+        {
+          "name": "@fx/core",
+          "count": 2
+        },
+        {
+          "name": "@app/api.js",
+          "count": 1
+        },
+        {
+          "name": "@fx/db",
+          "count": 1
+        },
+        {
+          "name": "better-sqlite3",
+          "count": 1
+        },
+        {
+          "name": "eslint",
+          "count": 1
+        },
+        {
+          "name": "react",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_3ff491f81a64",
+      "rootPath": "packages/trace-viewer/src/model",
+      "name": "trace-viewer model",
+      "fileCount": 44,
+      "files": [
+        "packages/trace-viewer/src/model/classify.test.ts",
+        "packages/trace-viewer/src/model/classify.ts",
+        "packages/trace-viewer/src/model/component-path.test.ts",
+        "packages/trace-viewer/src/model/component-path.ts",
+        "packages/trace-viewer/src/model/exact-guard.test.ts",
+        "packages/trace-viewer/src/model/exact-guard.ts",
+        "packages/trace-viewer/src/model/fold-agent.ts",
+        "packages/trace-viewer/src/model/fold-chapters.test.ts",
+        "packages/trace-viewer/src/model/fold-chapters.ts",
+        "packages/trace-viewer/src/model/fold-evidence.test.ts",
+        "packages/trace-viewer/src/model/fold-evidence.ts",
+        "packages/trace-viewer/src/model/fold-finalize.ts",
+        "packages/trace-viewer/src/model/fold-overview.test.ts",
+        "packages/trace-viewer/src/model/fold-overview.ts",
+        "packages/trace-viewer/src/model/fold-state.ts",
+        "packages/trace-viewer/src/model/fold.bench.ts",
+        "packages/trace-viewer/src/model/fold.fixtures.test.ts",
+        "packages/trace-viewer/src/model/fold.incremental.test.ts",
+        "packages/trace-viewer/src/model/fold.mutations.test.ts",
+        "packages/trace-viewer/src/model/fold.parity.test.ts",
+        "packages/trace-viewer/src/model/fold.soak-shape.test.ts",
+        "packages/trace-viewer/src/model/fold.test.ts",
+        "packages/trace-viewer/src/model/fold.ts",
+        "packages/trace-viewer/src/model/format.test.ts",
+        "packages/trace-viewer/src/model/format.ts",
+        "packages/trace-viewer/src/model/graphics.test.ts",
+        "packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/model/lookup.test.ts",
+        "packages/trace-viewer/src/model/lookup.ts",
+        "packages/trace-viewer/src/model/overview-status.test.ts",
+        "packages/trace-viewer/src/model/overview-status.ts",
+        "packages/trace-viewer/src/model/registry.test.ts",
+        "packages/trace-viewer/src/model/registry.ts",
+        "packages/trace-viewer/src/model/rows.test.ts",
+        "packages/trace-viewer/src/model/rows.ts",
+        "packages/trace-viewer/src/model/search.test.ts",
+        "packages/trace-viewer/src/model/search.ts",
+        "packages/trace-viewer/src/model/short-title.test.ts",
+        "packages/trace-viewer/src/model/short-title.ts",
+        "packages/trace-viewer/src/model/signals.test.ts",
+        "packages/trace-viewer/src/model/signals.ts",
+        "packages/trace-viewer/src/model/types.test.ts",
+        "packages/trace-viewer/src/model/types.ts",
+        "packages/trace-viewer/src/model/ui-fields.test.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Folds trace rows into turns, steps, chapters and findings.",
+      "provenance": "model",
+      "contentHash": "46469d473254606667e16707884066631d388562",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 24
+        },
+        {
+          "name": "fast-check",
+          "count": 6
+        },
+        {
+          "name": "zod",
+          "count": 5
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_381d69b6cafc",
+      "rootPath": "packages/trace-viewer/src/layout",
+      "name": "trace-viewer layout",
+      "fileCount": 43,
+      "files": [
+        "packages/trace-viewer/src/layout/canvas-items.test.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.bench.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.property.test.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.soak-shape.test.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.test.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.ts",
+        "packages/trace-viewer/src/layout/canvas-levels.test.ts",
+        "packages/trace-viewer/src/layout/canvas-levels.ts",
+        "packages/trace-viewer/src/layout/canvas-live-tick.equivalence.property.test.ts",
+        "packages/trace-viewer/src/layout/canvas-minimap.test.ts",
+        "packages/trace-viewer/src/layout/canvas-minimap.ts",
+        "packages/trace-viewer/src/layout/canvas-routes.test.ts",
+        "packages/trace-viewer/src/layout/canvas-routes.ts",
+        "packages/trace-viewer/src/layout/chapter-label.ts",
+        "packages/trace-viewer/src/layout/map-details.test.ts",
+        "packages/trace-viewer/src/layout/map-details.ts",
+        "packages/trace-viewer/src/layout/map-layout.bench.ts",
+        "packages/trace-viewer/src/layout/map-layout.property.test.ts",
+        "packages/trace-viewer/src/layout/map-layout.test.ts",
+        "packages/trace-viewer/src/layout/map-layout.ts",
+        "packages/trace-viewer/src/layout/overview-index.incremental.property.test.ts",
+        "packages/trace-viewer/src/layout/overview-index.ts",
+        "packages/trace-viewer/src/layout/overview-layout.bench.ts",
+        "packages/trace-viewer/src/layout/overview-layout.property.test.ts",
+        "packages/trace-viewer/src/layout/overview-layout.test.ts",
+        "packages/trace-viewer/src/layout/overview-layout.ts",
+        "packages/trace-viewer/src/layout/spine-rows.bench.ts",
+        "packages/trace-viewer/src/layout/spine-rows.property.test.ts",
+        "packages/trace-viewer/src/layout/spine-rows.test.ts",
+        "packages/trace-viewer/src/layout/spine-rows.ts",
+        "packages/trace-viewer/src/layout/ticks.test.ts",
+        "packages/trace-viewer/src/layout/ticks.ts",
+        "packages/trace-viewer/src/layout/time-scale.property.test.ts",
+        "packages/trace-viewer/src/layout/time-scale.test.ts",
+        "packages/trace-viewer/src/layout/time-scale.ts",
+        "packages/trace-viewer/src/layout/tone.test.ts",
+        "packages/trace-viewer/src/layout/tone.ts",
+        "packages/trace-viewer/src/layout/trace-index.incremental.property.test.ts",
+        "packages/trace-viewer/src/layout/trace-index.test.ts",
+        "packages/trace-viewer/src/layout/trace-index.ts",
+        "packages/trace-viewer/src/layout/viewport.property.test.ts",
+        "packages/trace-viewer/src/layout/viewport.test.ts",
+        "packages/trace-viewer/src/layout/viewport.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Pure layouts for the Canvas, the Hybrid spine and the Map.",
+      "provenance": "model",
+      "contentHash": "79f92cd9a1ab419e33dc0d1ff80d182551f7351b",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 28
+        },
+        {
+          "name": "fast-check",
+          "count": 9
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_4f85bffae8dd",
+      "rootPath": "packages/trace-viewer",
+      "name": "trace-viewer",
+      "fileCount": 33,
+      "files": [
+        "packages/trace-viewer/package.json",
+        "packages/trace-viewer/scripts/copy-assets.mjs",
+        "packages/trace-viewer/scripts/overview-fixture.mjs",
+        "packages/trace-viewer/src/css-modules.d.ts",
+        "packages/trace-viewer/src/index.ts",
+        "packages/trace-viewer/src/lint-boundaries.test.ts",
+        "packages/trace-viewer/src/source.test.ts",
+        "packages/trace-viewer/src/source.ts",
+        "packages/trace-viewer/src/sources/errors.ts",
+        "packages/trace-viewer/src/sources/index.ts",
+        "packages/trace-viewer/src/sources/read-all.test.ts",
+        "packages/trace-viewer/src/sources/read-all.ts",
+        "packages/trace-viewer/src/sources/static-bundle.test.ts",
+        "packages/trace-viewer/src/sources/static-bundle.ts",
+        "packages/trace-viewer/src/test-support/arbitraries.ts",
+        "packages/trace-viewer/src/test-support/canvas-arbitraries.ts",
+        "packages/trace-viewer/src/test-support/canvas-view-harness.tsx",
+        "packages/trace-viewer/src/test-support/fixture-rows.ts",
+        "packages/trace-viewer/src/test-support/map-checks.ts",
+        "packages/trace-viewer/src/test-support/overview-arbitraries.ts",
+        "packages/trace-viewer/src/test-support/overview-builder.ts",
+        "packages/trace-viewer/src/test-support/overview-fixture.ts",
+        "packages/trace-viewer/src/test-support/recording-context.ts",
+        "packages/trace-viewer/src/test-support/row-arbitraries.ts",
+        "packages/trace-viewer/src/test-support/session-builder.test.ts",
+        "packages/trace-viewer/src/test-support/session-builder.ts",
+        "packages/trace-viewer/src/test-support/session-edits.ts",
+        "packages/trace-viewer/src/test-support/synthetic-rows.ts",
+        "packages/trace-viewer/src/test-support/trace-builder.ts",
+        "packages/trace-viewer/src/test-support/ui-harness.tsx",
+        "packages/trace-viewer/tsconfig.build.json",
+        "packages/trace-viewer/tsconfig.json",
+        "packages/trace-viewer/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Package entry, sources and test support for the trace viewer.",
+      "provenance": "model",
+      "contentHash": "4f6e1faca17b29afdd51aad27e80498df738b895",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 8
+        },
+        {
+          "name": "fast-check",
+          "count": 6
+        },
+        {
+          "name": "react",
+          "count": 5
+        },
+        {
+          "name": "@testing-library/react",
+          "count": 2
+        },
+        {
+          "name": "eslint",
+          "count": 1
+        }
+      ],
+      "entryPoints": [
+        "packages/trace-viewer/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_88cac31c4ffc",
+      "rootPath": "packages/telemetry",
+      "name": "telemetry",
+      "fileCount": 11,
+      "files": [
+        "packages/telemetry/package.json",
+        "packages/telemetry/src/events.test.ts",
+        "packages/telemetry/src/events.ts",
+        "packages/telemetry/src/export.test.ts",
+        "packages/telemetry/src/export.ts",
+        "packages/telemetry/src/index.ts",
+        "packages/telemetry/src/sink.test.ts",
+        "packages/telemetry/src/sink.ts",
+        "packages/telemetry/tsconfig.build.json",
+        "packages/telemetry/tsconfig.json",
+        "packages/telemetry/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "domain",
+      "role": "domain",
+      "purpose": "Collects local timing and count metrics for the pipeline.",
+      "provenance": "model",
+      "contentHash": "de0191d27f63b1367a9d08eb79b43a55cf1e854b",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 4
+        },
+        {
+          "name": "zod",
+          "count": 3
+        }
+      ],
+      "entryPoints": [
+        "packages/telemetry/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_21ca93ae5083",
+      "rootPath": "packages/storage",
+      "name": "storage",
+      "fileCount": 18,
+      "files": [
+        "packages/storage/package.json",
+        "packages/storage/src/db.test.ts",
+        "packages/storage/src/db.ts",
+        "packages/storage/src/explainer-store.test.ts",
+        "packages/storage/src/fixtures.ts",
+        "packages/storage/src/index.ts",
+        "packages/storage/src/instruction-inbox.test.ts",
+        "packages/storage/src/local-schemas.ts",
+        "packages/storage/src/migrations.ts",
+        "packages/storage/src/projections.test.ts",
+        "packages/storage/src/rebuild.test.ts",
+        "packages/storage/src/telemetry-prefs.test.ts",
+        "packages/storage/src/test-utils.ts",
+        "packages/storage/src/trace-reader.test.ts",
+        "packages/storage/src/trace-reader.ts",
+        "packages/storage/tsconfig.build.json",
+        "packages/storage/tsconfig.json",
+        "packages/storage/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "storage",
+      "role": "storage",
+      "purpose": "SQLite event store, migrations and the trace reader.",
+      "provenance": "model",
+      "contentHash": "4c965c9e5b69a25a90ba608bc11aa6d13f9333a7",
+      "externalDeps": [
+        {
+          "name": "better-sqlite3",
+          "count": 10
+        },
+        {
+          "name": "vitest",
+          "count": 9
+        },
+        {
+          "name": "zod",
+          "count": 2
+        }
+      ],
+      "entryPoints": [
+        "packages/storage/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_64bacb15ef37",
+      "rootPath": "evals",
+      "name": "evals",
+      "fileCount": 19,
+      "files": [
+        "evals/README.md",
+        "evals/config/alternatives.json",
+        "evals/package.json",
+        "evals/src/alternatives.ts",
+        "evals/src/cli.ts",
+        "evals/src/guardrail-checks.ts",
+        "evals/src/index.ts",
+        "evals/src/metrics.test.ts",
+        "evals/src/metrics.ts",
+        "evals/src/playback.test.ts",
+        "evals/src/playback.ts",
+        "evals/src/report.ts",
+        "evals/src/runner.test.ts",
+        "evals/src/runner.ts",
+        "evals/src/scenario.test.ts",
+        "evals/src/scenario.ts",
+        "evals/tsconfig.build.json",
+        "evals/tsconfig.json",
+        "evals/vitest.config.ts"
+      ],
+      "language": "TypeScript",
+      "roleGuess": "tests",
+      "role": "tests",
+      "purpose": "Scenario playback and metrics for Jev decision quality.",
+      "provenance": "model",
+      "contentHash": "ec28573c97c564e900ce69fd8d46cb1ba115ebdd",
+      "externalDeps": [
+        {
+          "name": "vitest",
+          "count": 5
+        }
+      ],
+      "entryPoints": [
+        "evals/src/index.ts"
+      ],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_16728d18790d",
+      "rootPath": "scripts",
+      "name": "scripts",
+      "fileCount": 5,
+      "files": [
+        "scripts/diff-line-counts.mjs",
+        "scripts/fixture-diffs.mjs",
+        "scripts/perf.mjs",
+        "scripts/soak.mjs",
+        "scripts/validate-fixtures.mjs"
+      ],
+      "language": "JavaScript",
+      "roleGuess": "tooling",
+      "role": "tooling",
+      "purpose": "Repository maintenance and verification scripts.",
+      "provenance": "model",
+      "contentHash": "5a8891f0a7adb5b9efcce17ceb11e15cbf2506dd",
+      "externalDeps": [
+        {
+          "name": "zod",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    },
+    {
+      "id": "cmp_3a52ce780950",
+      "rootPath": ".",
+      "name": "config",
+      "fileCount": 8,
+      "files": [
+        ".editorconfig",
+        ".gitignore",
+        ".npmrc",
+        "eslint.config.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json"
+      ],
+      "language": "JSON",
+      "roleGuess": "config",
+      "role": "config",
+      "purpose": "Workspace, TypeScript, ESLint and editor configuration.",
+      "provenance": "model",
+      "contentHash": "0848a67213631f61c91386199fae6b5b4a99208b",
+      "externalDeps": [
+        {
+          "name": "@eslint/js",
+          "count": 1
+        },
+        {
+          "name": "typescript-eslint",
+          "count": 1
+        }
+      ],
+      "entryPoints": [],
+      "importsAnalyzed": true
+    }
+  ],
+  "edges": [
+    {
+      "from": "cmp_03cac6d3205d",
+      "to": "cmp_381d69b6cafc",
+      "count": 150,
+      "examples": [
+        "packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx → packages/trace-viewer/src/layout/map-details.ts",
+        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/trace-viewer/src/layout/trace-index.ts",
+        "packages/trace-viewer/src/ui/inspector/Inspector.tsx → packages/trace-viewer/src/layout/trace-index.ts"
+      ]
+    },
+    {
+      "from": "cmp_03cac6d3205d",
+      "to": "cmp_3ff491f81a64",
+      "count": 86,
+      "examples": [
+        "packages/trace-viewer/src/ui/graphics/ClaimVsObserved.tsx → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/ui/graphics/DiffBar.tsx → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/ui/graphics/FlowGlyph.tsx → packages/trace-viewer/src/model/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_03cac6d3205d",
+      "to": "cmp_4f85bffae8dd",
+      "count": 67,
+      "examples": [
+        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/canvas-view-harness.tsx",
+        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/overview-builder.ts",
+        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/session-builder.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_de23360922b6",
+      "count": 52,
+      "examples": [
+        "apps/desktop/src/main/index.ts → packages/contracts/src/index.ts",
+        "apps/desktop/src/main/ipc.test.ts → packages/contracts/src/index.ts",
+        "apps/desktop/src/main/ipc.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_21ca93ae5083",
+      "count": 47,
+      "examples": [
+        "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
+        "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
+        "apps/desktop/src/main/ipc.test.ts → packages/storage/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_4f85bffae8dd",
+      "count": 45,
+      "examples": [
+        "packages/trace-viewer/src/layout/canvas-items.test.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.bench.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.property.test.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts"
+      ]
+    },
+    {
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_3ff491f81a64",
+      "count": 37,
+      "examples": [
+        "packages/trace-viewer/src/layout/canvas-items.test.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.property.test.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/layout/canvas-layout.soak-shape.test.ts → packages/trace-viewer/src/model/fold.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_27ce274f853f",
+      "count": 34,
+      "examples": [
+        "apps/desktop/src/main/actions.test.ts → apps/desktop/src/shared/errors.ts",
+        "apps/desktop/src/main/actions.ts → apps/desktop/src/shared/errors.ts",
+        "apps/desktop/src/main/git.test.ts → apps/desktop/src/shared/errors.ts"
+      ]
+    },
+    {
+      "from": "cmp_3ff491f81a64",
+      "to": "cmp_4f85bffae8dd",
+      "count": 33,
+      "examples": [
+        "packages/trace-viewer/src/model/classify.test.ts → packages/trace-viewer/src/test-support/trace-builder.ts",
+        "packages/trace-viewer/src/model/component-path.test.ts → packages/trace-viewer/src/test-support/overview-builder.ts",
+        "packages/trace-viewer/src/model/exact-guard.test.ts → packages/trace-viewer/src/test-support/fixture-rows.ts"
+      ]
+    },
+    {
+      "from": "cmp_846ce170a650",
+      "to": "cmp_de23360922b6",
+      "count": 27,
+      "examples": [
+        "packages/ui-catalog/src/catalog-validation.ts → packages/contracts/src/index.ts",
+        "packages/ui-catalog/src/catalog.test.ts → packages/contracts/src/index.ts",
+        "packages/ui-catalog/src/catalog.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_7773132844d4",
+      "to": "cmp_de23360922b6",
+      "count": 24,
+      "examples": [
+        "packages/evidence-engine/src/collectors/commands.test.ts → packages/contracts/src/index.ts",
+        "packages/evidence-engine/src/collectors/commands.ts → packages/contracts/src/index.ts",
+        "packages/evidence-engine/src/collectors/dependencies.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_3ff491f81a64",
+      "to": "cmp_de23360922b6",
+      "count": 22,
+      "examples": [
+        "packages/trace-viewer/src/model/component-path.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/model/exact-guard.test.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/model/fold-agent.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_03cac6d3205d",
+      "count": 21,
+      "examples": [
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/viewport/controller.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/state/location.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/shell/TraceViewer.tsx"
+      ]
+    },
+    {
+      "from": "cmp_b66601070199",
+      "to": "cmp_de23360922b6",
+      "count": 19,
+      "examples": [
+        "packages/jev-router/src/degrade.ts → packages/contracts/src/index.ts",
+        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts",
+        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_de23360922b6",
+      "count": 17,
+      "examples": [
+        "packages/trace-viewer/src/source.test.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/source.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/sources/read-all.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_44240dbada3f",
+      "count": 16,
+      "examples": [
+        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
+        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/semantic-core/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_03cac6d3205d",
+      "to": "cmp_de23360922b6",
+      "count": 15,
+      "examples": [
+        "packages/trace-viewer/src/ui/icons/icons.test.tsx → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/ui/icons/kind-icons.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_44240dbada3f",
+      "to": "cmp_de23360922b6",
+      "count": 15,
+      "examples": [
+        "packages/semantic-core/src/categories.ts → packages/contracts/src/index.ts",
+        "packages/semantic-core/src/clustering.property.test.ts → packages/contracts/src/index.ts",
+        "packages/semantic-core/src/clustering.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_27ce274f853f",
+      "count": 14,
+      "examples": [
+        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
+        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
+        "apps/desktop/src/renderer/bridge.ts → apps/desktop/src/shared/api.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_b66601070199",
+      "count": 13,
+      "examples": [
+        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/jev-router/src/index.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/jev-router/src/index.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.ts → packages/jev-router/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_7773132844d4",
+      "count": 12,
+      "examples": [
+        "apps/desktop/src/main/index.ts → packages/evidence-engine/src/index.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_c13abffb8548",
+      "count": 11,
+      "examples": [
+        "apps/desktop/src/main/index.ts → packages/codebase-map/src/node/index.ts",
+        "apps/desktop/src/main/pipeline/explainer-overview.bench.ts → packages/codebase-map/package.json",
+        "apps/desktop/src/main/pipeline/explainer-overview.bench.ts → packages/codebase-map/src/node/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_21ca93ae5083",
+      "to": "cmp_de23360922b6",
+      "count": 10,
+      "examples": [
+        "packages/storage/src/db.test.ts → packages/contracts/src/index.ts",
+        "packages/storage/src/db.ts → packages/contracts/src/index.ts",
+        "packages/storage/src/db.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_381d69b6cafc",
+      "count": 10,
+      "examples": [
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/viewport.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/trace-index.ts",
+        "packages/trace-viewer/src/test-support/canvas-arbitraries.ts → packages/trace-viewer/src/layout/canvas-layout.ts"
+      ]
+    },
+    {
+      "from": "cmp_4cf1fb937bae",
+      "to": "cmp_de23360922b6",
+      "count": 9,
+      "examples": [
+        "packages/agent-core/src/adapter.ts → packages/contracts/src/index.ts",
+        "packages/agent-core/src/events.test.ts → packages/contracts/src/index.ts",
+        "packages/agent-core/src/events.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_3ff491f81a64",
+      "count": 9,
+      "examples": [
+        "packages/trace-viewer/src/test-support/arbitraries.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/test-support/canvas-arbitraries.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/test-support/canvas-view-harness.tsx → packages/trace-viewer/src/model/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_99a2f6525f7f",
+      "to": "cmp_de23360922b6",
+      "count": 9,
+      "examples": [
+        "packages/agent-codex/src/codex-adapter.test.ts → packages/contracts/src/index.ts",
+        "packages/agent-codex/src/codex-adapter.ts → packages/contracts/src/index.ts",
+        "packages/agent-codex/src/delivery-queue.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_c13abffb8548",
+      "to": "cmp_de23360922b6",
+      "count": 9,
+      "examples": [
+        "packages/codebase-map/src/core/edges.ts → packages/contracts/src/index.ts",
+        "packages/codebase-map/src/core/roles.test.ts → packages/contracts/src/index.ts",
+        "packages/codebase-map/src/core/roles.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_3018d1c5d93a",
+      "to": "cmp_de23360922b6",
+      "count": 7,
+      "examples": [
+        "packages/ui-compiler/src/compile.test.ts → packages/contracts/src/index.ts",
+        "packages/ui-compiler/src/compile.ts → packages/contracts/src/index.ts",
+        "packages/ui-compiler/src/golden-specs.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_64bacb15ef37",
+      "to": "cmp_b66601070199",
+      "count": 7,
+      "examples": [
+        "evals/src/alternatives.ts → packages/jev-router/src/index.ts",
+        "evals/src/guardrail-checks.ts → packages/jev-router/src/index.ts",
+        "evals/src/playback.test.ts → packages/jev-router/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_64bacb15ef37",
+      "to": "cmp_de23360922b6",
+      "count": 7,
+      "examples": [
+        "evals/src/alternatives.ts → packages/contracts/src/index.ts",
+        "evals/src/guardrail-checks.ts → packages/contracts/src/index.ts",
+        "evals/src/playback.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_d310ea320463",
+      "to": "cmp_4f85bffae8dd",
+      "count": 7,
+      "examples": [
+        "apps/trace-viewer-dev/src/host.tsx → packages/trace-viewer/src/index.ts",
+        "apps/trace-viewer-dev/src/perf-hud.tsx → packages/trace-viewer/src/index.ts",
+        "apps/trace-viewer-dev/src/selftest-open.ts → packages/trace-viewer/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_de23360922b6",
+      "count": 6,
+      "examples": [
+        "packages/trace-viewer/src/layout/canvas-live-tick.equivalence.property.test.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/layout/map-details.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/layout/map-layout.property.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_99a2f6525f7f",
+      "to": "cmp_4cf1fb937bae",
+      "count": 6,
+      "examples": [
+        "packages/agent-codex/src/codex-adapter.ts → packages/agent-core/src/index.ts",
+        "packages/agent-codex/src/fallback.test.ts → packages/agent-core/src/index.ts",
+        "packages/agent-codex/src/fallback.ts → packages/agent-core/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_4f85bffae8dd",
+      "count": 6,
+      "examples": [
+        "apps/desktop/src/renderer/trace/host.ts → packages/trace-viewer/src/index.ts",
+        "apps/desktop/src/renderer/trace/ipc-source.test.ts → packages/trace-viewer/src/sources/index.ts",
+        "apps/desktop/src/renderer/trace/ipc-source.ts → packages/trace-viewer/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_de23360922b6",
+      "count": 5,
+      "examples": [
+        "apps/desktop/src/renderer/components/WorkspaceHost.tsx → packages/contracts/src/index.ts",
+        "apps/desktop/src/renderer/payload-types.ts → packages/contracts/src/index.ts",
+        "apps/desktop/src/renderer/trace/ipc-source.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_27ce274f853f",
+      "to": "cmp_de23360922b6",
+      "count": 4,
+      "examples": [
+        "apps/desktop/src/shared/api.ts → packages/contracts/src/index.ts",
+        "apps/desktop/src/shared/api.ts → packages/contracts/src/index.ts",
+        "apps/desktop/src/shared/ipc-registry.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_d310ea320463",
+      "to": "cmp_de23360922b6",
+      "count": 4,
+      "examples": [
+        "apps/trace-viewer-dev/src/host.tsx → packages/contracts/src/index.ts",
+        "apps/trace-viewer-dev/src/overview-sample.ts → packages/contracts/src/index.ts",
+        "apps/trace-viewer-dev/src/selftest-open.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_4f85bffae8dd",
+      "count": 4,
+      "examples": [
+        "apps/desktop/src/main/trace-bundle.test.ts → packages/trace-viewer/src/sources/index.ts",
+        "apps/desktop/src/main/trace-parity.test.ts → packages/trace-viewer/package.json",
+        "apps/desktop/src/main/trace-parity.test.ts → packages/trace-viewer/src/sources/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_846ce170a650",
+      "count": 3,
+      "examples": [
+        "packages/trace-viewer/src/lint-boundaries.test.ts → packages/ui-catalog/src/index.ts",
+        "packages/trace-viewer/src/lint-boundaries.test.ts → packages/ui-catalog/src/components/ArchitectureDelta.tsx",
+        "packages/trace-viewer/src/lint-boundaries.test.ts → packages/ui-catalog/src/components/CodeDiff.tsx"
+      ]
+    },
+    {
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_03cac6d3205d",
+      "count": 2,
+      "examples": [
+        "packages/trace-viewer/src/layout/canvas-layout.soak-shape.test.ts → packages/trace-viewer/src/ui/views/canvas/frame-label.ts",
+        "packages/trace-viewer/src/layout/canvas-live-tick.equivalence.property.test.ts → packages/trace-viewer/src/ui/views/canvas/frame-label.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_3018d1c5d93a",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/main/pipeline/ui-stage.ts → packages/ui-compiler/src/index.ts",
+        "apps/desktop/src/main/pipeline/ui-stage.ts → packages/ui-compiler/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_3ff491f81a64",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/main/trace-parity.test.ts → packages/trace-viewer/src/model/index.ts",
+        "apps/desktop/src/main/trace-parity.test.ts → packages/trace-viewer/src/model/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_4cf1fb937bae",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/main/pipeline/mock-agent-adapter.ts → packages/agent-core/src/index.ts",
+        "apps/desktop/src/main/pipeline/pipeline-runtime.ts → packages/agent-core/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_88cac31c4ffc",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/main/pipeline/pipeline-runtime.ts → packages/telemetry/src/index.ts",
+        "apps/desktop/src/main/pipeline/pipeline-runtime.ts → packages/telemetry/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_3ff491f81a64",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/renderer/components/WorkspaceHost.tsx → packages/trace-viewer/src/model/index.ts",
+        "apps/desktop/src/renderer/components/composer-prefill.ts → packages/trace-viewer/src/model/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_846ce170a650",
+      "count": 2,
+      "examples": [
+        "apps/desktop/src/renderer/components/WorkspaceHost.tsx → packages/ui-catalog/src/index.ts",
+        "apps/desktop/src/renderer/components/WorkspaceHost.tsx → packages/ui-catalog/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_03cac6d3205d",
+      "to": "cmp_846ce170a650",
+      "count": 1,
+      "examples": [
+        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/ui-catalog/src/components/CodeDiff.tsx"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_21ca93ae5083",
+      "count": 1,
+      "examples": [
+        "packages/trace-viewer/src/lint-boundaries.test.ts → packages/storage/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_44240dbada3f",
+      "count": 1,
+      "examples": [
+        "packages/trace-viewer/src/test-support/fixture-rows.ts → packages/semantic-core/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_88cac31c4ffc",
+      "to": "cmp_de23360922b6",
+      "count": 1,
+      "examples": [
+        "packages/telemetry/src/events.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_b66601070199",
+      "to": "cmp_7773132844d4",
+      "count": 1,
+      "examples": [
+        "packages/jev-router/src/state.parser.test.ts → packages/evidence-engine/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_99a2f6525f7f",
+      "count": 1,
+      "examples": [
+        "apps/desktop/src/main/pipeline/pipeline-runtime.ts → packages/agent-codex/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_f1dc43a02c16",
+      "count": 1,
+      "examples": [
+        "apps/desktop/src/main/trace-parity.test.ts → apps/desktop/src/renderer/trace/ipc-source.ts"
+      ]
+    }
+  ],
+  "externals": [
+    {
+      "name": "vitest",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 47
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 33
+        },
+        {
+          "componentId": "cmp_381d69b6cafc",
+          "count": 28
+        },
+        {
+          "componentId": "cmp_3ff491f81a64",
+          "count": 24
+        },
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 16
+        },
+        {
+          "componentId": "cmp_de23360922b6",
+          "count": 14
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 13
+        },
+        {
+          "componentId": "cmp_b66601070199",
+          "count": 12
+        },
+        {
+          "componentId": "cmp_44240dbada3f",
+          "count": 10
+        },
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 10
+        },
+        {
+          "componentId": "cmp_21ca93ae5083",
+          "count": 9
+        },
+        {
+          "componentId": "cmp_4f85bffae8dd",
+          "count": 8
+        },
+        {
+          "componentId": "cmp_99a2f6525f7f",
+          "count": 7
+        },
+        {
+          "componentId": "cmp_4cf1fb937bae",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_27ce274f853f",
+          "count": 5
+        },
+        {
+          "componentId": "cmp_64bacb15ef37",
+          "count": 5
+        },
+        {
+          "componentId": "cmp_3018d1c5d93a",
+          "count": 4
+        },
+        {
+          "componentId": "cmp_88cac31c4ffc",
+          "count": 4
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "name": "react",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 78
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 9
+        },
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 7
+        },
+        {
+          "componentId": "cmp_d310ea320463",
+          "count": 7
+        },
+        {
+          "componentId": "cmp_4f85bffae8dd",
+          "count": 5
+        },
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "zod",
+      "usedBy": [
+        {
+          "componentId": "cmp_de23360922b6",
+          "count": 13
+        },
+        {
+          "componentId": "cmp_3ff491f81a64",
+          "count": 5
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 4
+        },
+        {
+          "componentId": "cmp_27ce274f853f",
+          "count": 3
+        },
+        {
+          "componentId": "cmp_88cac31c4ffc",
+          "count": 3
+        },
+        {
+          "componentId": "cmp_21ca93ae5083",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_16728d18790d",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_3018d1c5d93a",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@testing-library/react",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 27
+        },
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 4
+        },
+        {
+          "componentId": "cmp_4f85bffae8dd",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "fast-check",
+      "usedBy": [
+        {
+          "componentId": "cmp_381d69b6cafc",
+          "count": 9
+        },
+        {
+          "componentId": "cmp_3ff491f81a64",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_4f85bffae8dd",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 4
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 3
+        },
+        {
+          "componentId": "cmp_de23360922b6",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_44240dbada3f",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "better-sqlite3",
+      "usedBy": [
+        {
+          "componentId": "cmp_21ca93ae5083",
+          "count": 10
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 3
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@fx/core",
+      "usedBy": [
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "electron",
+      "usedBy": [
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 7
+        },
+        {
+          "componentId": "cmp_27ce274f853f",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@json-render/react",
+      "usedBy": [
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "react-dom",
+      "usedBy": [
+        {
+          "componentId": "cmp_d310ea320463",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@json-render/core",
+      "usedBy": [
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 5
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@testing-library/user-event",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "name": "vite",
+      "usedBy": [
+        {
+          "componentId": "cmp_27ce274f853f",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_d310ea320463",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "node-pty",
+      "usedBy": [
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 2
+        },
+        {
+          "componentId": "cmp_99a2f6525f7f",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@app/api.js",
+      "usedBy": [
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@fx/db",
+      "usedBy": [
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@tanstack/react-virtual",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "usedBy": [
+        {
+          "componentId": "cmp_27ce274f853f",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_d310ea320463",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@xterm/xterm",
+      "usedBy": [
+        {
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "eslint",
+      "usedBy": [
+        {
+          "componentId": "cmp_4f85bffae8dd",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_c13abffb8548",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "${specifier}",
+      "usedBy": [
+        {
+          "componentId": "cmp_44240dbada3f",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@bench/pkg-${pad((pkg + 1) % packages, 2)}",
+      "usedBy": [
+        {
+          "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@eslint/js",
+      "usedBy": [
+        {
+          "componentId": "cmp_3a52ce780950",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@scope/pkg",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@typesafe-ai/sdk",
+      "usedBy": [
+        {
+          "componentId": "cmp_b66601070199",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@xyflow/react",
+      "usedBy": [
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "chokidar",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "diff2html",
+      "usedBy": [
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "lib",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "node-tree-sitter",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "pkg",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "side-effect",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "typescript-eslint",
+      "usedBy": [
+        {
+          "componentId": "cmp_3a52ce780950",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "web-tree-sitter",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "x",
+      "usedBy": [
+        {
+          "componentId": "cmp_7773132844d4",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "narrative": {
+    "provenance": "model",
+    "sentences": [
+      {
+        "text": "jevcode is an Electron app that supervises a coding agent and explains its work.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_f12bdb7b5a14"
+          },
+          {
+            "kind": "component",
+            "id": "cmp_f1dc43a02c16"
+          }
+        ]
+      },
+      {
+        "text": "The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_f12bdb7b5a14"
+          },
+          {
+            "kind": "component",
+            "id": "cmp_99a2f6525f7f"
+          },
+          {
+            "kind": "component",
+            "id": "cmp_44240dbada3f"
+          }
+        ]
+      },
+      {
+        "text": "Every event lands in the SQLite store, and the trace viewer reads it back as rows.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_21ca93ae5083"
+          },
+          {
+            "kind": "component",
+            "id": "cmp_3ff491f81a64"
+          }
+        ]
+      },
+      {
+        "text": "Jev's questions go through jev-router with schema-checked answers.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_b66601070199"
+          }
+        ]
+      },
+      {
+        "text": "contracts holds the shared schemas that every package imports.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_de23360922b6"
+          }
+        ]
+      },
+      {
+        "text": "The stack is TypeScript with React 19, Vite and better-sqlite3 in a pnpm workspace.",
+        "citations": [
+          {
+            "kind": "component",
+            "id": "cmp_3a52ce780950"
+          }
+        ]
+      }
+    ]
+  },
+  "status": {
+    "scan": {
+      "state": "done",
+      "scanned": 721,
+      "total": 721
+    },
+    "narrator": "ready"
+  },
+  "generatedAt": "2026-10-03T11:52:15+09:00"
+}

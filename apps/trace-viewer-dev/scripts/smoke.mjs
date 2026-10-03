@@ -14,7 +14,7 @@ const DEFAULT_PORT = 4179;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const WIDTHS = [1440, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
-const MAP_OVERVIEW = "sample";
+const MAP_OVERVIEW = "jevcode";
 const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
 
 function parseArgs(argv) {
@@ -267,6 +267,19 @@ async function main() {
         ]);
         if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
         shots += 1;
+        if (view === "map") {
+          // The rule-based twin (narrator off, no purposes): lane 06 P-5.
+          const ruleFile = path.join(SMOKE_DIR, `map-rule-${width}.png`);
+          rmSync(ruleFile, { force: true });
+          await chrome(profile, [
+            `--window-size=${width},900`,
+            "--virtual-time-budget=3000",
+            `--screenshot=${ruleFile}`,
+            `${ORIGIN}/?bundle=oauth&overview=jevcode-rule${locationHash(sessionId, "map")}`,
+          ]);
+          if (!existsSync(ruleFile)) throw new Error(`no screenshot at ${ruleFile}`);
+          shots += 1;
+        }
       }
       if (view === "map") continue; // screenshots only: the drip and open selftests measure step selection
       if (view === "hybrid") {

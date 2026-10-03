@@ -1,6 +1,9 @@
 // Dev host only: in-browser overviews for the Map (P-3): a small sample repo and a 200-component synthetic map for
-// pan and zoom profiling. P-5 adds this repository's fixture.
+// pan and zoom profiling, and this repository's fixture (P-5).
 import { OverviewSnapshotSchema, ROLES, type OverviewSnapshot, type Role, type TraceBundle } from "@jevcode/contracts";
+
+import jevcodeRuleUrl from "../../../packages/trace-viewer/fixtures/overview-jevcode-rule.json?url";
+import jevcodeUrl from "../../../packages/trace-viewer/fixtures/overview-jevcode.json?url";
 
 interface SampleComponent { root: string; name: string; role: Role; purpose: string; files: number; deps?: readonly string[] }
 
@@ -31,6 +34,9 @@ const EDGES: readonly (readonly [string, string, number])[] = [
 ];
 
 const hex = (n: number, width: number): string => n.toString(16).padStart(width, "0");
+
+/** This repository's fixture (lane 06, P-5), served as build assets (vite `?url`; the Electron CSP allows same-origin fetch). */
+const FIXTURES: Readonly<Record<string, string>> = { jevcode: jevcodeUrl, "jevcode-rule": jevcodeRuleUrl };
 
 export function sampleOverview(sessionId: string): OverviewSnapshot {
   const ids = new Map(SAMPLE.map((component, index) => [component.root, `cmp_${hex(index + 1, 12)}`] as const));
@@ -184,5 +190,10 @@ export async function loadOverview(name: string, sessionId: string): Promise<rea
     return [sampleWithout(full, "services/worker"), full];
   }
   if (name === "synthetic") return [syntheticSampleOverview(sessionId)];
-  return null;
+  const url = FIXTURES[name];
+  if (url === undefined) return null;
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  const parsed = OverviewSnapshotSchema.safeParse(await response.json());
+  return parsed.success ? [{ ...parsed.data, sessionId }] : null;
 }
