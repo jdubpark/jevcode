@@ -12,7 +12,8 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(APP, "../..");
 const DEFAULT_PORT = 4179;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const WIDTHS = [1440, 1000];
+/** Screenshot widths (console-explainer spec §12: 1440, 1180 and 1000 px). */
+const WIDTHS = [1440, 1180, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
 const MAP_OVERVIEW = "jevcode";
 const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
