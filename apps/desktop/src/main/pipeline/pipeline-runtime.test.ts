@@ -2049,6 +2049,30 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     }
   }, 60_000);
 
+  it("after shutdown, no debounced coordinator rebuild fires against the closed database (lane 07 fix wave)", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/quit-rebuild");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-quit-rebuild";
+    const repoId = "repo-qr";
+    db.upsertRepository({ id: repoId, path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId, prompt: "demo" });
+    const logs: string[] = [];
+    const runtime = new PipelineRuntime({ db, emit: collectEmit().emit, evidence: false, jevClient: new DegradeClient(), log: (line) => logs.push(line) });
+    const at = (ms: number): string => new Date(Date.parse("2026-10-02T10:00:00.000Z") + ms).toISOString();
+    await runtime.startSession({ sessionId, repoId, repoPath: dir, prompt: "demo", agentMode: "replay" });
+    // Each fact is past the coordinator's 500 ms window of the one before. The second flush comes within the 25 ms
+    // rebuild debounce of the first, so the coordinator puts that rebuild on its timer.
+    for (const [index, file] of ["src/a.ts", "src/b.ts", "src/c.ts"].entries()) {
+      runtime.ingestRecord(sessionId, { type: "file_changed", repoId, sessionId, path: file, kind: "modified", ts: at(index * 1_000) });
+    }
+    // will-quit: the runtime shuts down, then the database closes.
+    runtime.shutdown();
+    db.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(logs.filter((line) => line.includes("rebuild failed") || line.includes("not open"))).toEqual([]);
+  }, 30_000);
+
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
     rmSync(dir, { recursive: true, force: true });

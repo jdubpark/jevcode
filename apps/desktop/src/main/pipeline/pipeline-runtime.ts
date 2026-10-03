@@ -475,20 +475,12 @@ export class PipelineRuntime {
   }
 
   /**
-   * Stops a session's agent. A live session is paused, not ended (D10): the
-   * runtime records `agent_interrupted {reason: "stop"}`, stores `paused` and
-   * keeps the execution claim. With `teardown: false` (the user's Stop) a
-   * paused session stays registered with its adapter, which keeps the Codex
-   * thread id, so `resume()` can relaunch it; its evidence collection pauses
-   * until then. `teardown: true`, the default (repo close, the replay CLI and
-   * soak), releases the session as before.
-   */
-  /**
    * The app is quitting (index.ts will-quit) and the database closes next. Every session stops at once and writes
    * nothing more: a pass waiting at a slicer yield, or on a Jev client, ends at its next slice check (PassStopped)
    * without touching the database, ingestion drops records, sync timers are cleared, and the agent and the evidence
    * collector are told to stop without waiting for them. Sessions keep the state the database holds; the boot sweep
-   * (session-recovery.ts) settles them at the next start. Synchronous, so the database can close right after it.
+   * (session-recovery.ts) settles them at the next start. Synchronous, so the database can close right after it. Each
+   * coordinator's debounced rebuild is cancelled too: it would write to the closed database.
    */
   shutdown(): void {
     for (const session of this.sessions.values()) {
@@ -497,6 +489,7 @@ export class PipelineRuntime {
         clearTimeout(session.syncTimer);
         session.syncTimer = null;
       }
+      session.coordinator.dispose();
       for (const [what, stop] of [
         ["evidence", () => session.evidence?.stop()],
         ["agent", () => session.adapter?.stop()],
@@ -510,6 +503,15 @@ export class PipelineRuntime {
     }
   }
 
+  /**
+   * Stops a session's agent. A live session is paused, not ended (D10): the
+   * runtime records `agent_interrupted {reason: "stop"}`, stores `paused` and
+   * keeps the execution claim. With `teardown: false` (the user's Stop) a
+   * paused session stays registered with its adapter, which keeps the Codex
+   * thread id, so `resume()` can relaunch it; its evidence collection pauses
+   * until then. `teardown: true`, the default (repo close, the replay CLI and
+   * soak), releases the session as before.
+   */
   async stopSession(
     sessionId: string,
     opts: { teardown?: boolean } = {},

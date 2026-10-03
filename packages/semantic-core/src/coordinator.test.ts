@@ -403,3 +403,26 @@ describe("PipelineCoordinator rebuild retry (lane 03 PL-2)", () => {
     }
   });
 });
+
+describe("PipelineCoordinator dispose (lane 07 fix wave)", () => {
+  it("cancels a debounced rebuild, so none runs after the app quit closed the stores", () => {
+    vi.useFakeTimers();
+    try {
+      const stores = createInMemoryStores();
+      const coordinator = new PipelineCoordinator({ stores, clock: () => 0, maxBatchSize: 1 });
+      coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+      // The second record flushes the first window; at clock 0 the rebuild is debounced onto the timer.
+      coordinator.ingest(hunk("src/b.ts", tsOf(1)));
+      expect(vi.getTimerCount()).toBe(1);
+      coordinator.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(25);
+      expect(stores.units.all()).toHaveLength(0);
+      // A later window arms no new timer either.
+      coordinator.ingest(hunk("src/c.ts", tsOf(2)));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
