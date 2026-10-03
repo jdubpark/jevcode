@@ -53,7 +53,7 @@ export const FOLD_SLICE_MS = 20;
 /** The first guess of a settle's time per ms of folding; each settle measures it again. */
 const SETTLE_RATIO_START = 3;
 /** A slice folds for at least this share of FOLD_SLICE_MS, so a settle's fixed cost cannot shrink slices to a row. */
-const MIN_FOLD_SHARE = 0.25;
+const MIN_FOLD_SHARE = 0.1;
 const CLOSED_UNIT: ReadonlySet<ChangeUnit["status"]> = new Set<ChangeUnit["status"]>(["validated", "failed"]);
 
 type Question = "sessionStory" | "decisionWhy";
@@ -192,8 +192,8 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
   let failures = 0;
   let retryAt = 0;
-  // How long a fold slice folds before it settles (advance): its share of sliceMs, from the measured time a settle
-  // takes per ms of folding (averaged over the settles so far).
+  // How long a fold slice folds before it settles (advance): its share of sliceMs, from the time a settle takes per ms
+  // of folding. A settle that took longer than predicted raises the ratio at once; a shorter one lowers it by half.
   let settleRatio = SETTLE_RATIO_START;
   const foldBudget = (): number => sliceMs * Math.max(1 / (1 + settleRatio), MIN_FOLD_SHARE);
   // Lane 05's schema brake: schema-valid answers so far, and schema-invalid ones since the last valid one.
@@ -281,7 +281,8 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
         const settleStart = performance.now();
         finalize(t.fold, { live: true });
         const folded = Math.max(settleStart - sliceStart, 0.5);
-        settleRatio = (settleRatio + (performance.now() - settleStart) / folded) / 2;
+        const measured = (performance.now() - settleStart) / folded;
+        settleRatio = Math.max(measured, (settleRatio + measured) / 2);
         budget = foldBudget();
       }
       unsettled = false;
