@@ -114,19 +114,20 @@ const TABLE_COMMIT = "e7f6a3d";
 
 /** The tree of TABLE_COMMIT in a temp dir (a git repo of its own), or null when git or the commit is unavailable. */
 function materializePinnedTree(): string | null {
+  // Only the probe may mean "unavailable"; an archive, extract or init failure is a real error and throws.
   try {
     execFileSync("git", ["cat-file", "-e", `${TABLE_COMMIT}^{commit}`], { cwd: REPO_ROOT, stdio: "ignore" });
-    const root = mkdtempSync(path.join(os.tmpdir(), "jevcode-pinned-"));
-    roots.push(root);
-    const tar = path.join(root, ".tree.tar");
-    execFileSync("git", ["archive", "--format=tar", "-o", tar, TABLE_COMMIT], { cwd: REPO_ROOT });
-    execFileSync("tar", ["-xf", tar, "-C", root]);
-    rmSync(tar);
-    execFileSync("git", ["init", "-q"], { cwd: root });
-    return root;
   } catch {
     return null;
   }
+  const root = mkdtempSync(path.join(os.tmpdir(), "jevcode-pinned-"));
+  roots.push(root);
+  const tar = path.join(root, ".tree.tar");
+  execFileSync("git", ["archive", "--format=tar", "-o", tar, TABLE_COMMIT], { cwd: REPO_ROOT });
+  execFileSync("tar", ["-xf", tar, "-C", root]);
+  rmSync(tar);
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  return root;
 }
 
 // The scan runs on the pinned tree, not the working tree, so the table does not break whenever this repo grows
