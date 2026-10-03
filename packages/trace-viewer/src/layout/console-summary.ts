@@ -33,6 +33,61 @@ function summaryRow(story: StoryModel): SummaryRow {
   return row;
 }
 
+/**
+ * byStep of a merged state: the base row of a step, moved by the summary rows above it. A view over the base map and the
+ * row positions, so a live commit does not copy a 10,000-entry map (the Console reads it only through get); iterating
+ * builds the map once.
+ */
+class ShiftedByStep implements ReadonlyMap<string, number> {
+  private map: Map<string, number> | null = null;
+
+  constructor(
+    private readonly base: ReadonlyMap<string, number>,
+    private readonly position: readonly number[],
+  ) {}
+
+  get size(): number {
+    return this.base.size;
+  }
+
+  get(key: string): number | undefined {
+    const at = this.base.get(key);
+    return at === undefined ? undefined : (this.position[at] ?? at);
+  }
+
+  has(key: string): boolean {
+    return this.base.has(key);
+  }
+
+  forEach(callback: (value: number, key: string, map: ReadonlyMap<string, number>) => void, thisArg?: unknown): void {
+    this.materialized().forEach((value, key) => callback.call(thisArg, value, key, this));
+  }
+
+  entries(): MapIterator<[string, number]> {
+    return this.materialized().entries();
+  }
+
+  keys(): MapIterator<string> {
+    return this.base.keys();
+  }
+
+  values(): MapIterator<number> {
+    return this.materialized().values();
+  }
+
+  [Symbol.iterator](): MapIterator<[string, number]> {
+    return this.materialized().entries();
+  }
+
+  private materialized(): Map<string, number> {
+    if (this.map === null) {
+      this.map = new Map();
+      for (const [key, at] of this.base) this.map.set(key, this.position[at] ?? at);
+    }
+    return this.map;
+  }
+}
+
 export function mergeSummaryRows(base: ConsoleRowsState, stories: readonly StoryModel[]): ConsoleRowsState {
   if (stories.length === 0) return base;
   const rows: ConsoleRow[] = [];
@@ -52,7 +107,5 @@ export function mergeSummaryRows(base: ConsoleRowsState, stories: readonly Story
     rows.push(summaryRow(story));
     next += 1;
   }
-  const byStep = new Map<string, number>();
-  for (const [key, index] of base.byStep) byStep.set(key, position[index] ?? index);
-  return { rows, byStep, base, stories };
+  return { rows, byStep: new ShiftedByStep(base.byStep, position), base, stories };
 }
