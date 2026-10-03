@@ -22,19 +22,23 @@ describe("componentIdForPath (spec §5.2, ruling R6)", () => {
     expect(componentIdForPath([server], "src/server2/x.ts")).toBeNull();
   });
 
-  it("falls back to the repo-root component and returns null without one", () => {
-    expect(componentIdForPath([server, root], "scripts/build.mjs")).toBe(root.id);
-    expect(componentIdForPath([server], "scripts/build.mjs")).toBeNull();
+  it('falls back to the repo-root component only for a root-level path: "." holds root-level files only (lane 06 fix I-3)', () => {
+    expect(componentIdForPath([server, root], "README.md")).toBe(root.id);
+    // Lane 04 groups a nested file by its directory, so an unclaimed nested path never belongs to ".".
+    expect(componentIdForPath([server, root], "scripts/build.mjs")).toBeNull();
+    expect(componentIdForPath([server, root], "config/app.json")).toBeNull();
+    expect(componentIdForPath([server], "README.md")).toBeNull();
     expect(componentIdForPath([], "src/server/app.ts")).toBeNull();
   });
 
-  it("returns a component that lists the path or whose root contains it", () => {
-    const pool = ["src/server/app.ts", "src/server/routes/limits.ts", "src/server/app.test.ts", "tests/x.test.ts", "lib/a.ts", "package.json"];
+  it("returns a component that lists the path or whose root contains it, and the root component only for a root-level path", () => {
+    const pool = ["src/server/app.ts", "src/server/routes/limits.ts", "src/server/app.test.ts", "tests/x.test.ts", "lib/a.ts", "package.json", "README.md", "scripts/build.mjs"];
     const components = [server, serverRoutes, tests, root, lib];
     fc.assert(
       fc.property(fc.subarray(components, { minLength: 0 }), fc.constantFrom(...pool), (chosen, path) => {
         const id = componentIdForPath(chosen, path);
-        const owns = (c: (typeof components)[number]): boolean => c.files.includes(path) || c.rootPath === "." || path.startsWith(`${c.rootPath}/`);
+        const owns = (c: (typeof components)[number]): boolean =>
+          c.files.includes(path) || (c.rootPath === "." && !path.includes("/")) || path.startsWith(`${c.rootPath}/`);
         expect(id === null).toBe(!chosen.some(owns));
         const component = chosen.find((c) => c.id === id);
         expect(id === null || component !== undefined).toBe(true);
@@ -48,16 +52,21 @@ describe("componentIdForPath (spec §5.2, ruling R6)", () => {
     expect(componentIdForPath([server], "/repo/src/server/app.ts")).toBeNull();
     expect(componentIdForPath([server], "./src/server/app.ts")).toBeNull();
     expect(componentIdForPath([server], "")).toBeNull();
-    // They are not normalized: only the repo-root component catches them.
-    expect(componentIdForPath([server, root], "./src/server/app.ts")).toBe(root.id);
+    // They are not normalized: a "./" path is nested, so not even the repo-root component catches it.
+    expect(componentIdForPath([server, root], "./src/server/app.ts")).toBeNull();
   });
 
-  it('resolves the "(other)" component only through its files list', () => {
+  it('sends an unclaimed nested path to the "(other)" component, which never matches by prefix (lane 06 fix I-3)', () => {
     const other = componentOf({ rootPath: "(other)", name: "(other)", files: ["misc/a.ts"] });
     expect(componentIdForPath([server, other], "misc/a.ts")).toBe(other.id);
-    expect(componentIdForPath([server, other], "misc/b.ts")).toBeNull();
-    expect(componentIdForPath([server, other], "(other)/new.ts")).toBeNull();
-    expect(componentIdForPath([server, other, root], "(other)/new.ts")).toBe(root.id);
+    // A file of a grouped directory past the 400-file list, or a directory created after the scan.
+    expect(componentIdForPath([server, other], "misc/b.ts")).toBe(other.id);
+    expect(componentIdForPath([server, other, root], "misc/b.ts")).toBe(other.id);
+    expect(componentIdForPath([server, other, root], "(other)/new.ts")).toBe(other.id);
+    // A claimed path keeps its component; a root-level path goes to "." first, else to "(other)" (where lane 04 puts a "." past the cap).
+    expect(componentIdForPath([server, other], "src/server/new.ts")).toBe(server.id);
+    expect(componentIdForPath([server, other, root], "README.md")).toBe(root.id);
+    expect(componentIdForPath([server, other], "README.md")).toBe(other.id);
   });
 
   it("names components by the spec id formula", () => {

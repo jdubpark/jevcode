@@ -356,7 +356,8 @@ export function createMapLayoutCache(): MapLayoutCache {
 
 /**
  * The component a repo path belongs to: strips the repo root and "./", then applies the model's one path rule
- * (componentIdForPath, ruling R6: listed file, then longest root, then "."). Entity paths may be absolute.
+ * (componentIdForPath, ruling R6: listed file, then longest root, then "." for a root-level path or "(other)" for a nested
+ * one). Entity paths may be absolute.
  */
 export function componentForPath(overview: OverviewModel, path: string): string | undefined {
   const repoPrefix = `${overview.snapshot.repoRoot.replace(/\/+$/, "")}/`;
