@@ -27,7 +27,7 @@ export function anthropicErrorToNarrator(error: unknown): NarratorUnavailableErr
   return new NarratorUnavailableError("unavailable", error instanceof Error ? error.message : String(error));
 }
 
-/** Messages API with a JSON-schema output format; retries are owned by the explainer's backoff. */
+/** Production always talks to api.anthropic.com; only tests pass another baseURL. */
 export const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 
 /** The SDK merges ANTHROPIC_CUSTOM_HEADERS from the environment; a null value removes a header. */
@@ -40,6 +40,7 @@ function suppressedEnvHeaders(): Record<string, null> {
   return suppressed;
 }
 
+/** Messages API with a JSON-schema output format; retries are owned by the explainer's backoff. */
 export function createAnthropicNarratorTransport(options: AnthropicNarratorTransportOptions): NarratorTransport {
   if (options.apiKey.trim() === "") {
     throw new NarratorUnavailableError("auth", "narrator needs an API key");
