@@ -405,6 +405,13 @@ The lane files were drafted against the real code, and some names above had to c
   - `buildOverviewModel` and `overviewStatusOf` are exported.
   - R6: lane 06's P-1 creates `src/model/component-path.ts` with `componentIdForPath`, and lane 07 consumes it.
   - Lane 07 fills the `mapOverlayOf` seam in `ui/views/map/overlay.ts`.
+- **Lane 02b additions (fix wave, binding for lanes 03, 06 and 07).**
+  - `ConsoleRow` gains `{ kind: "guardrails"; key: "guardrails:<first finding id>"; stepIds; findingIds; findingStepIds }`: consecutive warning guardrail-clamp flag lines fold into one "Jev review · n guardrails" row; a warning flag line is keyed `guardrails:<finding id>` from the start; critical findings never fold. `consoleRowStepIds(row)` covers every kind; read a row's anchor through it.
+  - `consoleNewRowCount(state, index, afterSeq)` (`src/layout/console-rows.ts`): the Console's "N new" counts rows. `NewBadge` gains `noun?: "step" | "row"`. `ViewPort.newCount?(): number` gives the title bar the active view's count.
+  - `ViewState.revealRev`: +1 when the Outline or the Brief picks the already-selected item; views reveal on it.
+  - `ViewPort.goToTail?(): boolean`: in the Console, `G`, the "N new" pills and the title bar's Live go Live at the tail without selecting (the Brief stays; a selection is kept). Hybrid and Canvas keep `nav/last`.
+  - `displayUntrusted` tokenizes `[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]` except a tab and, with `{ multiline: true }`, `\n`; emoji clusters and keycaps render as themselves.
+  - `showsBrief(state)` (`src/ui/inspector/RightPanel.tsx`); the right panel's aside is labelled after its content; `HarnessOptions.host?: ViewerHost` in the test harness.
 - **Lane 07 additions.** `ExplainerModel.stories` and the story and highlight `seq` fields; `BriefModel.decisions`; `BriefViewProps.onAnswer`; `ConsoleRowsState.base?` and `stories?`; `resolveCitation`.
 - **Fixtures** for the viewer live in `packages/trace-viewer/fixtures/`.
 
