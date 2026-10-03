@@ -82,22 +82,35 @@ const SYNC_DEBOUNCE_MS = 600;
  */
 const SYNC_SLICE_MS = 20;
 
+/** Thrown by a pass's pace() once its session is stopped: the pass ends there and writes nothing more. */
+class PassStopped extends Error {
+  constructor() {
+    super("session stopped during the sync pass");
+  }
+}
+
 interface Slicer {
-  /** Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer. */
+  /**
+   * Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer, calling beforeYield first. Then
+   * throws PassStopped if the session has been stopped, whether during this yield or during an earlier await.
+   */
   pace(): Promise<void>;
   /** How many times pace() has yielded. */
   readonly yields: number;
 }
 
-function createSlicer(sliceMs = SYNC_SLICE_MS): Slicer {
+function createSlicer(isStopped: () => boolean, beforeYield: () => void, sliceMs = SYNC_SLICE_MS): Slicer {
   let sliceStart = performance.now();
   let yields = 0;
   return {
     async pace() {
-      if (performance.now() - sliceStart < sliceMs) return;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      yields += 1;
-      sliceStart = performance.now();
+      if (performance.now() - sliceStart >= sliceMs) {
+        beforeYield();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        yields += 1;
+        sliceStart = performance.now();
+      }
+      if (isStopped()) throw new PassStopped();
     },
     get yields() {
       return yields;
@@ -982,16 +995,27 @@ export class PipelineRuntime {
    * stores' last payloads, unitState, surfaces, completionEmitted) is updated only after the writes it stands for,
    * so the next pass writes what this one did not.
    *
-   * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions once per pass, not once per decision, and
-   * one coordinator snapshot serves each stretch of the pass in which no store changes.
+   * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions at each slice that yields and once after
+   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below).
    *
-   * Slices (PL-2): the pass yields to the event loop between steps once it has run SYNC_SLICE_MS, so no block of a
-   * turn end's pass runs past spec §6.1's 50 ms. Other work may run between slices, as it already did across a
-   * networked Jev client's awaits; a snapshot read before a yield is read again before the steps that follow it.
+   * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
+   * surface, and once before the decision, validation and completion steps, which run together. When the slice is
+   * spent it sends unsent Jev decisions to the debug panel and yields (setImmediate), so no block of a turn end's pass
+   * runs past spec §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev
+   * client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
+   * stage, across their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
+   * Each check also ends the pass (PassStopped) once the session is stopped, so a suspended pass writes nothing after
+   * a stop and never interrupts a stopped adapter.
    */
   private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
-    const slicer = createSlicer();
+    let jevUnsent = false;
+    const sendJevDebug = (): void => {
+      if (!jevUnsent || session.stopping) return;
+      jevUnsent = false;
+      this.emitJevDebug(session);
+    };
+    const slicer = createSlicer(() => session.stopping, sendJevDebug);
     const pace = (): Promise<void> => slicer.pace();
     try {
       session.coordinator.flush();
@@ -1010,7 +1034,6 @@ export class PipelineRuntime {
       });
       let current = snapshot;
       if (changedUnits.length > 0) {
-        let jevLogged = false;
         const stage = runJevStage({
           db: this.opts.db,
           coordinator: session.coordinator,
@@ -1027,7 +1050,7 @@ export class PipelineRuntime {
           snapshot,
           pace,
           onJevLog: () => {
-            jevLogged = true;
+            jevUnsent = true;
           },
           onRedaction: (count) => {
             this.recordTelemetry(session, "redaction", { count });
@@ -1037,7 +1060,7 @@ export class PipelineRuntime {
         try {
           result = await stage;
         } finally {
-          if (jevLogged) this.emitJevDebug(session);
+          sendJevDebug();
         }
         await pace();
         // Read after the stage's label writes. Surfaces, decision surfaces and telemetry change none of the
@@ -1053,6 +1076,8 @@ export class PipelineRuntime {
       if (completing) this.emitCompletionSurface(session, current);
       this.emitSessionState(session.sessionId);
     } catch (error) {
+      // Stopped mid-pass: the stop owns the session from here.
+      if (error instanceof PassStopped) return;
       this.log(`sync failed for ${session.sessionId}: ${String(error)}`);
       // As before, a turn end shows its completion surface even when the sync failed.
       if (completing) {
@@ -1283,7 +1308,7 @@ export class PipelineRuntime {
     });
   }
 
-  /** The latest 50 Jev decisions, read and sent once per pass (lane 03 PL-2): the panel shows the final state. */
+  /** The latest 50 Jev decisions, read and sent at a pass's yields and after its Jev stage (lane 03 PL-2). */
   private emitJevDebug(session: ActiveSession): void {
     this.opts.emit(MainToRendererChannels.jevDebug, {
       sessionId: session.sessionId,
