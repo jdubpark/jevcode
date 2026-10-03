@@ -25,11 +25,11 @@ import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
+import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
-import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
 import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
-import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import { readAgentPreferences } from "../shared/prefs.js";
+import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
@@ -71,8 +71,6 @@ let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
 let explainer: ExplainerRegistry | null = null;
 let importExtractor: ImportExtractor | null = null;
-let narratorSwitch: NarratorSwitch | null = null;
-let narratorCalls: NarratorCallLog | null = null;
 const state = createAppState();
 
 function createWindow(): BrowserWindow {
@@ -101,11 +99,11 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   db = openDb();
   const openedDb = db;
-  narratorSwitch = createNarratorSwitch({
+  const narratorSwitch = createNarratorSwitch({
     enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
     env: process.env,
   });
-  narratorCalls = createNarratorCallLog();
+  const narratorCalls = createNarratorCallLog();
   // A second, query_only connection for the trace viewer (R5): trace:*
   // handlers read through it and can never write.
   const reader = openTraceReader(db.dbPath);
@@ -145,8 +143,15 @@ app.whenReady().then(() => {
   const eventsDb = db;
   const extractor = createImportExtractor();
   importExtractor = extractor;
-  const explainerRegistry = createExplainerRegistry((repoRoot) =>
-    createExplainerStage({
+  const explainerRegistry = createExplainerRegistry((repoRoot) => {
+    // Lane 05 (R4): the narration seam starts from the switch's current client; the subscription
+    // below forwards every later change to the open repo's stage.
+    const narratorOptions = {
+      initialNarrator: narratorSwitch.current(),
+      narratorAvailability: () => narratorSwitch.availability(),
+      recordNarratorCall: (record: NarratorCallRecord) => narratorCalls.record(record),
+    };
+    return createExplainerStage({
       db: eventsDb,
       repoRoot,
       sessionId: () => (state.repo?.gitRoot === repoRoot ? (state.session?.id ?? null) : null),
@@ -163,12 +168,15 @@ app.whenReady().then(() => {
         clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
       },
       log: (event) => console.log(`[explainer] ${JSON.stringify(event)}`),
-      // Ruling R3: narrator status "off" when the setting is off. Lane 05 N-5 adds `narration`.
+      // Ruling R3: narrator status "off" when the setting is off; otherwise the seam's state.
       explainWithModel: () => normalizeExplainWithModel(eventsDb.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)),
-    }),
-    (message) => console.error(`[explainer] ${message}`),
-  );
+      narration: createNarrationSeamFactory(narratorOptions),
+      initialNarrator: narratorOptions.initialNarrator,
+      recordNarratorCall: narratorOptions.recordNarratorCall,
+    });
+  }, (message) => console.error(`[explainer] ${message}`));
   explainer = explainerRegistry;
+  connectNarratorSwitch(narratorSwitch, explainerRegistry, () => state.repo?.gitRoot);
 
   runtime = new PipelineRuntime({
     db,
