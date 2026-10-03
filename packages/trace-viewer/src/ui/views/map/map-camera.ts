@@ -1,4 +1,4 @@
-import { layoutMap, mapLevelForZoom, type MapCard, type MapLayout, type MapLayoutState, type MapLevel } from "../../../layout/map-layout.js";
+import { layoutMap, mapLevelForZoom, type MapCard, type MapLayout, type MapLayoutCache, type MapLevel } from "../../../layout/map-layout.js";
 import { isInsideInset, screenToWorld, setCenter, type Point, type Size, type UniformCamera, type ZoomLimits } from "../../../layout/viewport.js";
 import type { OverviewModel } from "../../../model/index.js";
 
@@ -26,13 +26,13 @@ export interface MapFitPlan { level: MapLevel; camera: UniformCamera; layout: Ma
 /**
  * Fit (spec §3.4): the whole map, centered on both axes, filling the stage up to 100%. The geometry is the same at
  * every level, so there is one layout; `level` is the zoom band the fit lands in. k stays at or below 1, so the level
- * is chip or card, never detail.
+ * is chip or card, never detail. The layout is the viewer's cached one (the one the Map draws), else a fresh one.
  */
-export function planMapFit(overview: OverviewModel, viewport: Size, prev?: MapLayoutState): MapFitPlan | null {
+export function planMapFit(overview: OverviewModel, viewport: Size, layouts?: MapLayoutCache): MapFitPlan | null {
   const availW = viewport.w - 2 * MAP_FIT_PADDING.x;
   const availH = viewport.h - MAP_FIT_PADDING.top - MAP_FIT_PADDING.bottom;
   if (availW <= 0 || availH <= 0) return null;
-  const laid = layoutMap(overview, { level: "card" }, prev);
+  const laid = layouts === undefined ? layoutMap(overview, { level: "card" }) : layouts.layoutFor(overview);
   const { w, h } = laid.bounds;
   if (w <= 0 || h <= 0) return null;
   const k = Math.min(availW / w, availH / h, 1);

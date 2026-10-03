@@ -18,6 +18,7 @@ import {
 } from "../../../test-support/canvas-view-harness.js";
 import { componentId, overviewSnapshot, syntheticOverview } from "../../../test-support/overview-builder.js";
 import { buildSession } from "../../../test-support/session-builder.js";
+import { Brief } from "../../inspector/Brief.js";
 import { Inspector } from "../../inspector/Inspector.js";
 import { KeyboardLayer } from "../../shell/KeyboardLayer.js";
 import { MapHeader } from "./MapHeader.js";
@@ -123,6 +124,39 @@ describe("MapView (spec §3.4, E13)", () => {
     const plan = planMapFit(buildOverviewModel(WEB_API_DB, 1), { w: 1200, h: 800 });
     if (plan === null) throw new Error("no fit");
     expect(transform()).toBe(`translate(${plan.camera.tx}px, ${plan.camera.ty}px) scale(${plan.camera.k})`);
+  });
+
+  it("the Brief thumbnail shows the Map's arrangement card for card after a component is added (lane 06 fix I-2)", () => {
+    const crossing = {
+      components: [
+        { rootPath: "apps/a1", role: "ui" as const },
+        { rootPath: "apps/a2", role: "ui" as const },
+        { rootPath: "pkg/x", role: "domain" as const },
+        { rootPath: "pkg/y", role: "domain" as const },
+      ],
+      edges: [{ from: "apps/a1", to: "pkg/y", count: 2 }, { from: "apps/a2", to: "pkg/x", count: 2 }],
+    };
+    const grown = overviewSnapshot({ ...crossing, components: [...crossing.components, { rootPath: "pkg/a", role: "domain" }] });
+    const harness = renderWithViewer(
+      <>
+        <MapView active />
+        <Brief />
+      </>,
+      { session: sessionWith(overviewSnapshot(crossing)), state: { view: "map" } },
+    );
+    act(() => resize.resize(1200, 800));
+    act(() => harness.setSession(sessionWith(grown)));
+    const onMap = new Map(
+      [...document.querySelectorAll<HTMLElement>("[data-map-card]")].map((element) => [element.dataset.mapCard, `${element.style.left} ${element.style.top}`]),
+    );
+    const onThumb = new Map(
+      [...document.querySelectorAll("[data-thumb-card]")].map((rect) => [rect.getAttribute("data-thumb-card") ?? "", `${rect.getAttribute("x")}px ${rect.getAttribute("y")}px`]),
+    );
+    expect(onMap.size).toBe(5);
+    expect(onThumb).toEqual(onMap);
+    // The grown snapshot's fresh arrangement differs, so only a shared sticky layout keeps the two in step.
+    const fresh = layoutMap(buildOverviewModel(grown, 1), { level: "card" });
+    expect(fresh.cards.some((card) => onMap.get(card.id) !== `${card.x}px ${card.y}px`)).toBe(true);
   });
 
   it("shows a quiet empty state without a snapshot", () => {

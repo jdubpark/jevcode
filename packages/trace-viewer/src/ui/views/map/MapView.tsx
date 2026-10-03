@@ -5,14 +5,12 @@ import {
   MAP_BAND_LABEL_H,
   MAP_LANE_PAD,
   MAP_MARGIN,
-  layoutMap,
   mapHubIds,
   mapImporterCounts,
   mapLevelForZoom,
   type MapBand,
   type MapCard as MapCardBox,
   type MapLayout,
-  type MapLayoutState,
   type MapLevel,
 } from "../../../layout/map-layout.js";
 import type { Point, Size, UniformCamera } from "../../../layout/viewport.js";
@@ -26,6 +24,7 @@ import { useView, useViewStore } from "../../state/store.js";
 import { createViewportController, type FramePhase, type ViewportController } from "../../viewport/controller.js";
 import { useRegisterViewPort, useViewPortRegistry, type ViewPort, type ViewProps } from "../view-port.js";
 import { anchoredCamera, cardCenter, MAP_ICON_ONLY_K, MAP_ZOOM_PRESETS, mapZoomLimits, planMapFit, revealCamera, zoomedAtCenter } from "./map-camera.js";
+import { useMapLayouts } from "./map-layouts.js";
 import { isMapNavKey, mapNeighbor } from "./map-nav.js";
 import { scanNote } from "./map-text.js";
 import { MapCard } from "./MapCard.js";
@@ -97,9 +96,9 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [, bump] = useReducer((n: number) => n + 1, 0);
-  const stickyRef = useRef<MapLayoutState | undefined>(undefined);
-  // Sticky (spec §8.3): each layout starts from the last committed layout's band order.
-  const layout = useMemo(() => (overview === null ? null : layoutMap(overview, { level: "card" }, stickyRef.current)), [overview]);
+  // Sticky (spec §8.3): the viewer's layout cache chains each repo's layouts, and the Brief thumbnail reads the same one.
+  const layouts = useMapLayouts();
+  const layout = useMemo(() => (overview === null ? null : layouts.layoutFor(overview)), [layouts, overview]);
   /** The cards of the last committed layout, to tell a relayout that moves cards from the first layout. */
   const prevCardsRef = useRef<readonly MapCardBox[] | null>(null);
   /** Relayouts that moved cards so far; its parity picks the edge-fade keyframes, so back-to-back fades replay. */
@@ -136,7 +135,6 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
 
   useLayoutEffect(() => {
     latest.current = { overview, cards: layout?.cards ?? null, bounds: layout?.bounds ?? null, level, active };
-    if (layout !== null) stickyRef.current = layout.state;
   });
 
   // Spec E12: a new layout that moved placed cards marks the world in the same frame as the new positions, so the CSS
@@ -241,14 +239,14 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     (animate: boolean): boolean => {
       const current = latest.current;
       if (current.overview === null || controllerRef.current === null) return false;
-      const plan = planMapFit(current.overview, sizeRef.current, stickyRef.current);
+      const plan = planMapFit(current.overview, sizeRef.current, layouts);
       if (plan === null) return false;
       lastFitRef.current = plan.camera;
       if (plan.level !== current.level) setLevel(plan.level);
       moveTo(plan.camera, animate);
       return true;
     },
-    [moveTo],
+    [layouts, moveTo],
   );
 
   /**

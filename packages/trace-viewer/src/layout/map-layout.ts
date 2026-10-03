@@ -279,11 +279,20 @@ export function mapHubIds(layoutEdges: readonly MapEdgePath[], componentCount: n
   return hubs;
 }
 
+function placedAny(state: MapLayoutState): boolean {
+  for (const ids of state.orderByBand.values()) if (ids.length > 0) return true;
+  return false;
+}
+
+/**
+ * `prev` makes the order sticky when it is the same repo's and placed at least one card. A previous layout with no cards
+ * (a scan's first progress snapshot) is no previous layout, so the snapshot after it gets the normal fresh order.
+ */
 export function layoutMap(overview: OverviewModel, opts: { level: MapLevel }, prev?: MapLayoutState): MapLayout {
   const spec = MAP_LEVEL_SPECS[opts.level];
   const graph = buildGraph(overview);
   const repoRoot = overview.snapshot.repoRoot;
-  const order = prev !== undefined && prev.repoRoot === repoRoot ? stickyOrder(graph, prev) : freshOrder(graph);
+  const order = prev !== undefined && prev.repoRoot === repoRoot && placedAny(prev) ? stickyOrder(graph, prev) : freshOrder(graph);
   const top = MAP_MARGIN + MAP_BAND_LABEL_H;
   const pitch = spec.h + spec.rowGap;
   const bands: MapBandColumn[] = [];
@@ -315,6 +324,33 @@ export function layoutMap(overview: OverviewModel, opts: { level: MapLevel }, pr
     bands,
     bounds: { w: last === undefined ? 2 * MAP_MARGIN : last.x + last.w + MAP_MARGIN, h: top + Math.max(0, rows * pitch - spec.rowGap) + MAP_MARGIN },
     state: { orderByBand: new Map(MAP_BAND_ORDER.map((band) => [band, [...listOf(order, band)]] as const)), repoRoot },
+  };
+}
+
+/** One viewer's Map layouts (lane 06 fix I-2); see createMapLayoutCache. */
+export interface MapLayoutCache {
+  /** The card-level layout of `overview` (one geometry serves every level), made once per overview object. */
+  layoutFor(overview: OverviewModel): MapLayout;
+}
+
+/**
+ * A sticky layout cache: one layout per overview object, chained per repo, so the layout of a repo's next overview starts
+ * from the previous layout made for that repo (spec §8.3 stickiness). The Map, its Fit and the Brief thumbnail of one
+ * viewer share one cache, so the thumbnail always shows the Map's arrangement, whichever of them asked first.
+ */
+export function createMapLayoutCache(): MapLayoutCache {
+  const byOverview = new WeakMap<OverviewModel, MapLayout>();
+  const lastByRepo = new Map<string, MapLayoutState>();
+  return {
+    layoutFor(overview) {
+      const cached = byOverview.get(overview);
+      if (cached !== undefined) return cached;
+      const repoRoot = overview.snapshot.repoRoot;
+      const layout = layoutMap(overview, { level: "card" }, lastByRepo.get(repoRoot));
+      byOverview.set(overview, layout);
+      lastByRepo.set(repoRoot, layout.state);
+      return layout;
+    },
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type TraceRow,
 } from "@jevcode/contracts";
 
+import { createMapLayoutCache } from "../layout/map-layout.js";
 import { buildTimeScale, timeScaleInputOf } from "../layout/time-scale.js";
 import { buildTraceIndex, emptyTraceIndex } from "../layout/trace-index.js";
 import { compareFindings, foldRows, type TraceSession } from "../model/index.js";
@@ -24,6 +25,7 @@ import {
 } from "../ui/shell/session-context.js";
 import { createViewStore, ViewStoreContext, type ViewStore } from "../ui/state/store.js";
 import { initialViewState, type ViewState } from "../ui/state/view-state.js";
+import { MapLayoutCacheContext } from "../ui/views/map/map-layouts.js";
 import {
   createViewPortRegistry,
   ViewDefinitionsContext,
@@ -212,6 +214,8 @@ export function createHarness(session: TraceSession | null, options: HarnessOpti
     },
   };
   const host = options.host ?? {};
+  // One per viewer, as TraceViewer provides it: the Map and the Brief thumbnail share it.
+  const mapLayouts = createMapLayoutCache();
   const wrap = (node: ReactNode): ReactElement => (
     <ViewStoreContext.Provider value={store}>
       <SessionContext.Provider value={view}>
@@ -219,7 +223,9 @@ export function createHarness(session: TraceSession | null, options: HarnessOpti
           <DiagnosticsContext.Provider value={options.diagnostics ?? NO_DIAGNOSTICS}>
             <ViewPortRegistryContext.Provider value={registry}>
               <ViewDefinitionsContext.Provider value={options.views ?? []}>
-                <LiveRegion onAnnounce={(message) => announcements.push(message)}>{node}</LiveRegion>
+                <MapLayoutCacheContext.Provider value={mapLayouts}>
+                  <LiveRegion onAnnounce={(message) => announcements.push(message)}>{node}</LiveRegion>
+                </MapLayoutCacheContext.Provider>
               </ViewDefinitionsContext.Provider>
             </ViewPortRegistryContext.Provider>
           </DiagnosticsContext.Provider>

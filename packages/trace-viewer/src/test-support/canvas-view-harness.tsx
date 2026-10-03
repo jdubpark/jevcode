@@ -2,12 +2,14 @@ import { render, type RenderResult } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { vi } from "vitest";
 
+import { createMapLayoutCache } from "../layout/map-layout.js";
 import { buildTimeScale, timeScaleInputOf } from "../layout/time-scale.js";
 import { buildTraceIndex, emptyTraceIndex } from "../layout/trace-index.js";
 import type { TraceSession } from "../model/index.js";
 import { SessionContext, type SessionView } from "../ui/shell/session-context.js";
 import { ViewStoreContext, createViewStore, type ViewStore } from "../ui/state/store.js";
 import { initialViewState, type ViewState } from "../ui/state/view-state.js";
+import { MapLayoutCacheContext } from "../ui/views/map/map-layouts.js";
 import { ViewPortRegistryContext, createViewPortRegistry, type ViewPortRegistry } from "../ui/views/view-port.js";
 
 // Providers and per-test stubs for Canvas view tests. Every stub is installed by the test that calls it
@@ -50,11 +52,15 @@ export function renderWithViewer(
     view.index,
   );
   const registry = createViewPortRegistry();
+  // One per viewer, as TraceViewer provides it: the Map and the Brief thumbnail share it.
+  const mapLayouts = createMapLayoutCache();
   let current = ui;
   const tree = (value: SessionView): ReactElement => (
     <ViewStoreContext.Provider value={store}>
       <ViewPortRegistryContext.Provider value={registry}>
-        <SessionContext.Provider value={value}>{current}</SessionContext.Provider>
+        <MapLayoutCacheContext.Provider value={mapLayouts}>
+          <SessionContext.Provider value={value}>{current}</SessionContext.Provider>
+        </MapLayoutCacheContext.Provider>
       </ViewPortRegistryContext.Provider>
     </ViewStoreContext.Provider>
   );
