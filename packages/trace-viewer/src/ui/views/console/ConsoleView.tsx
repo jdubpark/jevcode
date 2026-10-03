@@ -9,7 +9,7 @@ import type { SelectionId, TraceIndex } from "../../../layout/trace-index.js";
 import { buildSearchIndex, type SearchIndex, type TraceSession } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
 import { useViewerHost } from "../../shell/host-context.js";
-import { useAnnounce } from "../../shell/LiveRegion.js";
+import { useDecisionAnswers } from "../../shell/decision-answers.js";
 import { measureFromFirstAfterPaint, PERF } from "../../shell/perf.js";
 import { searchMatches } from "../../shell/Outline/outline-rows.js";
 import { useDiagnostics, useSessionView } from "../../shell/session-context.js";
@@ -17,7 +17,7 @@ import { useDispatch, useView, useViewStore } from "../../state/store.js";
 import { extendRange, revealAlign, spineVirtualOptions } from "../hybrid/spine/scroll-sync.js";
 import { NewBadge } from "../shared/NewBadge.js";
 import { useRegisterViewPort, ViewPortRegistryContext, type ViewPort, type ViewProps, type ZoomPort } from "../view-port.js";
-import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable, isRunningRow, type AnswerState } from "./ConsoleRowView.js";
+import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable, isRunningRow } from "./ConsoleRowView.js";
 import styles from "./ConsoleView.module.css";
 
 const EMPTY_ROWS: ConsoleRowsState = { rows: [], byStep: new Map() };
@@ -82,7 +82,6 @@ export function ConsoleView({ active }: ViewProps) {
   const store = useViewStore();
   const dispatch = useDispatch();
   const host = useViewerHost();
-  const announce = useAnnounce();
   const diagnostics = useDiagnostics();
   const follow = useView((state) => state.follow);
   const selection = useView((state) => state.selection);
@@ -444,41 +443,10 @@ export function ConsoleView({ active }: ViewProps) {
     const id = consoleRowStepIds(row)[0];
     if (id !== undefined) dispatch({ type: "select", id: id as SelectionId, by: "console" });
   };
-  // Answer state lives here, by decision id, so it survives the row scrolling out of the virtual range. A decision with
-  // an answer sending or sent takes no second answer (the runtime would reject it) until the trace shows it answered.
-  const [answers, setAnswers] = useState<ReadonlyMap<string, AnswerState>>(() => new Map());
-  const answersRef = useRef(answers);
-  answersRef.current = answers;
-  const hostRef = useRef(host);
-  hostRef.current = host;
-  const announceRef = useRef(announce);
-  announceRef.current = announce;
-  const pendingAnswers = useRef(new Set<string>());
-  const answer = useCallback((decisionId: string, optionId: string): void => {
-    const send = hostRef.current.answerDecision;
-    if (send === undefined || pendingAnswers.current.has(decisionId) || answersRef.current.get(decisionId) === "sent") return;
-    pendingAnswers.current.add(decisionId);
-    const mark = (state: AnswerState): void => setAnswers((current) => new Map(current).set(decisionId, state));
-    mark("sending");
-    let sent: Promise<void>;
-    try {
-      sent = Promise.resolve(send({ decisionId, optionId }));
-    } catch (error) {
-      sent = Promise.reject(error);
-    }
-    sent.then(
-      () => {
-        pendingAnswers.current.delete(decisionId);
-        mark("sent");
-        announceRef.current("Answer sent");
-      },
-      () => {
-        pendingAnswers.current.delete(decisionId);
-        mark("failed");
-        announceRef.current("Could not send the answer");
-      },
-    );
-  }, []);
+  // Answer state is the viewer's (shell/decision-answers.ts), by decision id: it survives the row scrolling out of the
+  // virtual range and the Brief's cards share it. An answer sending or sent takes no second one (the runtime would
+  // reject it) until the trace shows the decision answered.
+  const { states: answers, answer } = useDecisionAnswers();
 
   if (session === null) {
     return (

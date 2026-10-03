@@ -15,6 +15,7 @@ import { buildTraceIndex, emptyTraceIndex } from "../layout/trace-index.js";
 import { compareFindings, foldRows, type TraceSession } from "../model/index.js";
 import { isTerminalState, type DataStatus } from "../ui/shell/data-controller.js";
 import type { ViewerHost } from "../ui/shell/host.js";
+import { createDecisionAnswerStore, DecisionAnswersContext } from "../ui/shell/decision-answers.js";
 import { ViewerHostContext } from "../ui/shell/host-context.js";
 import { LiveRegion } from "../ui/shell/LiveRegion.js";
 import {
@@ -214,12 +215,15 @@ export function createHarness(session: TraceSession | null, options: HarnessOpti
     },
   };
   const host = options.host ?? {};
+  // One per harness, as the Shell keeps one per session: every surface the harness renders shares the answers.
+  const answers = createDecisionAnswerStore();
   // One per viewer, as TraceViewer provides it: the Map and the Brief thumbnail share it.
   const mapLayouts = createMapLayoutCache();
   const wrap = (node: ReactNode): ReactElement => (
     <ViewStoreContext.Provider value={store}>
       <SessionContext.Provider value={view}>
         <ViewerHostContext.Provider value={host}>
+          <DecisionAnswersContext.Provider value={answers}>
           <DiagnosticsContext.Provider value={options.diagnostics ?? NO_DIAGNOSTICS}>
             <ViewPortRegistryContext.Provider value={registry}>
               <ViewDefinitionsContext.Provider value={options.views ?? []}>
@@ -229,6 +233,7 @@ export function createHarness(session: TraceSession | null, options: HarnessOpti
               </ViewDefinitionsContext.Provider>
             </ViewPortRegistryContext.Provider>
           </DiagnosticsContext.Provider>
+          </DecisionAnswersContext.Provider>
         </ViewerHostContext.Provider>
       </SessionContext.Provider>
     </ViewStoreContext.Provider>

@@ -3,10 +3,14 @@ import type { NarrativeSentence } from "@jevcode/contracts";
 import type { DecisionDetail, DecisionStableId, DecisionTradeoff, Step, StepId, TraceSession } from "../model/index.js";
 import { componentForPath } from "./map-layout.js";
 
-// Spec §3.5: a decision is a card in the Brief's Now while it is pending; the latest answered one stays
-// with its narrator "why" and the components it affected. Pure; cached per session object.
+// Spec §3.5: a decision is a card in the Brief's Now while it is pending; the latest decided ones stay, with
+// their narrator "why" and the components they affected (two, as the approved H3 mockup shows). Pure; cached per
+// session object.
 
+/** Open decisions the Brief shows as cards, oldest first. */
 export const BRIEF_DECISIONS_MAX = 3;
+/** Answered or delegated decisions the Brief keeps under Decisions, newest first. */
+export const BRIEF_DECIDED_MAX = 2;
 const COMPONENTS_MAX = 6;
 
 export interface BriefDecisionCard {
@@ -58,18 +62,21 @@ function cardOf(session: TraceSession, step: Step, decision: DecisionDetail): Br
   };
 }
 
-/** Open decisions oldest first, then the latest answered or delegated one; at most BRIEF_DECISIONS_MAX. */
+/**
+ * Open decisions oldest first (at most BRIEF_DECISIONS_MAX), then the answered or delegated ones newest first (at most
+ * BRIEF_DECIDED_MAX). A decision step sits at its first row, so "newest" is by step order.
+ */
 export function buildBriefDecisions(session: TraceSession): readonly BriefDecisionCard[] {
   const cached = cache.get(session);
   if (cached !== undefined) return cached;
   const open: Step[] = [];
-  let latestClosed: Step | undefined;
+  const closed: Step[] = [];
   for (const step of session.steps) {
     const status = step.decision?.status;
     if (status === "open") open.push(step);
-    else if (status === "answered" || status === "delegated") latestClosed = step;
+    else if (status === "answered" || status === "delegated") closed.push(step);
   }
-  const picked = [...open, ...(latestClosed !== undefined ? [latestClosed] : [])].slice(0, BRIEF_DECISIONS_MAX);
+  const picked = [...open.slice(0, BRIEF_DECISIONS_MAX), ...closed.reverse().slice(0, BRIEF_DECIDED_MAX)];
   const cards = picked.flatMap((step) => (step.decision === undefined ? [] : [cardOf(session, step, step.decision)]));
   cache.set(session, cards);
   return cards;

@@ -456,6 +456,22 @@ describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
     expect(decisions.getByText("Fail open · chosen by you")).toBeTruthy();
   });
 
+  it("keeps the two latest decided cards under Decisions · 2, newest first (the H3 mockup)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add a limiter" });
+    for (const [id, title] of [["k1", "Key scheme?"], ["k2", "Redis down?"], ["k3", "Log level?"]] as const) {
+      b.decision({ id, title, status: "open", options: CHOICES });
+      b.decision({ id, title, status: "answered", options: CHOICES, answer: { decisionId: id, decision: { decision: "closed" }, evidence: [] } });
+    }
+    renderHarness(<Brief />, foldLive(b, "running"));
+    const part = screen.getByRole("heading", { name: /^Decisions/ }).parentElement as HTMLElement;
+    expect(screen.getByRole("heading", { name: /^Decisions/ }).textContent).toBe("Decisions · 2");
+    expect(within(part).getAllByRole("region", { name: /^Decision card/ }).map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Decision card: Log level?",
+      "Decision card: Redis down?",
+    ]);
+  });
+
   it("answers through the host by pointer, with Choose disabled while the answer is on its way and after it is sent", async () => {
     let settle: () => void = () => undefined;
     const answerDecision = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));

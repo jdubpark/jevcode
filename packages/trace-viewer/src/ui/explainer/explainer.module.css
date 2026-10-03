@@ -108,6 +108,15 @@
   background: var(--tv-accent-soft);
 }
 
+/* The card takes focus when the one that held it was replaced; a ring only for keyboard focus. */
+.card:focus {
+  outline: none;
+}
+
+.card:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--tv-accent);
+}
+
 .cardHead {
   display: flex;
   align-items: flex-start;
