@@ -3,6 +3,7 @@ import type {
   ChangeUnit,
   Decision,
   EvidenceFact,
+  ExplainerRecord,
   JevDecisionLog,
   NormalizedAgentEvent,
   OverviewSnapshot,
@@ -24,6 +25,8 @@ export type UnitInput = Partial<ChangeUnit> & Pick<ChangeUnit, "id" | "files">;
 export type DecisionInput = Partial<Decision> & Pick<Decision, "id">;
 export type ValidationInput = Omit<ValidationResult, "ts"> & { ts?: string };
 export type JevInput = Partial<JevDecisionLog> & Pick<JevDecisionLog, "id" | "clamps">;
+
+export type ExplainerInput = DistributiveOmit<ExplainerRecord, "sessionId">;
 
 export function testMeta(overrides: Partial<TraceSessionSummary> = {}): TraceSessionSummary {
   return {
@@ -119,6 +122,10 @@ export class TraceBuilder {
 
   overview(snapshot: OverviewSnapshot, ts?: string): number {
     return this.raw("overview_snapshot", snapshot, this.nextTs(ts));
+  }
+
+  explainer(input: ExplainerInput, ts?: string): number {
+    return this.raw("explainer", { ...input, sessionId: SESSION_ID }, ts);
   }
 
   jev(input: JevInput): number {

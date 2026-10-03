@@ -49,7 +49,14 @@ function decisionDetail(decision: Decision): DecisionDetail {
     title: decision.title,
     severity: decision.severity,
     status: decision.status,
-    options: decision.options.map((option) => ({ id: option.id, label: option.label, chosen: chosen.has(option.id) })),
+    options: decision.options.map((option) => ({
+      id: option.id,
+      label: option.label,
+      chosen: chosen.has(option.id),
+      ...(option.tradeoffs !== undefined && option.tradeoffs.length > 0
+        ? { tradeoffs: option.tradeoffs.map((tradeoff) => ({ dimension: tradeoff.dimension, consequence: tradeoff.consequence })) }
+        : {}),
+    })),
     ...(decidedBy !== undefined ? { decidedBy } : {}),
   };
 }
