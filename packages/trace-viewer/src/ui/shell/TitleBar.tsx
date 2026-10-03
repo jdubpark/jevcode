@@ -105,6 +105,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
       ? 0
       : session.findings.filter((finding) => finding.severity === "critical" && finding.anchorSeq > lastSeenSeq).length;
   const gaps = session?.gaps ?? [];
+  const gapsText = gaps.length === 1 ? "1 gap" : `${gaps.length} gaps`;
   const approximate = session?.coverage.approximateJoins ?? false;
 
   const jumpToSeq = (seq: number): void => {
@@ -168,12 +169,22 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           <button
             type="button"
             ref={gapsPopover.triggerRef}
-            className={styles.chip}
+            className={embedded ? `${styles.chip} ${styles.chipCompact}` : styles.chip}
             data-tone="neutral"
             aria-expanded={gapsOpen}
+            // Embedded (the main window, from 880 px): icon and count only, the full text as name and tooltip.
+            aria-label={embedded ? gapsText : undefined}
+            title={embedded ? gapsText : undefined}
             onClick={() => setGapsOpen((open) => !open)}
           >
-            {gaps.length === 1 ? "1 gap" : `${gaps.length} gaps`}
+            {embedded ? (
+              <>
+                <Icon name="eyeoff" size={12} />
+                {gaps.length}
+              </>
+            ) : (
+              gapsText
+            )}
           </button>
           {gapsOpen ? (
             <ul className={styles.popover} aria-label="Gaps">
