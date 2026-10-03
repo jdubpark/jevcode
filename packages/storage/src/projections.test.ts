@@ -412,3 +412,21 @@ describe("projectionVersion (lane 07 PL-3)", () => {
     db.close();
   });
 });
+
+describe("listChangeUnitVersions (lane 07 PL-3)", () => {
+  it("lists each unit's id and last-write seq in listChangeUnits' order", () => {
+    const db = openSessionDb();
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_a", updatedAt: "2026-10-03T00:00:01.000Z" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_b", updatedAt: "2026-10-03T00:00:02.000Z" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_c", updatedAt: "2026-10-03T00:00:02.000Z" }));
+    const first = db.listChangeUnitVersions(SESSION);
+    expect(first.map((entry) => entry.id)).toEqual(db.listChangeUnits(SESSION).map((unit) => unit.id));
+    // A write moves the unit's seq (and its place when its updatedAt moves).
+    const rewritten = db.upsertChangeUnit(makeChangeUnit({ id: "cu_a", updatedAt: "2026-10-03T00:00:03.000Z" }));
+    const second = db.listChangeUnitVersions(SESSION);
+    expect(second.map((entry) => entry.id)).toEqual(db.listChangeUnits(SESSION).map((unit) => unit.id));
+    expect(second[0]).toEqual({ id: "cu_a", seq: rewritten.seq });
+    expect(second.find((entry) => entry.id === "cu_b")).toEqual(first.find((entry) => entry.id === "cu_b"));
+    db.close();
+  });
+});

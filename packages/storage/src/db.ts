@@ -815,6 +815,17 @@ export class JevcodeDb {
     return rows.map((row) => changeUnitFromRow(row.id, row));
   }
 
+  /**
+   * Each change unit's id and the seq of the event that last wrote it, in listChangeUnits' order, without reading
+   * the units. A reader that keeps the units reads only the rows whose seq moved (lane 07 PL-3: the pipeline's unit
+   * store; a full read takes 31-35 ms at 2,937 units).
+   */
+  listChangeUnitVersions(sessionId: string): { id: string; seq: number }[] {
+    return this.statements
+      .prepare("SELECT id, seq FROM change_units WHERE sessionId = ? ORDER BY updatedAt DESC")
+      .all(sessionId) as { id: string; seq: number }[];
+  }
+
   latestChangeUnits(sessionId: string, n: number): ChangeUnit[] {
     return this.listChangeUnits(sessionId).slice(0, n);
   }
