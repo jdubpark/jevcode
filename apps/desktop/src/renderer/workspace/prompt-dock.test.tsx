@@ -25,6 +25,7 @@ function Harness(props: {
   state: SessionStatePayload["state"] | null;
   pending?: PromptDockProps["pending"];
   held?: ComposerPrefillPayload;
+  noteTargetPrompt?: string;
 }) {
   const [composer, dispatch] = useReducer(composerReducer, "s1", initialComposer);
   useEffect(() => {
@@ -38,7 +39,7 @@ function Harness(props: {
       composer={composer}
       dispatch={dispatch}
       pending={props.pending ?? []}
-      noteTargetPrompt={undefined}
+      noteTargetPrompt={props.noteTargetPrompt}
     />
   );
 }
@@ -165,6 +166,16 @@ describe("PromptDock (spec §3.1, §3.7)", () => {
       expect(notice.textContent).toContain("Trace note for another session");
       fireEvent.click(screen.getByRole("button", { name: "Switch" }));
       await waitFor(() => expect(bridge.session.switchTo).toHaveBeenCalledWith("s2"));
+    });
+
+    it("names the other session through displayUntrusted, with its whole prompt as the tooltip (fix wave minor 6)", async () => {
+      const prompt = `Fix the \u202Elogin ${"z".repeat(120)} flow`;
+      render(<Harness bridge={fakeBridge()} state="running" held={HELD} noteTargetPrompt={prompt} />);
+      const target = (await screen.findByRole("status")).querySelector(".dock-note-target") as HTMLElement;
+      expect(target.textContent).not.toContain("\u202E");
+      expect(target.textContent).toContain("⟨U+202E⟩");
+      expect(target.textContent?.length).toBeLessThan(prompt.length);
+      expect(target.getAttribute("title")).toBe(`Fix the ⟨U+202E⟩login ${"z".repeat(120)} flow`);
     });
 
     it("Dismiss removes the notice without switching or touching the draft", async () => {

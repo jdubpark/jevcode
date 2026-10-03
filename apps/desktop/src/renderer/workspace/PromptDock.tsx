@@ -2,7 +2,7 @@ import { agentStateLabel, displayUntrusted } from "@jevcode/trace-viewer/model";
 import { useEffect, useRef, useState, type Dispatch } from "react";
 
 import type { AgentInstructionStatePayload, JevcodeApi } from "../../shared/api.js";
-import { traceNoteTarget, type ComposerEvent, type ComposerState } from "../components/composer-prefill.js";
+import { traceNoteTarget, traceNoteTargetTitle, type ComposerEvent, type ComposerState } from "../components/composer-prefill.js";
 import { Glyph } from "../components/glyph.js";
 import type { SessionStatePayload } from "../payload-types.js";
 
@@ -109,7 +109,9 @@ export function PromptDock(props: PromptDockProps) {
       {note !== null ? (
         <p className="dock-note" role="status">
           {note.replaced ? "Newer trace note for another session replaced the earlier one" : "Trace note for another session"}{" "}
-          <span className="dock-note-target">({traceNoteTarget(props.noteTargetPrompt, note.note.sessionId)})</span>{" "}
+          <span className="dock-note-target" title={traceNoteTargetTitle(props.noteTargetPrompt, note.note.sessionId)}>
+            ({traceNoteTarget(props.noteTargetPrompt, note.note.sessionId)})
+          </span>{" "}
           <button type="button" className="dock-link" onClick={switchToNote}>
             Switch
           </button>{" "}
