@@ -1076,3 +1076,55 @@ describe("session explainer: sessions and restarts", () => {
     expect(again.storyCalls).toHaveLength(1);
   });
 });
+
+describe("session explainer: fold slices (PL-3)", () => {
+  /** A session whose rows a single sync folds: units across components, test runs, an answered decision. */
+  const longSession = (w: World): { units: ChangeUnit[]; decisions: Decision[] } => {
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.overview([SERVER, REDIS]);
+    const units: ChangeUnit[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      w.agent({ type: "file_changed", path: `src/server/f${i}.ts` });
+      units.push(w.unit(`u${i}`, [i % 2 === 0 ? `src/server/f${i}.ts` : `src/redis/f${i}.ts`], i % 5 === 0 ? "validated" : "in_progress"));
+      if (i % 10 === 9) w.tests(i === 39 ? 1 : 0, "src/redis/limiter.test.ts");
+      w.agent({ type: "agent_message", role: "assistant", text: `Step ${i}.` });
+    }
+    const decision = w.decision("d1", "answered", ["u1"], "fail_open");
+    w.agent({ type: "agent_completed" });
+    return { units, decisions: [decision] };
+  };
+
+  it("settles and yields between slices of one sync's rows, and writes the rows one unsliced fold writes", async () => {
+    const run = async (foldSliceMs: number): Promise<{ rows: ExplainerRecord[]; turns: number }> => {
+      const w = new World();
+      const { units, decisions } = longSession(w);
+      const explainer = createSessionExplainer({ ...w.deps(null), foldSliceMs });
+      let turns = 0;
+      let counting = true;
+      const tick = (): void => {
+        turns += 1;
+        if (counting) setImmediate(tick);
+      };
+      setImmediate(tick);
+      explainer.onPipelineSync(w.sync(units, decisions));
+      await explainer.idle();
+      counting = false;
+      expect(w.logs.filter((event) => event.kind === "error")).toEqual([]);
+      return { rows: w.rows().map((row) => row.record), turns };
+    };
+    const traceRows = (() => {
+      const w = new World();
+      longSession(w);
+      return w.db.listEvents(SESSION, { limit: 10_000 }).filter((event) => isTraceRowType(event.type)).length;
+    })();
+    // foldSliceMs 0: every row is settled (an incremental finalize) and followed by a yield, so other tasks run
+    // between them. Infinity: the fold of one sync is one block, as before PL-3.
+    const sliced = await run(0);
+    const whole = await run(Number.POSITIVE_INFINITY);
+    expect(sliced.turns).toBeGreaterThanOrEqual(traceRows);
+    expect(whole.turns).toBeLessThan(10);
+    // Incremental equals fresh (S-3): the slices change no row the explainer writes.
+    expect(sliced.rows.map((row) => row.kind)).toEqual(["highlights", "story"]);
+    expect(sliced.rows).toEqual(whole.rows);
+  });
+});
