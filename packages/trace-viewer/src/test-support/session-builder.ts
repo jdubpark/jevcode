@@ -1,8 +1,8 @@
-import type { AgentState, ChangeCategory, ChangeUnitStatus } from "@jevcode/contracts";
+import type { AgentState, ChangeCategory, ChangeUnitStatus, OverviewSnapshot } from "@jevcode/contracts";
 
 import type { BandSpan, LaneMarks, OverviewIndex } from "../layout/overview-index.js";
 import {
-  CAPABILITIES, decisionStableId, fileStableId, findingStableId, LANES, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
+  buildOverviewModel, CAPABILITIES, decisionStableId, fileStableId, findingStableId, LANES, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
   type Actor, type Chapter, type ClaimObservation, type CommandDetail, type DecisionDetail, type EditDetail, type Entity,
   type Finding, type Gap, type GapKind, type GuardrailDetail, type Lane, type NoiseReason, type ProblemKind, type Severity,
   type SignalId, type Step, type StepKind, type StepStatus, type TestDetail, type TraceSession, type Turn, type TurnOutcome,
@@ -79,6 +79,8 @@ export interface SessionSeed {
   approximateJoins?: boolean;
   /** Seqs the source filtered out after the last step (Hidden.unreceived). */
   trailingHiddenRows?: number;
+  /** An overview_snapshot to fold into session.overview (seq = loadedThroughSeq). */
+  overview?: OverviewSnapshot;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -323,6 +325,7 @@ export function buildSession(seed: SessionSeed): TraceSession {
       inferredSteps: 0,
     },
     hidden: { byType: {}, unreceived: seed.trailingHiddenRows ?? 0 },
+    overview: seed.overview === undefined ? null : buildOverviewModel(seed.overview, Math.max(1, loadedThroughSeq)),
   };
 }
 

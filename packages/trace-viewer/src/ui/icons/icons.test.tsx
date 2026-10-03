@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { ChangeCategorySchema } from "@jevcode/contracts";
+import { ChangeCategorySchema, ROLES } from "@jevcode/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -7,7 +7,7 @@ import { LANES, SIGNAL_IDS, STEP_KINDS } from "../../model/index.js";
 import { Icon } from "./Icon.js";
 import { ICON_NAMES } from "./icon-names.js";
 import { IconSprite } from "./IconSprite.js";
-import { CATEGORY_ICON, KIND_ICON, LANE_ICON, LANE_LABEL, SIGNAL_ICON } from "./kind-icons.js";
+import { CATEGORY_ICON, KIND_ICON, LANE_ICON, LANE_LABEL, ROLE_ICON, ROLE_LABEL, SIGNAL_ICON } from "./kind-icons.js";
 import { ICON_PATHS } from "./paths.js";
 
 afterEach(() => cleanup());
@@ -62,5 +62,15 @@ describe("icon family", () => {
     for (const signal of SIGNAL_IDS) expect(names.has(SIGNAL_ICON[signal]), signal).toBe(true);
     expect(KIND_ICON.command).toBe("term");
     expect(CATEGORY_ICON.schema).toBe("table");
+  });
+});
+
+describe("role icons (spec §3.6)", () => {
+  it("maps every role to a real icon and a label", () => {
+    const names = new Set<string>(ICON_NAMES);
+    for (const role of ROLES) {
+      expect(names.has(ROLE_ICON[role]), role).toBe(true);
+      expect(ROLE_LABEL[role].length, role).toBeGreaterThan(0);
+    }
   });
 });

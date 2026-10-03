@@ -1,4 +1,4 @@
-import type { ChangeCategory } from "@jevcode/contracts";
+import type { ChangeCategory, Role } from "@jevcode/contracts";
 
 import type { Lane, SignalId, StepKind } from "../../model/index.js";
 import type { IconName } from "./icon-names.js";
@@ -25,3 +25,26 @@ export const CATEGORY_ICON = {
 export const SIGNAL_ICON = {
   claim_contradicted: "neq", failing_tests: "test", destructive_command: "term", guardrail_clamp: "shield", recovery_arc: "check",
 } as const satisfies Record<SignalId, IconName>;
+
+/** Map role icons (spec §3.6); tests reuse the test flask, external packages use `pkg`. */
+export const ROLE_ICON: { readonly [K in Role]: IconName } = {
+  ui: "role-ui",
+  api: "role-api",
+  agent: "role-agent",
+  domain: "role-domain",
+  storage: "role-storage",
+  tests: "test",
+  tooling: "role-tooling",
+  config: "role-config",
+};
+
+export const ROLE_LABEL: { readonly [K in Role]: string } = {
+  ui: "UI",
+  api: "API",
+  agent: "Agent",
+  domain: "Domain",
+  storage: "Storage",
+  tests: "Tests",
+  tooling: "Tooling",
+  config: "Config",
+};

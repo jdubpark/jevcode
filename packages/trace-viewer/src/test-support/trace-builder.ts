@@ -5,6 +5,7 @@ import type {
   EvidenceFact,
   JevDecisionLog,
   NormalizedAgentEvent,
+  OverviewSnapshot,
   TraceRow,
   TraceSessionSummary,
   ValidationResult,
@@ -114,6 +115,10 @@ export class TraceBuilder {
   validation(input: ValidationInput): number {
     const ts = this.nextTs(input.ts);
     return this.raw("validation", { ...input, ts }, ts);
+  }
+
+  overview(snapshot: OverviewSnapshot, ts?: string): number {
+    return this.raw("overview_snapshot", snapshot, this.nextTs(ts));
   }
 
   jev(input: JevInput): number {

@@ -7,3 +7,6 @@ export * from "./fold.js";
 export * from "./signals.js";
 export * from "./search.js";
 export * from "./lookup.js";
+export { buildOverviewModel } from "./fold-overview.js";
+export { componentIdForPath } from "./component-path.js";
+export { overviewStatusOf } from "./overview-status.js";

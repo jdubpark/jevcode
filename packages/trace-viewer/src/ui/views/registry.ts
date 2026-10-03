@@ -3,20 +3,19 @@ import type { ViewKind } from "../state/view-state.js";
 import { CanvasView } from "./canvas/CanvasView.js";
 import { ConsoleView } from "./console/ConsoleView.js";
 import { HybridView } from "./hybrid/HybridView.js";
-import { MapPlaceholder } from "./placeholder/ViewPlaceholder.js";
+import { MapView } from "./map/MapView.js";
 import type { ViewDefinition } from "./view-port.js";
 
 export type { ViewDefinition, ViewProps } from "./view-port.js";
 
 /**
- * Switch and key order (spec §3.7, §8.6, interfaces §6.2): Console 0, Canvas 1, Hybrid 2, Map 3. The Map slot holds a
- * quiet placeholder until lane 06's MapView replaces it, so the keys never move.
+ * Switch and key order (spec §3.7, §8.6, interfaces §6.2): Console 0, Canvas 1, Hybrid 2, Map 3.
  */
 export const VIEWS: readonly ViewDefinition[] = [
   { kind: "console", label: "Console", icon: "view-console", Component: ConsoleView },
   { kind: "canvas", label: "Canvas", icon: "view-canvas", Component: CanvasView },
   { kind: "hybrid", label: "Hybrid", icon: "view-hybrid", Component: HybridView },
-  { kind: "map", label: "Map", icon: "view-map", Component: MapPlaceholder },
+  { kind: "map", label: "Map", icon: "view-map", Component: MapView },
 ];
 
 /** true: hidden views stay mounted under <Activity mode="hidden">; the spike risk 6 ruling sets false (unmount). */

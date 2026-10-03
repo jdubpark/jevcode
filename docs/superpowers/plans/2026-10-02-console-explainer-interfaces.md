@@ -390,7 +390,7 @@ The lane files were drafted against the real code, and some names above had to c
 ### 8.4 Viewer (lanes 02, 06, 07)
 
 - **Location and keys.** `ViewerLocation.view` is optional and accepts any lower-case kind; `InitialViewStateInput.view?` is added. R5: key `0` is Console, and zoom to preset moves to Shift+0.
-- **View state.** `ViewState.brief` with action `brief/toggle`. `ViewState.mapSelection` with action `map/select`; Esc on the Map clears the selection first.
+- **View state.** `ViewState.brief` with action `brief/toggle`. `ViewState.mapSelection` with action `map/select`; Esc on the Map clears the selection first. Lane 06 fix wave: selecting a step or unit (any `select`, `nav`, search or `nav/first`/`nav/last`) clears `mapSelection` (I-1); on the Map, `brief/toggle` pins the Brief over a selected component and `map/select` unpins it (minor 3).
 - **Exports and icons.** The viewer exports `useView`, `useDispatch`, `useSessionView`, `ViewDefinition`, `ViewProps`, `ViewKind` and `IconName`. New icons: `view-console`, `view-map`, `view-surfaces` and `brief`.
 - **Host and chrome.** `ViewPort.toggle?` and `ViewerHostContext` / `useViewerHost` are added. Embedded chrome also hides the Outline.
 - **Push hints.** `HINT_COMMIT_GAP_MS = 50`, and hints are ignored while reconnecting. `StaticBundleSource.onRowsAvailable` is added.
@@ -399,11 +399,12 @@ The lane files were drafted against the real code, and some names above had to c
   - `MapLayout` gains `level` and `bands`. `MapBandColumn` is `{ band, x, w, count }`; `MapLevelSpec` is `{ w, h, rowGap, gutter, sideW, chips: 0 }` with one shared geometry for all three levels.
   - `MapEdgePath` gains `kind: "adjacent" | "long" | "same"` (`MapEdgeKind`); additive to §6.6.
   - `src/layout/map-layout.ts` also exports `mapHubIds(layoutEdges, componentCount): ReadonlySet<string>` (components with at least `max(6, ceil(n / 4))` distinct importers), `mapImporterCounts(layoutEdges): ReadonlyMap<string, number>`, `MAP_MARGIN` (16), `MAP_BAND_LABEL_H` (44), `MAP_LANE_PAD` (6, view only) and `MAP_SWEEPS`. `layoutMap` places no external chips (`externals` is always `[]`).
-  - Zoom bands are `chip` < 0.7 ≤ `card` < 1.4 ≤ `detail` (`mapLevelForZoom`); `map-camera.ts` has `MAP_FIT_PADDING` (`{ x: 20, top: 20, bottom: 68 }`) and `MAP_ICON_ONLY_K` (0.48), and `planMapFit` makes one layout.
+  - Zoom bands are `chip` < 0.7 ≤ `card` < 1.4 ≤ `detail` (`mapLevelForZoom`); `map-camera.ts` has `MAP_FIT_PADDING` (`{ x: 20, top: 20, bottom: 68 }`) and `MAP_ICON_ONLY_K` (0.48), and `planMapFit(overview, viewport, layouts?)` makes at most one layout.
+  - Lane 06 fix wave I-2: `map-layout.ts` exports `MapLayoutCache` and `createMapLayoutCache()` (one card-level layout per overview object, chained per repo). Each viewer holds one cache through `MapLayoutCacheContext` / `useMapLayouts()` (`src/ui/views/map/map-layouts.ts`), shared by the Map, its Fit and the Brief thumbnail. `layoutMap` treats a `prev` with no placed cards as no `prev`.
   - `src/ui/views/map/MapEdges.tsx` exports `MAP_EDGE_STROKE` (1, 1.6, 2.4 px) and `hubStubPath`; `map-text.ts` exports `linkSentence`; `MapHeader` gains the optional props `selectedId` and `onHoverComponent`.
   - The `role-*` icons gain `fan-in` (the hub glyph). `src/layout/map-details.ts` exports `topPackages`, `fileBarPercent`, `listBarPx` and `LIST_BAR_MAX_PX`.
   - `buildOverviewModel` and `overviewStatusOf` are exported.
-  - R6: lane 06's P-1 creates `src/model/component-path.ts` with `componentIdForPath`, and lane 07 consumes it.
+  - R6: lane 06's P-1 creates `src/model/component-path.ts` with `componentIdForPath`, and lane 07 consumes it. The rule: the component that lists the file, then the longest whole-segment root; an unclaimed root-level path (no `/`) goes to `"."` (else to `"(other)"`), an unclaimed nested path to `"(other)"` when the snapshot has one; otherwise null. `"."` holds root-level files only, so a nested path never resolves to it, and every caller tolerates null (lane 06 fix wave I-3).
   - Lane 07 fills the `mapOverlayOf` seam in `ui/views/map/overlay.ts`.
 - **Lane 02b additions (fix wave, binding for lanes 03, 06 and 07).**
   - `ConsoleRow` gains `{ kind: "guardrails"; key: "guardrails:<first finding id>"; stepIds; findingIds; findingStepIds }`: consecutive warning guardrail-clamp flag lines fold into one "Jev review · n guardrails" row; a warning flag line is keyed `guardrails:<finding id>` from the start; critical findings never fold. `consoleRowStepIds(row)` covers every kind; read a row's anchor through it.

@@ -14,7 +14,7 @@ interface Harness {
   state: { hand: boolean; reduced: boolean };
 }
 
-function setup(options: { settleRoundK?: number } = {}): Harness {
+function setup(options: { settleRoundK?: number; clientOrigin?: () => { x: number; y: number } | null } = {}): Harness {
   const element = document.createElement("div");
   document.body.append(element);
   vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
@@ -38,6 +38,7 @@ function setup(options: { settleRoundK?: number } = {}): Harness {
     isHandTool: () => state.hand,
     reducedMotion: () => state.reduced,
     settleRoundK: options.settleRoundK ?? null,
+    ...(options.clientOrigin === undefined ? {} : { clientOrigin: options.clientOrigin }),
     raf: (cb) => { queue.push(cb); return queue.length; },
     cancelRaf: () => { queue.length = 0; },
     setTimer: (cb, ms) => setTimeout(cb, ms),
@@ -251,6 +252,25 @@ describe("viewport controller", () => {
     for (const callback of observers) callback([], {} as ResizeObserver);
     wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 400, clientY: 300 });
     expect(measure).toHaveBeenCalledTimes(3);
+  });
+
+  it("a view that keeps the client origin current saves the zoom gesture its measure; null falls back to measuring", () => {
+    let origin: { x: number; y: number } | null = { x: 100, y: 50 };
+    const h = setup({ clientOrigin: () => origin });
+    const measure = vi.mocked(h.element.getBoundingClientRect);
+    measure.mockClear();
+    // The cursor at client (500, 350) is local (400, 300): that world point stays under it.
+    wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 500, clientY: 350 });
+    h.flush();
+    const camera = h.controller.get();
+    expect(camera.k).toBeGreaterThan(1);
+    expect((400 - camera.tx) / camera.k).toBeCloseTo(400, 6);
+    expect((300 - camera.ty) / camera.k).toBeCloseTo(300, 6);
+    expect(measure).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(SETTLE_MS);
+    origin = null;
+    wheel(h.element, { deltaY: -10, ctrlKey: true, clientX: 500, clientY: 350 });
+    expect(measure).toHaveBeenCalledTimes(1);
   });
 
   it("a zoom wheel that is a no-op at the zoom limit leaves no cached origin behind", () => {

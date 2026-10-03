@@ -135,6 +135,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/coverage/**",
       "**/.jevcode/**",
+      ".superpowers/**",
       "fixtures/**",
       "scripts/**",
       "apps/**/scripts/**",

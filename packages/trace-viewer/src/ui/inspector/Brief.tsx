@@ -6,6 +6,8 @@ import {
   agentStateLabel,
   displayUntrusted,
   formatDuration,
+  overviewStatusOf,
+  type OverviewModel,
   type Chapter,
   type Step,
   type StepId,
@@ -18,11 +20,14 @@ import { TestDots } from "../graphics/TestDots.js";
 import type { IconName } from "../icons/icon-names.js";
 import { Icon } from "../icons/Icon.js";
 import { CATEGORY_ICON, KIND_ICON } from "../icons/kind-icons.js";
+import { useViewerHost } from "../shell/host-context.js";
 import { displaySpanMs } from "../shell/TitleBar.js";
 import { useSessionView } from "../shell/session-context.js";
-import { useDispatch } from "../state/store.js";
+import { useDispatch, useView } from "../state/store.js";
+import { narratorNote } from "../views/map/map-text.js";
 import { ViewDefinitionsContext } from "../views/view-port.js";
 import styles from "./Brief.module.css";
+import { MapThumbnail } from "./MapThumbnail.js";
 
 /** Changes the list shows before "n more" (the Changes list is a summary; the views hold the rest). */
 export const BRIEF_CHANGES_SHOWN = 8;
@@ -47,7 +52,7 @@ export interface BriefViewProps {
   nowT: number;
   onSelect(id: SelectionId): void;
   onOpenMap(): void;
-  /** A Map view is registered (always in v1; the button hides otherwise). */
+  /** A Map view is registered and is not the one shown (the "Open the map" button hides otherwise). */
   mapAvailable: boolean;
 }
 
@@ -286,7 +291,19 @@ function EditedFiles({ files, onSelect }: { files: readonly EditedFile[]; onSele
   );
 }
 
-function Architecture({ architecture, onOpenMap, mapAvailable }: { architecture: BriefArchitecture | null; onOpenMap(): void; mapAvailable: boolean }) {
+function Architecture({
+  architecture,
+  overview,
+  onOpenMap,
+  mapAvailable,
+}: {
+  architecture: BriefArchitecture | null;
+  overview: OverviewModel | null;
+  onOpenMap(): void;
+  mapAvailable: boolean;
+}) {
+  // First, so the hook order never changes between the empty, scanning and filled states.
+  const host = useViewerHost();
   if (architecture === null) {
     return (
       <div className={styles.empty}>
@@ -298,29 +315,62 @@ function Architecture({ architecture, onOpenMap, mapAvailable }: { architecture:
       </div>
     );
   }
-  if (architecture.scanning !== null) {
-    const { done, total } = architecture.scanning;
-    const share = total > 0 ? Math.min(1, done / total) : 0;
+  const scanning = architecture.scanning;
+  const scanText = scanning === null ? null : `Mapping codebase · ${scanning.done.toLocaleString("en-US")} / ${scanning.total.toLocaleString("en-US")} files`;
+  const scanShare = scanning === null || scanning.total <= 0 ? 0 : Math.min(1, scanning.done / scanning.total);
+  // A first scan has no components yet: the progress box alone. A rescan's progress rows carry the previous components
+  // (spec §5.5), so the map stays and the progress is one quiet line under the counts (lane 06 fix I-4).
+  if (scanText !== null && architecture.componentCount === 0) {
     return (
       <div className={styles.empty}>
         <Icon name="view-map" size={14} />
         <span className={`${styles.emptyText} ${styles.grow}`}>
-          <span className={styles.emptyTitle}>{`Mapping codebase · ${done.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} files`}</span>
+          <span className={styles.emptyTitle}>{scanText}</span>
           <span className={styles.progress} aria-hidden="true">
-            <span style={{ width: `${Math.round(share * 100)}%` }} />
+            <span style={{ width: `${Math.round(scanShare * 100)}%` }} />
           </span>
         </span>
       </div>
     );
   }
   const counts = `${architecture.componentCount} components${architecture.touched.length > 0 ? ` · ${architecture.touched.length} touched` : ""}`;
+  const scan = overview === null ? null : overviewStatusOf(overview.snapshot).scan;
+  // Ruling R3 narrator words; a Brief built without an overview keeps "Descriptions pending".
+  const narrator = overview === null ? "Descriptions pending" : narratorNote(overview);
+  // The paragraph is clamped to four lines, so the full text also goes in its tooltip.
+  const prose = architecture.overviewSentences === null ? null : architecture.overviewSentences.map((sentence) => displayUntrusted(sentence.text)).join(" ");
   return (
-    <div className={styles.architecture}>
+    <div className={styles.architecture} data-brief-architecture="">
+      {overview === null || architecture.componentCount === 0 ? null : <MapThumbnail overview={overview} touched={architecture.touched} />}
       <p className={styles.meta}>{counts}</p>
-      {architecture.overviewSentences === null ? (
-        <p className={styles.quietSmall}>Descriptions pending</p>
+      {scanText === null ? null : (
+        <p className={`${styles.quietSmall} ${styles.scanLine}`} data-brief-scan="">
+          <Icon name="clock" size={12} />
+          <span>{scanText}</span>
+          <span className={styles.scanBar} aria-hidden="true">
+            <span style={{ width: `${Math.round(scanShare * 100)}%` }} />
+          </span>
+        </p>
+      )}
+      {scan?.state === "failed" ? (
+        <p className={styles.quietSmall} title={scan.error === undefined ? undefined : displayUntrusted(scan.error)}>
+          Codebase map unavailable
+          {host.rescanOverview === undefined ? null : (
+            <>
+              {" "}
+              <button type="button" className={styles.link} onClick={() => host.rescanOverview?.()}>
+                Retry
+              </button>
+            </>
+          )}
+        </p>
+      ) : null}
+      {prose === null ? (
+        narrator === null ? null : <p className={styles.quietSmall}>{narrator}</p>
       ) : (
-        <p className={styles.prose}>{architecture.overviewSentences.map((sentence) => displayUntrusted(sentence.text)).join(" ")}</p>
+        <p className={styles.prose} title={prose}>
+          {prose}
+        </p>
       )}
       {mapAvailable ? (
         <button type="button" className={styles.link} onClick={onOpenMap}>
@@ -380,7 +430,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
           <Icon name="route" size={14} />
           Architecture
         </h3>
-        <Architecture architecture={model.architecture} onOpenMap={props.onOpenMap} mapAvailable={props.mapAvailable} />
+        <Architecture architecture={model.architecture} overview={session.overview} onOpenMap={props.onOpenMap} mapAvailable={props.mapAvailable} />
       </section>
     </section>
   );
@@ -391,6 +441,7 @@ export function Brief(): JSX.Element {
   const { session, index, nowT, terminal } = useSessionView();
   const dispatch = useDispatch();
   const views = useContext(ViewDefinitionsContext);
+  const onMap = useView((state) => state.view === "map");
   const [, tick] = useReducer((n: number) => n + 1, 0);
   const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
@@ -420,7 +471,7 @@ export function Brief(): JSX.Element {
       nowT={nowT()}
       onSelect={(id) => dispatch({ type: "select", id, by: "shell" })}
       onOpenMap={() => dispatch({ type: "view/switch", view: "map" })}
-      mapAvailable={views.some((view) => view.kind === "map")}
+      mapAvailable={!onMap && views.some((view) => view.kind === "map")}
     />
   );
 }
