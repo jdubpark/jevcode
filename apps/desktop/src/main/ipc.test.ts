@@ -409,7 +409,7 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
     db.close();
   });
 
-  it("debug:listNarratorCalls answers only what DebugNarratorCallsPayloadSchema allows (N-4 review)", async () => {
+  it("debug:listNarratorCalls answers only what DebugNarratorCallsPayloadSchema allows and leaves out a bad record (N-4 review, I-3)", async () => {
     const { db, state } = seedRepoAndSession();
     const { runtime } = stubRuntime();
     const record = {
@@ -424,8 +424,12 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
       );
 
     await expect(list(listing([{ ...record, prompt: "model text never crosses IPC" }]))).resolves.toEqual({ availability: "on", calls: [record] });
-    await expect(list(listing([{ ...record, model: "m".repeat(65) }]))).rejects.toThrow();
-    await expect(list(listing([{ ...record, error: "e".repeat(65) }]))).rejects.toThrow();
+    // One out-of-cap record is left out; the rest of the list still reaches Inspect.
+    await expect(list(listing([{ ...record, id: "narr_bad", model: "m".repeat(65) }, record]))).resolves.toEqual({
+      availability: "on",
+      calls: [record],
+    });
+    await expect(list(listing([{ ...record, error: "e".repeat(65) }]))).resolves.toEqual({ availability: "on", calls: [] });
     db.close();
   });
 });

@@ -373,6 +373,7 @@ The lane files were drafted against the real code, and some names above had to c
 - `CitationUniverse.componentNameById?` is added.
 - `createFakeNarratorClient` records the calls it receives.
 - Calls are logged to an in-memory ring behind `debug:listNarratorCalls`, with a Narrator tab in Inspect.
+- Every caller (lane 05's overview calls, lane 07's session calls) builds its call record with `buildNarratorCallRecord(facts)` from `apps/desktop/src/main/pipeline/narrator-call-log.ts`. It caps `model` and `error` at `NARRATOR_RECORD_TEXT_MAX` and `reasons` at 40, and returns `null` for a record that still fails `NarratorCallRecordSchema`. The ring and `debug:listNarratorCalls` drop any record that fails the schema, one record at a time.
 
 ### 8.3 Explainer stage (lanes 04, 05, 07)
 

@@ -31,6 +31,7 @@ import {
   applyPreferencesPatch,
   readAgentPreferences,
 } from "../shared/prefs.js";
+import { NarratorCallRecordSchema } from "../shared/narrator-log.js";
 import type { AgentPreferences, PreferencesView } from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
@@ -487,10 +488,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   // The answer is parsed too: only the schema's fields, with its string caps, cross to the renderer.
+  // Each record is checked on its own, so one out-of-bounds record is left out instead of failing the list.
   handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) =>
     DebugNarratorCallsPayloadSchema.parse({
       availability: deps.narrator?.availability() ?? "off_setting",
-      calls: deps.narratorCalls?.list(limit ?? 50) ?? [],
+      calls: (deps.narratorCalls?.list(limit ?? 50) ?? []).flatMap((call) => {
+        const parsed = NarratorCallRecordSchema.safeParse(call);
+        return parsed.success ? [parsed.data] : [];
+      }),
     }),
   );
 
