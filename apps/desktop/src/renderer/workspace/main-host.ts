@@ -12,6 +12,8 @@ export interface MainHostDeps {
   /** Appends a review note to this session's composer draft and focuses it (composerReducer "prefill"). */
   prefill(text: string): void;
   log(line: string): void;
+  /** Smoke only: log every view and selection change as WORKSPACE_LOCATION. */
+  logLocations?: boolean;
 }
 
 /**
@@ -49,5 +51,10 @@ export function createMainHost(deps: MainHostDeps): ViewerHost {
       ready = true;
       deps.log(`WORKSPACE_READY ${info.rows}`);
     },
+    onLocation: deps.logLocations
+      ? (location) => {
+          deps.log(`WORKSPACE_LOCATION ${JSON.stringify({ view: location.view, selected: location.selected ?? null })}`);
+        }
+      : undefined,
   };
 }

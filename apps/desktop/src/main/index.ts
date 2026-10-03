@@ -37,6 +37,7 @@ import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
 import { MAIN_WINDOW_BACKGROUND, createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
 import type { TraceWindowRegistry } from "./trace-window.js";
+import { createAppendLog } from "./smoke-workspace.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,8 @@ const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
 /** JEVCODE_SMOKE_WORKSPACE=1: the smoke drives the main window through a scripted mock session (smoke-workspace.ts). */
 const SMOKE_WORKSPACE = SMOKE && process.env["JEVCODE_SMOKE_WORKSPACE"] === "1";
 const SMOKE_STEPS = Number.parseInt(process.env["JEVCODE_SMOKE_STEPS"] ?? "", 10) || SMOKE_SCRIPT_DEFAULTS.steps;
+/** The workspace smoke's append clock: main's wall time at each committed trace row (Console append latency, D-6). */
+const smokeAppends = SMOKE_WORKSPACE ? createAppendLog(() => Date.now()) : null;
 
 function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
   return {
@@ -90,6 +93,8 @@ function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
       mkdirSync(path.dirname(filePath), { recursive: true });
       writeFileSync(filePath, data);
     },
+    appends: smokeAppends ?? createAppendLog(() => Date.now()),
+    wallNow: () => Date.now(),
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     log: (line) => console.log(line),
@@ -126,7 +131,10 @@ function createWindow(): BrowserWindow {
       traceWindows?.closeAll();
     }
   });
-  void window.loadFile(path.join(dirname, "../renderer/src/renderer/index.html"));
+  void window.loadFile(
+    path.join(dirname, "../renderer/src/renderer/index.html"),
+    SMOKE_WORKSPACE ? { query: { smoke: "1" } } : undefined,
+  );
   return window;
 }
 
@@ -167,7 +175,10 @@ app.whenReady().then(() => {
     log: (message) => console.log(`[rows] ${message}`),
   });
   rowsAvailable = emitter;
-  observeTraceAppends(db, (event) => emitter.notify(event.sessionId, event.seq));
+  observeTraceAppends(db, (event) => {
+    emitter.notify(event.sessionId, event.seq);
+    smokeAppends?.record(event.sessionId, event.seq);
+  });
 
   // Crash recovery: any session left running/paused by a dead process is
   // either failed now or kept only while its execution claim is fresh.

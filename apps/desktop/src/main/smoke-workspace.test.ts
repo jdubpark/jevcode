@@ -3,28 +3,71 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  CONSOLE_APPEND_P95_BUDGET_MS,
   SHOT_HEIGHT,
   SHOT_WIDTHS,
   SMOKE_PROMPT,
+  VIEW_KEYS,
+  appendLatencies,
+  createAppendLog,
   openRepoScript,
+  parseConsolePaint,
+  parseWorkspaceLocation,
   parseWorkspaceReady,
+  percentile,
+  pressKeyScript,
   runWorkspaceSmoke,
   startSessionScript,
 } from "./smoke-workspace.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
-function fake() {
+interface FakeOptions {
+  /** Selection reported after each view key; default: unchanged. */
+  selectedFor?: (view: string) => string;
+  /** Latency in ms between each stored row and its paint. */
+  paintDelayMs?: number;
+  rows?: number;
+  /** The embedded viewer never logs WORKSPACE_READY. */
+  noReady?: boolean;
+}
+
+function fake(options: FakeOptions = {}) {
   const listeners = new Set<(message: string) => void>();
   const execs: string[] = [];
   const files = new Map<string, Uint8Array>();
-  const captures: Array<[number, number]> = [];
   const lines: string[] = [];
-  const timers = new Map<number, () => void>();
-  let nextTimer = 1;
+  let wall = 10_000;
+  const appends = createAppendLog(() => wall);
+  const emit = (message: string) => {
+    for (const listener of [...listeners]) listener(message);
+  };
   const deps: WorkspaceSmokeDeps = {
     exec: async (script) => {
       execs.push(script);
-      return null;
+      if (script.includes("listSessions")) return "s1";
+      if (script.includes("session.start")) {
+        if (options.noReady === true) return "repo_1";
+        queueMicrotask(() => emit("WORKSPACE_READY 2"));
+        // The mock agent, one macrotask later (after the smoke has read readyAt):
+        // rows stored after ready, each painted paintDelayMs later, then quiet.
+        setTimeout(() => {
+          const count = options.rows ?? 5;
+          for (let seq = 3; seq < 3 + count; seq += 1) {
+            wall += 300;
+            appends.record("s1", seq);
+            emit(`CONSOLE_PAINT s1 ${seq} ${wall + (options.paintDelayMs ?? 40)}`);
+          }
+          wall += 10_000;
+        }, 5);
+        return "repo_1";
+      }
+      const key = VIEW_KEYS.find((entry) => script.includes(`"${entry.code}"`));
+      if (script.includes('"KeyJ"')) queueMicrotask(() => emit('WORKSPACE_LOCATION {"view":"console","selected":"step:3"}'));
+      if (key !== undefined) {
+        const selected = options.selectedFor?.(key.view) ?? "step:3";
+        queueMicrotask(() => emit(`WORKSPACE_LOCATION ${JSON.stringify({ view: key.view, selected })}`));
+      }
+      return true;
     },
     onConsole: (listener) => {
       listeners.add(listener);
@@ -32,78 +75,110 @@ function fake() {
         listeners.delete(listener);
       };
     },
-    capture: async (width, height) => {
-      captures.push([width, height]);
-      return new Uint8Array([1, 2, 3]);
-    },
+    capture: async () => new Uint8Array([1]),
     writeFile: (file, data) => {
       files.set(file, data);
     },
-    setTimeout: (fn) => {
-      const id = nextTimer;
-      nextTimer += 1;
-      timers.set(id, fn);
-      return id;
-    },
-    clearTimeout: (handle) => {
-      timers.delete(handle as number);
-    },
+    appends,
+    wallNow: () => wall,
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 1)),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     log: (line) => lines.push(line),
   };
-  return {
-    deps,
-    execs,
-    files,
-    captures,
-    lines,
-    console: (message: string) => {
-      for (const listener of [...listeners]) listener(message);
-    },
-    fireTimers: () => {
-      for (const [id, fn] of [...timers]) {
-        timers.delete(id);
-        fn();
-      }
-    },
-  };
+  return { deps, execs, files, lines };
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+describe("smoke-workspace parsing", () => {
+  it("parses only exact smoke lines", () => {
+    expect(parseWorkspaceReady("WORKSPACE_READY 12")).toBe(12);
+    expect(parseWorkspaceReady("x WORKSPACE_READY 1")).toBeNull();
+    expect(parseConsolePaint("CONSOLE_PAINT s1 41 1700000000123")).toEqual({ sessionId: "s1", throughSeq: 41, atMs: 1700000000123 });
+    expect(parseConsolePaint("CONSOLE_PAINT s1 41")).toBeNull();
+    expect(parseWorkspaceLocation('WORKSPACE_LOCATION {"view":"map","selected":"step:9"}')).toEqual({ view: "map", selected: "step:9" });
+    expect(parseWorkspaceLocation('WORKSPACE_LOCATION {"view":"map"}')).toEqual({ view: "map", selected: null });
+    expect(parseWorkspaceLocation("WORKSPACE_LOCATION {")).toBeNull();
+  });
+
+  it("JSON-encodes values that reach executeJavaScript", () => {
+    expect(openRepoScript('/tmp/a"b')).toContain(JSON.stringify('/tmp/a"b'));
+    expect(startSessionScript(SMOKE_PROMPT)).toContain(JSON.stringify(SMOKE_PROMPT));
+    expect(pressKeyScript("Digit3", "3")).toContain('"Digit3"');
+  });
+});
+
+describe("append latency (spec §11)", () => {
+  it("uses the spec budget", () => {
+    expect(CONSOLE_APPEND_P95_BUDGET_MS).toBe(150);
+  });
+
+  it("measures each stored row to the first paint covering its seq", () => {
+    const { latencies, unpainted } = appendLatencies(
+      [
+        { seq: 4, atMs: 1_000 },
+        { seq: 5, atMs: 1_010 },
+        { seq: 6, atMs: 1_500 },
+        { seq: 7, atMs: 2_000 },
+      ],
+      [
+        { sessionId: "s1", throughSeq: 5, atMs: 1_060 },
+        { sessionId: "s1", throughSeq: 6, atMs: 1_530 },
+      ],
+    );
+    expect(latencies).toEqual([60, 50, 30]);
+    expect(unpainted).toEqual([7]);
+  });
+
+  it("takes the nearest-rank percentile", () => {
+    const values = Array.from({ length: 100 }, (_, index) => index + 1);
+    expect(percentile(values, 0.95)).toBe(95);
+    expect(percentile(values, 0.5)).toBe(50);
+    expect(percentile([7], 0.95)).toBe(7);
+    expect(Number.isNaN(percentile([], 0.95))).toBe(true);
+  });
+});
 
 describe("runWorkspaceSmoke", () => {
-  it("opens the repo, starts the session, waits for the embedded viewer and captures 1440 and 1000", async () => {
-    const run = fake();
-    const done = runWorkspaceSmoke(run.deps, { repoPath: "/tmp/smoke-repo", shotsDir: "/tmp/shots" });
-    await flush();
-    expect(run.execs).toEqual([openRepoScript("/tmp/smoke-repo"), startSessionScript(SMOKE_PROMPT)]);
-    run.console("TRACE_PERF tv:first-paint 12.00");
-    run.console("WORKSPACE_READY 3");
-    await done;
-    expect(run.captures).toEqual(SHOT_WIDTHS.map((width) => [width, SHOT_HEIGHT]));
-    expect([...run.files.keys()]).toEqual([
-      path.join("/tmp/shots", "main-console-1440.png"),
-      path.join("/tmp/shots", "main-console-1000.png"),
+  it("measures appends, captures 1440 and 1000 before any selection, then walks every view with the selection kept", async () => {
+    const run = fake({ rows: 5, paintDelayMs: 40 });
+    await runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: "/tmp/shots", minSamples: 5 });
+    expect(run.execs.slice(0, 2)).toEqual([openRepoScript("/tmp/repo"), startSessionScript(SMOKE_PROMPT)]);
+    const shots = SHOT_WIDTHS.map((width) => path.join("/tmp/shots", `main-console-${width}.png`));
+    // The shots come before the first key press, so the Brief (not a step's Inspector) is on the right.
+    expect(run.lines.filter((line) => line.startsWith("SMOKE_"))).toEqual([
+      "SMOKE_WORKSPACE session=s1 ready_rows=2",
+      "SMOKE_CONSOLE appends=5 p50_ms=40 p95_ms=40 max_ms=40",
+      ...shots.map((file) => `SMOKE_SHOT ${file}`),
+      "SMOKE_VIEWS selected=step:3 views=canvas,hybrid,map,surfaces,console",
     ]);
-    expect(run.lines[0]).toBe("SMOKE_WORKSPACE ready rows=3");
+    expect([...run.files.keys()]).toEqual(shots);
+    expect(SHOT_HEIGHT).toBe(900);
+  });
+
+  it("fails over the p95 budget", async () => {
+    const run = fake({ rows: 5, paintDelayMs: 400 });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /p95 400 ms is over the 150 ms budget/,
+    );
+  });
+
+  it("fails with too few samples for a p95", async () => {
+    const run = fake({ rows: 5 });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 300 })).rejects.toThrow(
+      /only 5 append samples \(need 300\)/,
+    );
   });
 
   it("fails when the embedded viewer never reports ready", async () => {
-    const run = fake();
-    const done = runWorkspaceSmoke(run.deps, { repoPath: "/tmp/smoke-repo", shotsDir: null });
-    await flush();
-    run.fireTimers();
-    await expect(done).rejects.toThrow(/WORKSPACE_READY not seen/);
+    const run = fake({ noReady: true });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /WORKSPACE_READY not seen/,
+    );
   });
 
-  it("JSON-encodes the repo path so a quote cannot break out of the script", () => {
-    const script = openRepoScript('/tmp/a"b');
-    expect(script).toContain(JSON.stringify('/tmp/a"b'));
-    expect(script.startsWith("window.jevcode.repo.open(")).toBe(true);
-  });
-
-  it("parses only exact WORKSPACE_READY lines", () => {
-    expect(parseWorkspaceReady("WORKSPACE_READY 12")).toBe(12);
-    expect(parseWorkspaceReady("WORKSPACE_READY")).toBeNull();
-    expect(parseWorkspaceReady("x WORKSPACE_READY 1")).toBeNull();
+  it("fails when a view switch loses the selection", async () => {
+    const run = fake({ selectedFor: (view) => (view === "hybrid" ? "step:9" : "step:3") });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /selection changed on hybrid: step:3 → step:9/,
+    );
   });
 });
