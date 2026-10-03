@@ -165,7 +165,14 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   let disposed = false;
   let syncChain: Promise<void> = Promise.resolve();
   let narration: Promise<void> = Promise.resolve();
-  let pendingSync: PipelineSyncSnapshot | null = null;
+  /**
+   * The latest unprocessed sync of each session. Per session, not one shared slot: another session's
+   * sync must never overwrite the current session's (its agent_completed would be lost). Which session
+   * is current is decided when the sync is processed, not when it arrives, so a switch in flight keeps
+   * the latest sync of whichever session ends up current.
+   */
+  const pendingSyncs = new Map<string, PipelineSyncSnapshot>();
+  let drainQueued = false;
   let inFlight: AbortController | null = null;
   // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
   let failures = 0;
@@ -612,17 +619,23 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
   return {
     onPipelineSync(sync) {
       if (disposed) return;
-      // Each sync carries the session's whole unit and decision lists, so a burst folds once, for the latest.
-      const queued = pendingSync !== null;
-      pendingSync = sync;
-      if (queued) return;
-      syncChain = syncChain
-        .then(() => {
-          const next = pendingSync;
-          pendingSync = null;
-          return next === null ? undefined : process(next);
-        })
-        .catch(fail);
+      // Each sync carries the session's whole unit and decision lists, so a burst folds once per session,
+      // for its latest sync; process() skips every session that is not current by then.
+      pendingSyncs.set(sync.sessionId, sync);
+      if (drainQueued) return;
+      drainQueued = true;
+      syncChain = syncChain.then(async () => {
+        drainQueued = false;
+        const batch = [...pendingSyncs.values()];
+        pendingSyncs.clear();
+        for (const next of batch) {
+          try {
+            await process(next);
+          } catch (error) {
+            fail(error);
+          }
+        }
+      });
     },
     setNarrator(next) {
       if (disposed) return;
@@ -658,7 +671,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       inFlight?.abort();
       if (tracked !== null) release(tracked);
       tracked = null;
-      pendingSync = null;
+      pendingSyncs.clear();
     },
   };
 }
