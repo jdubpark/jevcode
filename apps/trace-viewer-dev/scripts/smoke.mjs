@@ -427,7 +427,7 @@ async function main() {
     }
     if (options.explainer) {
       // The H3 screens (docs/superpowers/specs/2026-10-02-console-and-explainer-mockups): Console with ◆ Summary blocks and
-      // the Brief's story and decided card (c-console-summary), the decision in the Inspector (c-decision-inspector), and the
+      // the Map session overlay (c-map-overlay), the Brief's story and decided card (c-console-summary), the decision in the Inspector (c-decision-inspector), and the
       // pending card with a rule-based summary in a host that answers (c-brief-story).
       const explained = JSON.parse(readFileSync(path.join(bundles, "rate-limit-explainer.json"), "utf8"));
       const decisionSeq = explained.rows.find((row) => row.type === "decision")?.seq;
@@ -436,6 +436,7 @@ async function main() {
         ["explainer-console", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "console")}`],
         ["explainer-decision", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "hybrid", `step:${decisionSeq}`)}`],
         ["explainer-pending", `bundle=rate-limit-pending&chrome=embedded&answer=1${locationHash(explained.session.sessionId, "console")}`],
+        ["explainer-map", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "map")}`],
       ];
       for (const [name, query] of explainerShots) {
         for (const width of WIDTHS) {

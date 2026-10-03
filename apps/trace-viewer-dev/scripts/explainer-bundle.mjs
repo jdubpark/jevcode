@@ -128,6 +128,7 @@ export function buildExplainerBundles(file) {
         { id: server.id, state: "changed", unitIds: unitIds.slice(0, 1) },
         { id: middleware.id, state: "new", unitIds: unitIds.slice(0, 2) },
         { id: redis.id, state: "decision", unitIds: unitIds.slice(1, 2) },
+        { id: tests.id, state: "failing", unitIds: [] },
       ],
     },
   });
