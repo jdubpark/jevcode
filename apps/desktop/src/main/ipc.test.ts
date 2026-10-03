@@ -430,6 +430,20 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
       calls: [record],
     });
     await expect(list(listing([{ ...record, error: "e".repeat(65) }]))).resolves.toEqual({ availability: "on", calls: [] });
+
+    // One handler logs the error code once, on the first record it leaves out.
+    const logged: string[] = [];
+    const handler = registerAndCapture({
+      ...makeDeps(db, runtime, state),
+      log: (message: string) => logged.push(message),
+      narrator: narratorStub().narrator,
+      narratorCalls: listing([{ ...record, model: "m".repeat(65) }, { ...record, error: "e".repeat(65) }, record]),
+    }).get("debug:listNarratorCalls")!;
+    await handler(TRUSTED_EVENT, {});
+    await handler(TRUSTED_EVENT, {});
+    expect(logged.filter((line) => line.startsWith("narrator_record_dropped:"))).toEqual([
+      "narrator_record_dropped: debug:listNarratorCalls left out a call record that fails NarratorCallRecordSchema (model: too_big)",
+    ]);
     db.close();
   });
 });

@@ -50,12 +50,16 @@ describe("createNarratorCallLog", () => {
     expect(log.list(0)).toEqual([]);
   });
 
-  it("drops an entry that fails NarratorCallRecordSchema, so Inspect never receives one", () => {
-    const log = createNarratorCallLog();
+  it("drops an entry that fails NarratorCallRecordSchema, so Inspect never receives one, and logs the first drop once", () => {
+    const logged: string[] = [];
+    const log = createNarratorCallLog(10, { log: (message) => logged.push(message) });
     log.record({ ...entry(1), model: "m".repeat(NARRATOR_RECORD_TEXT_MAX + 1) });
     log.record({ ...entry(2), reasons: Array.from({ length: 41 }, () => "r") });
     log.record(entry(3));
     expect(log.list().map((item) => item.id)).toEqual(["narr_3"]);
+    expect(logged).toEqual([
+      "narrator_record_dropped: the narrator call log left out a call record that fails NarratorCallRecordSchema (model: too_big)",
+    ]);
   });
 });
 

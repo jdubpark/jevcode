@@ -35,6 +35,7 @@ import { NarratorCallRecordSchema } from "../shared/narrator-log.js";
 import type { AgentPreferences, PreferencesView } from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
+import { droppedRecordMessage } from "./pipeline/narrator-call-log.js";
 import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
@@ -488,13 +489,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   // The answer is parsed too: only the schema's fields, with its string caps, cross to the renderer.
-  // Each record is checked on its own, so one out-of-bounds record is left out instead of failing the list.
+  // Each record is checked on its own, so one out-of-bounds record is left out instead of failing the list;
+  // the first one left out is logged once.
+  let narratorRecordDropReported = false;
   handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) =>
     DebugNarratorCallsPayloadSchema.parse({
       availability: deps.narrator?.availability() ?? "off_setting",
       calls: (deps.narratorCalls?.list(limit ?? 50) ?? []).flatMap((call) => {
         const parsed = NarratorCallRecordSchema.safeParse(call);
-        return parsed.success ? [parsed.data] : [];
+        if (parsed.success) return [parsed.data];
+        if (!narratorRecordDropReported) {
+          narratorRecordDropReported = true;
+          deps.log(droppedRecordMessage("debug:listNarratorCalls", parsed.error));
+        }
+        return [];
       }),
     }),
   );

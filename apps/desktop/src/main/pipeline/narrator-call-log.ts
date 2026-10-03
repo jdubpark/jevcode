@@ -1,5 +1,6 @@
 import { narratorCostUsd } from "@jevcode/jev-router";
 import type { NarratorUsage } from "@jevcode/jev-router";
+import type { ZodError } from "zod";
 
 import { NARRATOR_RECORD_TEXT_MAX, NarratorCallRecordSchema } from "../../shared/narrator-log.js";
 import type { NarratorCallRecord } from "../../shared/narrator-log.js";
@@ -7,6 +8,20 @@ import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 export const NARRATOR_CALL_LOG_CAPACITY = 200;
 /** NarratorCallRecordSchema's cap on `reasons`. */
 export const NARRATOR_RECORD_REASONS_MAX = 40;
+/** Error code logged (once per log or handler) when a call record that fails the schema is left out. */
+export const NARRATOR_RECORD_DROPPED = "narrator_record_dropped";
+
+/** One log line for a dropped record: the code, where, and the first schema issue (never record text). */
+export function droppedRecordMessage(where: string, error: ZodError): string {
+  const issue = error.issues[0];
+  const detail = issue === undefined ? "invalid record" : `${issue.path.join(".") || "(record)"}: ${issue.code}`;
+  return `${NARRATOR_RECORD_DROPPED}: ${where} left out a call record that fails NarratorCallRecordSchema (${detail})`;
+}
+
+export interface NarratorCallLogOptions {
+  /** Receives one NARRATOR_RECORD_DROPPED line, on the first dropped record only. */
+  log?(message: string): void;
+}
 
 export interface NarratorCallLog {
   /** Stores only records that pass NarratorCallRecordSchema; anything else is dropped. */
@@ -63,12 +78,26 @@ export function buildNarratorCallRecord(facts: NarratorCallFacts): NarratorCallR
 }
 
 /** In-memory ring for Inspect (deviation 9); narrator calls are per repo and never trace rows. */
-export function createNarratorCallLog(capacity: number = NARRATOR_CALL_LOG_CAPACITY): NarratorCallLog {
+export function createNarratorCallLog(
+  capacity: number = NARRATOR_CALL_LOG_CAPACITY,
+  options: NarratorCallLogOptions = {},
+): NarratorCallLog {
   const entries: NarratorCallRecord[] = [];
+  let dropReported = false;
   return {
     record(entry) {
       const parsed = NarratorCallRecordSchema.safeParse(entry);
-      if (!parsed.success) return;
+      if (!parsed.success) {
+        if (!dropReported) {
+          dropReported = true;
+          try {
+            options.log?.(droppedRecordMessage("the narrator call log", parsed.error));
+          } catch {
+            // A failing logger must not break recording.
+          }
+        }
+        return;
+      }
       entries.push(parsed.data);
       if (entries.length > capacity) entries.splice(0, entries.length - capacity);
     },
