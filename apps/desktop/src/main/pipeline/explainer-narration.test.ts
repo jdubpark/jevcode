@@ -275,7 +275,11 @@ describe("describe batching and cache (spec §6.1, §6.4)", () => {
       role: "domain",
       model: NARRATOR_MODEL,
     });
-    expect(h.narration.textFor([{ ...raw.components[1]!, contentHash: "f".repeat(40) }]).size).toBe(0);
+    // A new hash of a known id keeps its settled text while it is pending (spec §6.4); an unknown id has none.
+    expect(h.narration.textFor([{ ...raw.components[1]!, contentHash: "f".repeat(40) }]).get(raw.components[1]!.id)?.purpose).toBe(
+      "Handles the packages/p1 package.",
+    );
+    expect(h.narration.textFor([{ id: "cmp_ffffffffffff", name: "ghost", contentHash: "f".repeat(40) }]).size).toBe(0);
     expect(h.narration.status()).toMatchObject({ state: "ready", described: 3, total: 3, retryAt: null });
     expect(h.narration.narratorStatus()).toBe("ready");
   });
@@ -302,7 +306,9 @@ describe("describe batching and cache (spec §6.1, §6.4)", () => {
     expect(second.narration.narratorStatus()).toBe("ready");
   });
 
-  it("asks again only for components whose content hash changed: one call per 20 changed", async () => {
+  it("asks again only for components whose content hash changed, once it held 60 s: one call per 20 changed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-02T09:00:00.000Z"));
     const client = echoClient();
     const h = harness({ narrator: client });
     const counts = () => ({
@@ -315,11 +321,16 @@ describe("describe batching and cache (spec §6.1, §6.4)", () => {
     expect(counts()).toEqual({ describe: 3, narrative: 1 });
 
     h.feed(snapshot(60, (entry, index) => (index < 3 ? { ...entry, contentHash: hex(1000 + index, 40) } : entry)));
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(counts()).toEqual({ describe: 3, narrative: 1 });
+    await vi.advanceTimersByTimeAsync(1_000);
     await h.narration.idle();
+    // 3 of 60 is under max(3, 10%) = 6 changed components: the narrative stays.
     expect(counts()).toEqual({ describe: 4, narrative: 1 });
     expect((client.calls[4]!.input as ComponentBrief[]).map((brief) => brief.id)).toEqual(base.components.slice(0, 3).map((entry) => entry.id));
 
     h.feed(snapshot(60, (entry, index) => (index < 28 ? { ...entry, contentHash: hex(1000 + index, 40) } : entry)));
+    await vi.advanceTimersByTimeAsync(60_000);
     await h.narration.idle();
     expect(counts()).toEqual({ describe: 6, narrative: 2 });
   });
@@ -531,7 +542,7 @@ describe("narrator off or offline (Review Focus 5)", () => {
     const h = harness({ narrator: client });
     h.feed(snapshot(12));
     await vi.advanceTimersByTimeAsync(40_000);
-    h.feed(snapshot(12, (entry, index) => (index === 0 ? { ...entry, contentHash: hex(999, 40) } : entry)));
+    h.feed(snapshot(13));
     await vi.advanceTimersByTimeAsync(0);
     expect(callTimes).toEqual([0, 30_000, 40_000]);
   });
@@ -569,7 +580,7 @@ describe("narrator off or offline (Review Focus 5)", () => {
     const h = harness({ narrator: client });
     h.feed(snapshot(12));
     await vi.advanceTimersByTimeAsync(40_000);
-    h.feed(snapshot(12, (entry, index) => (index === 0 ? { ...entry, contentHash: hex(999, 40) } : entry)));
+    h.feed(snapshot(13));
     await vi.advanceTimersByTimeAsync(200_000);
     expect(callTimes).toEqual([0, 30_000, 40_000, 70_000]);
     expect(h.records.filter((record) => record.question === "describeComponents").map((record) => record.error)).toEqual([
@@ -577,15 +588,73 @@ describe("narrator off or offline (Review Focus 5)", () => {
     ]);
   });
 
-  it("treats a schema-invalid answer as a failure: backoff, no cache write", async () => {
-    const client = createFakeNarratorClient({ describeComponents: [FAKE_SCHEMA_INVALID] });
+  it("keeps the rule-based value after a component's second schema-invalid answer, with no backoff (spec §6.3)", async () => {
+    const client = createFakeNarratorClient({
+      describeComponents: [FAKE_SCHEMA_INVALID, FAKE_SCHEMA_INVALID],
+      overviewNarrative: [echoNarrative],
+    });
+    const describes = () => client.calls.filter((call) => call.method === "describeComponents").length;
     const h = harness({ narrator: client });
-    const raw = snapshot(2);
+    const raw = snapshot(1);
     h.feed(raw);
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.records[0]).toMatchObject({ error: "schema", discarded: true });
-    expect(h.db.getComponentText(REPO, raw.components[0]!.id, raw.components[0]!.contentHash)).toBeUndefined();
+    await h.narration.idle();
+    expect(describes()).toBe(2);
+    expect(h.records.filter((record) => record.question === "describeComponents").map((record) => [record.error, record.discarded])).toEqual([
+      ["schema", true],
+      ["schema", true],
+    ]);
+    expect(h.db.getComponentText(REPO, raw.components[0]!.id, raw.components[0]!.contentHash)).toEqual({
+      purpose: null,
+      role: "domain",
+      model: NARRATOR_MODEL,
+    });
+    expect(h.narration.status()).toMatchObject({ state: "ready", described: 1, total: 1, retryAt: null });
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(describes()).toBe(2);
+  });
+
+  it("halves a batch that timed out before backing off", async () => {
+    const sizes: number[] = [];
+    const timedOut = (input: unknown) => {
+      sizes.push((input as ComponentBrief[]).length);
+      return Promise.reject(new NarratorUnavailableError("timeout", "narrator call timed out"));
+    };
+    const answer = (input: unknown) => {
+      sizes.push((input as ComponentBrief[]).length);
+      return echoDescribe(input);
+    };
+    const client = createFakeNarratorClient({ describeComponents: [timedOut, answer, answer], overviewNarrative: [echoNarrative] });
+    const h = harness({ narrator: client, availability: "on" });
+    h.feed(snapshot(20));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sizes).toEqual([20]);
     expect(h.narration.status()).toMatchObject({ state: "backoff", retryAt: Date.now() + 30_000 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await h.narration.idle();
+    expect(sizes).toEqual([20, 10, 10]);
+    expect(h.narration.narratorStatus()).toBe("ready");
+  });
+
+  it("settles the narrative after two schema-invalid answers for one structure, sent 2 minutes apart", async () => {
+    const t0 = Date.now();
+    const narrativeTimes: number[] = [];
+    const invalid = () => {
+      narrativeTimes.push(Date.now() - t0);
+      return FAKE_SCHEMA_INVALID;
+    };
+    const client = createFakeNarratorClient({ describeComponents: [echoDescribe], overviewNarrative: [invalid, invalid] });
+    const h = harness({ narrator: client });
+    const raw = snapshot(3);
+    h.feed(raw);
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(narrativeTimes).toEqual([0, 120_000]);
+    expect(h.records.filter((record) => record.question === "overviewNarrative").map((record) => record.error)).toEqual(["schema", "schema"]);
+    expect(h.db.getOverviewState(REPO)).toMatchObject({
+      narrativeInputsHash: narrativeStructureHash(h.narration.applyCached(raw)),
+      narrative: null,
+    });
+    expect(h.narration.status()).toMatchObject({ state: "ready", retryAt: null });
   });
 
   it("shows first purposes within 30 s for 200 components when each call takes 5 s (spec §11)", async () => {
@@ -739,6 +808,33 @@ describe("logging (spec §6.3)", () => {
     }
   });
 
+  it("drops a call record that still fails the schema after capping, and keeps the answer", async () => {
+    const client: NarratorClient = {
+      describeComponents: async (batch) => ({
+        value: echoDescribe(batch) as DescribedComponent[],
+        confidence: 1,
+        heuristic: false,
+        model: NARRATOR_MODEL,
+        ms: 1,
+        usage: { inputTokens: -5, outputTokens: 1.5 },
+        schemaValid: true,
+      }),
+      overviewNarrative: () => Promise.reject(new NarratorUnavailableError("offline", "down")),
+      sessionStory: () => Promise.reject(new Error("unused")),
+      decisionWhy: () => Promise.reject(new Error("unused")),
+    };
+    const h = harness({ narrator: client });
+    const raw = snapshot(1);
+    h.feed(raw);
+    await h.narration.idle();
+    expect(h.records.map((record) => record.question)).toEqual(["overviewNarrative"]);
+    expect(h.logs.filter((event) => event.kind === "narrator").map((event) => event.question)).toEqual([
+      "describeComponents",
+      "overviewNarrative",
+    ]);
+    expect(h.narration.textFor(raw.components).size).toBe(1);
+  });
+
   it("gives every call record an id unique across narration instances started in the same millisecond", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-02T09:00:00.000Z"));
@@ -755,6 +851,35 @@ describe("logging (spec §6.3)", () => {
 });
 
 describe("failures outside the provider call (storage, refresh, sinks)", () => {
+  it("starts no call while a cache read fails, and starts once reads work again", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    let broken = true;
+    const flaky = new Proxy(db, {
+      get(target, prop) {
+        if (prop === "getComponentText" && broken) {
+          return () => {
+            throw new Error("SQLITE_BUSY: database is locked");
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const client = echoClient();
+    const h = harness({ narrator: client, db: flaky });
+    const raw = snapshot(2);
+    h.feed(raw);
+    await flush();
+    expect(client.calls).toEqual([]);
+    expect(errorsOf(h.logs)).toEqual([
+      { kind: "error", where: "state", message: expect.stringMatching(/component_text_cache read failed: SQLITE_BUSY/) },
+    ]);
+    broken = false;
+    h.feed(raw);
+    await h.narration.idle();
+    expect(client.calls.map((call) => call.method)).toEqual(["describeComponents", "overviewNarrative"]);
+  });
+
   it("keeps an answer whose component_text_cache write failed: one call, no backoff, one error log", async () => {
     const client = echoClient();
     const h = harness({ narrator: client, db: failingDb("putComponentText") });
@@ -964,7 +1089,9 @@ describe("re-entrant refresh (lane 04: refresh → publish → onSnapshot)", () 
     expect(h.records).toHaveLength(client.calls.length);
   });
 
-  it("asks for a new narrative when a component is added or a role changes, below the 10% content threshold", async () => {
+  it("asks for a new narrative when a component is added or a role changes, below the content threshold, at most every 2 minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-02T09:00:00.000Z"));
     const asStorage = (input: unknown): unknown =>
       (echoDescribe(input) as DescribedComponent[]).map((entry) => ({ ...entry, role: "storage" }));
     const client = createFakeNarratorClient({
@@ -977,16 +1104,164 @@ describe("re-entrant refresh (lane 04: refresh → publish → onSnapshot)", () 
     await h.narration.idle();
     expect(narratives()).toBe(1);
 
+    // A new component is described at once; the narrative for the new structure waits out the 2 minutes.
     h.feed(snapshot(21));
+    await h.narration.idle();
+    expect(narratives()).toBe(1);
+    await vi.advanceTimersByTimeAsync(120_000);
     await h.narration.idle();
     expect(narratives()).toBe(2);
 
+    // A re-roled component (1 of 21 changed, under the content threshold) changes the structure too.
     const rehashed = snapshot(21, (entry, index) => (index === 0 ? { ...entry, contentHash: hex(5000, 40) } : entry));
     h.feed(rehashed);
+    await vi.advanceTimersByTimeAsync(60_000);
     await h.narration.idle();
     expect(h.narration.applyCached(rehashed).components[0]!.role).toBe("storage");
+    expect(narratives()).toBe(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await h.narration.idle();
     expect(narratives()).toBe(3);
     expect(h.published.at(-1)!.narrative?.sentences[0]!.text).toBe("The system has 21 components.");
+  });
+});
+
+describe("a batch that always fails schema (I-1, spec §6.3)", () => {
+  it("splits a refusing batch down to lone calls, negative-caches each refusing component, narrates and reaches ready", async () => {
+    const raw = snapshot(200);
+    const refusing = new Set(raw.components.slice(0, 20).map((entry) => entry.id));
+    const sentIn = new Map<string, number[]>();
+    const answer = (input: unknown): unknown => {
+      const batch = input as ComponentBrief[];
+      for (const brief of batch) sentIn.set(brief.id, [...(sentIn.get(brief.id) ?? []), batch.length]);
+      return batch.some((brief) => refusing.has(brief.id)) ? FAKE_SCHEMA_INVALID : echoDescribe(input);
+    };
+    const client = createFakeNarratorClient({
+      describeComponents: Array.from({ length: 200 }, () => answer),
+      overviewNarrative: [echoNarrative],
+    });
+    const h = harness({ narrator: client, availability: "on" });
+    h.feed(raw);
+    await h.narration.idle();
+    await flush();
+
+    const describeInputs = client.calls
+      .filter((call) => call.method === "describeComponents")
+      .map((call) => (call.input as ComponentBrief[]).map((brief) => brief.id));
+    for (const ids of describeInputs) {
+      const refused = ids.filter((id) => refusing.has(id)).length;
+      expect(refused === 0 || refused === ids.length).toBe(true);
+    }
+    for (const entry of raw.components) {
+      const sizes = sentIn.get(entry.id) ?? [];
+      if (!refusing.has(entry.id)) {
+        expect(sizes).toEqual([20]);
+        continue;
+      }
+      // At most twice per batch size, halving down to a lone call, then the rule-based value is kept.
+      for (const size of new Set(sizes)) expect(sizes.filter((sent) => sent === size).length).toBeLessThanOrEqual(2);
+      expect(sizes.at(-1)).toBe(1);
+      expect(sizes.length).toBeLessThanOrEqual(7);
+      expect(h.db.getComponentText(REPO, entry.id, entry.contentHash)).toEqual({ purpose: null, role: "domain", model: NARRATOR_MODEL });
+    }
+    const methods = client.calls.map((call) => call.method);
+    expect(methods.filter((method) => method === "overviewNarrative")).toHaveLength(1);
+    // The narrative did not wait for the refusing components to be settled.
+    expect(methods.indexOf("overviewNarrative")).toBeLessThan(methods.lastIndexOf("describeComponents"));
+    expect(h.published.at(-1)!.narrative?.provenance).toBe("model");
+    expect(h.narration.status()).toMatchObject({ state: "ready", described: 200, total: 200, retryAt: null });
+    expect(h.narration.narratorStatus()).toBe("ready");
+  });
+});
+
+describe("edits while an agent works (I-2, spec §6.1, §6.4)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-02T09:00:00.000Z"));
+  });
+
+  const asStorage = (input: unknown): unknown =>
+    (echoDescribe(input) as DescribedComponent[]).map((entry) => ({ ...entry, role: "storage" }));
+
+  it("ten saves in one component cost one describe once its hash held 60 s, and the caption and band never fall back", async () => {
+    const client = createFakeNarratorClient({
+      describeComponents: Array.from({ length: 5 }, () => asStorage),
+      overviewNarrative: Array.from({ length: 5 }, () => echoNarrative),
+    });
+    const counts = () => ({
+      describe: client.calls.filter((call) => call.method === "describeComponents").length,
+      narrative: client.calls.filter((call) => call.method === "overviewNarrative").length,
+    });
+    const revision = (rev: number) =>
+      snapshot(5, (entry, index) => (index === 0 && rev > 0 ? { ...entry, contentHash: hex(9000 + rev, 40) } : entry));
+    const h = harness({ narrator: client });
+    h.feed(revision(0));
+    await h.narration.idle();
+    expect(counts()).toEqual({ describe: 1, narrative: 1 });
+
+    const shown: string[] = [];
+    for (let rev = 1; rev <= 10; rev += 1) {
+      h.feed(revision(rev));
+      const first = h.narration.applyCached(revision(rev)).components[0]!;
+      shown.push(`${first.provenance}/${first.role}/${first.purpose}`);
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(new Set(shown)).toEqual(new Set(["model/storage/Handles the packages/p0 package."]));
+    expect(h.published.every((row) => row.components[0]!.provenance === "model" && row.components[0]!.role === "storage")).toBe(true);
+    // The last save was at 45 s: nothing is asked until 105 s.
+    await vi.advanceTimersByTimeAsync(54_000);
+    expect(counts()).toEqual({ describe: 1, narrative: 1 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.narration.idle();
+    expect(counts()).toEqual({ describe: 2, narrative: 1 });
+    expect(client.calls.at(-1)!.input).toEqual([expect.objectContaining({ id: revision(10).components[0]!.id })]);
+    expect(h.db.getComponentText(REPO, revision(10).components[0]!.id, hex(9010, 40))?.purpose).toBe("Handles the packages/p0 package.");
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(counts()).toEqual({ describe: 2, narrative: 1 });
+  });
+
+  it("asks for a new narrative for content only when at least max(3, 10%) of components changed", async () => {
+    const client = echoClient();
+    const narratives = () => client.calls.filter((call) => call.method === "overviewNarrative").length;
+    const h = harness({ narrator: client });
+    // 10 components: 10% is 1, so the floor of 3 decides (2 of 10 changed is 20%, still too few).
+    const rehash = (count: number) =>
+      snapshot(10, (entry, index) => (index < count ? { ...entry, contentHash: hex(3000 + index, 40) } : entry));
+    h.feed(snapshot(10));
+    await h.narration.idle();
+    expect(narratives()).toBe(1);
+
+    h.feed(rehash(2));
+    await vi.advanceTimersByTimeAsync(600_000);
+    await h.narration.idle();
+    expect(narratives()).toBe(1);
+
+    h.feed(rehash(3));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await h.narration.idle();
+    expect(narratives()).toBe(2);
+  });
+
+  it("shows the stored overview's text for a component that changed while the app was closed, until it is described again", async () => {
+    const db = openDb({ dbPath: ":memory:" });
+    const raw = snapshot(3);
+    const first = harness({ narrator: echoClient(), db });
+    first.feed(raw);
+    await first.narration.idle();
+    first.narration.dispose();
+
+    const client = echoClient();
+    const second = harness({ narrator: client, db });
+    const changed = snapshot(3, (entry, index) => (index === 0 ? { ...entry, contentHash: hex(7777, 40) } : entry));
+    expect(second.narration.textFor(changed.components).get(changed.components[0]!.id)?.purpose).toBe(
+      "Handles the packages/p0 package.",
+    );
+    second.feed(changed);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(client.calls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await second.narration.idle();
+    expect(client.calls.map((call) => call.method)).toEqual(["describeComponents"]);
   });
 });
 

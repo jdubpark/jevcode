@@ -270,8 +270,8 @@ The stage runs in `apps/desktop/src/main/pipeline`, beside the UI stage. Its wor
 |---|---|---|
 | Repo scan | Repo open, or first session start | Background worker. Progress is visible in the Brief ("Mapping codebase · 3,200 / 9,800 files"). |
 | Snapshot rebuild | After watcher changes settle (500 ms) | Only dirty components are recomputed. |
-| `describeComponents` | After a snapshot with uncached components | Batches of 20, at most 2 in flight. |
-| `overviewNarrative` | After the first full description pass; then when the component set or role bands change, or more than 10% of components changed | One in flight. |
+| `describeComponents` | After a snapshot with uncached components. A new component is described at once. A changed component (new content hash) is described again only after that hash has held for 60 s; until then it keeps its last text and role (§6.4). | Batches of 20, at most 2 in flight. Components that failed schema never share a batch with fresh ones (§6.6). |
+| `overviewNarrative` | After the first full description pass. After that, it runs again when a component is added, removed or re-roled, when at least max(3, 10%) of components have a new content hash since the last narrative, or when the stored narrative cites something that is gone. It waits for pending descriptions, except components that already failed schema. | One in flight, and at most one call per 2 minutes. |
 | `sessionStory` (phase C) | Meaningful events (change unit closed, decision answered, test result, agent completed), debounced to at least 20 s apart | One in flight. Skipped if nothing changed. |
 | `decisionWhy` (phase C) | A decision is answered | One per decision. |
 
@@ -279,7 +279,7 @@ The stage runs in `apps/desktop/src/main/pipeline`, beside the UI stage. Its wor
 
 | Call | Inputs |
 |---|---|
-| `describeComponents` | Per component: name, rootPath, role guess, top 20 file paths, top 15 exported symbol names, external deps, in and out edges (names and counts), and the package.json `description` or the first README paragraph. The README paragraph is redacted with the A1 redaction rules and clipped to 600 characters. |
+| `describeComponents` | Per component: name, rootPath, role guess, top 20 file paths, top 15 exported symbol names, external deps, in and out edges (names and counts), and the package.json `description` or the first README paragraph. Either text is redacted with the A1 redaction rules first and then clipped to 600 characters, so a secret that crosses character 600 is still caught. |
 | `overviewNarrative` | The component list (name, role, purpose) and the top 40 edges. |
 | `sessionStory` | The session prompt, the last 12 steps' headlines, open and answered decisions, test state, and the touched components. |
 | `decisionWhy` | The decision, its options, the answer, and the 3 agent messages or plan steps nearest the answer. |
@@ -296,7 +296,13 @@ Whole files are never sent.
 
 ### 6.4 Cache
 
-`component_text_cache` is keyed by `(repo_root, component_id, content_hash)`. On a hit, the cached purpose and role are used with no call. The overview narrative is stored in `overview_state` and reused while its inputs hash is unchanged.
+`component_text_cache` is keyed by `(repo_root, component_id, content_hash)`. On a hit, the cached purpose and role are used with no call. A cached purpose is checked again on read (plain text, no other component's name); one that fails is a miss.
+
+While a component's new content hash is pending, the component keeps showing the text and role of its last settled hash, so an edit never makes the caption or the role band flicker. After a restart, the stored overview supplies that text. A component whose answer failed schema twice on its own is cached with no purpose, so it keeps its rule-based text and is not asked again for that hash.
+
+The overview narrative is stored in `overview_state` with its inputs hash. It is reused while every sentence still passes the citation check against the current snapshot.
+
+While a cache read fails, no new call starts, because a call could re-ask something already cached.
 
 ### 6.5 Rows
 
@@ -310,7 +316,8 @@ Rows are appended through the existing event store with a gapless seq, carry `ts
 
 ### 6.6 Failure
 
-- **Model problems:** if the model is unavailable, rate-limited or slow (10 s timeout), the call is skipped and retried on the next trigger with backoff (30 s, 2 min, 10 min). The Brief shows "descriptions pending" in quiet ink, never an error banner.
+- **Model problems:** if the model is unavailable, rate-limited or slow (10 s timeout), the call is skipped and retried on the next trigger with backoff (30 s, 2 min, 10 min). A timed-out describe batch is halved before the backoff. The Brief shows "descriptions pending" in quiet ink, never an error banner.
+- **Schema problems:** a schema-invalid answer (for example a refusal or an answer cut off at the token limit) does not mean the model is down, so it does not start the backoff. Each component counts its schema failures. From a component's second failure on, its batch is halved, and a component that fails alone keeps its rule-based value (§6.4). Every component is sent at most twice per batch size. The narrative is settled, keeping what it showed, after two schema-invalid answers for the same structure.
 - **Scan problems:** a scan failure is logged and surfaced as "Codebase map unavailable" with Retry. Agent work is never affected.
 
 ## 7. Contracts, storage and IPC
