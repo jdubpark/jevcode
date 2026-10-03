@@ -298,7 +298,7 @@ Whole files are never sent.
 
 `component_text_cache` is keyed by `(repo_root, component_id, content_hash)`. On a hit, the cached purpose and role are used with no call. A cached purpose is checked again on read (plain text, no other component's name); one that fails is a miss.
 
-While a component's new content hash is pending, the component keeps showing the text and role of its last settled hash, so an edit never makes the caption or the role band flicker. After a restart, the stored overview supplies that text. A component whose answer failed schema twice on its own is cached with no purpose, so it keeps its rule-based text and is not asked again for that hash.
+While a component's new content hash is pending, the component keeps showing the text and role of its last settled hash, so an edit never makes the caption or the role band flicker. After a restart, the stored overview supplies that text. A component whose answer failed schema twice on its own is cached with no purpose, so it keeps its rule-based text and is not asked again for that hash. The row is stored only when a valid answer has shown the provider works (§6.6).
 
 The overview narrative is stored in `overview_state` with its inputs hash. It is reused while every sentence still passes the citation check against the current snapshot.
 
@@ -318,7 +318,8 @@ Rows are appended through the existing event store with a gapless seq, carry `ts
 
 - **Model problems:** if the model is unavailable, rate-limited or slow (10 s timeout), the call is skipped and retried on the next trigger with backoff (30 s, 2 min, 10 min). A timed-out describe batch is halved before the backoff. The Brief shows "descriptions pending" in quiet ink, never an error banner.
 - **Schema problems:** on a provider that has answered validly, a schema-invalid answer (for example a refusal or an answer cut off at the token limit) does not mean the model is down, so it does not start the backoff. Each component counts its schema failures. From a component's second failure on, its batch is halved, and a component that fails alone keeps its rule-based value (§6.4). Every component is sent at most twice per batch size. The narrative is settled, keeping what it showed, after two schema-invalid answers for the same structure.
-- **Schema fault brake:** until the session's first schema-valid answer arrives, calls go one at a time after any schema-invalid answer. A third schema-invalid answer in a row starts the backoff, as a provider fault, instead of a split. No-purpose rows and a settled narrative from that time stay in memory only. The first valid answer clears those no-purpose rows, so their components are asked again.
+- **Schema fault brake:** until the session's first schema-valid answer arrives, calls go one at a time after any schema-invalid answer. A third schema-invalid answer in a row starts the backoff, as a provider fault, instead of a split. The first valid answer resets every schema-failure count and split.
+- **What a schema failure stores:** a no-purpose row, or a narrative settled after two schema failures, is stored only if a schema-valid answer arrived after that component's (or that structure's) first schema failure. Such an answer shows the provider works, so the refusal is about the content. Otherwise the result stays in memory only. A component kept that way is asked again after the next valid answer, and anything kept in memory is asked again after a restart.
 - **Scan problems:** a scan failure is logged and surfaced as "Codebase map unavailable" with Retry. Agent work is never affected.
 
 ## 7. Contracts, storage and IPC

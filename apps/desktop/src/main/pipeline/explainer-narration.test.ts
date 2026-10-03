@@ -667,6 +667,66 @@ describe("narrator off or offline (Review Focus 5)", () => {
     expect(h.narration.status()).toMatchObject({ state: "ready", described: 1, total: 1, retryAt: null });
   });
 
+  it("resets every schema count and split on the first valid answer, braked ones included", async () => {
+    const raw = snapshot(2);
+    const [c0, c1] = raw.components;
+    const sent: string[][] = [];
+    // Broken for the first three answers; after that c1 is answered and c0 is refused (content).
+    const answer = (input: unknown): unknown => {
+      const ids = (input as ComponentBrief[]).map((brief) => brief.id);
+      sent.push(ids);
+      return sent.length <= 3 || ids.includes(c0!.id) ? FAKE_SCHEMA_INVALID : echoDescribe(input);
+    };
+    const client = createFakeNarratorClient({
+      describeComponents: Array.from({ length: 10 }, () => answer),
+      overviewNarrative: [echoNarrative],
+    });
+    const h = harness({ narrator: client, availability: "on" });
+    h.feed(raw);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sent).toEqual([[c0!.id, c1!.id], [c0!.id, c1!.id], [c0!.id]]);
+    expect(h.narration.status().state).toBe("backoff");
+    await vi.advanceTimersByTimeAsync(30_000);
+    await h.narration.idle();
+    // c1 answers first (fewest failures). That first valid answer clears c0's braked count of 3, so
+    // c0 gets two tries of its own before its rule-based value is kept, and stored.
+    expect(sent.slice(3)).toEqual([[c1!.id], [c0!.id], [c0!.id]]);
+    expect(h.db.getComponentText(REPO, c0!.id, c0!.contentHash)).toEqual({ purpose: null, role: "domain", model: NARRATOR_MODEL });
+    expect(h.narration.status()).toMatchObject({ state: "ready", described: 2, total: 2 });
+  });
+
+  it("stores no no-purpose row when the provider breaks after one valid answer, and a restart describes every component", async () => {
+    let validLeft = 1;
+    const answer = (input: unknown): unknown => (validLeft-- > 0 ? echoDescribe(input) : FAKE_SCHEMA_INVALID);
+    const client = createFakeNarratorClient({
+      describeComponents: Array.from({ length: 300 }, () => answer),
+      overviewNarrative: Array.from({ length: 5 }, () => FAKE_SCHEMA_INVALID),
+    });
+    const db = openDb({ dbPath: ":memory:" });
+    const textWrites = vi.spyOn(db, "putComponentText");
+    const stateWrites = vi.spyOn(db, "putOverviewState");
+    const raw = snapshot(60);
+    const first = harness({ narrator: client, db, availability: "on" });
+    first.feed(raw);
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    await first.narration.idle();
+    expect(textWrites.mock.calls.filter((call) => call[3].purpose === null)).toEqual([]);
+    expect(textWrites).toHaveBeenCalledTimes(20);
+    expect(stateWrites).not.toHaveBeenCalled();
+    first.narration.dispose();
+
+    const healthy = echoClient();
+    const second = harness({ narrator: healthy, db, availability: "on" });
+    second.feed(raw);
+    await second.narration.idle();
+    const described = healthy.calls
+      .filter((call) => call.method === "describeComponents")
+      .flatMap((call) => (call.input as ComponentBrief[]).map((brief) => brief.id));
+    expect(described).toEqual(raw.components.slice(20).map((entry) => entry.id));
+    expect(second.narration.status()).toMatchObject({ state: "ready", described: 60, total: 60 });
+    expect(second.narration.applyCached(raw).components.every((entry) => entry.provenance === "model")).toBe(true);
+  });
+
   it("halves a batch that timed out before backing off", async () => {
     const sizes: number[] = [];
     const timedOut = (input: unknown) => {
@@ -689,7 +749,7 @@ describe("narrator off or offline (Review Focus 5)", () => {
     expect(h.narration.narratorStatus()).toBe("ready");
   });
 
-  it("settles the narrative after two schema-invalid answers for one structure, sent 2 minutes apart", async () => {
+  it("settles the narrative after two schema-invalid answers for one structure, sent 2 minutes apart, in memory only", async () => {
     const t0 = Date.now();
     const narrativeTimes: number[] = [];
     const invalid = () => {
@@ -703,10 +763,8 @@ describe("narrator off or offline (Review Focus 5)", () => {
     await vi.advanceTimersByTimeAsync(3_600_000);
     expect(narrativeTimes).toEqual([0, 120_000]);
     expect(h.records.filter((record) => record.question === "overviewNarrative").map((record) => record.error)).toEqual(["schema", "schema"]);
-    expect(h.db.getOverviewState(REPO)).toMatchObject({
-      narrativeInputsHash: narrativeStructureHash(h.narration.applyCached(raw)),
-      narrative: null,
-    });
+    // No valid answer arrived after the first refusal, so the settled narrative is not stored (spec §6.6).
+    expect(h.db.getOverviewState(REPO)).toBeUndefined();
     expect(h.narration.status()).toMatchObject({ state: "ready", retryAt: null });
   });
 
@@ -1183,11 +1241,20 @@ describe("a batch that always fails schema (I-1, spec §6.3)", () => {
   it("splits a refusing batch down to lone calls, negative-caches each refusing component, narrates and reaches ready", async () => {
     const raw = snapshot(200);
     const refusing = new Set(raw.components.slice(0, 20).map((entry) => entry.id));
+    // Batch sizes per component, from the first valid answer on (it resets every schema count), and
+    // how many sends came before it.
     const sentIn = new Map<string, number[]>();
+    const sentBeforeValid = new Map<string, number>();
+    let answeredValidly = false;
     const answer = (input: unknown): unknown => {
       const batch = input as ComponentBrief[];
-      for (const brief of batch) sentIn.set(brief.id, [...(sentIn.get(brief.id) ?? []), batch.length]);
-      return batch.some((brief) => refusing.has(brief.id)) ? FAKE_SCHEMA_INVALID : echoDescribe(input);
+      const refused = batch.some((brief) => refusing.has(brief.id));
+      for (const brief of batch) {
+        if (answeredValidly) sentIn.set(brief.id, [...(sentIn.get(brief.id) ?? []), batch.length]);
+        else sentBeforeValid.set(brief.id, (sentBeforeValid.get(brief.id) ?? 0) + 1);
+      }
+      if (!refused) answeredValidly = true;
+      return refused ? FAKE_SCHEMA_INVALID : echoDescribe(input);
     };
     const client = createFakeNarratorClient({
       describeComponents: Array.from({ length: 200 }, () => answer),
@@ -1207,11 +1274,14 @@ describe("a batch that always fails schema (I-1, spec §6.3)", () => {
     }
     for (const entry of raw.components) {
       const sizes = sentIn.get(entry.id) ?? [];
+      const early = sentBeforeValid.get(entry.id) ?? 0;
+      expect(early).toBeLessThanOrEqual(1);
       if (!refusing.has(entry.id)) {
-        expect(sizes).toEqual([20]);
+        expect(sizes.length + early).toBe(1);
         continue;
       }
-      // At most twice per batch size, halving down to a lone call, then the rule-based value is kept.
+      // At most twice per batch size, halving down to a lone call, then the rule-based value is kept
+      // and stored: valid answers arrived after its first refusal.
       for (const size of new Set(sizes)) expect(sizes.filter((sent) => sent === size).length).toBeLessThanOrEqual(2);
       expect(sizes.at(-1)).toBe(1);
       expect(sizes.length).toBeLessThanOrEqual(7);
