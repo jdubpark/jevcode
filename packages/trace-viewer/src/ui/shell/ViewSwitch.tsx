@@ -67,7 +67,8 @@ export function isOwnSwitchTarget(target: Element, store: ViewStore): boolean {
 
 /**
  * The switcher a host places itself (TraceViewerProps.renderSwitch, deviation 8). It carries the viewer's store, view
- * list and tokens, so it works anywhere in the host's tree; its icons resolve against the Shell's sprite.
+ * list and tokens, so it works anywhere in the host's tree; its icons resolve against the Shell's sprite. It is marked
+ * data-trace-viewer like the Shell's root, so a host's style guard skips it as it skips the viewer (E M-4).
  */
 export function HostViewSwitch({ store, views }: { store: ViewStore; views: readonly ViewDefinition[] }) {
   return (
@@ -76,6 +77,7 @@ export function HostViewSwitch({ store, views }: { store: ViewStore; views: read
         <div
           className={styles.hostSwitch}
           style={tokenStyle() as CSSProperties}
+          data-trace-viewer=""
           data-trace-viewer-switch=""
           ref={(node) => {
             if (node !== null) switchOwners.set(node, store);

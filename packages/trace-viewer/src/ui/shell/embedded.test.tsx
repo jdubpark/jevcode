@@ -104,6 +104,8 @@ describe("chrome (spec §8.5)", () => {
     const slot = screen.getByTestId("slot");
     const group = await within(slot).findByRole("radiogroup", { name: "View" });
     expect(screen.getAllByRole("radiogroup", { name: "View" })).toHaveLength(1);
+    // The host's style guard (:not([data-trace-viewer], [data-trace-viewer] *)) skips the switcher it places (E M-4).
+    expect(group.closest("[data-trace-viewer-switch]")?.hasAttribute("data-trace-viewer")).toBe(true);
     expect(within(group).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["Console", "Canvas", "Hybrid", "Map"]);
     expect(within(group).getByRole("radio", { name: /Console/ }).getAttribute("title")).toBe("Console (0)");
     fireEvent.click(within(group).getByRole("radio", { name: /Hybrid/ }));
