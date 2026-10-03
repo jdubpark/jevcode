@@ -1,6 +1,6 @@
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, type JSX, type RefObject } from "react";
 
-import { buildBrief, type BriefArchitecture, type BriefChange, type BriefModel } from "../../layout/brief.js";
+import { buildBrief, editedFilesOf, type BriefArchitecture, type BriefChange, type BriefModel, type EditedFile } from "../../layout/brief.js";
 import type { SelectionId, TraceIndex } from "../../layout/trace-index.js";
 import {
   agentStateLabel,
@@ -10,7 +10,6 @@ import {
   type OverviewModel,
   type Chapter,
   type Step,
-  type StepId,
   type StepKind,
   type TraceSession,
 } from "../../model/index.js";
@@ -225,30 +224,6 @@ function ChangeRow({ change, session, index, onSelect }: { change: BriefChange; 
   );
 }
 
-interface EditedFile {
-  path: string;
-  added: number;
-  removed: number;
-  /** The file's latest edit step, which a click selects (as a file location does, Shell selectionFromStableId). */
-  stepId: StepId;
-  seq: number;
-}
-
-/**
- * The session's edited files, newest edit first: the D-3 rail's "Files in play" before any change unit exists, and
- * once units exist the files no unit holds yet (`ungroupedOnly`, lane triage t3).
- */
-function editedFilesOf(session: TraceSession, index: TraceIndex, ungroupedOnly = false): EditedFile[] {
-  const files: EditedFile[] = [];
-  for (const entity of session.entities) {
-    if (ungroupedOnly && entity.chapterIds.length > 0) continue;
-    const stepId = entity.stepIds.at(-1);
-    if (stepId === undefined) continue;
-    files.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId, seq: index.entry(stepId)?.firstSeq ?? 0 });
-  }
-  return files.sort((a, b) => b.seq - a.seq || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-}
-
 function EditedFiles({ files, onSelect }: { files: readonly EditedFile[]; onSelect(id: SelectionId): void }) {
   const shown = files.slice(0, EDITED_FILES_SHOWN);
   const more = files.length - shown.length;
@@ -456,7 +431,7 @@ export function BriefView(props: BriefViewProps): JSX.Element {
   const id = useId();
   const shown = model.changes.slice(0, BRIEF_CHANGES_SHOWN);
   const more = model.changes.length - shown.length;
-  const edited = useMemo(() => editedFilesOf(session, index, model.changes.length > 0), [model.changes.length, session, index]);
+  const edited = editedFilesOf(session.entities, model.changes.length > 0);
   const root = useRef<HTMLDivElement>(null);
   useDecisionFocusRepair(root, `${id}-decisions`);
   return (
