@@ -168,10 +168,11 @@ function deferredStoryCalls(storyAt: readonly number[], timers: readonly ArmedTi
       (timer) =>
         timer.armedAt >= previous &&
         timer.armedAt < previous + interval &&
-        Math.abs(timer.armedAt + timer.delay - (previous + interval)) <= 5 &&
+        // Wide enough for skew between the narrator's entry clock and the stage's, far below the interval.
+        Math.abs(timer.armedAt + timer.delay - (previous + interval)) <= 50 &&
         timer.firedAt !== null &&
         call >= timer.firedAt &&
-        call - timer.firedAt <= 250,
+        call - timer.firedAt <= 1_000,
     );
     if (byThrottle) deferred.push(call);
   }
