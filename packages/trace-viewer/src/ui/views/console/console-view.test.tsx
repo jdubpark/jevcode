@@ -19,7 +19,7 @@ import {
 import type { ViewerHost } from "../../shell/host.js";
 import { ViewerHostContext } from "../../shell/host-context.js";
 import { LiveRegion } from "../../shell/LiveRegion.js";
-import { SessionContext, type SessionView } from "../../shell/session-context.js";
+import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "../../shell/session-context.js";
 import { ViewStoreContext, type ViewStore } from "../../state/store.js";
 import { ViewPortRegistryContext } from "../view-port.js";
 import { ConsoleView } from "./ConsoleView.js";
@@ -30,6 +30,8 @@ vi.mock("../../../model/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../model/index.js")>();
   return { ...actual, displayUntrusted: vi.fn(actual.displayUntrusted) };
 });
+
+const NO_DIAGNOSTICS: DiagnosticsSink = { enabled: false, reportDrift: () => undefined, reportError: () => undefined, flush: () => undefined };
 
 const NOW = Date.parse("2026-09-18T09:30:00.000Z");
 
@@ -80,11 +82,12 @@ function SessionApplier({ session, index, store, children }: { session: TraceSes
 }
 
 /** The Console inside the providers the Shell gives it; update() applies a new commit the way the Shell does. */
-function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost; activity?: boolean } = {}): Mounted {
+function mountConsole(session: TraceSession, options: HarnessOptions & { host?: ViewerHost; activity?: boolean; } = {}): Mounted {
   const h = createHarness(session, options);
   let view: SessionView = h.view;
   let mode: "visible" | "hidden" = "visible";
   const tree = (current: SessionView): ReactElement => (
+    <DiagnosticsContext.Provider value={options.diagnostics ?? NO_DIAGNOSTICS}>
     <ViewStoreContext.Provider value={h.store}>
       <SessionApplier session={current.session} index={current.index} store={h.store}>
         <SessionContext.Provider value={current}>
@@ -104,6 +107,7 @@ function mountConsole(session: TraceSession, options: HarnessOptions & { host?: 
         </SessionContext.Provider>
       </SessionApplier>
     </ViewStoreContext.Provider>
+    </DiagnosticsContext.Provider>
   );
   const result = render(tree(view));
   return {
@@ -704,5 +708,57 @@ describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
       expect(appendMeasures()).toHaveLength(1);
       expect(appendMeasures()[0]?.duration).toBeLessThan(120);
     });
+  });
+});
+
+describe("ConsoleView anchor drift sampler (viewer spec §10)", () => {
+  /** DOM tops from the rows' transforms, so a test can move them the way a commit's layout would. */
+  function stubRowTops(): { shift: { px: number }; restore(): void } {
+    const proto = Element.prototype;
+    const original = proto.getBoundingClientRect;
+    const shift = { px: 0 };
+    proto.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+      const rect = original.call(this);
+      if (!(this instanceof HTMLElement) || this.tagName !== "ARTICLE") return rect;
+      const scroller = this.closest<HTMLElement>("[data-console-scroll]");
+      const match = /translateY\((-?[\d.]+)px\)/.exec(this.style.transform);
+      const top = Number(match?.[1] ?? 0) - (scroller?.scrollTop ?? 0) + shift.px;
+      return { ...rect, top, y: top, bottom: top + rect.height } as DOMRect;
+    };
+    return { shift, restore: () => void (proto.getBoundingClientRect = original) };
+  }
+  function sink(): DiagnosticsSink & { drifts: number[] } {
+    const drifts: number[] = [];
+    return { enabled: true, drifts, reportDrift: (px) => void drifts.push(px), reportError: () => undefined, flush: () => undefined };
+  }
+
+  it("reads 0 px for appends below a reviewing reader, and the shift of an uncompensated move above the anchor", async () => {
+    const stub = stubRowTops();
+    try {
+      const diagnostics = sink();
+      const b = messages(60);
+      const m = mountConsole(live(b), { diagnostics, state: { follow: false, loaded: true } });
+      await frames();
+      diagnostics.drifts.length = 0;
+      for (let i = 0; i < 3; i += 1) {
+        b.agent({ type: "agent_message", role: "assistant", text: `late ${i}` });
+        m.update(live(b));
+        await frames();
+      }
+      expect(diagnostics.drifts.length).toBeGreaterThan(0);
+      expect(Math.max(...diagnostics.drifts)).toBe(0);
+
+      // The commit itself moves the anchor row (rows inserted above it, with no compensation): the baseline was read
+      // before the commit, so the sample sees the 40 px.
+      diagnostics.drifts.length = 0;
+      b.agent({ type: "agent_message", role: "assistant", text: "late shifted" });
+      stub.shift.px = 40;
+      m.update(live(b));
+      await frames();
+      stub.shift.px = 0;
+      expect(Math.max(...diagnostics.drifts)).toBeGreaterThanOrEqual(40);
+    } finally {
+      stub.restore();
+    }
   });
 });
