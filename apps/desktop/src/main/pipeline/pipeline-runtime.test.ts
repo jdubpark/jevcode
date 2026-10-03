@@ -1728,6 +1728,12 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(failing.unitSurfaces).toEqual(clean.unitSurfaces);
     expect(clean.completionSnapshots).toBe(1);
     expect(failing.completionSnapshots).toBe(1);
+    // An upper bound on what the retry writes: one more Jev pass over the units and the ui_intent written before the
+    // throw. Labels, surfaces and the completion are not written twice.
+    expect(failing.counts["change_unit"]).toBeLessThanOrEqual(clean.counts["change_unit"] ?? 0);
+    expect(failing.counts["ui_snapshot"]).toBeLessThanOrEqual(clean.counts["ui_snapshot"] ?? 0);
+    expect(failing.counts["ui_intent"]).toBeLessThanOrEqual((clean.counts["ui_intent"] ?? 0) + 1);
+    expect(failing.counts["jev_decision"]).toBeLessThanOrEqual(2 * (clean.counts["jev_decision"] ?? 0));
   }, 60_000);
 
   it("retries a coordinator rebuild that threw in the turn-end pass: the next pass writes its units, no new record needed", async () => {
