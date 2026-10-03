@@ -161,19 +161,19 @@ class StorageSemanticEventSink implements SemanticEventSink {
     private readonly persist?: (event: SemanticEvent) => void,
   ) {}
 
-  // Written, then listed: an event whose write throws is neither listed nor marked, so the next rebuild writes it
-  // and lists it once (PL-2).
+  // Written, then listed and marked, then announced. An event whose write throws is neither listed nor marked, so the
+  // next rebuild writes it and lists it once (PL-2). One whose listener throws is already marked, so no rebuild writes
+  // or lists it again (fix wave minor 5).
   emit(event: SemanticEvent): void {
     const previous = this.byId.get(event.id);
-    if (previous === undefined) {
-      this.persist?.(event);
-      this.order.push(event.id);
-      this.onEmit?.(event);
-    } else if (previous.changeUnitId !== event.changeUnitId) {
-      this.persist?.(event);
-      this.onEmit?.(event);
+    if (previous !== undefined && previous.changeUnitId === event.changeUnitId) {
+      this.byId.set(event.id, event);
+      return;
     }
+    this.persist?.(event);
+    if (previous === undefined) this.order.push(event.id);
     this.byId.set(event.id, event);
+    this.onEmit?.(event);
   }
 
   all(): SemanticEvent[] {
