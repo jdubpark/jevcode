@@ -1016,7 +1016,9 @@ export class PipelineRuntime {
    * so the next pass writes what this one did not.
    *
    * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions at each slice that yields and once after
-   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below).
+   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below). Below
+   * that, the unit and graph stores reread their lists only after a row of their kind was written (lane 07 PL-3), so
+   * a snapshot, the rebuild's unit lists and emitSessionState after no such write cost no O(session) read.
    *
    * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
    * surface, once before the decision, validation and completion steps, which run together, and once after them,
