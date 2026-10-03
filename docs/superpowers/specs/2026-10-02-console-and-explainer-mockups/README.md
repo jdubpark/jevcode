@@ -14,7 +14,7 @@ Each phase's UI tasks compare their headless screenshots against the approved PN
 
 | Date | Person | Decision | Notes |
 |---|---|---|---|
-| PENDING | | | |
+| 2026-10-03 | Jongwon Park | approved | Approved as rendered. |
 
 ## Phase B: Map and Brief architecture card (P-0, gate H2)
 
@@ -38,7 +38,7 @@ Decisions for the person:
 
 | Gate | Date | Person | Decision | Notes |
 |---|---|---|---|---|
-| H2 | PENDING | | | |
+| H2 | 2026-10-03 | Jongwon Park | approved | Approved the revised Map (20404f9): full-width fit, band columns, full names, size bars, gutter edges, plain-text overview. |
 
 ## Phase C (S-0, gate H3)
 
@@ -58,4 +58,4 @@ Decisions for the person:
 
 | Gate | Status | Notes |
 |---|---|---|
-| H3 | PENDING | Awaiting the person's review. S-4 and S-5 start after this row says "approved <date>". |
+| H3 | approved 2026-10-03 | Approved by Jongwon Park as rendered, with the revised Map overlay. S-4 and S-5 may start. |
