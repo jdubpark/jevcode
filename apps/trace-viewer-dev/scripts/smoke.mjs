@@ -14,6 +14,8 @@ const DEFAULT_PORT = 4179;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const WIDTHS = [1440, 1000];
 const SMOKE_DIR = path.join(APP, ".smoke");
+const MAP_OVERVIEW = "jevcode";
+const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
 
 function parseArgs(argv) {
   const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false };
@@ -35,9 +37,9 @@ function parseArgs(argv) {
       i += 1;
     } else throw new Error(`unknown argument ${arg}`);
   }
-  if (options.views.length === 0) throw new Error("--views needs hybrid, canvas or console");
+  if (options.views.length === 0) throw new Error(`--views needs one or more of ${[...SMOKE_VIEWS].join(", ")}`);
   for (const view of options.views) {
-    if (view !== "hybrid" && view !== "canvas" && view !== "console") throw new Error(`unknown view ${view}`);
+    if (!SMOKE_VIEWS.has(view)) throw new Error(`unknown view ${view}`);
   }
   return options;
 }
@@ -261,11 +263,40 @@ async function main() {
           `--window-size=${width},900`,
           "--virtual-time-budget=3000",
           `--screenshot=${file}`,
-          `${ORIGIN}/?bundle=oauth${locationHash(sessionId, view)}`,
+          `${ORIGIN}/?bundle=oauth${view === "map" ? `&overview=${MAP_OVERVIEW}` : ""}${locationHash(sessionId, view)}`,
         ]);
         if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
         shots += 1;
+        if (view === "map") {
+          // The rule-based twin (narrator off, no purposes): lane 06 P-5.
+          const ruleFile = path.join(SMOKE_DIR, `map-rule-${width}.png`);
+          rmSync(ruleFile, { force: true });
+          await chrome(profile, [
+            `--window-size=${width},900`,
+            "--virtual-time-budget=3000",
+            `--screenshot=${ruleFile}`,
+            `${ORIGIN}/?bundle=oauth&overview=jevcode-rule${locationHash(sessionId, "map")}`,
+          ]);
+          if (!existsSync(ruleFile)) throw new Error(`no screenshot at ${ruleFile}`);
+          shots += 1;
+        }
       }
+      if (view === "map") {
+        // The Brief's architecture card (lane 06 P-4): the right panel with nothing selected.
+        for (const width of WIDTHS) {
+          const file = path.join(SMOKE_DIR, `map-brief-${width}.png`);
+          rmSync(file, { force: true });
+          await chrome(profile, [
+            `--window-size=${width},900`,
+            "--virtual-time-budget=3000",
+            `--screenshot=${file}`,
+            `${ORIGIN}/?bundle=oauth&overview=${MAP_OVERVIEW}&brief=1${locationHash(sessionId, "map")}`,
+          ]);
+          if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
+          shots += 1;
+        }
+      }
+      if (view === "map") continue; // screenshots only: the drip and open selftests measure step selection
       if (view === "hybrid") {
         // Spec §1 "found at once": oauth opened in Hybrid at 1440 px with no input (?selftest=open).
         const opened = readSelftest(

@@ -1,0 +1,27 @@
+.frame {
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--tv-canvas);
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: 112px;
+}
+
+.lane {
+  fill: rgb(16 24 40 / 0.024);
+}
+
+.card {
+  fill: var(--tv-panel);
+  stroke: var(--tv-hair);
+  stroke-width: 2;
+}
+
+.card[data-touched] {
+  fill: var(--tv-accent-soft);
+  stroke: var(--tv-accent);
+  stroke-width: 6;
+}

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 
 import { TRACE_LIVE_POLL_MS } from "@jevcode/contracts";
 
+import { createMapLayoutCache } from "../../layout/map-layout.js";
 import { emptyTraceIndex } from "../../layout/trace-index.js";
 import type { TraceSource } from "../../source.js";
 import type { ViewerLocation } from "../state/location.js";
@@ -9,6 +10,7 @@ import { createViewStore, ViewStoreContext } from "../state/store.js";
 import { initialViewState, type ViewKind } from "../state/view-state.js";
 import base from "../tokens/base.module.css";
 import { tokenStyle } from "../tokens/tokens.js";
+import { MapLayoutCacheContext } from "../views/map/map-layouts.js";
 import { composeViews, openingView } from "../views/registry.js";
 import type { ViewDefinition } from "../views/view-port.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
@@ -62,6 +64,7 @@ export function TraceViewer({
       emptyTraceIndex(source.sessionId),
     ),
   );
+  const [mapLayouts] = useState(createMapLayoutCache);
   const shellHost = useMemo<ViewerHost>(() => host ?? {}, [host]);
   const hostPlacesSwitch = chrome === "embedded" && renderSwitch !== undefined;
 
@@ -87,16 +90,18 @@ export function TraceViewer({
         fallbackClassName={base.root}
         fallbackStyle={tokenStyle() as CSSProperties}
       >
-        <Shell
-          sessionId={source.sessionId}
-          host={shellHost}
-          controller={controller}
-          location={location}
-          initialFollow={initialFollow}
-          chrome={chrome}
-          views={views}
-          showSwitch={!hostPlacesSwitch}
-        />
+        <MapLayoutCacheContext.Provider value={mapLayouts}>
+          <Shell
+            sessionId={source.sessionId}
+            host={shellHost}
+            controller={controller}
+            location={location}
+            initialFollow={initialFollow}
+            chrome={chrome}
+            views={views}
+            showSwitch={!hostPlacesSwitch}
+          />
+        </MapLayoutCacheContext.Provider>
       </ErrorBoundary>
     </ViewStoreContext.Provider>
   );

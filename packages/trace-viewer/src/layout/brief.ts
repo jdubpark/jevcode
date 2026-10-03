@@ -2,6 +2,7 @@ import type { NarrativeSentence } from "@jevcode/contracts";
 
 import type { Chapter, Step, TraceSession } from "../model/index.js";
 import type { TraceIndex } from "./trace-index.js";
+import { briefArchitecture } from "./brief-architecture.js";
 
 /** The Brief's three parts (spec §3.3, §8.4; interfaces §6.4). Lane 06 fills `architecture`, lane 07 adds the story `now`. */
 export interface BriefModel {
@@ -77,7 +78,7 @@ function changeOf(chapter: Chapter, session: TraceSession, index: TraceIndex): B
   return { unitId: chapter.id, title: chapter.shortTitle ?? chapter.title, added, removed, tests, attention };
 }
 
-/** Pure (spec §8.4): the rule-based Brief of phases A and B. `architecture` stays null until lane 06 fills it. */
+/** Pure (spec §8.4): the rule-based Brief of phases A and B. `architecture` comes from the session's overview (null until a snapshot row arrives). */
 export function buildBrief(session: TraceSession, index: TraceIndex): BriefModel {
   const chapters = shownChapters(session);
   return {
@@ -88,6 +89,6 @@ export function buildBrief(session: TraceSession, index: TraceIndex): BriefModel
       pendingDecisionId: pendingDecisionOf(session),
     },
     changes: chapters.map((chapter) => changeOf(chapter, session, index)),
-    architecture: null,
+    architecture: briefArchitecture(session),
   };
 }

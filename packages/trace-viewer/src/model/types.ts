@@ -4,11 +4,13 @@ import type {
   AgentInterruptReason,
   ChangeCategory,
   ChangeUnitStatus,
+  Component,
   Decision,
   DependencyChange,
   EventStoreType,
   JevClientKind,
   JevPass,
+  OverviewSnapshot,
   SchemaChange,
   TraceSessionSummary,
 } from "@jevcode/contracts";
@@ -472,6 +474,18 @@ export interface Hidden {
   unreceived: number;
 }
 
+/**
+ * The latest overview_snapshot row (spec §8.1, replace semantics). Between finalize calls with the same `live` the
+ * model is the same object until a new snapshot row arrives; in a new model every component equal to the previous one
+ * with the same id and content hash is the previous object.
+ */
+export interface OverviewModel {
+  snapshot: OverviewSnapshot;
+  componentById: ReadonlyMap<string, Component>;
+  /** seq of the overview_snapshot row. */
+  seq: number;
+}
+
 export interface TraceSession {
   schemaVersion: typeof TRACE_SCHEMA_VERSION;
   meta: TraceSessionSummary;
@@ -489,6 +503,8 @@ export interface TraceSession {
   gaps: Gap[];
   coverage: Coverage;
   hidden: Hidden;
+  /** null until an overview_snapshot row arrives (spec §8.1). */
+  overview: OverviewModel | null;
 }
 
 // ------------------------------------------------------------ mini graphics (D8)

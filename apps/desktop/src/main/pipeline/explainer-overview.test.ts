@@ -109,12 +109,40 @@ describe("buildOverview on a pnpm workspace fixture (spec §5, §12)", () => {
   });
 });
 
-describe("buildOverview on this repo (index §9 lane 04 done)", () => {
+/** Lane 04's merge: the commit whose tree the expected table below was written against. */
+const TABLE_COMMIT = "e7f6a3d";
+
+/** The tree of TABLE_COMMIT in a temp dir (a git repo of its own), or null when git or the commit is unavailable. */
+function materializePinnedTree(): string | null {
+  // Only the probe may mean "unavailable"; an archive, extract or init failure is a real error and throws.
+  try {
+    execFileSync("git", ["cat-file", "-e", `${TABLE_COMMIT}^{commit}`], { cwd: REPO_ROOT, stdio: "ignore" });
+  } catch {
+    return null;
+  }
+  const root = mkdtempSync(path.join(os.tmpdir(), "jevcode-pinned-"));
+  roots.push(root);
+  const tar = path.join(root, ".tree.tar");
+  execFileSync("git", ["archive", "--format=tar", "-o", tar, TABLE_COMMIT], { cwd: REPO_ROOT });
+  execFileSync("tar", ["-xf", tar, "-C", root]);
+  rmSync(tar);
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  return root;
+}
+
+// The scan runs on the pinned tree, not the working tree, so the table does not break whenever this repo grows
+// (the cut rules split a directory past 150 files).
+describe(`buildOverview on this repo's tree at ${TABLE_COMMIT} (index §9 lane 04 done)`, () => {
   it(
     "matches the expected component table rows and edges",
-    async () => {
-      const model = await scanRepoModel(REPO_ROOT, { scan: scanRepo, extract: extractImports });
-      const snapshot = snapshotOf(REPO_ROOT, buildOverview(model), model.partial);
+    async (context) => {
+      const pinned = materializePinnedTree();
+      if (pinned === null) {
+        context.skip(`commit ${TABLE_COMMIT} or git is unavailable (shallow clone?): the pinned-tree table check was skipped`);
+        return;
+      }
+      const model = await scanRepoModel(pinned, { scan: scanRepo, extract: extractImports });
+      const snapshot = snapshotOf(pinned, buildOverview(model), model.partial);
       expect(OverviewSnapshotSchema.safeParse(snapshot).success).toBe(true);
       expect(snapshot.partial).toBe(false);
       const row = (rootPath: string) => {

@@ -3,6 +3,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { FINDING_TITLE } from "../inspector/finding-copy.js";
 import { copyText } from "../inspector/Inspector.js";
 import { buildReviewNote } from "../inspector/review-note.js";
+import { showsBrief } from "../inspector/RightPanel.js";
 import { resolveKey, type KeyCommand, type KeyInput } from "../state/keymap.js";
 import { useViewStore } from "../state/store.js";
 import type { Tool } from "../state/view-state.js";
@@ -159,9 +160,11 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
           return;
         }
         case "brief": {
-          if (state.selection === null) return;
+          // Announces what the panel now shows; nothing when B changed nothing (no selection, no Map component).
+          const before = showsBrief(state);
           store.dispatch({ type: "brief/toggle" });
-          latest.current.announce(store.get().brief ? "Brief" : "Inspector");
+          const after = showsBrief(store.get());
+          if (after !== before) latest.current.announce(after ? "Brief" : "Inspector");
           return;
         }
         case "level":

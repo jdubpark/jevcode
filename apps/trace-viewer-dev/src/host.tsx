@@ -15,6 +15,7 @@ import {
 } from "@jevcode/trace-viewer";
 
 import styles from "./host.module.css";
+import { loadOverview, withOverview } from "./overview-sample.js";
 import { PerfHud } from "./perf-hud.js";
 import { createSelftest, selftestDrip, type SelftestResult } from "./selftest.js";
 import { claimStepIdOf, createOpenProbe, type OpenProbeResult } from "./selftest-open.js";
@@ -73,6 +74,14 @@ async function loadBundle(name: string): Promise<Loaded> {
   } catch (error) {
     return { kind: "error", message: `Could not load ${url}: ${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+/** ?overview=<name>: appends its overview_snapshot rows to the loaded bundle (dev host only). */
+async function attachOverview(bundle: TraceBundle, name: string): Promise<Loaded> {
+  const snapshots = await loadOverview(name, bundle.session.sessionId);
+  return snapshots === null
+    ? { kind: "error", message: `Unknown overview "${name}"` }
+    : { kind: "ready", bundle: snapshots.reduce(withOverview, bundle) };
 }
 
 /**
@@ -163,12 +172,24 @@ function ViewerBody({
     return () => probe.stop();
   }, [probe]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
+  const showBrief = useMemo(() => new URLSearchParams(window.location.search).get("brief") === "1", []);
   const host = useMemo<ViewerHost>(
     () => ({
       onLocation: (next) => history.replaceState(null, "", locationToHash(next)),
+      // ?brief=1 (screenshots only): Esc up to an empty selection, so the right panel shows the Brief (spec E4).
+      ...(showBrief
+        ? {
+            onReady: () => {
+              // After the open defaults select a step (spec §7.8): Esc collapses, goes to the parent, then clears.
+              window.setTimeout(() => {
+                for (let i = 0; i < 4; i += 1) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+              }, 300);
+            },
+          }
+        : {}),
       ...(test === null ? {} : test.host),
     }),
-    [test],
+    [test, showBrief],
   );
   const viewer = (
     <TraceViewer
@@ -219,20 +240,23 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const openProbe = params.get("selftest") === "open";
   const chrome = params.get("chrome") === "embedded" ? "embedded" : "full";
   const view = parseView(params.get("view"));
+  const overviewName = params.get("overview");
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   // Each bundle request (a ?bundle= fetch or a drop) takes a token; only the latest may write.
   const requestToken = useRef(0);
 
   useEffect(() => {
     const token = (requestToken.current += 1);
-    void loadBundle(bundleName).then((next) => {
-      if (requestToken.current === token) setLoaded(next);
-    });
+    void loadBundle(bundleName)
+      .then((next) => (next.kind === "ready" && overviewName !== null ? attachOverview(next.bundle, overviewName) : next))
+      .then((next) => {
+        if (requestToken.current === token) setLoaded(next);
+      });
     return () => {
       // A later token (a drop or a new bundle name) supersedes this fetch.
       if (requestToken.current === token) requestToken.current += 1;
     };
-  }, [bundleName]);
+  }, [bundleName, overviewName]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
