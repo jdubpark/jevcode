@@ -10,6 +10,7 @@ import {
   TraceViewer,
   type DripOptions,
   type StaticBundleSource,
+  type ViewDefinition,
   type ViewerHost,
   type ViewKind,
 } from "@jevcode/trace-viewer";
@@ -197,6 +198,14 @@ function Viewer({
   );
 }
 
+/**
+ * The main window registers its Surfaces host view, which makes five switch segments. This stub gives the embedded
+ * dev host the same bar, so the bar probe measures the real segment count.
+ */
+const EMBEDDED_HOST_VIEWS: readonly ViewDefinition[] = [
+  { kind: "surfaces", label: "Surfaces", icon: "view-surfaces", Component: () => null },
+];
+
 function ViewerBody({
   source,
   bundle,
@@ -291,6 +300,7 @@ function ViewerBody({
       initialFollow={selftest ? false : undefined}
       chrome={chrome}
       initialView={view}
+      hostViews={chrome === "embedded" ? EMBEDDED_HOST_VIEWS : undefined}
     />
   );
   return (

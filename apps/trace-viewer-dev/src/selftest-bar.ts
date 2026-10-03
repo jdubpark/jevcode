@@ -7,6 +7,8 @@ export interface BarProbeResult {
   barScrollWidth: number;
   /** The bar's content fits: no horizontal overflow. */
   fits: boolean;
+  /** The view switch's radio count (the main window has five). */
+  segments: number;
   gapsChip: boolean;
   approxChip: boolean;
   briefToggle: boolean;
@@ -48,6 +50,7 @@ export function measureBar(root: ParentNode): BarProbeResult | null {
     barWidth: Math.round(barBox.width),
     barScrollWidth: bar.scrollWidth,
     fits: bar.scrollWidth <= bar.clientWidth,
+    segments: bar.querySelectorAll('[role="radiogroup"][aria-label="View"] > [role="radio"]').length,
     gapsChip: bar.querySelector(GAPS) !== null,
     approxChip: bar.querySelector(APPROX) !== null,
     briefToggle: toggle !== null,
