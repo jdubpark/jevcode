@@ -75,8 +75,8 @@ class ProjectionCache<T extends { id: string }> {
 
   /**
    * After the store's own write of one row, given as a fresh read returns it: the list takes it in place of a read.
-   * For a list read in rowid order (no ORDER BY; the graph tables), an upsert keeps a row's place and a new row comes
-   * last. Taken only when that write is the one row applied since the list was current; otherwise the next list()
+   * For a list read in rowid order (listGraphNodes and listGraphEdges, ORDER BY rowid), an upsert keeps a row's place
+   * and a new row comes last. Taken only when that write is the one row applied since the list was current; otherwise the next list()
    * reads, so another writer's rows are never missed.
    */
   wrote(item: T): void {
