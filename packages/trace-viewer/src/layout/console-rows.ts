@@ -243,8 +243,25 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
   const base = buildStepRows(session, index, prev?.base ?? prev);
   const stories = session.explainer.stories;
   // Without stories the merge returns `base` itself, which is `prev` when nothing changed.
-  if (prev !== undefined && prev.base === base && prev.stories === stories) return prev;
+  if (prev?.base !== undefined && prev.stories === stories) {
+    if (prev.base === base) return prev;
+    // A commit that left every step row as it was (a why or highlights row): the merge would give the same rows. A new
+    // state object, so the Console still treats it as a commit (its append measure), over the same rows.
+    if (sameRowObjects(prev.base, base)) return { rows: prev.rows, byStep: prev.byStep, base, stories };
+  }
   return mergeSummaryRows(base, stories);
+}
+
+/** The same row, or an instruction row rebuilt with the same content (buildStepRows rebuilds those every commit). */
+function sameRow(a: ConsoleRow, b: ConsoleRow | undefined): boolean {
+  if (a === b) return true;
+  return (
+    a.kind === "instruction" && b?.kind === "instruction" && a.key === b.key && a.stepId === b.stepId && a.text === b.text && a.mode === b.mode
+  );
+}
+
+function sameRowObjects(a: ConsoleRowsState, b: ConsoleRowsState): boolean {
+  return a.rows.length === b.rows.length && a.byStep.size === b.byStep.size && a.rows.every((row, i) => sameRow(row, b.rows[i]));
 }
 
 /** The step rows (V-3's builder): incremental against `prev`, the step rows of an earlier commit. */

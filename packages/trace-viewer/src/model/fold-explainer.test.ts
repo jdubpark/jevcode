@@ -102,6 +102,27 @@ describe("explainer fold", () => {
     expect(session.hidden.byType.explainer).toBeUndefined();
   });
 
+  it("keeps the same stories array until a story row adds a refresh, so the Console's merge can skip", () => {
+    const b = started();
+    b.explainer({ kind: "story", sentences: [S1], basisSeq: 1 });
+    const state = createTraceState(testMeta());
+    accumulateAll(state, b.rows);
+    const first = finalize(state, { live: true }).explainer;
+    b.explainer({ kind: "decision_why", decisionId: "d1", sentence: S3 });
+    b.explainer({ kind: "highlights", basisSeq: 2, components: [{ id: "cmp_000000000001", state: "new", unitIds: [] }] });
+    b.explainer({ kind: "story", sentences: [S1], basisSeq: 3 });
+    accumulateAll(state, b.rows.slice(-3));
+    const second = finalize(state, { live: true }).explainer;
+    expect(second).not.toBe(first);
+    expect(second.stories).toBe(first.stories);
+    b.explainer({ kind: "story", sentences: [S2], basisSeq: 4 });
+    accumulateAll(state, b.rows.slice(-1));
+    const third = finalize(state, { live: true }).explainer;
+    expect(third.stories).not.toBe(first.stories);
+    expect(third.stories.map((story) => story.sentences)).toEqual([[S1], [S2]]);
+    expect(first.stories.map((story) => story.sentences)).toEqual([[S1]]);
+  });
+
   it("never changes a returned session's explainer and reuses it until an explainer row arrives", () => {
     const b = started();
     b.explainer({ kind: "story", sentences: [S1], basisSeq: 1 });
