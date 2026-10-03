@@ -2,7 +2,7 @@
 import type { Component, NarrativeSentence } from "@jevcode/contracts";
 
 import { decisionStableId, type DecisionDetail, type OverviewModel, type StepId, type TraceSession } from "../model/index.js";
-import { componentDecisionIds } from "./brief-decisions.js";
+import { componentDecisionIds, decisionSteps } from "./brief-decisions.js";
 import { componentForPath } from "./map-layout.js";
 
 /** Spec §3.4: files are listed top 20, then "n more". */
@@ -30,9 +30,10 @@ export interface ComponentDetails {
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byCount = (a: MapLink, b: MapLink): number => b.count - a.count || cmp(a.name, b.name) || cmp(a.id, b.id);
 
-export function componentDetails(overview: OverviewModel, componentId: string, session: TraceSession): ComponentDetails | null {
-  const component = overview.componentById.get(componentId);
-  if (component === undefined) return null;
+type ComponentParts = Pick<ComponentDetails, "files" | "importsOut" | "importsIn" | "externals" | "citations">;
+
+/** What the Inspector reads of the overview alone: its files, imports, packages and the sentences citing it. */
+function componentParts(overview: OverviewModel, componentId: string, component: Component): ComponentParts {
   const nameOf = (id: string): string => overview.componentById.get(id)?.name ?? id;
   const importsOut: MapLink[] = [];
   const importsIn: MapLink[] = [];
@@ -41,22 +42,6 @@ export function componentDetails(overview: OverviewModel, componentId: string, s
     const example = edge.examples[0] ?? null;
     if (edge.from === componentId) importsOut.push({ id: edge.to, name: nameOf(edge.to), count: edge.count, example });
     else if (edge.to === componentId) importsIn.push({ id: edge.from, name: nameOf(edge.from), count: edge.count, example });
-  }
-  const changes: ComponentChange[] = [];
-  for (const entity of session.entities) {
-    const stepId = entity.stepIds.at(-1);
-    if (stepId === undefined || componentForPath(overview, entity.path) !== componentId) continue;
-    changes.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId });
-  }
-  changes.sort((a, b) => cmp(a.path, b.path));
-  const touching = componentDecisionIds(session, componentId);
-  const decisions: ComponentDecision[] = [];
-  if (touching.size > 0) {
-    for (const step of session.steps) {
-      const decision = step.decision;
-      if (decision === undefined || !touching.has(decisionStableId(decision.decisionId))) continue;
-      decisions.push({ decisionId: decision.decisionId, stepId: step.id, title: decision.title, status: decision.status });
-    }
   }
   const files = new Set(component.files);
   const citations = (overview.snapshot.narrative?.sentences ?? []).filter((sentence) =>
@@ -70,10 +55,75 @@ export function componentDetails(overview: OverviewModel, componentId: string, s
     importsOut: importsOut.sort(byCount),
     importsIn: importsIn.sort(byCount),
     externals: [...component.externalDeps].sort((a, b) => b.count - a.count || cmp(a.name, b.name)),
-    changes,
-    decisions,
     citations,
   };
+}
+
+/** This session's edited files inside the component, by path. */
+function componentChanges(overview: OverviewModel, componentId: string, entities: TraceSession["entities"]): ComponentChange[] {
+  const changes: ComponentChange[] = [];
+  for (const entity of entities) {
+    const stepId = entity.stepIds.at(-1);
+    if (stepId === undefined || componentForPath(overview, entity.path) !== componentId) continue;
+    changes.push({ path: entity.path, added: entity.added, removed: entity.removed, stepId });
+  }
+  return changes.sort((a, b) => cmp(a.path, b.path));
+}
+
+/** The decisions touching the component, in session order: its decision steps only (decisionSteps). */
+function componentDecisions(session: TraceSession, componentId: string): ComponentDecision[] {
+  const touching = componentDecisionIds(session, componentId);
+  const decisions: ComponentDecision[] = [];
+  if (touching.size === 0) return decisions;
+  for (const step of decisionSteps(session.steps)) {
+    const decision = step.decision;
+    if (decision === undefined || !touching.has(decisionStableId(decision.decisionId))) continue;
+    decisions.push({ decisionId: decision.decisionId, stepId: step.id, title: decision.title, status: decision.status });
+  }
+  return decisions;
+}
+
+/**
+ * The inputs of the last details built. The overview parts read the passed overview and component; the changes also read
+ * the entities; the decisions read the session's chapters, overview and steps. Finalize keeps each of those the same
+ * object while it is unchanged, so a live commit rebuilds only the parts whose inputs it changed.
+ */
+let last: {
+  overview: OverviewModel;
+  componentId: string;
+  entities: TraceSession["entities"];
+  chapters: TraceSession["chapters"];
+  sessionOverview: TraceSession["overview"];
+  steps: TraceSession["steps"];
+  details: ComponentDetails;
+} | null = null;
+
+export function componentDetails(overview: OverviewModel, componentId: string, session: TraceSession): ComponentDetails | null {
+  const component = overview.componentById.get(componentId);
+  if (component === undefined) return null;
+  const { entities, chapters, steps } = session;
+  const previous = last !== null && last.overview === overview && last.componentId === componentId ? last : null;
+  if (
+    previous !== null && previous.entities === entities && previous.chapters === chapters &&
+    previous.sessionOverview === session.overview && previous.steps === steps
+  ) {
+    return previous.details;
+  }
+  const parts: ComponentParts = previous?.details ?? componentParts(overview, componentId, component);
+  const details: ComponentDetails = {
+    files: parts.files,
+    importsOut: parts.importsOut,
+    importsIn: parts.importsIn,
+    externals: parts.externals,
+    changes: previous !== null && previous.entities === entities ? previous.details.changes : componentChanges(overview, componentId, entities),
+    decisions:
+      previous !== null && previous.chapters === chapters && previous.sessionOverview === session.overview && previous.steps === steps
+        ? previous.details.decisions
+        : componentDecisions(session, componentId),
+    citations: parts.citations,
+  };
+  last = { overview, componentId, entities, chapters, sessionOverview: session.overview, steps, details };
+  return details;
 }
 
 /** The longest list bar in the Inspector, in px (revised Map mockup). */

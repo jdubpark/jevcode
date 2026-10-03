@@ -135,6 +135,26 @@ describe("explainer fold", () => {
     expect(first.stories.map((story) => story.sentences)).toEqual([[S1]]);
   });
 
+  it("keeps the same decisionWhy map until a decision_why row arrives, so the Brief's decision cards can skip", () => {
+    const b = started();
+    b.explainer({ kind: "decision_why", decisionId: "d1", sentence: S3 });
+    const state = createTraceState(testMeta());
+    accumulateAll(state, b.rows);
+    const first = finalize(state, { live: true }).explainer;
+    b.explainer({ kind: "story", sentences: [S1], basisSeq: 2 });
+    b.explainer({ kind: "highlights", basisSeq: 2, components: [{ id: "cmp_000000000001", state: "new", unitIds: [] }] });
+    accumulateAll(state, b.rows.slice(-2));
+    const second = finalize(state, { live: true }).explainer;
+    expect(second).not.toBe(first);
+    expect(second.decisionWhy).toBe(first.decisionWhy);
+    b.explainer({ kind: "decision_why", decisionId: "d2", sentence: S1 });
+    accumulateAll(state, b.rows.slice(-1));
+    const third = finalize(state, { live: true }).explainer;
+    expect(third.decisionWhy).not.toBe(first.decisionWhy);
+    expect([...third.decisionWhy.keys()]).toEqual(["d1", "d2"]);
+    expect([...first.decisionWhy.keys()]).toEqual(["d1"]);
+  });
+
   it("never changes a returned session's explainer and reuses it until an explainer row arrives", () => {
     const b = started();
     b.explainer({ kind: "story", sentences: [S1], basisSeq: 1 });

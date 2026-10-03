@@ -354,14 +354,22 @@ export function createMapLayoutCache(): MapLayoutCache {
   };
 }
 
+const componentByPath = new WeakMap<OverviewModel, Map<string, string | undefined>>();
+
 /**
  * The component a repo path belongs to: strips the repo root and "./", then applies the model's one path rule
  * (componentIdForPath, ruling R6: listed file, then longest root, then "." for a root-level path or "(other)" for a nested
- * one). Entity paths may be absolute.
+ * one). Entity paths may be absolute. Cached per overview (a model is never changed once built), so the Brief and the
+ * component Inspector look each edited path up once per snapshot rather than once per commit.
  */
 export function componentForPath(overview: OverviewModel, path: string): string | undefined {
+  let byPath = componentByPath.get(overview);
+  if (byPath === undefined) componentByPath.set(overview, (byPath = new Map()));
+  if (byPath.has(path)) return byPath.get(path);
   const repoPrefix = `${overview.snapshot.repoRoot.replace(/\/+$/, "")}/`;
   let relative = path.startsWith(repoPrefix) ? path.slice(repoPrefix.length) : path;
   while (relative.startsWith("./")) relative = relative.slice(2);
-  return componentIdForPath(overview.snapshot.components, relative) ?? undefined;
+  const id = componentIdForPath(overview.snapshot.components, relative) ?? undefined;
+  byPath.set(path, id);
+  return id;
 }
