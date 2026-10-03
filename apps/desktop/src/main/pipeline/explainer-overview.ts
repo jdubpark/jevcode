@@ -35,6 +35,8 @@ import {
   type extractImports,
 } from "@jevcode/evidence-engine";
 
+import type { MainSlicer } from "./main-slicer.js";
+
 /** Spec §6.2: the narrator sees at most this many exported names per component. */
 export const MAX_EXPORTS_PER_COMPONENT = 15;
 /**
@@ -526,20 +528,23 @@ export function nextTurn(): Promise<void> {
 /**
  * Runs `steps` on the main thread in slices: after a step that ends a slice of `sliceMs`, it
  * yields to the event loop (setImmediate), so agent events queued meanwhile are ingested
- * (spec §6.1). Returns null, without finishing, once `cancelled()` is true after a yield.
+ * (spec §6.1). With `slicer` (lane 07 PL-3), a slice ends once the main slicer's turn budget is
+ * spent, and the yield goes through it, so the slice shares its turn with the pipeline and the
+ * session explainer. Returns null, without finishing, once `cancelled()` is true after a yield.
  */
 export async function runSliced<T>(
   steps: Generator<void, T>,
-  options: { sliceMs: number; cancelled?: () => boolean; now?: () => number },
+  options: { sliceMs: number; cancelled?: () => boolean; now?: () => number; slicer?: MainSlicer },
 ): Promise<{ value: T; yielded: boolean } | null> {
   const now = options.now ?? (() => performance.now());
+  const slicer = options.slicer;
   let started = now();
   let yielded = false;
   for (;;) {
     const next = steps.next();
     if (next.done === true) return { value: next.value, yielded };
-    if (now() - started < options.sliceMs) continue;
-    await nextTurn();
+    if (slicer !== undefined ? !slicer.spent() : now() - started < options.sliceMs) continue;
+    await (slicer !== undefined ? slicer.yield() : nextTurn());
     yielded = true;
     if (options.cancelled?.() === true) {
       steps.return(undefined as never);

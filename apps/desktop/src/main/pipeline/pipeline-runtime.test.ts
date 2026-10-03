@@ -23,6 +23,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MockScriptEntry } from "./mock-agent-adapter.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
 import { PlaybackClient, PlaybackLabels, loadPlaybackFixture } from "./playback.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import { PipelineRuntime } from "./pipeline-runtime.js";
 import { observeTraceAppends } from "../rows-available.js";
 import type { ObservedAppend } from "../rows-available.js";
@@ -1654,11 +1655,13 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
      * debounce then leaves the rebuild that projects that result to the turn-end pass's flush.
      */
     endByHand?: boolean;
+    /** The main slicer to share (index.ts passes one to the runtime and the explainer stage). */
+    slicer?: MainSlicer;
   }
 
   async function runTurnEnd(
     name: string,
-    { arm = () => {}, inspect = () => {}, endByHand = false }: TurnEndOptions = {},
+    { arm = () => {}, inspect = () => {}, endByHand = false, slicer }: TurnEndOptions = {},
   ): Promise<ReturnType<typeof rowSummary>> {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
     rmSync(dir, { recursive: true, force: true });
@@ -1672,6 +1675,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       db,
       emit,
       evidence: false,
+      ...(slicer !== undefined ? { slicer } : {}),
       jevClient: new DegradeClient(),
       log: () => {},
     });
@@ -1849,6 +1853,14 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       const repeated = own.filter((entry, index) => entry.startsWith("read") && index > 0 && own[index - 1]?.startsWith("read") === true);
       expect({ type, repeated: repeated.length }).toEqual({ type, repeated: 0 });
     }
+  }, 60_000);
+
+  it("yields through the main slicer it is given, the one index.ts shares with the session explainer (PL-3)", async () => {
+    const slicer = createMainSlicer();
+    const rows = await runTurnEnd("pass-shared-slicer", { slicer });
+    expect(rows.completionSnapshots).toBe(1);
+    // Every pass's first check comes after its flush, outside a slicer turn, so each pass yields through it.
+    expect(slicer.turns).toBeGreaterThan(0);
   }, 60_000);
 
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {

@@ -25,6 +25,7 @@ import type { JevcodeDb } from "@jevcode/storage";
 import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 import type { BriefSources } from "./explainer-narration.js";
 import { createSessionExplainer } from "./explainer-session.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import {
   OverviewIndex,
   applyFileChanges,
@@ -155,6 +156,12 @@ export interface ExplainerStageDeps {
   onStatus?(status: ExplainerStatus): void;
   /** Lane 07: minimum time between story narrations (spec §6.1); default 20,000 ms. The live smoke shortens it. */
   storyIntervalMs?: number;
+  /**
+   * Lane 07 PL-3: the main process's shared slicer (main-slicer.ts). The session explainer's fold and the overview
+   * rebuild yield through it, as the pipeline's sync pass does, so one event-loop turn runs at most one budget of
+   * their work. index.ts passes the pipeline's instance; without one the stage makes its own.
+   */
+  slicer?: MainSlicer;
 }
 
 export interface ExplainerStage {
@@ -252,8 +259,10 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     },
   });
 
+  const slicer = deps.slicer ?? createMainSlicer();
   // Lane 07 (S-2, ruling R4): the session explainer starts from initialNarrator and follows setNarrator.
   const sessionExplainer = createSessionExplainer({
+    slicer,
     db: deps.db,
     repoRoot: deps.repoRoot,
     sessionId: () => deps.sessionId(),
@@ -592,7 +601,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     index = null;
     let result: { value: OverviewIndex; yielded: boolean } | null;
     try {
-      result = await runSliced(OverviewIndex.steps(repo), { sliceMs: REBUILD_SLICE_MS, cancelled: stale });
+      result = await runSliced(OverviewIndex.steps(repo), { sliceMs: REBUILD_SLICE_MS, cancelled: stale, slicer });
     } catch (error) {
       if (!stale()) buildFailed(repo, error);
       return;

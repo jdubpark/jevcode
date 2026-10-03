@@ -48,6 +48,7 @@ import {
   defaultModelSelector,
   type ModelSelectionResult,
 } from "./model-selection.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import { resolveSessionModelSelection } from "./model-resolution.js";
 import { deriveRepoContext } from "./repo-context.js";
 import {
@@ -76,12 +77,6 @@ import type {
 
 const SYNC_DEBOUNCE_MS = 600;
 
-/**
- * A sync pass yields to the event loop once it has run this long without a break, so IPC, the renderer's rows
- * requests among it, is answered during a long pass. Spec §6.1 caps a synchronous block at 50 ms (lane 03 PL-2).
- */
-const SYNC_SLICE_MS = 20;
-
 /** Thrown by a pass's pace() once its session is stopped: the pass ends there and writes nothing more. */
 class PassStopped extends Error {
   constructor() {
@@ -91,24 +86,24 @@ class PassStopped extends Error {
 
 interface Slicer {
   /**
-   * Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer, calling beforeYield first. Then
-   * throws PassStopped if the session has been stopped, whether during this yield or during an earlier await.
+   * Yields through the main slicer once this event-loop turn's shared budget (MAIN_SLICE_MS) is spent, calling
+   * beforeYield first, so IPC, the renderer's rows requests among it, is answered during a long pass (spec §6.1,
+   * lane 03 PL-2; one slicer for the pass and the session explainer since lane 07 PL-3). Then throws PassStopped if
+   * the session has been stopped, whether during this yield or during an earlier await.
    */
   pace(): Promise<void>;
   /** How many times pace() has yielded. */
   readonly yields: number;
 }
 
-function createSlicer(isStopped: () => boolean, beforeYield: () => void, sliceMs = SYNC_SLICE_MS): Slicer {
-  let sliceStart = performance.now();
+function createSlicer(main: MainSlicer, isStopped: () => boolean, beforeYield: () => void): Slicer {
   let yields = 0;
   return {
     async pace() {
-      if (performance.now() - sliceStart >= sliceMs) {
+      if (main.spent()) {
         beforeYield();
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await main.yield();
         yields += 1;
-        sliceStart = performance.now();
       }
       if (isStopped()) throw new PassStopped();
     },
@@ -158,8 +153,11 @@ export class PipelineRuntime {
 
   private readonly opts: PipelineRuntimeOptions;
 
+  private readonly slicer: MainSlicer;
+
   constructor(opts: PipelineRuntimeOptions) {
     this.opts = opts;
+    this.slicer = opts.slicer ?? createMainSlicer();
   }
 
   get activeSessions(): string[] {
@@ -1020,12 +1018,12 @@ export class PipelineRuntime {
    * that, the unit and graph stores reread their lists only after a row of their kind was written (lane 07 PL-3), so
    * a snapshot, the rebuild's unit lists and emitSessionState after no such write cost no O(session) read.
    *
-   * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
-   * surface, once before the decision, validation and completion steps, which run together, and once after them,
-   * before the explainer hook (onPipelineSync, lane 07 S-2), which only a completed pass reaches. When the slice is
-   * spent it sends unsent Jev decisions to the debug panel and yields (setImmediate), so no block of a turn end's pass
-   * runs past spec §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev
-   * client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
+   * Slices (PL-2): the pass checks its slice after the flush, before each Jev batch and unit, before each surface,
+   * once before the decision, validation and completion steps, which run together, and once after them, before the
+   * explainer hook (onPipelineSync, lane 07 S-2), which only a completed pass reaches. The slice is the main slicer's
+   * per-turn budget, shared with the session explainer (lane 07 PL-3): when the turn's budget is spent the pass sends
+   * unsent Jev decisions to the debug panel and yields through the slicer, so no event-loop turn runs past spec
+   * §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
    * stage, across their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
    * Each check also ends the pass (PassStopped) once the session is stopped, so a suspended pass writes nothing after
    * a stop and never interrupts a stopped adapter.
@@ -1038,7 +1036,7 @@ export class PipelineRuntime {
       jevUnsent = false;
       this.emitJevDebug(session);
     };
-    const slicer = createSlicer(() => session.stopping, sendJevDebug);
+    const slicer = createSlicer(this.slicer, () => session.stopping, sendJevDebug);
     const pace = (): Promise<void> => slicer.pace();
     try {
       session.coordinator.flush();

@@ -26,6 +26,7 @@ import { describe, expect, it, vi } from "vitest";
 import { NARRATOR_RECORD_TEXT_MAX, type NarratorCallRecord } from "../../shared/narrator-log.js";
 import { NARRATOR_BACKOFF_MS } from "./explainer-narration.js";
 import { createSessionExplainer, type SessionExplainer, type SessionExplainerDeps } from "./explainer-session.js";
+import { createMainSlicer } from "./main-slicer.js";
 import {
   STORY_MIN_INTERVAL_MS,
   backoffMs,
@@ -1095,10 +1096,12 @@ describe("session explainer: fold slices (PL-3)", () => {
   };
 
   it("settles and yields between slices of one sync's rows, and writes the rows one unsliced fold writes", async () => {
-    const run = async (foldSliceMs: number): Promise<{ rows: ExplainerRecord[]; turns: number }> => {
+    const run = async (foldSliceMs: number): Promise<{ rows: ExplainerRecord[]; turns: number; slicerTurns: number }> => {
       const w = new World();
       const { units, decisions } = longSession(w);
-      const explainer = createSessionExplainer({ ...w.deps(null), foldSliceMs });
+      // The slicer index.ts shares with the pipeline: every slice yields through it (PL-3 continuation).
+      const slicer = createMainSlicer();
+      const explainer = createSessionExplainer({ ...w.deps(null), foldSliceMs, slicer });
       let turns = 0;
       let counting = true;
       const tick = (): void => {
@@ -1110,7 +1113,7 @@ describe("session explainer: fold slices (PL-3)", () => {
       await explainer.idle();
       counting = false;
       expect(w.logs.filter((event) => event.kind === "error")).toEqual([]);
-      return { rows: w.rows().map((row) => row.record), turns };
+      return { rows: w.rows().map((row) => row.record), turns, slicerTurns: slicer.turns };
     };
     const traceRows = (() => {
       const w = new World();
@@ -1122,6 +1125,7 @@ describe("session explainer: fold slices (PL-3)", () => {
     const sliced = await run(0);
     const whole = await run(Number.POSITIVE_INFINITY);
     expect(sliced.turns).toBeGreaterThanOrEqual(traceRows);
+    expect(sliced.slicerTurns).toBeGreaterThanOrEqual(traceRows);
     expect(whole.turns).toBeLessThan(10);
     // Incremental equals fresh (S-3): the slices change no row the explainer writes.
     expect(sliced.rows.map((row) => row.kind)).toEqual(["highlights", "story"]);

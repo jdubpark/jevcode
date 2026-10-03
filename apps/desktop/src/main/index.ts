@@ -18,6 +18,7 @@ import {
 } from "./ipc.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
+import { createMainSlicer } from "./pipeline/main-slicer.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
@@ -214,6 +215,9 @@ app.whenReady().then(() => {
   const eventsDb = db;
   const extractor = createImportExtractor();
   importExtractor = extractor;
+  // Lane 07 PL-3: one slicer for the main process's long work. Sync passes, the session explainer's fold and the
+  // overview rebuild all yield through it, so one event-loop turn runs at most one budget of their work.
+  const mainSlicer = createMainSlicer();
   const explainerRegistry = createExplainerRegistry((repoRoot) => {
     // Lane 05 (R4): the narration seam starts from the switch's current client; the subscription
     // below forwards every later change to the open repo's stage.
@@ -243,6 +247,7 @@ app.whenReady().then(() => {
       narration: createNarrationSeamFactory(narratorOptions),
       initialNarrator: narratorOptions.initialNarrator,
       recordNarratorCall: narratorOptions.recordNarratorCall,
+      slicer: mainSlicer,
     });
   }, (message) => console.error(`[explainer] ${message}`));
   explainer = explainerRegistry;
@@ -259,6 +264,7 @@ app.whenReady().then(() => {
       : undefined,
     // Lane 07 (S-2): story, decision why and highlight triggers for the open repo's stage.
     onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
+    slicer: mainSlicer,
   });
 
   const instructionRouter = new InstructionRouter({
