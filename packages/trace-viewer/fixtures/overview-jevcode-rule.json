@@ -4,10 +4,10 @@
   "scanId": "fixture",
   "partial": false,
   "counts": {
-    "files": 770,
-    "totalFiles": 770,
+    "files": 772,
+    "totalFiles": 772,
     "components": 22,
-    "edges": 54,
+    "edges": 56,
     "languages": [
       "TypeScript",
       "JSON",
@@ -337,7 +337,7 @@
       "role": "ui",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "9acccd35bd1f66553dc9c550cfd871a0a7c95eae",
+      "contentHash": "22daa028178d06e589895e24abb60ff64b25804c",
       "externalDeps": [
         {
           "name": "react",
@@ -505,7 +505,7 @@
       "id": "cmp_f12bdb7b5a14",
       "rootPath": "apps/desktop/src/main",
       "name": "desktop main",
-      "fileCount": 80,
+      "fileCount": 81,
       "files": [
         "apps/desktop/src/main/actions.test.ts",
         "apps/desktop/src/main/actions.ts",
@@ -554,6 +554,7 @@
         "apps/desktop/src/main/pipeline/repo-context.ts",
         "apps/desktop/src/main/pipeline/resume-budget.test.ts",
         "apps/desktop/src/main/pipeline/runtime-instruction-deliverer.ts",
+        "apps/desktop/src/main/pipeline/storage-stores.test.ts",
         "apps/desktop/src/main/pipeline/storage-stores.ts",
         "apps/desktop/src/main/pipeline/types.ts",
         "apps/desktop/src/main/pipeline/ui-stage.test.ts",
@@ -593,11 +594,11 @@
       "role": "api",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "8ad5c600faf3937725c5d76d1895dda4b347acbe",
+      "contentHash": "cceb9d36ab435d4860e56cc409ce33f1871c471a",
       "externalDeps": [
         {
           "name": "vitest",
-          "count": 39
+          "count": 40
         },
         {
           "name": "electron",
@@ -635,10 +636,11 @@
       "id": "cmp_27ce274f853f",
       "rootPath": "apps/desktop",
       "name": "desktop shell",
-      "fileCount": 27,
+      "fileCount": 28,
       "files": [
         "apps/desktop/package.json",
         "apps/desktop/scripts/native-abi.mjs",
+        "apps/desktop/scripts/pipeline-scale-probe.mjs",
         "apps/desktop/scripts/replay.mjs",
         "apps/desktop/src/index.ts",
         "apps/desktop/src/preload/index.ts",
@@ -670,7 +672,7 @@
       "role": "api",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "efe019016bae9e8d69333ef1f8451433e218e5ff",
+      "contentHash": "462d96de3883c594146a579e7d57f6cce7f6a7a0",
       "externalDeps": [
         {
           "name": "vitest",
@@ -972,7 +974,7 @@
       "role": "domain",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "20d4f546421f0a9e9d74bff0f9d1c305c046551c",
+      "contentHash": "137b6eea97500e1aaf598e52a8cb7c6430f08724",
       "externalDeps": [
         {
           "name": "vitest",
@@ -1217,7 +1219,7 @@
       "role": "domain",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "be9c28784f04c2706a78c37952e5b07aff739e1c",
+      "contentHash": "035b889ceef36bc65fac1bb3257bd2cc5bdec738",
       "externalDeps": [
         {
           "name": "vitest",
@@ -1612,7 +1614,7 @@
     {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_de23360922b6",
-      "count": 60,
+      "count": 62,
       "examples": [
         "apps/desktop/src/main/index.ts → packages/contracts/src/index.ts",
         "apps/desktop/src/main/ipc.test.ts → packages/contracts/src/index.ts",
@@ -1622,7 +1624,7 @@
     {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_21ca93ae5083",
-      "count": 54,
+      "count": 56,
       "examples": [
         "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
         "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
@@ -1750,6 +1752,16 @@
       ]
     },
     {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_44240dbada3f",
+      "count": 18,
+      "examples": [
+        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
+        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
+        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/semantic-core/src/index.ts"
+      ]
+    },
+    {
       "from": "cmp_4f85bffae8dd",
       "to": "cmp_de23360922b6",
       "count": 17,
@@ -1767,16 +1779,6 @@
         "apps/desktop/src/main/index.ts → packages/evidence-engine/src/index.ts",
         "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts",
         "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts"
-      ]
-    },
-    {
-      "from": "cmp_f12bdb7b5a14",
-      "to": "cmp_44240dbada3f",
-      "count": 16,
-      "examples": [
-        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
-        "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
-        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/semantic-core/src/index.ts"
       ]
     },
     {
@@ -2051,6 +2053,22 @@
       ]
     },
     {
+      "from": "cmp_27ce274f853f",
+      "to": "cmp_21ca93ae5083",
+      "count": 1,
+      "examples": [
+        "apps/desktop/scripts/pipeline-scale-probe.mjs → packages/storage/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_27ce274f853f",
+      "to": "cmp_44240dbada3f",
+      "count": 1,
+      "examples": [
+        "apps/desktop/scripts/pipeline-scale-probe.mjs → packages/semantic-core/src/index.ts"
+      ]
+    },
+    {
       "from": "cmp_4f85bffae8dd",
       "to": "cmp_21ca93ae5083",
       "count": 1,
@@ -2109,7 +2127,7 @@
         },
         {
           "componentId": "cmp_f12bdb7b5a14",
-          "count": 39
+          "count": 40
         },
         {
           "componentId": "cmp_381d69b6cafc",
@@ -2677,8 +2695,8 @@
   "status": {
     "scan": {
       "state": "done",
-      "scanned": 770,
-      "total": 770
+      "scanned": 772,
+      "total": 772
     },
     "narrator": "off"
   },
