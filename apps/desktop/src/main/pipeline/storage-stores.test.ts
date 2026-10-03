@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { ChangeUnit, Decision, EvidenceFact, ValidationResult } from "@jevcode/contracts";
 import { PipelineCoordinator } from "@jevcode/semantic-core";
-import type { FailureRecord, PipelineStores } from "@jevcode/semantic-core";
+import type { FailureRecord, GraphEdge, GraphNode, PipelineStores } from "@jevcode/semantic-core";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it } from "vitest";
@@ -454,5 +454,146 @@ describe("storage stores: payloads that are already written", () => {
     expect(rowsOf(db, "semantic_event")).toBe(1);
     expect(stores.events.all().map((listed) => listed.id)).toEqual(["sev_2"]);
     expect(notified).toBe(1);
+  });
+});
+
+describe("storage stores: projection lists (lane 07 PL-3)", () => {
+  const unit = (id: string, status: ChangeUnit["status"] = "in_progress"): ChangeUnit => ({
+    id,
+    sessionId: SESSION,
+    title: `Changed ${id}`,
+    category: "implementation",
+    status,
+    files: [`src/${id}.ts`],
+    symbols: [],
+    interfacesChanged: [],
+    schemaChanges: [],
+    dependencyChanges: [],
+    relatedDecisions: [],
+    validationResults: [],
+    evidence: [],
+    createdAt: TS,
+    updatedAt: TS,
+  });
+
+  /** Counts the database's list reads. */
+  function countReads(db: JevcodeDb): { units: number; nodes: number; edges: number } {
+    const reads = { units: 0, nodes: 0, edges: 0 };
+    const units = db.listChangeUnits.bind(db);
+    const nodes = db.listGraphNodes.bind(db);
+    const edges = db.listGraphEdges.bind(db);
+    db.listChangeUnits = (sessionId) => {
+      reads.units += 1;
+      return units(sessionId);
+    };
+    db.listGraphNodes = (sessionId) => {
+      reads.nodes += 1;
+      return nodes(sessionId);
+    };
+    db.listGraphEdges = (sessionId) => {
+      reads.edges += 1;
+      return edges(sessionId);
+    };
+    return reads;
+  }
+
+  it("reads the change units once until a change unit is written, by the store or any other writer", () => {
+    const { db, stores } = open();
+    const reads = countReads(db);
+    stores.units.upsert(unit("cu_1"));
+    stores.units.upsert(unit("cu_2"));
+    const first = stores.units.all();
+    expect(first.map((entry) => entry.id).sort()).toEqual(["cu_1", "cu_2"]);
+    stores.units.all();
+    stores.units.all();
+    expect(reads.units).toBe(1);
+    // Rows of other kinds leave the list as it is.
+    stores.validations.upsertValidation(validation());
+    stores.graph.upsertNodes([{ id: "node_1", sessionId: SESSION, type: "File", label: "src/a.ts" }]);
+    expect(stores.units.all()).toEqual(first);
+    expect(reads.units).toBe(1);
+    // A write that bypasses the store (the runtime's acceptChanges writes the database directly) is read.
+    db.upsertChangeUnit(unit("cu_1", "validated"));
+    expect(stores.units.all().find((entry) => entry.id === "cu_1")?.status).toBe("validated");
+    expect(reads.units).toBe(2);
+    // The store's own write and its superseded rewrite are read too, in the database's order.
+    stores.units.upsert(unit("cu_3"));
+    stores.units.remove("cu_2");
+    const listed = stores.units.all();
+    expect(reads.units).toBe(3);
+    reads.units = 0;
+    expect(listed).toEqual(db.listChangeUnits(SESSION));
+    // Every caller gets its own array.
+    listed.pop();
+    expect(stores.units.all()).toHaveLength(3);
+  });
+
+  it("reads again only the change units whose rows moved, in the order a fresh read gives", () => {
+    const { db, stores } = open();
+    for (let index = 0; index < 20; index += 1) {
+      stores.units.upsert({ ...unit(`cu_${String(index).padStart(2, "0")}`), updatedAt: `2026-10-03T00:00:${String(index).padStart(2, "0")}.000Z` });
+    }
+    expect(stores.units.all()).toEqual(db.listChangeUnits(SESSION));
+    let pointReads = 0;
+    const getUnit = db.getChangeUnit.bind(db);
+    db.getChangeUnit = (id) => {
+      pointReads += 1;
+      return getUnit(id);
+    };
+    const reads = countReads(db);
+    // A label write and the runtime's direct write (acceptChanges): two rows move, one of them to the front.
+    stores.units.upsert({ ...unit("cu_03"), title: "Relabeled", updatedAt: "2026-10-03T00:00:03.000Z" });
+    db.upsertChangeUnit({ ...unit("cu_07", "validated"), updatedAt: "2026-10-03T00:01:00.000Z" });
+    const listed = stores.units.all();
+    expect([reads.units, pointReads]).toEqual([0, 2]);
+    reads.units = 0;
+    expect(listed).toEqual(db.listChangeUnits(SESSION));
+    expect(listed[0]?.id).toBe("cu_07");
+    expect(listed.find((entry) => entry.id === "cu_03")?.title).toBe("Relabeled");
+  });
+
+  it("keeps the graph lists equal to a fresh read: its own writes go in place, any other writer's make it read", () => {
+    const { db, stores } = open();
+    const reads = countReads(db);
+    // Ids that do not ascend in write order, so an id-ordered read would not match the store's in-place lists.
+    const node = (id: string, label: string): GraphNode => ({ id, sessionId: SESSION, type: "File", label, data: { path: label } });
+    const edge = (id: string, to: string): GraphEdge => ({ id, sessionId: SESSION, from: "node_k", to, type: "DEPENDS_ON" });
+    const fresh = () => ({
+      nodes: db.listGraphNodes(SESSION).map((record) => record.id),
+      edges: db.listGraphEdges(SESSION).map((record) => record.id),
+    });
+    stores.graph.upsertNodes([node("node_k", "src/a.ts"), node("node_c", "src/b.ts")]);
+    stores.graph.upsertEdges([edge("edge_q", "node_c")]);
+    stores.graph.nodes();
+    stores.graph.edges();
+    expect([reads.nodes, reads.edges]).toEqual([1, 1]);
+    // An unchanged node is not written; rows of other kinds leave the lists as they are.
+    stores.graph.upsertNodes([node("node_k", "src/a.ts")]);
+    stores.units.upsert(unit("cu_1"));
+    // The store's own writes, an update and new rows, are taken without a read, where a fresh read puts them.
+    stores.graph.upsertNodes([node("node_x", "src/c.ts"), node("node_k", "src/a2.ts")]);
+    stores.graph.upsertEdges([edge("edge_b", "node_x"), edge("edge_q", "node_x")]);
+    const nodes = stores.graph.nodes();
+    const edges = stores.graph.edges();
+    expect([reads.nodes, reads.edges]).toEqual([1, 1]);
+    const listed = { nodes: nodes.map((entry) => entry.id), edges: edges.map((entry) => entry.id) };
+    expect(listed).toEqual({ nodes: ["node_k", "node_c", "node_x"], edges: ["edge_q", "edge_b"] });
+    expect(listed).toEqual(fresh());
+    expect(nodes.find((entry) => entry.id === "node_k")).toEqual({
+      id: "node_k",
+      sessionId: SESSION,
+      type: "File",
+      label: "src/a2.ts",
+      data: { label: "src/a2.ts", path: "src/a2.ts" },
+    });
+    expect(edges.find((entry) => entry.id === "edge_q")?.to).toBe("node_x");
+    reads.nodes = 0;
+    reads.edges = 0;
+    // A row written past the store (another writer) is read.
+    db.upsertGraphNode(SESSION, { id: "node_a", nodeType: "File", payload: { label: "src/d.ts" } });
+    const afterForeign = stores.graph.nodes().map((entry) => entry.id);
+    stores.graph.edges();
+    expect([reads.nodes, reads.edges]).toEqual([1, 0]);
+    expect(afterForeign).toEqual(fresh().nodes);
   });
 });

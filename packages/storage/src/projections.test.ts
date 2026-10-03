@@ -392,3 +392,66 @@ describe("per-table upserts", () => {
     db.close();
   });
 });
+
+describe("projectionVersion (lane 07 PL-3)", () => {
+  it("moves for each row of its type that reaches the projections, by an append or a rebuild, and for no other type", () => {
+    const db = openSessionDb();
+    expect(db.projectionVersion("change_unit")).toBe(0);
+    db.upsertChangeUnit(makeChangeUnit());
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    db.appendAgentEvent(SESSION, makeAgentEvent());
+    db.upsertDecision(makeDecision());
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    expect(db.projectionVersion("agent_event")).toBe(1);
+    expect(db.projectionVersion("decision")).toBe(1);
+    // A rejected payload never reaches the projections.
+    expect(() => db.upsertChangeUnit({ ...makeChangeUnit(), status: "nope" } as never)).toThrow();
+    expect(db.projectionVersion("change_unit")).toBe(1);
+    db.rebuildSession(SESSION);
+    expect(db.projectionVersion("change_unit")).toBe(2);
+    db.close();
+  });
+});
+
+describe("listChangeUnitVersions (lane 07 PL-3)", () => {
+  it("lists each unit's id and last-write seq in listChangeUnits' order", () => {
+    const db = openSessionDb();
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_a", updatedAt: "2026-10-03T00:00:01.000Z" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_b", updatedAt: "2026-10-03T00:00:02.000Z" }));
+    db.upsertChangeUnit(makeChangeUnit({ id: "cu_c", updatedAt: "2026-10-03T00:00:02.000Z" }));
+    const first = db.listChangeUnitVersions(SESSION);
+    expect(first.map((entry) => entry.id)).toEqual(db.listChangeUnits(SESSION).map((unit) => unit.id));
+    // A write moves the unit's seq (and its place when its updatedAt moves).
+    const rewritten = db.upsertChangeUnit(makeChangeUnit({ id: "cu_a", updatedAt: "2026-10-03T00:00:03.000Z" }));
+    const second = db.listChangeUnitVersions(SESSION);
+    expect(second.map((entry) => entry.id)).toEqual(db.listChangeUnits(SESSION).map((unit) => unit.id));
+    expect(second[0]).toEqual({ id: "cu_a", seq: rewritten.seq });
+    expect(second.find((entry) => entry.id === "cu_b")).toEqual(first.find((entry) => entry.id === "cu_b"));
+    db.close();
+  });
+});
+
+describe("graph lists (lane 07 PL-3 review)", () => {
+  it("lists graph nodes and edges in rowid order: an upsert keeps its place, a new row comes last, the index serves it", () => {
+    const db = openSessionDb();
+    // Ids that do not ascend in write order, so an id order would show.
+    for (const id of ["node_c", "node_a", "node_b"]) db.upsertGraphNode(SESSION, { id, nodeType: "File", payload: { label: id } });
+    db.upsertGraphNode(SESSION, { id: "node_a", nodeType: "File", payload: { label: "node_a again" } });
+    db.upsertGraphNode(SESSION, { id: "node_0", nodeType: "File", payload: { label: "node_0" } });
+    expect(db.listGraphNodes(SESSION).map((node) => node.id)).toEqual(["node_c", "node_a", "node_b", "node_0"]);
+    expect(db.listGraphNodes(SESSION)[1]?.payload).toEqual({ label: "node_a again" });
+    for (const id of ["edge_z", "edge_m", "edge_a"]) db.upsertGraphEdge(SESSION, { id, fromId: "node_c", toId: "node_a", edgeType: "DEPENDS_ON" });
+    db.upsertGraphEdge(SESSION, { id: "edge_z", fromId: "node_b", toId: "node_a", edgeType: "DEPENDS_ON" });
+    expect(db.listGraphEdges(SESSION).map((edge) => edge.id)).toEqual(["edge_z", "edge_m", "edge_a"]);
+    const raw = new Database(db.dbPath);
+    for (const table of ["graph_nodes", "graph_edges"]) {
+      const plan = (raw.prepare(`EXPLAIN QUERY PLAN SELECT payloadJson FROM ${table} WHERE sessionId = ? ORDER BY rowid`).all(SESSION) as {
+        detail: string;
+      }[]).map((row) => row.detail);
+      expect(plan.join(" | ")).toContain(`USING INDEX idx_${table}_session`);
+      expect(plan.some((detail) => detail.includes("TEMP B-TREE"))).toBe(false);
+    }
+    raw.close();
+    db.close();
+  });
+});

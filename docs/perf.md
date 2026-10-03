@@ -457,3 +457,220 @@ The Electron evidence smoke had 0 such rows and 1,051–1,055 trace rows in the 
 (Console appends 1,052–1,053 in the 3 check (e) runs); the remaining spread is distinct updates to the first few units
 (modules 2–7) whose timing follows the coordinator's real-time rebuilds. The
 guard is `storage-stores.test.ts` ("a change unit that leaves the projection").
+
+## Phase C (session explainer), lane 07 S-6, 2026-10-03
+
+Spec §11 and the §13 phase C exit, measured on `ce/07-session` (05d29b9 plus S-6) on the reference machine while other
+lanes ran (one-minute load average given per measure). Fix round 1 (same day, after PL-3 at a65d164) ran the live smoke
+3 more times, the soak pair once with a stub-narrator run, and one Console run; where its numbers replace S-6's, the
+table says so. The Console and pipeline sections above keep their own numbers; this section adds only what the session
+explainer changes.
+
+| Measure (spec §11, §13) | Budget | Measured | Status |
+|---|---|---|---|
+| Story row after a trigger, live mock session (story interval shortened to 2.5 s) | ≤ interval + 600 ms sync debounce + 1 s = 4.1 s | fix round, 3 runs after PL-3 (load 10.2, 8.9, 6.9): 870, 919 and 885 ms after the answered decision, which the throttle held back; 4, 5 and 13 ms after `agent_completed` | PASS |
+| Highlights row after the first change unit | ≤ 600 ms + 1 s | 914, 938 and 915 ms; 3–5 ms after the sync pass that first carried a unit | PASS |
+| Story calls per interval | ≤ 1 per 2.5 s | 5 calls per run; gaps 2,502 ms (the call the throttle deferred, one per run) and 3,054–4,021 ms | PASS |
+| Decision why with resolvable citations | every answered decision | 1 of 1 in each run; every story citation resolves as well | PASS |
+| `mergeSummaryRows`, 10,000 rows and 500 stories | small part of a Console rebuild | mean 0.33 ms, p99 0.52 ms (load 6.3) | PASS |
+| Console append p95 with summary rows (`console-10k` plus 420 story rows, 16 of them in the drip window, V-6 harness) | ≤ 150 ms, ≥ 300 samples | p95 28.8 ms, median of 3 runs (29.2, 28.8, 21.7 ms; append median 21.7, 20.1, 16.9 ms), 300 samples each; scroll 0.55, 0.00, 0.00% dropped. Fix round: 28.6 ms (load 6.3) | PASS |
+| Ingest soak ratio, stage on, sync passes during ingestion | ≤ 1.10 | S-6, narrator off: 1.04 (median `ingestMs` 16,014 against 15,422 ms). Fix round after PL-3, one pair: 0.99 narrator off (10,742 against 10,821 ms) and 0.99 with the stub narrator (10,686 ms, 2 story calls). It does not see per-pass work under about 70 ms (see "What `ingestMs` sees" below) | PASS |
+| Console append in the Electron main window with the session explainer hook (80-step evidence smoke) | p95 ≤ 150 ms | p95 73 and 89 ms, max 89 and 104 ms (load 4.25 and 3.42 before the runs); interleaved hook off / on at load 4.0–5.5: p95 89, 86 / 90, 79 ms | PASS |
+| Longest main-process block at a turn end, long session (spec §6.1) | ≤ 50 ms | 116–125 ms at 1,459 units (default and trace profiles); 441 ms at 2,937 units | MISS at S-6. The orchestrator's PL-3 ruling fixed it except for the coordinator's rebuild, the one v1 known limit: below |
+
+**Live smoke.** `explainer-live.e2e.test.ts` runs the PRD §58 rate-limit demo through the real `PipelineRuntime`, the
+mock adapter and the real explainer stage on a 9-file git repository, with a stub narrator that cites the step and
+component ids it was shown. As in `index.ts`, the runtime and the stage share one main-thread slicer. The script keeps
+the fixture's own gaps between records, each capped at 1 s, so the session pauses where the recorded agent paused: the
+runtime's 600 ms sync debounce is trailing, and a fixed 150 ms spacing gave only 4 sync passes and 2 story calls in the
+whole session. With the fixture's gaps the session has 20 passes and 5 story calls. `storyIntervalMs` is 2,500 (S-6
+used 1,500): the answer arrives about 1.6 s after the story before it, so it lands inside an interval and the throttle
+must hold its story back until the interval ends. The test records every timer the stage arms and asserts at least 3
+gaps between story calls, each at least one interval, and at least one call made by the throttle's timer rather than
+at once. It prints one `EXPLAINER_LIVE` line with the gaps above. RED, S-6: with `storyIntervalMs` 20,000 the
+story-window assertion fails (`expected 18402 to be less than or equal to 3100`, at a 1.5 s interval). RED, fix round:
+with the throttle removed from `explainer-session.ts` (the wait set to 0, then restored), the answer's story goes out
+at once and the test fails with `expected 1596 to be greater than or equal to 2498`; no call was deferred.
+
+**Console perf with summary rows.** `CONSOLE_STORY_EVERY=5` (S-4's switch in `console-bundle.mjs`) writes a story
+row after every fifth unit: 420 stories, 16 of them in the 600-row drip window, so the commits merge summary rows
+while they are measured. The harness prints both counts on its `CONSOLE_PERF` line (`story_rows=420
+story_rows_in_drip=16`). Load 5.3, 7.6 and 6.1 before the three runs. One earlier run stopped at the drip
+selftest with a 37 px drift on the `oauth` bundle, which has no story rows: the transient described in the Console
+section. The next three runs read 0 px.
+
+**Ingest soak.** Guard A's ingest loop never yields, so no sync pass runs while it ingests, and the session explainer,
+which starts from a completed pass, adds nothing to its `ingestMs` (checked: 0 hook calls during ingestion at 1,000
+events, 2 after it). The ratio therefore uses guard B's shape with a repository whose scan finishes early (2,978
+records, 1,459 units, about 45,500 stored rows, 25 pauses from record 500); the commands are under Reproduce. The head
+runs 24 sync passes through the session explainer during ingestion (`explainer.duringIngest.pipelineSyncs`). The base
+sets `JEVCODE_SOAK_SESSION_HOOK=0`: the runtime gets no `onPipelineSync`, so the stage runs as on the merge base and the
+session explainer never runs. `JEVCODE_SOAK_NARRATOR=stub` gives the session explainer a narrator that answers at once
+and cites the ids it was shown, and the JSON counts its calls (`explainer.narrator`). Since fix round 1 the soak's
+runtime and stage share one main-thread slicer, as `index.ts` does.
+
+What `ingestMs` sees of the session explainer. A pass's 600 ms debounce starts with the last record before a pause,
+and the pause lasts 600 ms too, so every pass starts inside a pause (24 of 24), in its last tens of milliseconds. Only
+4–9 of the 24 passes end inside it; the rest end, and hand their sync to the session explainer, after ingestion has
+resumed, so most of the explainer's work is counted. A probe (scratch copy, not committed) added a synchronous 100 ms
+wait to every hook call: `ingestMs` rose by 1.6 s for the 2.4 s added (medians of 3 runs, 12,799 against 11,212 ms;
+load 5.5–11.1), so about two thirds of per-pass work shows. Runs of one configuration differ by up to 8% (11,002 to
+11,841 ms). The gate allows 10%, 1.1 s here, spread over 24 passes of which two thirds count: the ratio cannot see
+per-pass explainer work under about 70 ms, and a few tens of milliseconds per pass disappear in the noise. Per-pass cost
+and main-thread blocks come from the turn-end and long-session probes (below, and PL-3's section after this one).
+
+What 1.04 and 0.99 prove: running the session explainer on every completed pass, 24 of them during ingestion of a
+1,459-unit stream, does not slow ingestion by 10% or more, with the narrator off or with a narrator that answers at
+once (2 story calls, none discarded). What they do not prove: that any pass or any explainer task stays under spec
+§6.1's 50 ms block (a 100 ms task per pass would still pass); a real narrator's latency or cost (the stub answers at
+once, and a real call waits off the main thread); decision whys (the soak answers no decision, so the stub got 0
+`decisionWhy` calls); longer sessions, more frequent passes or guard A's shape, where no pass runs during ingestion.
+
+| Run (`uptime` before) | Base `ingestMs` | Head `ingestMs` |
+|---|---|---|
+| S-6, before PL-3, alternating 1 (load 6.4 / 7.3) | 15,512 | 16,174 |
+| S-6, 2 (load 8.4 / 14.3) | 21,719, not matched: its scan finished only at record 700, so it paused 23 times instead of 25 | 15,765 |
+| S-6, 3 (load 11.3 / 9.0) | 15,338 | 16,014 |
+| S-6, 4 (load 7.1), replaces base run 2 | 15,422 | |
+| S-6 median | 15,422 | 16,014 |
+| Fix round, after PL-3 (load 8.7 / 8.6) | 10,821 | 10,742 |
+| Fix round, stub narrator (load 6.8) | | 10,686 (2 `sessionStory` calls, 0 `decisionWhy`) |
+
+Event loop delay over ingestion, head against base: S-6 medians p99 126.6 against 123.9 ms (1.02), max 656.9 against
+660.1 ms (1.00); fix round p99 86.6 against 90.9 ms, max 447.0 against 410.3 ms. The max is the pipeline's own rebuild
+in both. `syncMs` after ingestion: S-6 1,561 against 1,292 ms (median), fix round 661 against 564 ms (stub 679), the
+explainer folding the last passes while `syncAll` runs.
+
+**Electron.** `ANTHROPIC_API_KEY="" JEVCODE_NARRATOR=off node apps/desktop/scripts/smoke-workspace.mjs`, started once
+the one-minute load fell under 4 (it read 4.25 when the first run started). Both runs are above lane 03 PL-2's runs in
+the Console row, so four more runs alternated a build whose `index.js` passes `onPipelineSync: undefined` (temporary,
+restored byte for byte afterwards) with the normal build: hook off p95 89 and 86 ms (max 104, 99), hook on 90 and
+79 ms (max 103, 89), 1,052–1,053 appends each, no `sync failed` or `explainer hook failed` line. The hook adds nothing
+measurable to an 80-step session; the spread against PL-2 is the machine's state on the day.
+
+**Turn-end block on a long session (spec §6.1: no synchronous block over 50 ms).** Method as lane 03's PL-2 probe,
+not committed: the soak's stream ingested with yields and pauses as above, the work settled, then a `setImmediate`
+loop from `agent_completed` until 3 s after the turn-end pass; the block is the longest gap between ticks, and
+timing wrappers on the coordinator, the database, the runtime's steps and the session explainer's steps name the
+phases. Lane 03's 80-unit smoke measured 22–29 ms.
+
+| Session | Turn end: longest block | Phases of the blocks over 50 ms |
+|---|---|---|
+| 2,978 records, 1,459 units, 28,569 trace rows | 117.3 ms (2 runs: 116.0, 117.3) | session explainer `finalize` 115.6 ms; `agent_completed` ingest plus `coordinator.flush` 113.5 ms (flush 96.6, of which 3 `listChangeUnits` 46.8; `emitSessionState` 15.7); `coordinator.snapshot` plus `emitSessionState` 50.8 and 53.6 ms (snapshot 32–35, of which 2 `listChangeUnits` 30–31) |
+| Trace profile, 3,008 records, 1,459 units, 30,325 trace rows | 125.4 ms | `coordinator.flush` 107.8 ms (3 `listChangeUnits` 49.1); `coordinator.snapshot` plus `emitSessionState` 79.7 ms (the explainer's `finalize` took 17.4 ms here) |
+| 5,990 records, 2,937 units, 77,527 trace rows | 441.3 ms | session explainer `finalize` 331.5 ms run back to back with the next pass's `coordinator.snapshot` 71.3 ms; `coordinator.flush` 242.0 ms (3 `listChangeUnits` 100.9); snapshot plus `emitSessionState` 107.8 ms |
+
+`listChangeUnits` reads and parses every stored unit (about 15 ms at 1,459 units, 32 ms at 2,937); a turn end calls it
+7 times. The explainer's `finalize` is the viewer model's incremental fold, run in main (S-2). At the turn end it re-derives
+far more than the few new rows (0.8–1.8 ms on the next pass); why was not traced. Before the turn end its slowest
+`finalize` was 117 ms (default profile, 5,990 records) and 83 ms (trace profile). `listAgentEvents` stayed under 1 ms (its 1,000-row cap; the soak
+has under 60 agent events). Not fixed in S-6; PL-3 below traces and fixes the explainer's part.
+
+Reproduce:
+
+```sh
+pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts
+pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts
+CONSOLE_STORY_EVERY=5 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf
+# ingest soak (after pnpm -r build): base, head, head with the stub narrator
+export JEVCODE_SOAK_EVENTS=3000 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=200 \
+  JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=300
+JEVCODE_SOAK_SESSION_HOOK=0 node scripts/soak.mjs   # base: no onPipelineSync, the session explainer never runs
+node scripts/soak.mjs                               # head
+JEVCODE_SOAK_NARRATOR=stub node scripts/soak.mjs    # head, stub narrator
+ANTHROPIC_API_KEY="" JEVCODE_NARRATOR=off node apps/desktop/scripts/smoke-workspace.mjs   # Electron ABI
+```
+
+## Long-session main-process blocks, lane 07 PL-3, 2026-10-03
+
+Spec §6.1 caps a main-process block at 50 ms. Measured on `ce/07-session` before (c4e6f48) and after (34276ed) PL-3
+with S-6's turn-end probe, extended to the whole session: a scratch copy of `scripts/soak.mjs` (never committed) runs a
+`setImmediate` tick loop from the start of ingestion to 3 s after the turn-end pass. A block is the gap between two
+ticks. Timing wrappers on the coordinator, the database and the runtime's steps, plus temporary spans in the built
+session explainer and fold (`dist`, rebuilt from source afterwards), name the phases. "Mid-session" is every block
+before `agent_completed`; "explainer task" is the session explainer's own synchronous run inside one block. Input:
+`JEVCODE_SOAK_EVENTS=3000` or `6000`, `JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=200
+JEVCODE_SOAK_YIELD_EVERY=10 JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=300`, default profile: 1,459 units
+(about 28,600 trace rows, 24,080 viewer steps) and 2,937 units (about 79,900 trace rows, 68,321 steps). One-minute
+load 4.3–8.4.
+
+| Measure | 1,459 units before | after | 2,937 units before | after |
+|---|---|---|---|---|
+| Turn end, longest block | 114.6 ms: explainer `finalize` 112.4 | 64.7–74.3 ms: `coordinator.flush` | 434.8 ms: explainer `finalize` 324.2, then `snapshot` 71.8 and `emitSessionState` 33.5 | 158.9–184.8 ms: `coordinator.flush` |
+| Turn end, explainer `finalize` | 112.4 ms | 0.9–1.0 ms | 324.2 ms | 2.2–3.0 ms |
+| Turn end, `listChangeUnits` reads | 7 (15 ms each) | 0 | 7 (32 ms each) | 0 |
+| Turn end, snapshot and session-state block | 50.5 and 49.5 ms | 8.8–9.2 ms | 105.2 ms | 16.3–18.8 ms |
+| Turn end, `coordinator.flush` | 94.4 ms | 64.1–73.5 ms | 243.5 ms | 156.3–183.9 ms |
+| Mid-session, longest explainer task | 59.7 ms (`finalize` 40.6, page fold 17.6) | 28.9 and 29.3 ms | 146.1 ms (S-6: `finalize` up to 117 ms) | 30.2 and 32.8 ms |
+
+Turn-end figures span four runs per size after PL-3; the mid-session explainer figures are the two runs of the final
+slice sizing (34276ed; the first sizing, f80b03c, reached 32.4 and 37.9 ms).
+
+The trace profile at 1,459 units (S-6: 125.4 ms) now reads 89.8 ms at the turn end, all `coordinator.flush` (88.3,
+one unit read 16.7 ms because its rebuild wrote units); its explainer tasks stay under 28 ms.
+
+What the explainer's blocks were:
+
+- **Turn end.** A turn that closed re-derived every step of the turn (fold-finalize `scanSteps` 73 ms and
+  `rebuildStepPre` 36 ms at 1,459 units). The soak session is one turn, so that was every step of the session. Only an
+  open step and a step with missing evidence read their turn's state; each turn now indexes those steps, and a turn end
+  re-derives them only. The turn's plan and claim marks are also extended over appended steps instead of read again
+  (they cost 2–13 ms per finalize). `fold.incremental.test.ts` pins both as work counts that do not grow with the
+  session.
+- **Mid-session.** Each pass appends a `jev_decision` row for every changed unit, so one sync brings 1,000–3,000 rows
+  that reach as many chapters; the incremental finalize was already proportional to them (about 22 µs per row at 1,459
+  units, up to 70 µs at 2,937, where chapters hold more steps). The explainer now folds in slices: it settles the rows
+  folded so far with an incremental finalize and yields once a slice's folding plus its predicted settle reaches 20 ms
+  (since the continuation below, the main slicer's per-turn budget), at each page end, and it starts a drain in a task
+  of its own. Incremental equals fresh (S-3),
+  so the rows it writes are those of one finalize (`explainer-session.test.ts`, "fold slices").
+- Not the cause: the story and highlight builders (`computeHighlights` at most 4.8 ms, `sessionStoryInput` 7.1 ms,
+  `detect` 2.2 ms at 2,937 units), and no non-live finalize: the explainer always finalizes with `live: true`.
+
+What the pipeline's blocks were: `listChangeUnits` (read and parse every unit) ran 7 times per turn end, and every
+snapshot read the graph (17 ms at 1,459 units, 37 ms at 2,937). The unit and graph stores now keep the database's own
+list and read it again only when `JevcodeDb.projectionVersion` shows a row of that kind was written, by any writer.
+
+### Continuation: one main-thread slicer (orchestrator ruling, 2026-10-03)
+
+The numbers above are per task. IPC waits on event-loop turns, and two producers that yielded with their own
+`setImmediate` could run in the same turn: 66 ms at 1,459 units (an explainer task of 29 ms and a pipeline slice of
+37 ms) and 113 ms at 2,937 (with `emitJevDebug`'s 54 ms read). Four changes followed:
+
+- `createMainSlicer` (`apps/desktop/src/main/pipeline/main-slicer.ts`) keeps one queue of continuations, drained by one
+  `setImmediate` per turn under a 20 ms budget. The sync pass, the session explainer's fold and the overview rebuild
+  all check its shared clock and yield through it; `index.ts` passes them one instance.
+- Migration v6 indexes `jev_decisions (sessionId, seq)`. `latestJevDecisions(50)` took 52.6 ms over 65,340 rows on the
+  2,937-unit database, a sort of every row (`USE TEMP B-TREE FOR ORDER BY`); with the index it takes 0.07 ms. The
+  index is built once, when `openDb` upgrades a v5 database at app start: on a copy of that 129 MB database,
+  `openDb` took 24.5–27.6 ms (median 25.7 ms over 3 copies) and the `CREATE INDEX` alone 21.9–25.9 ms (median 24.0, 5
+  runs). With the table at eight times the rows (522,720), the build took 251–276 ms (median 265 ms, 3 runs).
+- With those, the longest turn without a coordinator rebuild at 2,937 units was a snapshot: 58–81 ms, from rereading
+  every graph row and every unit after a rebuild or the pass's label writes. The graph store now puts the rows it
+  writes into its lists itself, and the unit store rereads only the units whose rows moved (`listChangeUnitVersions`).
+
+Measured as the longest event-loop turn: the probe's `setImmediate` tick shares the check phase with the slicer's
+drain, so a gap holds one drain's work and anything else that ran in that turn. Two runs per size on 865c207, load
+4.3–6.0. "Rebuild turns" hold a coordinator rebuild (in `flush`, in `ingest`, or from its debounce timer).
+
+| Longest event-loop turn | 1,459 units | 2,937 units |
+|---|---|---|
+| Turn end, all turns | 65.8 and 68.9 ms: `coordinator.flush` | 167.2 and 180.5 ms: `coordinator.flush` |
+| Turn end, without a rebuild | under 8 ms (no other turn reached 8 ms) | 8.2 and 10.9 ms: the explainer's last finalize, highlights and triggers |
+| Mid-session, all turns | 389.7 and 392.6 ms: rebuilds in `coordinator.ingest` | 723.7 and 771.4 ms: rebuilds in `coordinator.ingest` |
+| Mid-session, without a rebuild | 31.6 and 28.8 ms: an explainer task (31.0), a 10-record ingest | 34.9 and 37.2 ms: an explainer task (32.6), a 10-record ingest |
+
+Before the continuation (130c82d, the first probe above), turns that ran an explainer task next to a pipeline slice
+reached 66.1 ms at 1,459 units and 112.6 ms at 2,937. After the slicer and the index alone (a92b3ea, this probe), the
+longest turns without a rebuild were 33.4–37.2 ms and 58.1–81.0 ms. One run at
+2,937 units also had a 260.4 ms turn in which 31 row writes took 258 ms: a single SQLite write that stalled on I/O
+(the WAL's automatic checkpoint commits on the writing connection), seen once in four runs.
+
+### Known limit (v1)
+
+**The coordinator's rebuild re-projects the whole session**, in one synchronous call. At the turn end
+`coordinator.flush` takes 65–69 ms at 1,459 units and 167–181 ms at 2,937 units. Mid-session the same rebuild runs
+inside `coordinator.ingest` and from its debounce timer, and gives the session's longest turns: 390–393 ms at 1,459
+units and 724–771 ms at 2,937 units in this soak, where 10 records are ingested between yields. Follow-up: an
+incremental projection (cluster only the facts since the last rebuild and re-project the units they touch), or run
+`clusterSession` and `projectGraph` in a worker thread and apply the result in sliced writes.

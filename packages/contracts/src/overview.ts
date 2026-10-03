@@ -142,7 +142,10 @@ export const ExplainerRecordSchema = z.discriminatedUnion("kind", [
       .array(
         z.object({
           id: ComponentIdSchema,
+          /** The strongest state (failing > decision > new > changed). */
           state: z.enum(["new", "changed", "decision", "failing"]),
+          /** Every state that applies (a new component with an open decision is new and decision); absent reads as [state]. */
+          states: z.array(z.enum(["new", "changed", "decision", "failing"])).min(1).max(4).optional(),
           unitIds: z.array(z.string().min(1).max(128)).max(50),
         }),
       )

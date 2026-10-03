@@ -268,6 +268,8 @@ export class JevcodeDb {
    * variable number of placeholders keeps calling this.db.prepare.
    */
   private readonly statements: { prepare(sql: string): BetterSqlite3.Statement };
+  /** Per event type, the rows of that type this connection applied to the projections (projectionVersion). */
+  private readonly projectionWrites = new Map<EventStoreType, number>();
 
   constructor(dbPath: string, db: BetterSqlite3.Database) {
     this.dbPath = dbPath;
@@ -369,6 +371,16 @@ export class JevcodeDb {
       .prepare("SELECT COUNT(*) AS n FROM events WHERE sessionId = ?")
       .get(sessionId) as { n: number };
     return row.n;
+  }
+
+  /**
+   * A count that moves whenever this connection applies a row of `type` to its projection tables (appendEvent, a
+   * rebuild), whichever session it belongs to. A reader that keeps a projection list, such as the pipeline's
+   * change-unit store, reads it again only when the count has moved (lane 07 PL-3). Writes from another connection
+   * are not counted.
+   */
+  projectionVersion(type: EventStoreType): number {
+    return this.projectionWrites.get(type) ?? 0;
   }
 
   getLatestSeq(sessionId: string): number {
@@ -803,6 +815,17 @@ export class JevcodeDb {
     return rows.map((row) => changeUnitFromRow(row.id, row));
   }
 
+  /**
+   * Each change unit's id and the seq of the event that last wrote it, in listChangeUnits' order, without reading
+   * the units. A reader that keeps the units reads only the rows whose seq moved (lane 07 PL-3: the pipeline's unit
+   * store; a full read takes 31-35 ms at 2,937 units).
+   */
+  listChangeUnitVersions(sessionId: string): { id: string; seq: number }[] {
+    return this.statements
+      .prepare("SELECT id, seq FROM change_units WHERE sessionId = ? ORDER BY updatedAt DESC")
+      .all(sessionId) as { id: string; seq: number }[];
+  }
+
   latestChangeUnits(sessionId: string, n: number): ChangeUnit[] {
     return this.listChangeUnits(sessionId).slice(0, n);
   }
@@ -929,18 +952,20 @@ export class JevcodeDb {
     );
   }
 
+  /** In rowid order: an upsert keeps a row's place and a new row comes last (the pipeline's graph store relies on it). */
   listGraphNodes(sessionId: string): GraphNodeRecord[] {
     const rows = this.statements
-      .prepare("SELECT payloadJson FROM graph_nodes WHERE sessionId = ?")
+      .prepare("SELECT payloadJson FROM graph_nodes WHERE sessionId = ? ORDER BY rowid")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
       parseWith(GraphNodeRecordSchema, row.payloadJson, `graph_nodes[${i}]`),
     );
   }
 
+  /** In rowid order, as listGraphNodes. */
   listGraphEdges(sessionId: string): GraphEdgeRecord[] {
     const rows = this.statements
-      .prepare("SELECT payloadJson FROM graph_edges WHERE sessionId = ?")
+      .prepare("SELECT payloadJson FROM graph_edges WHERE sessionId = ? ORDER BY rowid")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
       parseWith(GraphEdgeRecordSchema, row.payloadJson, `graph_edges[${i}]`),
@@ -1145,6 +1170,8 @@ export class JevcodeDb {
   // ------------------------------------------------------------------
 
   private applyProjection(event: StoredEvent): void {
+    // Counted before the write: a write that throws only makes a reader read again.
+    this.projectionWrites.set(event.type, (this.projectionWrites.get(event.type) ?? 0) + 1);
     switch (event.type) {
       case "agent_event":
         this.applyAgentEvent(event);

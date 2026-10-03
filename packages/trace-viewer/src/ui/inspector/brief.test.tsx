@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useState, type JSX, type ReactNode } from "react";
@@ -7,11 +8,12 @@ import { useState, type JSX, type ReactNode } from "react";
 import { buildBrief, type BriefModel } from "../../layout/brief.js";
 import { buildTraceIndex } from "../../layout/trace-index.js";
 import { foldRows, type TraceSession } from "../../model/index.js";
+import { sentence } from "../../test-support/explainer-fixtures.js";
 import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
 import { KeyboardLayer } from "../shell/KeyboardLayer.js";
 import { TitleBar } from "../shell/TitleBar.js";
-import { BriefView } from "./Brief.js";
+import { Brief, BriefView } from "./Brief.js";
 import { RightPanel } from "./RightPanel.js";
 
 let layout: LayoutStub;
@@ -33,8 +35,9 @@ function oauthModel(): { session: ReturnType<typeof foldFixture>; model: BriefMo
 
 function renderView(model: BriefModel, onSelect = vi.fn(), onOpenMap = vi.fn()) {
   const session = foldFixture("oauth");
-  render(
+  renderHarness(
     <BriefView model={model} session={session} index={buildTraceIndex(session)} nowT={0} onSelect={onSelect} onOpenMap={onOpenMap} mapAvailable />,
+    session,
   );
   return { onSelect, onOpenMap };
 }
@@ -49,8 +52,12 @@ function foldLive(b: TraceBuilder, state: "starting" | "running" | "completed"):
 function renderSession(session: TraceSession, onSelect = vi.fn()) {
   const index = buildTraceIndex(session);
   const nowT = (session.steps.at(-1)?.tMs ?? 0) + 12_000;
-  render(<BriefView model={buildBrief(session, index)} session={session} index={index} nowT={nowT} onSelect={onSelect} onOpenMap={vi.fn()} mapAvailable={false} />);
-  return { onSelect };
+  // The harness gives the decision cards and citation chips the viewer's store and session (they select through it).
+  const harness = renderHarness(
+    <BriefView model={buildBrief(session, index)} session={session} index={index} nowT={nowT} onSelect={onSelect} onOpenMap={vi.fn()} mapAvailable={false} />,
+    session,
+  );
+  return { onSelect, harness };
 }
 
 function unitRows(b: TraceBuilder): void {
@@ -161,14 +168,14 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("Now shows the running step, the latest change and the open decision with a way to it, untrusted text as tokens", () => {
+  it("Now shows the running step, the latest change and the open decision's card with a way to it, untrusted text as tokens", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "Add OAuth" });
     unitRows(b);
     b.decision({ id: "d1", title: "Keep \u202Epassword login?" });
     b.agent({ type: "command_started", command: "pnpm test --filter \u202Eauth" });
     const session = foldLive(b, "running");
-    const { onSelect } = renderSession(session);
+    const { harness } = renderSession(session);
     const now = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
     if (!session.steps.some((step) => step.status === "running" && step.kind === "test")) throw new Error("no running test run");
     const runningRow = now.getByRole("button", { name: /pnpm test/ });
@@ -176,11 +183,13 @@ describe("Brief (spec §3.3, E4)", () => {
     expect(runningRow.getAttribute("title")).toContain("--filter ⟨U+202E⟩auth");
     expect(runningRow.textContent).toContain("12 s");
     expect(now.getByRole("button", { name: "Latest change: Identity linking" })).toBeTruthy();
-    const decision = now.getByRole("button", { name: /Needs your decision/ });
-    expect(decision.textContent).toContain("Keep ⟨U+202E⟩password login?");
-    fireEvent.click(decision);
+    // Phase C (lane 07 S-4): the open decision is its card in Now, not a "Needs your decision" link.
+    expect(now.queryByRole("button", { name: /Needs your decision/ })).toBeNull();
+    const card = within(now.getByRole("group", { name: "Decision card: Keep ⟨U+202E⟩password login?" }));
+    expect(card.getByText("Needs your decision")).toBeTruthy();
+    fireEvent.click(card.getByRole("button", { name: "Keep ⟨U+202E⟩password login?" }));
     const decisionStep = session.steps.find((step) => step.decision?.decisionId === "d1");
-    expect(onSelect).toHaveBeenLastCalledWith(decisionStep?.id);
+    expect(harness.store.get().selection).toBe(decisionStep?.id);
     expect(screen.getByText("Live")).toBeTruthy();
   });
 
@@ -221,7 +230,7 @@ describe("Brief (spec §3.3, E4)", () => {
     const now = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
     expect(now.getByText("Completed")).toBeTruthy();
     expect(now.getByRole("button", { name: "Latest change: Identity linking" })).toBeTruthy();
-    expect(now.queryByRole("button", { name: /Needs your decision/ })).toBeNull();
+    expect(now.queryByRole("group", { name: /^Decision card/ })).toBeNull();
     expect(screen.getByText(/^Completed · /)).toBeTruthy();
     const change = within(screen.getByRole("list", { name: "Changes so far" })).getByRole("button");
     expect(change.getAttribute("aria-label")).toBe("Identity linking, 2 files, +41 −12");
@@ -278,11 +287,13 @@ describe("Brief (spec §3.3, E4)", () => {
     const view = (): JSX.Element => (
       <BriefView model={model} session={session} index={index} nowT={0} onSelect={vi.fn()} onOpenMap={vi.fn()} mapAvailable />
     );
-    render(
+    // oauth has a decision: its card selects through the viewer's store, so the Briefs render inside the harness.
+    renderHarness(
       <>
         {view()}
         {view()}
       </>,
+      session,
     );
     for (const name of ["Brief", "Now", "Changes so far", "Architecture"]) {
       const ids = screen.getAllByRole("heading", { name }).map((heading) => heading.id);
@@ -413,5 +424,97 @@ describe("Brief (spec §3.3, E4)", () => {
       act(() => h.store.dispatch({ type: "select", id: null, by: "shell" }));
       expect(document.activeElement).toBe(main);
     });
+  });
+});
+
+describe("Brief story and decision cards (phase C, lane 07 S-4)", () => {
+  const CHOICES = [
+    { id: "open", label: "Fail open", description: "", tradeoffs: [{ dimension: "availability", consequence: "API stays up." }] },
+    { id: "closed", label: "Fail closed", description: "" },
+  ];
+
+  function explainedSession(): TraceSession {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add a limiter" });
+    const note = b.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure." });
+    b.decision({ id: "d0", title: "Key scheme?", status: "open", options: CHOICES });
+    b.decision({ id: "d0", title: "Key scheme?", status: "answered", options: CHOICES, answer: { decisionId: "d0", decision: { decision: "open" }, evidence: [] } });
+    b.decision({ id: "d1", title: "Redis down?", status: "open", options: CHOICES });
+    b.explainer({ kind: "story", provenance: "rule", basisSeq: 4, sentences: [sentence("Asked what to do when Redis is down.", { kind: "step", id: `step:${note}` })] });
+    return foldLive(b, "running");
+  }
+
+  it("Now is the story with its quiet rule-based label and the open card; the latest decided card sits under Decisions", () => {
+    renderHarness(<Brief />, explainedSession());
+    const now = within(screen.getByRole("heading", { name: "Now" }).parentElement as HTMLElement);
+    expect(now.getByText("Asked what to do when Redis is down.")).toBeTruthy();
+    expect(now.getByText("rule-based")).toBeTruthy();
+    expect(now.getByRole("group", { name: "Decision card: Redis down?" })).toBeTruthy();
+    expect(now.queryByRole("group", { name: "Decision card: Key scheme?" })).toBeNull();
+    const decisions = within(screen.getByRole("heading", { name: /^Decisions/ }).parentElement as HTMLElement);
+    expect(decisions.getByRole("group", { name: "Decision card: Key scheme?" })).toBeTruthy();
+    expect(decisions.getByText("Fail open · chosen by you")).toBeTruthy();
+  });
+
+  it("keeps the two latest decided cards under Decisions · 2, newest first (the H3 mockup)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "Add a limiter" });
+    for (const [id, title] of [["k1", "Key scheme?"], ["k2", "Redis down?"], ["k3", "Log level?"]] as const) {
+      b.decision({ id, title, status: "open", options: CHOICES });
+      b.decision({ id, title, status: "answered", options: CHOICES, answer: { decisionId: id, decision: { decision: "closed" }, evidence: [] } });
+    }
+    renderHarness(<Brief />, foldLive(b, "running"));
+    const part = screen.getByRole("heading", { name: /^Decisions/ }).parentElement as HTMLElement;
+    expect(screen.getByRole("heading", { name: /^Decisions/ }).textContent).toBe("Decisions · 2");
+    expect(within(part).getAllByRole("group", { name: /^Decision card/ }).map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Decision card: Log level?",
+      "Decision card: Redis down?",
+    ]);
+  });
+
+  it("answers through the host by pointer, with Choose disabled while the answer is on its way and after it is sent", async () => {
+    let settle: () => void = () => undefined;
+    const answerDecision = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
+    renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
+    fireEvent.click(card.getByRole("button", { name: "Choose Fail open" }));
+    expect(answerDecision).toHaveBeenCalledWith({ decisionId: "d1", optionId: "open" });
+    expect(card.getByText("Sending answer")).toBeTruthy();
+    expect(card.getAllByRole("button", { name: /^Choose/ }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+    fireEvent.click(card.getByRole("button", { name: "Choose Fail closed" }));
+    expect(answerDecision).toHaveBeenCalledTimes(1);
+    await act(async () => settle());
+    expect(card.getByText("Answer sent")).toBeTruthy();
+    expect(card.getAllByRole("button", { name: /^Choose/ }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it("answers by keyboard: Choose is in the tab order and Enter sends the option", async () => {
+    const user = userEvent.setup();
+    const answerDecision = vi.fn(async () => undefined);
+    renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
+    const choose = within(screen.getByRole("group", { name: "Decision card: Redis down?" })).getByRole("button", { name: "Choose Fail closed" });
+    expect(choose.tabIndex).toBe(0);
+    act(() => choose.focus());
+    await user.keyboard("{Enter}");
+    expect(answerDecision).toHaveBeenCalledWith({ decisionId: "d1", optionId: "closed" });
+  });
+
+  it("a failed answer is announced and the options come back", async () => {
+    const answerDecision = vi.fn(async () => {
+      throw new Error("runtime said no");
+    });
+    const h = renderHarness(<Brief />, explainedSession(), { host: { answerDecision } });
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
+    fireEvent.click(card.getByRole("button", { name: "Choose Fail open" }));
+    await waitFor(() => expect(card.getByText("Could not send the answer. Try again.")).toBeTruthy());
+    expect(h.announcements).toContain("Could not send the answer");
+    expect((card.getByRole("button", { name: "Choose Fail open" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a read-only host (the trace window) shows the open card without Choose buttons", () => {
+    renderHarness(<Brief />, explainedSession());
+    const card = within(screen.getByRole("group", { name: "Decision card: Redis down?" }));
+    expect(card.getByText("Needs your decision")).toBeTruthy();
+    expect(card.queryByRole("button", { name: /^Choose/ })).toBeNull();
   });
 });

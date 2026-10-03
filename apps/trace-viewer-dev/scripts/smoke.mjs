@@ -21,9 +21,11 @@ const SMOKE_VIEWS = new Set(["hybrid", "canvas", "console", "map"]);
  * is 200 px below a 1120 px window (apps/desktop styles.css). Measured in Electron (lane 03 fix wave minor 1).
  */
 const MAIN_COLUMN_AT_MIN = 680;
+/** --console-perf drips the last CONSOLE_DRIP_BACK rows of console-10k (docs/perf.md, Console). */
+const CONSOLE_DRIP_BACK = 600;
 
 function parseArgs(argv) {
-  const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false };
+  const options = { views: ["hybrid"], skipBuild: false, port: DEFAULT_PORT, embedded: false, consolePerf: false, explainer: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--skip-build") options.skipBuild = true;
@@ -35,6 +37,7 @@ function parseArgs(argv) {
     }
     else if (arg === "--embedded") options.embedded = true;
     else if (arg === "--console-perf") options.consolePerf = true;
+    else if (arg === "--explainer") options.explainer = true;
     else if (arg === "--views") {
       options.views = String(argv[i + 1] ?? "")
         .split(",")
@@ -217,8 +220,9 @@ async function chromeSelftest(profile, url, timeoutMs, selector = "pre#selftest"
   }
 }
 
-function locationHash(sessionId, view) {
-  return `#${encodeURIComponent(JSON.stringify({ v: 1, sessionId, view, level: "chapter", brush: { kind: "session" } }))}`;
+function locationHash(sessionId, view, selected) {
+  const location = { v: 1, sessionId, view, level: "chapter", brush: { kind: "session" }, ...(selected === undefined ? {} : { selected }) };
+  return `#${encodeURIComponent(JSON.stringify(location))}`;
 }
 
 function decodeHtml(text) {
@@ -251,6 +255,11 @@ async function main() {
     copyFileSync(path.join(tmp, "oauth", "trace.json"), path.join(bundles, "oauth.json"));
     const sessionId = JSON.parse(readFileSync(path.join(bundles, "oauth.json"), "utf8")).session.sessionId;
     if (options.consolePerf) run("node", [path.join(APP, "scripts", "console-bundle.mjs")]);
+    if (options.explainer) {
+      // Phase C bundles (lane 07 S-4): the rate-limit replay with an overview and explainer rows (explainer-bundle.mjs).
+      run("pnpm", ["--filter", "jevcode-desktop", "replay", path.join(REPO, "fixtures", "rate-limit"), path.join(tmp, "rate-limit")]);
+      run("node", [path.join(APP, "scripts", "explainer-bundle.mjs"), path.join(tmp, "rate-limit", "trace.json")]);
+    }
     run("pnpm", ["--filter", "jevcode-trace-viewer-dev", "build"]);
     preview = spawn(
       "pnpm",
@@ -418,11 +427,42 @@ async function main() {
         shots += 1;
       }
     }
+    if (options.explainer) {
+      // The H3 screens (docs/superpowers/specs/2026-10-02-console-and-explainer-mockups): Console with ◆ Summary blocks and
+      // the Map session overlay (c-map-overlay), the Brief's story and decided card (c-console-summary), the decision in the Inspector (c-decision-inspector), and the
+      // pending card with a rule-based summary in a host that answers (c-brief-story).
+      const explained = JSON.parse(readFileSync(path.join(bundles, "rate-limit-explainer.json"), "utf8"));
+      // The decision with a narrator why (the bundle also holds an earlier decision without one).
+      const whyFor = explained.rows.find((row) => row.type === "explainer" && row.payload.kind === "decision_why")?.payload.decisionId;
+      const decisionSeq = explained.rows.find((row) => row.type === "decision" && row.payload.id === whyFor)?.seq;
+      if (decisionSeq === undefined) throw new Error("the explainer bundle has no decision with a why");
+      const explainerShots = [
+        ["explainer-console", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "console")}`],
+        ["explainer-decision", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "hybrid", `step:${decisionSeq}`)}`],
+        ["explainer-pending", `bundle=rate-limit-pending&chrome=embedded&answer=1${locationHash(explained.session.sessionId, "console")}`],
+        ["explainer-map", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "map")}`],
+      ];
+      for (const [name, query] of explainerShots) {
+        for (const width of WIDTHS) {
+          const file = path.join(SMOKE_DIR, `${name}-${width}.png`);
+          rmSync(file, { force: true });
+          await chrome(profile, [`--window-size=${width},900`, "--virtual-time-budget=4000", `--screenshot=${file}`, `${ORIGIN}/?${query}`]);
+          if (!existsSync(file)) throw new Error(`no screenshot at ${file}`);
+          shots += 1;
+        }
+      }
+    }
     if (options.consolePerf) {
-      const consoleSession = JSON.parse(readFileSync(path.join(bundles, "console-10k.json"), "utf8")).session.sessionId;
+      const consoleBundle = JSON.parse(readFileSync(path.join(bundles, "console-10k.json"), "utf8"));
+      const consoleSession = consoleBundle.session.sessionId;
+      // Story rows (CONSOLE_STORY_EVERY, one ◆ Summary row each) in the whole bundle and among the rows the drip
+      // releases while append latency is measured: those after lastSeq − CONSOLE_DRIP_BACK (static-bundle.ts).
+      const dripFrom = Math.max(0, consoleBundle.session.lastEventSeq - CONSOLE_DRIP_BACK);
+      const storyRows = consoleBundle.rows.filter((row) => row.type === "explainer" && row.payload?.kind === "story");
+      const dripStoryRows = storyRows.filter((row) => row.seq > dripFrom).length;
       const result = await chromeSelftest(
         path.join(tmp, "chrome-console-perf"),
-        `${ORIGIN}/?bundle=console-10k&perf=1&perfrun=console&chrome=embedded&drip=1,120,-600${locationHash(consoleSession, "console")}`,
+        `${ORIGIN}/?bundle=console-10k&perf=1&perfrun=console&chrome=embedded&drip=1,120,-${CONSOLE_DRIP_BACK}${locationHash(consoleSession, "console")}`,
         240_000,
         "pre#perf-result",
       );
@@ -435,6 +475,8 @@ async function main() {
         `scroll_dropped=${result.scroll.droppedPct.toFixed(2)}%`,
         `scroll_p95_frames=${result.scroll.p95Rounded}`,
         `refresh_ms=${result.scroll.refreshMs.toFixed(1)}`,
+        `story_rows=${storyRows.length}`,
+        `story_rows_in_drip=${dripStoryRows}`,
       ].join(" ");
       console.log(`CONSOLE_PERF ${line}`);
       const misses = [];

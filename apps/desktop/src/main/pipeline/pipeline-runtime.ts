@@ -48,6 +48,7 @@ import {
   defaultModelSelector,
   type ModelSelectionResult,
 } from "./model-selection.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import { resolveSessionModelSelection } from "./model-resolution.js";
 import { deriveRepoContext } from "./repo-context.js";
 import {
@@ -76,12 +77,6 @@ import type {
 
 const SYNC_DEBOUNCE_MS = 600;
 
-/**
- * A sync pass yields to the event loop once it has run this long without a break, so IPC, the renderer's rows
- * requests among it, is answered during a long pass. Spec §6.1 caps a synchronous block at 50 ms (lane 03 PL-2).
- */
-const SYNC_SLICE_MS = 20;
-
 /** Thrown by a pass's pace() once its session is stopped: the pass ends there and writes nothing more. */
 class PassStopped extends Error {
   constructor() {
@@ -91,24 +86,24 @@ class PassStopped extends Error {
 
 interface Slicer {
   /**
-   * Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer, calling beforeYield first. Then
-   * throws PassStopped if the session has been stopped, whether during this yield or during an earlier await.
+   * Yields through the main slicer once this event-loop turn's shared budget (MAIN_SLICE_MS) is spent, calling
+   * beforeYield first, so IPC, the renderer's rows requests among it, is answered during a long pass (spec §6.1,
+   * lane 03 PL-2; one slicer for the pass and the session explainer since lane 07 PL-3). Then throws PassStopped if
+   * the session has been stopped, whether during this yield or during an earlier await.
    */
   pace(): Promise<void>;
   /** How many times pace() has yielded. */
   readonly yields: number;
 }
 
-function createSlicer(isStopped: () => boolean, beforeYield: () => void, sliceMs = SYNC_SLICE_MS): Slicer {
-  let sliceStart = performance.now();
+function createSlicer(main: MainSlicer, isStopped: () => boolean, beforeYield: () => void): Slicer {
   let yields = 0;
   return {
     async pace() {
-      if (performance.now() - sliceStart >= sliceMs) {
+      if (main.spent()) {
         beforeYield();
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await main.yield();
         yields += 1;
-        sliceStart = performance.now();
       }
       if (isStopped()) throw new PassStopped();
     },
@@ -128,6 +123,8 @@ interface ActiveSession {
   adapter: CodingAgentAdapter | null;
   adapterKind: "codex" | "mock" | "none";
   coordinator: PipelineCoordinator;
+  /** The coordinator's stores: the session state counts the change units the unit store already holds (PL-3). */
+  stores: PipelineStores;
   client: JevClient;
   facts: EvidenceFact[];
   unitState: Map<string, JevStageUnitState & { coreSignature: string }>;
@@ -156,8 +153,11 @@ export class PipelineRuntime {
 
   private readonly opts: PipelineRuntimeOptions;
 
+  private readonly slicer: MainSlicer;
+
   constructor(opts: PipelineRuntimeOptions) {
     this.opts = opts;
+    this.slicer = opts.slicer ?? createMainSlicer();
   }
 
   get activeSessions(): string[] {
@@ -261,6 +261,7 @@ export class PipelineRuntime {
       adapter,
       adapterKind,
       coordinator: new PipelineCoordinator({ stores, onRebuildError: (error) => this.log(`pipeline rebuild failed (retried on the next sync): ${String(error)}`) }),
+      stores,
       client: this.opts.jevClient ?? createJevClient(),
       facts: [],
       unitState: new Map(),
@@ -470,6 +471,35 @@ export class PipelineRuntime {
   async syncAll(): Promise<void> {
     for (const session of [...this.sessions.values()]) {
       await this.syncSession(session);
+    }
+  }
+
+  /**
+   * The app is quitting (index.ts will-quit) and the database closes next. Every session stops at once and writes
+   * nothing more: a pass waiting at a slicer yield, or on a Jev client, ends at its next slice check (PassStopped)
+   * without touching the database, ingestion drops records, sync timers are cleared, and the agent and the evidence
+   * collector are told to stop without waiting for them. Sessions keep the state the database holds; the boot sweep
+   * (session-recovery.ts) settles them at the next start. Synchronous, so the database can close right after it. Each
+   * coordinator's debounced rebuild is cancelled too: it would write to the closed database.
+   */
+  shutdown(): void {
+    for (const session of this.sessions.values()) {
+      session.stopping = true;
+      if (session.syncTimer !== null) {
+        clearTimeout(session.syncTimer);
+        session.syncTimer = null;
+      }
+      session.coordinator.dispose();
+      for (const [what, stop] of [
+        ["evidence", () => session.evidence?.stop()],
+        ["agent", () => session.adapter?.stop()],
+      ] as const) {
+        try {
+          void Promise.resolve(stop()).catch((error: unknown) => this.log(`quit: ${what} stop failed: ${String(error)}`));
+        } catch (error) {
+          this.log(`quit: ${what} stop failed: ${String(error)}`);
+        }
+      }
     }
   }
 
@@ -1013,14 +1043,18 @@ export class PipelineRuntime {
    * so the next pass writes what this one did not.
    *
    * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions at each slice that yields and once after
-   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below).
+   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below). Below
+   * that, the unit and graph stores reread their lists only after a row of their kind was written (lane 07 PL-3), so
+   * a snapshot, the rebuild's unit lists and emitSessionState after no such write cost no O(session) read.
    *
-   * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
-   * surface, and once before the decision, validation and completion steps, which run together. When the slice is
-   * spent it sends unsent Jev decisions to the debug panel and yields (setImmediate), so no block of a turn end's pass
-   * runs past spec §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev
-   * client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
-   * stage, across their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
+   * Slices (PL-2): the pass checks its slice after the flush, before each Jev batch and unit, before each surface,
+   * once before the decision, validation and completion steps, which run together, and once after them, before the
+   * explainer hook (onPipelineSync, lane 07 S-2), which only a completed pass reaches. The slice is the main slicer's
+   * per-turn budget, shared with the session explainer (lane 07 PL-3): when the turn's budget is spent the pass sends
+   * unsent Jev decisions to the debug panel and yields through the slicer, so no event-loop turn runs past spec
+   * §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev client's awaits.
+   * The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the stage, across
+   * their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
    * Each check also ends the pass (PassStopped) once the session is stopped, so a suspended pass writes nothing after
    * a stop and never interrupts a stopped adapter.
    */
@@ -1032,7 +1066,7 @@ export class PipelineRuntime {
       jevUnsent = false;
       this.emitJevDebug(session);
     };
-    const slicer = createSlicer(() => session.stopping, sendJevDebug);
+    const slicer = createSlicer(this.slicer, () => session.stopping, sendJevDebug);
     const pace = (): Promise<void> => slicer.pace();
     try {
       session.coordinator.flush();
@@ -1092,6 +1126,10 @@ export class PipelineRuntime {
       this.emitValidations(session, current);
       if (completing) this.emitCompletionSurface(session, current);
       this.emitSessionState(session.sessionId);
+      // Lane 07 S-2: once per completed pass. The decision, validation and completion steps above run as one block,
+      // so the pass checks its slice (and a stop) again before the hook. current is the pass's last snapshot.
+      await pace();
+      this.notifyPipelineSync(session, current);
     } catch (error) {
       // Stopped mid-pass: the stop owns the session from here.
       if (error instanceof PassStopped) return;
@@ -1325,6 +1363,25 @@ export class PipelineRuntime {
     });
   }
 
+  /**
+   * Console-explainer spec §6.1: the explainer stage reads every completed pass, once, with the snapshot the pass
+   * last held (runSync's current). A hook error never fails the pass.
+   */
+  private notifyPipelineSync(session: ActiveSession, snapshot: ReturnType<PipelineCoordinator["snapshot"]>): void {
+    const hook = this.opts.onPipelineSync;
+    if (hook === undefined) return;
+    try {
+      hook(session.repoPath, {
+        sessionId: session.sessionId,
+        lastSeq: this.opts.db.getSession(session.sessionId)?.lastEventSeq ?? 0,
+        changeUnits: snapshot.units,
+        decisions: snapshot.decisions,
+      });
+    } catch (error) {
+      this.log(`session ${session.sessionId}: explainer hook failed: ${String(error)}`);
+    }
+  }
+
   /** The latest 50 Jev decisions, read and sent at a pass's yields and after its Jev stage (lane 03 PL-2). */
   private emitJevDebug(session: ActiveSession): void {
     this.opts.emit(MainToRendererChannels.jevDebug, {
@@ -1415,9 +1472,11 @@ export class PipelineRuntime {
   private emitSessionState(sessionId: string): void {
     try {
       const session = this.sessions.get(sessionId);
+      // A pass emits this after its snapshot, so the unit store's list is current and reread only after a unit write.
+      const changeUnitCount = session?.stores.units.all().length;
       this.opts.emit(
         MainToRendererChannels.sessionState,
-        buildSessionState(this.opts.db, sessionId, session?.threadId ?? null),
+        buildSessionState(this.opts.db, sessionId, session?.threadId ?? null, changeUnitCount),
       );
     } catch {
       // session may be mid-teardown

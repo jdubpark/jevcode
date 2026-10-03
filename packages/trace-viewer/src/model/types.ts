@@ -8,6 +8,7 @@ import type {
   Decision,
   DependencyChange,
   EventStoreType,
+  NarrativeSentence,
   JevClientKind,
   JevPass,
   OverviewSnapshot,
@@ -230,12 +231,18 @@ export interface EditDetail {
   formattingOnly: boolean;
 }
 
+export interface DecisionTradeoff {
+  dimension: string;
+  consequence: string;
+}
+
 export interface DecisionDetail {
   decisionId: string;
   title: string;
   severity: Decision["severity"];
   status: Decision["status"];
-  options: { id: string; label: string; chosen: boolean }[];
+  /** tradeoffs: the option's tradeoffs from the decision row, when it has any (spec §3.5). */
+  options: { id: string; label: string; chosen: boolean; tradeoffs?: DecisionTradeoff[] }[];
   decidedBy?: "supervisor" | "delegated";
   /** seq of the supervisor's answer message, absorbed into this step (R25). */
   answerSeq?: number;
@@ -486,6 +493,48 @@ export interface OverviewModel {
   seq: number;
 }
 
+// ------------------------------------------------------------ explainer (phase C, spec §8.1)
+
+export type HighlightState = "new" | "changed" | "decision" | "failing";
+export const HIGHLIGHT_STATES: readonly HighlightState[] = ["new", "changed", "decision", "failing"];
+
+export interface StoryModel {
+  sentences: NarrativeSentence[];
+  /** The last seq the narration read. */
+  basisSeq: number;
+  /** seq of the explainer row. */
+  seq: number;
+  /** "rule" for the factual-template fallback, "model" for narrator text (a row without the field reads as "model"). */
+  provenance: "rule" | "model";
+}
+
+export interface HighlightEntryModel {
+  /** The strongest state. */
+  state: HighlightState;
+  /** Every state that applies, in HIGHLIGHT_STATES order; a row without the field reads as [state]. */
+  states: readonly HighlightState[];
+  unitIds: readonly string[];
+}
+
+export interface HighlightsModel {
+  basisSeq: number;
+  seq: number;
+  byComponent: ReadonlyMap<string, HighlightEntryModel>;
+}
+
+export interface ExplainerModel {
+  /** The latest story: the row with the greatest (basisSeq, seq). */
+  story: StoryModel | null;
+  /** Every story that replaced the previous one with different sentences, in seq order (Console summaries). */
+  stories: readonly StoryModel[];
+  decisionWhy: ReadonlyMap<string, NarrativeSentence>;
+  highlights: HighlightsModel | null;
+}
+
+export function emptyExplainer(): ExplainerModel {
+  return { story: null, stories: [], decisionWhy: new Map(), highlights: null };
+}
+
 export interface TraceSession {
   schemaVersion: typeof TRACE_SCHEMA_VERSION;
   meta: TraceSessionSummary;
@@ -505,6 +554,8 @@ export interface TraceSession {
   hidden: Hidden;
   /** null until an overview_snapshot row arrives (spec §8.1). */
   overview: OverviewModel | null;
+  /** Explainer rows (phase C): latest story and its history, why per decision, latest highlights. */
+  explainer: ExplainerModel;
 }
 
 // ------------------------------------------------------------ mini graphics (D8)

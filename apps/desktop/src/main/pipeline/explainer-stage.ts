@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@jevcode/contracts";
 import type {
-  ChangeUnit,
   ComponentEdge,
-  Decision,
   ExternalDep,
   NarratorState,
   OverviewSnapshot,
@@ -26,17 +24,19 @@ import type { JevcodeDb } from "@jevcode/storage";
 
 import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 import type { BriefSources } from "./explainer-narration.js";
+import { createSessionExplainer } from "./explainer-session.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
 import {
   OverviewIndex,
   applyFileChanges,
   hasFileChanges,
-  nextTurn,
   runSliced,
   scanRepoModel,
   type BuiltOverview,
   type FileChanges,
   type RepoModel,
 } from "./explainer-overview.js";
+import type { PipelineSyncSnapshot } from "./types.js";
 
 /** Spec §5.5: at most one snapshot row per session every 2 s. */
 export const SNAPSHOT_WRITE_INTERVAL_MS = 2_000;
@@ -69,9 +69,11 @@ export type ExplainerLogEvent =
       dropped: number;
       discarded: boolean;
       error?: string;
+      /** Lane 07: the guard's reason codes (never model text), e.g. "batch_discarded". */
+      reasons?: readonly string[];
     }
   | { kind: "snapshot"; components: number; edges: number; bytes: number }
-  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state" | "dispose"; message: string };
+  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state" | "dispose" | "session"; message: string };
 
 /** Scan progress and failure for the Brief (spec §6.1, §6.6); see the lane's spec gap 1. */
 export interface ExplainerStatus {
@@ -151,6 +153,14 @@ export interface ExplainerStageDeps {
   /** The explainWithModel preference (spec E15); false writes narrator "off". Absent reads as on. */
   explainWithModel?(): boolean;
   onStatus?(status: ExplainerStatus): void;
+  /** Lane 07: minimum time between story narrations (spec §6.1); default 20,000 ms. The live smoke shortens it. */
+  storyIntervalMs?: number;
+  /**
+   * Lane 07 PL-3: the main process's shared slicer (main-slicer.ts). The session explainer's fold and the overview
+   * rebuild yield through it, as the pipeline's sync pass does, so one event-loop turn runs at most one budget of
+   * their work. index.ts passes the pipeline's instance; without one the stage makes its own.
+   */
+  slicer?: MainSlicer;
 }
 
 export interface ExplainerStage {
@@ -160,11 +170,16 @@ export interface ExplainerStage {
   onSessionStarted(sessionId: string): void;
   /** Queues changed repo-relative paths; the rebuild runs 500 ms after the last change. */
   onFilesChanged(paths: readonly string[]): void;
-  /** Lane 07 (S-2) owns this body: story and highlight triggers. */
-  onPipelineSync(sync: { sessionId: string; lastSeq: number; changeUnits: ChangeUnit[]; decisions: Decision[] }): void;
+  /** Lane 07 (S-2): hands the sync to the session explainer (story, decision why and highlight rows). Returns at once. */
+  onPipelineSync(sync: PipelineSyncSnapshot): void;
+  /**
+   * Lane 07 fix I-2: the open session changed (session:switch); `deps.sessionId()` already names it. The session
+   * explainer runs the sync it kept for that session. Returns at once.
+   */
+  onSessionSwitched(): void;
   /** overview:rescan (spec §6.6 Retry): aborts a running scan and starts a new one. */
   rescan(): void;
-  /** R4: forwards to the narration seam (and, after lane 07 S-2, to the session explainer). */
+  /** R4: forwards to the narration seam and to the session explainer. */
   setNarrator(narrator: NarratorClient | null): void;
   status(): ExplainerStatus;
   /** Resolves when no scan, rebuild or queued row write is in flight. Timers are not awaited. */
@@ -246,6 +261,22 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       const last = built;
       if (!disposed && last !== null) publishBuilt(last.repo, last.overview);
     },
+  });
+
+  const slicer = deps.slicer ?? createMainSlicer();
+  // Lane 07 (S-2, ruling R4): the session explainer starts from initialNarrator and follows setNarrator.
+  const sessionExplainer = createSessionExplainer({
+    slicer,
+    db: deps.db,
+    repoRoot: deps.repoRoot,
+    sessionId: () => deps.sessionId(),
+    narrator: deps.initialNarrator ?? null,
+    emitRowsAvailable: (sessionId, lastSeq) => deps.emitRowsAvailable(sessionId, lastSeq),
+    now: () => deps.now(),
+    schedule: deps.schedule,
+    log: (event) => deps.log(event),
+    ...(deps.recordNarratorCall !== undefined ? { recordCall: (record: NarratorCallRecord) => deps.recordNarratorCall?.(record) } : {}),
+    ...(deps.storyIntervalMs !== undefined ? { storyIntervalMs: deps.storyIntervalMs } : {}),
   });
 
   function setStatus(next: ExplainerStatus): void {
@@ -332,7 +363,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       persistedKey = pending.key;
       const snapshot = pending.snapshot;
       writing = writing.then(async () => {
-        await nextTurn();
+        await slicer.yield();
         if (!disposed) persist(snapshot);
       });
     }
@@ -361,7 +392,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     if (wait === 0) {
       queuedWrites.add(sessionId);
       writing = writing.then(async () => {
-        await nextTurn();
+        await slicer.yield();
         queuedWrites.delete(sessionId);
         writeNow(sessionId);
       });
@@ -560,7 +591,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       buildFailed(repo, error);
       return;
     }
-    await nextTurn();
+    await slicer.yield();
     if (!stale()) publishBuilt(repo, overview);
   }
 
@@ -574,7 +605,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     index = null;
     let result: { value: OverviewIndex; yielded: boolean } | null;
     try {
-      result = await runSliced(OverviewIndex.steps(repo), { sliceMs: REBUILD_SLICE_MS, cancelled: stale });
+      result = await runSliced(OverviewIndex.steps(repo), { sliceMs: REBUILD_SLICE_MS, cancelled: stale, slicer });
     } catch (error) {
       if (!stale()) buildFailed(repo, error);
       return;
@@ -582,7 +613,7 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
     if (result === null || stale()) return;
     index = result.value;
     // The build's last slice ran up to here; the overview gets a turn of its own.
-    await nextTurn();
+    await slicer.yield();
     if (!stale()) await publishIndex(repo, result.value, stale);
   }
 
@@ -727,8 +758,22 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       }
       if (model !== null && scanning === null && dirty.size > 0) scheduleSettle();
     },
-    onPipelineSync(_sync) {
-      // Lane 07 (S-2): story and highlight triggers.
+    onPipelineSync(sync) {
+      if (disposed) return;
+      // Spec §6.1: the stage never blocks ingestion, and its errors never reach the runtime.
+      try {
+        sessionExplainer.onPipelineSync(sync);
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
+      }
+    },
+    onSessionSwitched() {
+      if (disposed) return;
+      try {
+        sessionExplainer.onSessionSwitched();
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
+      }
     },
     rescan() {
       startScan();
@@ -739,6 +784,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         narration.setNarrator?.(narrator);
       } catch (error) {
         seamFailed(error);
+      }
+      try {
+        sessionExplainer.setNarrator(narrator);
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
       }
     },
     status() {
@@ -769,6 +819,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       } catch (error) {
         deps.log({ kind: "error", where: "dispose", message: messageOf(error) });
       }
+      try {
+        sessionExplainer.dispose();
+      } catch (error) {
+        deps.log({ kind: "error", where: "dispose", message: messageOf(error) });
+      }
     },
   };
 }
@@ -777,6 +832,8 @@ export interface ExplainerRegistry {
   repoOpened(repoRoot: string): void;
   repoClosed(repoRoot: string): void;
   sessionStarted(repoRoot: string, sessionId: string): void;
+  /** Lane 07 fix I-2: session:switch opened another session of `repoRoot`. Ignored unless it is the open repo. */
+  sessionSwitched(repoRoot: string): void;
   filesChanged(repoRoot: string, paths: readonly string[]): void;
   /** Ignored unless `repoRoot` is the open repo, so a renderer cannot start a scan elsewhere. */
   rescan(repoRoot: string): void;
@@ -821,6 +878,7 @@ export function createExplainerRegistry(
       if (active !== null && active.repoRoot === repoRoot) release();
     },
     sessionStarted: (repoRoot, sessionId) => ensure(repoRoot).onSessionStarted(sessionId),
+    sessionSwitched: (repoRoot) => existing(repoRoot)?.onSessionSwitched(),
     filesChanged: (repoRoot, paths) => existing(repoRoot)?.onFilesChanged(paths),
     rescan: (repoRoot) => existing(repoRoot)?.rescan(),
     setNarrator: (narrator) => active?.stage.setNarrator(narrator),

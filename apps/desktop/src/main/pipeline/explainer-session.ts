@@ -1,0 +1,850 @@
+import {
+  OverviewSnapshotSchema,
+  isTraceRowType,
+  type ChangeUnit,
+  type ExplainerRecord,
+  type NarrativeSentence,
+  type OverviewSnapshot,
+  type TraceSessionSummary,
+} from "@jevcode/contracts";
+import {
+  NARRATOR_MODEL,
+  NarratorUnavailableError,
+  guardDecisionWhy,
+  guardSessionStory,
+  type NarratorClient,
+  type NarratorResult,
+  type SessionStoryInput,
+} from "@jevcode/jev-router";
+import type { JevcodeDb } from "@jevcode/storage";
+import { accumulate, createTraceState, finalize, type TraceSession, type TraceState } from "@jevcode/trace-viewer/model";
+
+import type { NarratorCallRecord } from "../../shared/narrator-log.js";
+import { SCHEMA_BRAKE_STREAK } from "./explainer-narration.js";
+import {
+  EXPLAINER_ID_MAX,
+  STORY_MIN_INTERVAL_MS,
+  STORY_UNIT_THRESHOLD,
+  backoffMs,
+  computeHighlights,
+  decisionWhyInput,
+  failingTestFiles,
+  failureReason,
+  ruleStory,
+  sessionStoryInput,
+  stepSourceText,
+  type HighlightEntry,
+} from "./explainer-session-rules.js";
+import type { ExplainerLogEvent } from "./explainer-stage.js";
+import { createMainSlicer, type MainSlicer } from "./main-slicer.js";
+import { buildNarratorCallRecord } from "./narrator-call-log.js";
+import type { PipelineSyncSnapshot } from "./types.js";
+
+// The session explainer (spec §6.1, phase C). It folds the current session's trace rows with the
+// viewer's model, so every step id it cites is the id the viewer resolves, and writes explainer rows.
+// onPipelineSync returns at once; folds run on syncChain, narrator calls one at a time on narration.
+
+const FOLD_PAGE = 2_000;
+/*
+ * Spec §6.1 caps a main-process block at 50 ms (lane 07 PL-3). A pass can append rows for every change unit (the
+ * Jev stage logs each changed unit), so one sync can bring thousands of rows. The fold works in slices of the main
+ * slicer's per-turn budget, which the pipeline's sync pass shares (main-slicer.ts): it folds rows, settles them with
+ * an incremental finalize, which re-derives only what those rows changed, and yields through the slicer. A slice
+ * stops folding once the turn's time so far, plus the settle its folding predicts, reaches the budget.
+ */
+/** The first guess of a settle's time per ms of folding; each settle measures it again. */
+const SETTLE_RATIO_START = 3;
+/** A slice folds for at least this share of the budget, so a settle's fixed cost cannot shrink slices to a row. */
+const MIN_FOLD_SHARE = 0.1;
+const CLOSED_UNIT: ReadonlySet<ChangeUnit["status"]> = new Set<ChangeUnit["status"]>(["validated", "failed"]);
+
+type Question = "sessionStory" | "decisionWhy";
+
+interface Outcome {
+  accepted: number;
+  dropped: number;
+  discarded: boolean;
+  reasons: readonly string[];
+  error: string | null;
+}
+
+export interface SessionExplainerDeps {
+  db: JevcodeDb;
+  repoRoot: string;
+  sessionId(): string | null;
+  /** Ruling R4: the stage's initialNarrator; setNarrator follows the switch. */
+  narrator: NarratorClient | null;
+  emitRowsAvailable(sessionId: string, lastSeq: number): void;
+  now(): number;
+  schedule: { setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void };
+  log(event: ExplainerLogEvent): void;
+  /** N-4's Inspect sink, one record per narrator call (built by buildNarratorCallRecord). */
+  recordCall?(record: NarratorCallRecord): void;
+  /** Minimum time between story narrations; default STORY_MIN_INTERVAL_MS. */
+  storyIntervalMs?: number;
+  /** The main process's shared slicer (main-slicer.ts); index.ts passes the pipeline's. Default: an own instance. */
+  slicer?: MainSlicer;
+  /** The length of a fold slice, folding and settling; default the slicer's budget. 0 settles and yields after
+   *  every row. */
+  foldSliceMs?: number;
+}
+
+export interface SessionExplainer {
+  onPipelineSync(sync: PipelineSyncSnapshot): void;
+  /**
+   * The open session changed (lane fix I-2). Runs the sync the explainer kept for the session that is open now, if
+   * any, and a story or why that came due while it was not open. Returns at once.
+   */
+  onSessionSwitched(): void;
+  /** Ruling R4: the stage's setNarrator forwards here. null turns narration off and aborts the call in flight (spec E15). */
+  setNarrator(narrator: NarratorClient | null): void;
+  /** Resolves once queued syncs and narrator calls have settled (dispose, tests). Timers are not awaited. */
+  idle(): Promise<void>;
+  dispose(): void;
+}
+
+interface Tracked {
+  readonly sessionId: string;
+  readonly fold: TraceState;
+  cursor: number;
+  session: TraceSession | null;
+  sync: PipelineSyncSnapshot | null;
+  seeded: boolean;
+  /** Component ids of the first overview snapshot row with components in this session ("new" is against it). */
+  initialComponentIds: ReadonlySet<string> | null;
+  highlights: HighlightEntry[];
+  highlightsKey: string | null;
+  readonly seenUnits: Set<string>;
+  readonly closedUnits: Set<string>;
+  readonly answered: Set<string>;
+  /** Redacted label text of lifecycle, dependency and revert steps, by their first row's seq (stepSourceText). */
+  readonly sources: Map<number, string>;
+  /** The seq of the row where each unit first closed and each decision was first answered or delegated (the seed's basis). */
+  readonly closedAt: Map<string, number>;
+  readonly answeredAt: Map<string, number>;
+  testRuns: number;
+  terminalTurn: number;
+  unitsAtStory: number;
+  /** The last written story's input, and whether the narrator answered that input (a failed call did not). */
+  storyKey: string | null;
+  storyAsked: boolean;
+  /** The last written story's sentences and provenance: an identical story is not written again. */
+  storyText: string | null;
+  storyPending: boolean;
+  storyRunning: boolean;
+  lastStoryAt: number | null;
+  storyTimer: unknown;
+  readonly whyQueue: string[];
+  readonly whyDone: Set<string>;
+  whyRunning: boolean;
+  whyTimer: unknown;
+}
+
+/** Process-wide, so call record ids stay unique across explainer instances (one per repo). */
+let recordSeq = 0;
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAbort(error: unknown): boolean {
+  return error instanceof NarratorUnavailableError && error.reason === "aborted";
+}
+
+/** The narrator input is frozen once built: the guard reads exactly what was sent. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
+/** The "new" baseline: a snapshot's component ids, or null when it has none (a scan still running). */
+function componentIdsOf(snapshot: OverviewSnapshot): ReadonlySet<string> | null {
+  return snapshot.components.length > 0 ? new Set(snapshot.components.map((component) => component.id)) : null;
+}
+
+/** Settled test or check runs whose rows all came at or before `throughSeq`. */
+function countRuns(session: TraceSession, throughSeq = Number.POSITIVE_INFINITY): number {
+  let runs = 0;
+  for (const step of session.steps) if (step.tests !== undefined && step.status !== "running" && step.lastSeq <= throughSeq) runs += 1;
+  return runs;
+}
+
+function lastTerminalTurn(session: TraceSession): number {
+  for (let i = session.turns.length - 1; i >= 0; i -= 1) {
+    const turn = session.turns[i];
+    if (turn !== undefined && (turn.outcome === "completed" || turn.outcome === "failed")) return turn.index;
+  }
+  return -1;
+}
+
+/**
+ * The index of the last turn that had completed or failed by `throughSeq`: the turn of the last completion or failure
+ * step (a lifecycle step with status ok or failed) at or before it. -1 when none. A turn's endSeq does not tell, since
+ * rows after the turn's end (facts, decisions, explainer rows) extend it.
+ */
+function terminalTurnThrough(session: TraceSession, throughSeq: number): number {
+  let last = -1;
+  for (const step of session.steps) {
+    if (step.kind === "lifecycle" && (step.status === "ok" || step.status === "failed") && step.firstSeq <= throughSeq) {
+      last = Math.max(last, step.turnIndex);
+    }
+  }
+  return last;
+}
+
+function storyTextOf(sentences: readonly NarrativeSentence[], provenance: "rule" | "model"): string {
+  return JSON.stringify([provenance, sentences]);
+}
+
+export function createSessionExplainer(deps: SessionExplainerDeps): SessionExplainer {
+  const interval = deps.storyIntervalMs ?? STORY_MIN_INTERVAL_MS;
+  const slicer = deps.slicer ?? createMainSlicer();
+  const sliceMs = deps.foldSliceMs ?? slicer.budgetMs;
+  let narrator = deps.narrator;
+  let tracked: Tracked | null = null;
+  let disposed = false;
+  let syncChain: Promise<void> = Promise.resolve();
+  let narration: Promise<void> = Promise.resolve();
+  /**
+   * The latest unprocessed sync of each session, at most one per session. Per session, not one shared slot: another
+   * session's sync must never overwrite the current session's (its agent_completed would be lost). A drain processes
+   * the entry of the session that is current then, not when the sync arrived, so a switch in flight keeps the latest
+   * sync of whichever session ends up current. The other entries are kept (lane fix I-2): a session that finished
+   * while another one was open gets its last sync processed when it is open again (onSessionSwitched). An entry goes
+   * once it is processed, when its session no longer exists, and with the explainer (dispose: the repo closed or the
+   * app quit, which ends the repo's sessions).
+   */
+  const pendingSyncs = new Map<string, PipelineSyncSnapshot>();
+  /** When each session's last story was narrated, so a session tracked again keeps its interval (spec §6.1 cost). */
+  const storyTimes = new Map<string, number>();
+  let drainQueued = false;
+  let inFlight: AbortController | null = null;
+  // One backoff for every call of this explainer (spec §6.6): a provider fault is not per session.
+  let failures = 0;
+  let retryAt = 0;
+  // The time a settle takes per ms of folding (advance). A settle that took longer than predicted raises it at once;
+  // a shorter one lowers it by half.
+  let settleRatio = SETTLE_RATIO_START;
+  // Lane 05's schema brake: schema-valid answers so far, and schema-invalid ones since the last valid one.
+  let validAnswers = 0;
+  let invalidStreak = 0;
+
+  const fail = (error: unknown): void => {
+    try {
+      deps.log({ kind: "error", where: "session", message: messageOf(error) });
+    } catch {
+      // A failing logger must not break the chains.
+    }
+  };
+
+  const current = (t: Tracked): boolean => !disposed && tracked === t && deps.sessionId() === t.sessionId;
+
+  /** Runs `task` on the narration chain, then `after`; neither can reject the chain. */
+  function enqueue(task: () => Promise<void>, after: () => void): void {
+    narration = narration.then(async () => {
+      try {
+        await task();
+      } catch (error) {
+        fail(error);
+      }
+      try {
+        after();
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
+  function release(t: Tracked): void {
+    if (t.storyTimer !== null) deps.schedule.clearTimeout(t.storyTimer);
+    if (t.whyTimer !== null) deps.schedule.clearTimeout(t.whyTimer);
+    t.storyTimer = null;
+    t.whyTimer = null;
+    t.whyQueue.length = 0;
+  }
+
+  function track(sessionId: string): Tracked | null {
+    if (tracked !== null && tracked.sessionId === sessionId) return tracked;
+    if (tracked !== null) {
+      // A session switch: the old session's call can no longer write, so stop paying for it.
+      release(tracked);
+      inFlight?.abort();
+    }
+    tracked = null;
+    const record = deps.db.getSession(sessionId);
+    if (record === undefined) return null;
+    const meta: TraceSessionSummary = {
+      sessionId,
+      repoId: record.repoId,
+      repoName: "",
+      prompt: record.prompt,
+      state: record.state,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      lastEventSeq: record.lastEventSeq,
+    };
+    tracked = {
+      sessionId, fold: createTraceState(meta), cursor: 0, session: null, sync: null, seeded: false,
+      initialComponentIds: null, highlights: [], highlightsKey: null, seenUnits: new Set(), closedUnits: new Set(),
+      answered: new Set(), sources: new Map(), closedAt: new Map(), answeredAt: new Map(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
+      storyText: null, storyPending: false, storyRunning: false, lastStoryAt: storyTimes.get(sessionId) ?? null, storyTimer: null, whyQueue: [],
+      whyDone: new Set(), whyRunning: false, whyTimer: null,
+    };
+    return tracked;
+  }
+
+  /**
+   * Notes the row where a unit first closed or a decision was first answered or delegated, so a seed counts as told
+   * only what came by the latest story's basisSeq (re-review minor).
+   */
+  function noteTold(t: Tracked, type: string, seq: number, payload: unknown): void {
+    if (type !== "change_unit" && type !== "decision") return;
+    if (payload === null || typeof payload !== "object") return;
+    const row = payload as { id?: unknown; status?: unknown };
+    if (typeof row.id !== "string") return;
+    if (type === "change_unit" && CLOSED_UNIT.has(row.status as ChangeUnit["status"])) {
+      if (!t.closedAt.has(row.id)) t.closedAt.set(row.id, seq);
+    } else if (type === "decision" && (row.status === "answered" || row.status === "delegated")) {
+      if (!t.answeredAt.has(row.id)) t.answeredAt.set(row.id, seq);
+    }
+  }
+
+  /**
+   * Folds the rows after the cursor, read 2,000 per page (spec §6.1), in slices (PL-3): once the turn's time so far
+   * plus the settle its folding predicts reaches sliceMs, and at the end of each full page, it settles the rows folded
+   * so far with an incremental finalize and yields through the main slicer. So no turn folds or finalizes more than a
+   * slice's rows, however many rows the pass appended. A settle's session is discarded: the session is the last
+   * finalize's, which incremental equals fresh (S-3) makes deep-equal to one finalize of every row. It folds up to
+   * the last row stored when it starts: under sustained ingest it would otherwise chase new rows across its yields and
+   * write no story or highlights; the next sync folds the rest. Null when the explainer was disposed (the app quit
+   * closes the database next) or the session switched during a yield.
+   */
+  async function advance(t: Tracked): Promise<TraceSession | null> {
+    const until = deps.db.getLatestSeq(t.sessionId);
+    let foldStart = performance.now();
+    let unsettled = false;
+    const sliceEnds = (): boolean => {
+      const turn = slicer.elapsed();
+      if (turn >= sliceMs) return true;
+      const folded = performance.now() - foldStart;
+      return folded >= sliceMs * MIN_FOLD_SHARE && turn + settleRatio * folded >= sliceMs;
+    };
+    const pause = async (): Promise<boolean> => {
+      if (unsettled) {
+        const settleStart = performance.now();
+        finalize(t.fold, { live: true });
+        const folded = Math.max(settleStart - foldStart, 0.5);
+        const measured = (performance.now() - settleStart) / folded;
+        settleRatio = Math.max(measured, (settleRatio + measured) / 2);
+      }
+      unsettled = false;
+      await slicer.yield();
+      foldStart = performance.now();
+      return current(t);
+    };
+    for (;;) {
+      const events = deps.db.listEvents(t.sessionId, { fromSeq: t.cursor, limit: FOLD_PAGE });
+      let reached = false;
+      for (const event of events) {
+        if (event.seq > until) {
+          reached = true;
+          break;
+        }
+        t.cursor = event.seq;
+        if (isTraceRowType(event.type)) {
+          const payload = JSON.parse(event.payloadJson) as unknown;
+          if (event.type === "overview_snapshot" && t.initialComponentIds === null) {
+            // The fold drops a snapshot that fails the contract schema (an invalid_row gap), so the baseline does too.
+            const parsed = OverviewSnapshotSchema.safeParse(payload);
+            if (parsed.success) t.initialComponentIds = componentIdsOf(parsed.data);
+          }
+          // The full text a cut headline came from, kept before the fold cuts it (leftover 1 of the fix wave).
+          const source = stepSourceText(event.type, payload);
+          if (source !== null) t.sources.set(event.seq, source);
+          noteTold(t, event.type, event.seq, payload);
+          accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
+          unsettled = true;
+        }
+        if (sliceEnds() && !(await pause())) return null;
+      }
+      if (reached || events.length < FOLD_PAGE || t.cursor >= until) break;
+      if (!(await pause())) return null;
+    }
+    // The tail (this settle, then the highlights and triggers in process()) starts a turn of its own once this one is
+    // spent, so it never extends a spent turn (lane review minor 4). The session may have switched meanwhile.
+    if (slicer.spent()) {
+      await slicer.yield();
+      if (!current(t)) return null;
+    }
+    const state = deps.db.getSession(t.sessionId)?.state;
+    t.session = finalize(t.fold, { live: true, throughSeq: t.cursor, ...(state !== undefined ? { state } : {}) });
+    return t.session;
+  }
+
+  /** Spec §6.1: rows only through the event store, each followed by its push hint. */
+  function append(t: Tracked, record: ExplainerRecord): void {
+    const stored = deps.db.appendEvent(t.sessionId, "explainer", record);
+    try {
+      deps.emitRowsAvailable(t.sessionId, stored.seq);
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  /** Spec §6.3: one narrator log event and one call record (through lane 05's builder) per call. */
+  function record(question: Question, started: number, outcome: Outcome, result: NarratorResult<unknown> | null): void {
+    const ms = Math.max(0, Math.round(deps.now() - started));
+    try {
+      deps.log({
+        kind: "narrator",
+        question,
+        ms,
+        accepted: outcome.accepted,
+        dropped: outcome.dropped,
+        discarded: outcome.discarded,
+        ...(outcome.error === null ? {} : { error: outcome.error }),
+        ...(outcome.reasons.length > 0 ? { reasons: outcome.reasons.slice(0, 40) } : {}),
+      });
+    } catch {
+      // A failing logger must not lose the call record or the answer.
+    }
+    recordSeq += 1;
+    const entry = buildNarratorCallRecord({
+      id: `narr_session_${started.toString(36)}_${recordSeq.toString(36)}`,
+      at: deps.now(),
+      repoRoot: deps.repoRoot,
+      question,
+      model: result?.model ?? NARRATOR_MODEL,
+      ms,
+      batchSize: 1,
+      accepted: outcome.accepted,
+      dropped: outcome.dropped,
+      discarded: outcome.discarded,
+      usage: result?.usage ?? null,
+      error: outcome.error,
+      reasons: outcome.reasons,
+    });
+    if (entry === null) return;
+    try {
+      deps.recordCall?.(entry);
+    } catch {
+      // A failing recorder must not undo the call's result.
+    }
+  }
+
+  /** A provider fault backs off 30 s, 2 min, 10 min (spec §6.6); switching the narrator off is not one. */
+  function failed(error: unknown): void {
+    if (isAbort(error)) return;
+    failures += 1;
+    retryAt = deps.now() + backoffMs(failures);
+  }
+
+  function answered(): void {
+    failures = 0;
+  }
+
+  /**
+   * Lane 05's brake (SCHEMA_BRAKE_STREAK): until this explainer has had a schema-valid answer, the
+   * third schema-invalid answer in a row reads as a provider fault and backs off. True when braked.
+   */
+  function schemaAnswer(valid: boolean): boolean {
+    if (valid) {
+      validAnswers += 1;
+      invalidStreak = 0;
+      return false;
+    }
+    invalidStreak += 1;
+    return validAnswers === 0 && invalidStreak >= SCHEMA_BRAKE_STREAK;
+  }
+
+  function seed(t: Tracked, session: TraceSession, sync: PipelineSyncSnapshot): void {
+    t.seeded = true;
+    const explainer = session.explainer;
+    for (const decisionId of explainer.decisionWhy.keys()) t.whyDone.add(decisionId);
+    if (explainer.highlights !== null) {
+      const entries = [...explainer.highlights.byComponent.entries()]
+        .map(([id, entry]) => ({
+          id,
+          state: entry.state,
+          // Same shape computeHighlights writes: `states` only when more than the strongest state applies.
+          ...(entry.states.length > 1 ? { states: [...entry.states] } : {}),
+          unitIds: [...entry.unitIds],
+        }))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      t.highlightsKey = JSON.stringify(entries);
+    }
+    if (explainer.story === null) return;
+    // Narrated before (an app restart, or a session open again after another one was followed). Unit closures,
+    // answers, test runs and turn ends count as told only up to the story's basisSeq, so one that came after it (a
+    // session that finished while another one was open, lane fix I-2; or just before the app quit, re-review minor)
+    // still triggers its story. A closure or answer whose row the fold has not reached counts as after the story.
+    const basis = explainer.story.basisSeq;
+    const told = (at: number | undefined): boolean => at !== undefined && at <= basis;
+    t.storyText = storyTextOf(explainer.story.sentences, explainer.story.provenance);
+    for (const unit of sync.changeUnits) {
+      t.seenUnits.add(unit.id);
+      if (CLOSED_UNIT.has(unit.status) && told(t.closedAt.get(unit.id))) t.closedUnits.add(unit.id);
+    }
+    for (const decision of sync.decisions) {
+      if (decision.status !== "answered" && decision.status !== "delegated") continue;
+      // Answered after the story: detect() triggers it and queues its why.
+      if (!told(t.answeredAt.get(decision.id))) continue;
+      t.answered.add(decision.id);
+      if (!t.whyDone.has(decision.id)) t.whyQueue.push(decision.id);
+    }
+    t.testRuns = countRuns(session, basis);
+    t.terminalTurn = terminalTurnThrough(session, basis);
+    t.unitsAtStory = t.seenUnits.size;
+  }
+
+  /** Spec §6.1 triggers (lane "Spec alignment notes"); also queues a why per newly answered decision. */
+  function detect(t: Tracked, session: TraceSession, sync: PipelineSyncSnapshot): boolean {
+    let trigger = false;
+    for (const unit of sync.changeUnits) {
+      t.seenUnits.add(unit.id);
+      if (CLOSED_UNIT.has(unit.status) && !t.closedUnits.has(unit.id)) {
+        t.closedUnits.add(unit.id);
+        trigger = true;
+      }
+    }
+    if (t.seenUnits.size - t.unitsAtStory >= STORY_UNIT_THRESHOLD) trigger = true;
+    for (const decision of sync.decisions) {
+      if ((decision.status === "answered" || decision.status === "delegated") && !t.answered.has(decision.id)) {
+        t.answered.add(decision.id);
+        if (!t.whyDone.has(decision.id)) t.whyQueue.push(decision.id);
+        trigger = true;
+      }
+    }
+    const runs = countRuns(session);
+    if (runs > t.testRuns) {
+      t.testRuns = runs;
+      trigger = true;
+    }
+    const terminal = lastTerminalTurn(session);
+    if (terminal > t.terminalTurn) {
+      t.terminalTurn = terminal;
+      trigger = true;
+    }
+    return trigger;
+  }
+
+  /** Keeps a sync whose session stopped being current before it was processed, unless a newer one is kept (I-2). */
+  function keep(sync: PipelineSyncSnapshot): void {
+    if (!disposed && !pendingSyncs.has(sync.sessionId)) pendingSyncs.set(sync.sessionId, sync);
+  }
+
+  async function process(sync: PipelineSyncSnapshot): Promise<void> {
+    if (disposed) return;
+    if (deps.sessionId() !== sync.sessionId) {
+      keep(sync);
+      return;
+    }
+    // A session that no longer exists has nothing to explain: its sync goes.
+    const t = track(sync.sessionId);
+    if (t === null) return;
+    const session = await advance(t);
+    if (session === null || !current(t)) {
+      keep(sync);
+      return;
+    }
+    t.sync = sync;
+    if (!t.seeded) seed(t, session, sync);
+    const highlights = computeHighlights({
+      units: sync.changeUnits,
+      decisions: sync.decisions,
+      overview: session.overview,
+      initialComponentIds: t.initialComponentIds,
+      failingFiles: failingTestFiles(session),
+    });
+    t.highlights = highlights;
+    const key = JSON.stringify(highlights);
+    if (key !== t.highlightsKey && (highlights.length > 0 || t.highlightsKey !== null)) {
+      append(t, { sessionId: t.sessionId, kind: "highlights", basisSeq: session.loadedThroughSeq, components: highlights });
+      t.highlightsKey = key;
+    }
+    if (detect(t, session, sync)) t.storyPending = true;
+    // Also a story that came due while the session was not open (its timer found it not current): kick does nothing
+    // unless one is pending (re-review of lane fix I-2).
+    kick(t);
+    pumpWhy(t);
+  }
+
+  /** Leading edge, then at most one story per interval, with one trailing story within an interval of a trigger. */
+  function kick(t: Tracked): void {
+    if (!current(t) || !t.storyPending || t.storyRunning || t.storyTimer !== null) return;
+    const wait = t.lastStoryAt === null ? 0 : t.lastStoryAt + interval - deps.now();
+    if (wait > 0) {
+      t.storyTimer = deps.schedule.setTimeout(() => {
+        t.storyTimer = null;
+        kick(t);
+      }, wait);
+      return;
+    }
+    t.storyPending = false;
+    t.storyRunning = true;
+    enqueue(
+      () => story(t),
+      () => {
+        t.storyRunning = false;
+        kick(t);
+        pumpWhy(t);
+      },
+    );
+  }
+
+  /** The guarded narration of `input`, or null; `asked` is false when no answer came (a failure or an abort). */
+  async function narrateStory(client: NarratorClient, input: SessionStoryInput): Promise<{ sentences: NarrativeSentence[] | null; asked: boolean }> {
+    const started = deps.now();
+    const controller = new AbortController();
+    inFlight = controller;
+    try {
+      let result: NarratorResult<NarrativeSentence[]>;
+      try {
+        result = await client.sessionStory(input, { signal: controller.signal });
+      } catch (error) {
+        failed(error);
+        record("sessionStory", started, { accepted: 0, dropped: 0, discarded: false, reasons: [], error: failureReason(error) }, null);
+        return { sentences: null, asked: false };
+      }
+      if (controller.signal.aborted) {
+        // Turned off while the answer was on its way (spec E15): recorded, never shown.
+        record("sessionStory", started, { accepted: 0, dropped: 0, discarded: true, reasons: [], error: "aborted" }, result);
+        return { sentences: null, asked: false };
+      }
+      if (!result.schemaValid) {
+        const braked = schemaAnswer(false);
+        if (braked) failed(new NarratorUnavailableError("unavailable", "schema"));
+        else answered();
+        record("sessionStory", started, { accepted: 0, dropped: 0, discarded: true, reasons: [], error: "schema" }, result);
+        return { sentences: null, asked: !braked };
+      }
+      schemaAnswer(true);
+      answered();
+      if (result.heuristic === true) {
+        record("sessionStory", started, { accepted: 0, dropped: 0, discarded: true, reasons: ["heuristic"], error: null }, result);
+        return { sentences: null, asked: true };
+      }
+      // Guarded against exactly the (frozen) input that was sent.
+      const guard = guardSessionStory(result.value, input);
+      record(
+        "sessionStory",
+        started,
+        { accepted: guard.accepted.length, dropped: guard.dropped, discarded: guard.discarded, reasons: guard.reasons, error: null },
+        result,
+      );
+      return { sentences: guard.discarded || guard.accepted.length === 0 ? null : guard.accepted, asked: true };
+    } finally {
+      if (inFlight === controller) inFlight = null;
+    }
+  }
+
+  async function story(t: Tracked): Promise<void> {
+    const session = t.session;
+    const sync = t.sync;
+    if (session === null || sync === null || !current(t)) return;
+    const input = deepFreeze(sessionStoryInput(session, sync.decisions, t.highlights, t.sources));
+    const key = JSON.stringify(input);
+    const client = narrator;
+    const canCall = client !== null && deps.now() >= retryAt;
+    t.unitsAtStory = t.seenUnits.size;
+    // Spec §6.1: a story whose input equals the last narrated input is skipped.
+    if (key === t.storyKey && (t.storyAsked || !canCall)) return;
+    t.lastStoryAt = deps.now();
+    storyTimes.set(t.sessionId, t.lastStoryAt);
+    const basisSeq = session.loadedThroughSeq;
+    const narrated = canCall && client !== null ? await narrateStory(client, input) : { sentences: null, asked: false };
+    if (!current(t)) return;
+    const provenance = narrated.sentences !== null ? "model" : "rule";
+    const sentences = narrated.sentences ?? ruleStory(session, input, sync.changeUnits, t.highlights);
+    t.storyKey = key;
+    t.storyAsked = narrated.asked;
+    if (sentences.length === 0) return;
+    const text = storyTextOf(sentences, provenance);
+    if (text === t.storyText) return;
+    append(t, { sessionId: t.sessionId, kind: "story", sentences, basisSeq, provenance });
+    t.storyText = text;
+  }
+
+  function armWhyRetry(t: Tracked): void {
+    if (t.whyTimer !== null) return;
+    t.whyTimer = deps.schedule.setTimeout(() => {
+      t.whyTimer = null;
+      pumpWhy(t);
+    }, Math.max(0, retryAt - deps.now()));
+  }
+
+  /** One why at a time, after the story chain; during a backoff the queue waits for its end. */
+  function pumpWhy(t: Tracked): void {
+    if (!current(t)) return;
+    const client = narrator;
+    if (client === null) {
+      t.whyQueue.length = 0;
+      return;
+    }
+    if (t.whyRunning || t.storyRunning || t.whyQueue.length === 0) return;
+    if (deps.now() < retryAt) {
+      armWhyRetry(t);
+      return;
+    }
+    const decisionId = t.whyQueue.shift();
+    if (decisionId === undefined) return;
+    t.whyRunning = true;
+    enqueue(
+      () => why(t, client, decisionId),
+      () => {
+        t.whyRunning = false;
+        pumpWhy(t);
+        kick(t);
+      },
+    );
+  }
+
+  async function why(t: Tracked, client: NarratorClient, decisionId: string): Promise<void> {
+    // Settled since it was queued (setNarrator re-queues while a why is in flight): one why per decision.
+    if (t.whyDone.has(decisionId)) return;
+    const session = t.session;
+    const decision = t.sync?.decisions.find((candidate) => candidate.id === decisionId);
+    if (session === null || decision === undefined || !current(t)) return;
+    const input = decisionWhyInput(session, decision);
+    if (input === null || input.nearby.length === 0 || decisionId.length > EXPLAINER_ID_MAX) {
+      // Nothing nearby to ground a reason in (or an id the row cannot hold): settled without a call.
+      // Not a failure: no backoff, no failure count, never asked again.
+      t.whyDone.add(decisionId);
+      return;
+    }
+    deepFreeze(input);
+    const started = deps.now();
+    const controller = new AbortController();
+    inFlight = controller;
+    try {
+      let result: NarratorResult<NarrativeSentence | null>;
+      try {
+        result = await client.decisionWhy(input, { signal: controller.signal });
+      } catch (error) {
+        failed(error);
+        // Retried once the backoff ends; an abort waits for the narrator to come back (setNarrator).
+        if (!isAbort(error) && narrator !== null && current(t)) t.whyQueue.unshift(decisionId);
+        record("decisionWhy", started, { accepted: 0, dropped: 0, discarded: false, reasons: [], error: failureReason(error) }, null);
+        return;
+      }
+      if (controller.signal.aborted) {
+        record("decisionWhy", started, { accepted: 0, dropped: 0, discarded: true, reasons: [], error: "aborted" }, result);
+        return;
+      }
+      if (!result.schemaValid) {
+        const braked = schemaAnswer(false);
+        if (braked) {
+          // A provider fault, not this decision's: asked again after the backoff.
+          failed(new NarratorUnavailableError("unavailable", "schema"));
+          if (narrator !== null && current(t)) t.whyQueue.unshift(decisionId);
+        } else {
+          answered();
+          t.whyDone.add(decisionId);
+        }
+        record("decisionWhy", started, { accepted: 0, dropped: 0, discarded: true, reasons: [], error: "schema" }, result);
+        return;
+      }
+      schemaAnswer(true);
+      answered();
+      t.whyDone.add(decisionId);
+      // Guarded against exactly the (frozen) input that was sent; a null answer guards as an empty batch.
+      const guard = guardDecisionWhy(result.value, input);
+      record(
+        "decisionWhy",
+        started,
+        { accepted: guard.accepted.length, dropped: guard.dropped, discarded: guard.discarded, reasons: guard.reasons, error: null },
+        result,
+      );
+      const sentence = guard.discarded ? undefined : guard.accepted[0];
+      if (sentence !== undefined && current(t)) append(t, { sessionId: t.sessionId, kind: "decision_why", decisionId, sentence });
+    } finally {
+      if (inFlight === controller) inFlight = null;
+    }
+  }
+
+  /**
+   * Processes the current session's kept sync, if any, in a task of its own. Without one, it resumes a story or why of
+   * the followed session that came due while that session was not open (their timers fired and found it not current).
+   */
+  function drain(): void {
+    if (drainQueued) return;
+    drainQueued = true;
+    syncChain = syncChain.then(async () => {
+      // The hook runs inside the pipeline's sync pass (after its last slice check): the fold starts in a turn the
+      // main slicer gives it, so its first slice never extends the pass's last one (PL-3).
+      await slicer.yield();
+      drainQueued = false;
+      if (disposed) return;
+      const sessionId = deps.sessionId();
+      const next = sessionId === null ? undefined : pendingSyncs.get(sessionId);
+      try {
+        if (next !== undefined) {
+          pendingSyncs.delete(next.sessionId);
+          await process(next);
+          return;
+        }
+        const t = tracked;
+        if (t !== null && current(t)) {
+          kick(t);
+          pumpWhy(t);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
+  return {
+    onPipelineSync(sync) {
+      if (disposed) return;
+      // Each sync carries the session's whole unit and decision lists, so a burst folds once per session,
+      // for its latest sync; the drain processes the current session's and keeps the others.
+      pendingSyncs.set(sync.sessionId, sync);
+      drain();
+    },
+    onSessionSwitched() {
+      if (disposed) return;
+      drain();
+    },
+    setNarrator(next) {
+      if (disposed) return;
+      narrator = next;
+      const t = tracked;
+      if (next === null) {
+        inFlight?.abort();
+        if (t !== null) {
+          t.whyQueue.length = 0;
+          if (t.whyTimer !== null) deps.schedule.clearTimeout(t.whyTimer);
+          t.whyTimer = null;
+        }
+        return;
+      }
+      if (t === null) return;
+      // Back on: explain the decisions answered while it was off (or whose call it aborted).
+      for (const decisionId of t.answered) {
+        if (!t.whyDone.has(decisionId) && !t.whyQueue.includes(decisionId)) t.whyQueue.push(decisionId);
+      }
+      pumpWhy(t);
+    },
+    async idle() {
+      for (;;) {
+        const syncs = syncChain;
+        const calls = narration;
+        await Promise.all([syncs, calls]);
+        if (syncs === syncChain && calls === narration) return;
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      inFlight?.abort();
+      if (tracked !== null) release(tracked);
+      tracked = null;
+      pendingSyncs.clear();
+      storyTimes.clear();
+    },
+  };
+}

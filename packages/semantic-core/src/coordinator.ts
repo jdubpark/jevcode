@@ -95,6 +95,7 @@ export class PipelineCoordinator {
   private bufferStartClock = 0;
   private readonly rebuildDebounceMs: number;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
   private lastRebuildAtMs = 0;
   // Records were drained since the last rebuild that returned. Cleared only when rebuild() returns, so a rebuild that
   // throws partway (a store write failing) is run again by the next flush(), with no new record needed (lane 03 PL-2).
@@ -155,6 +156,19 @@ export class PipelineCoordinator {
     if (this.rebuildPending) this.rebuildNow();
   }
 
+  /**
+   * Cancels a debounced rebuild and arms no new one (lane 07 fix wave): the app quit closes the stores' database next,
+   * and a rebuild on the timer would write to it. ingest and flush still work synchronously, for a caller that keeps
+   * using the coordinator.
+   */
+  dispose(): void {
+    this.disposed = true;
+    if (this.rebuildTimer !== null) {
+      clearTimeout(this.rebuildTimer);
+      this.rebuildTimer = null;
+    }
+  }
+
   applyLabelResult(result: UnitLabelResult): boolean {
     const current = this.decisionVersions.get(result.changeUnitId) ?? 0;
     if (result.decisionVersion < current) return false;
@@ -212,7 +226,7 @@ export class PipelineCoordinator {
       this.rebuildNow();
       return;
     }
-    if (this.rebuildTimer !== null) return;
+    if (this.rebuildTimer !== null || this.disposed) return;
     const timer = setTimeout(() => {
       this.rebuildTimer = null;
       if (this.onRebuildError === undefined) {

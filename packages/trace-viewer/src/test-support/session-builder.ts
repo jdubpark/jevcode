@@ -2,8 +2,8 @@ import type { AgentState, ChangeCategory, ChangeUnitStatus, OverviewSnapshot } f
 
 import type { BandSpan, LaneMarks, OverviewIndex } from "../layout/overview-index.js";
 import {
-  buildOverviewModel, CAPABILITIES, decisionStableId, fileStableId, findingStableId, LANES, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
-  type Actor, type Chapter, type ClaimObservation, type CommandDetail, type DecisionDetail, type EditDetail, type Entity,
+  buildOverviewModel, CAPABILITIES, emptyExplainer, decisionStableId, fileStableId, findingStableId, LANES, SIGNAL_IDS, stepStableId, TRACE_SCHEMA_VERSION, unitStableId,
+  type Actor, type Chapter, type ClaimObservation, type CommandDetail, type DecisionDetail, type EditDetail, type Entity, type ExplainerModel,
   type Finding, type Gap, type GapKind, type GuardrailDetail, type Lane, type NoiseReason, type ProblemKind, type Severity,
   type SignalId, type Step, type StepKind, type StepStatus, type TestDetail, type TraceSession, type Turn, type TurnOutcome,
   type TurnTrigger,
@@ -81,6 +81,7 @@ export interface SessionSeed {
   trailingHiddenRows?: number;
   /** An overview_snapshot to fold into session.overview (seq = loadedThroughSeq). */
   overview?: OverviewSnapshot;
+  explainer?: ExplainerModel;
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -326,6 +327,7 @@ export function buildSession(seed: SessionSeed): TraceSession {
     },
     hidden: { byType: {}, unreceived: seed.trailingHiddenRows ?? 0 },
     overview: seed.overview === undefined ? null : buildOverviewModel(seed.overview, Math.max(1, loadedThroughSeq)),
+    explainer: seed.explainer ?? emptyExplainer(),
   };
 }
 

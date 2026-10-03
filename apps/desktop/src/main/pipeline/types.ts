@@ -13,6 +13,7 @@ import type { JevClient } from "@jevcode/jev-router";
 import type { JevcodeDb } from "@jevcode/storage";
 
 import type { FromMainChannelName, FromMainPayload } from "../../shared/ipc-registry.js";
+import type { MainSlicer } from "./main-slicer.js";
 import type { MockAgentScript } from "./mock-agent-adapter.js";
 import type { ModelSelector } from "./model-selection.js";
 
@@ -46,6 +47,18 @@ export interface PipelineRuntimeOptions {
   onRepoFilesChanged?: (repoPath: string, paths: readonly string[]) => void;
   /** Script for a mock session started without input.mockScript (the Electron workspace smoke). */
   mockScriptFor?: (input: SessionStartOptions) => MockAgentScript;
+  /**
+   * Called once per completed sync pass with the session's units and decisions (console-explainer
+   * spec §6.1 triggers), never after a pass that a stop ended or that threw; index.ts routes it to the
+   * repo's explainer stage. Errors are logged, never thrown.
+   */
+  onPipelineSync?: (repoPath: string, sync: PipelineSyncSnapshot) => void;
+  /**
+   * The main process's shared slicer (main-slicer.ts): sync passes yield through it, as the session explainer does,
+   * so one event-loop turn runs at most one budget of their work. index.ts passes one instance to both; without
+   * one the runtime makes its own.
+   */
+  slicer?: MainSlicer;
 }
 
 export interface SessionStartOptions {
@@ -64,6 +77,15 @@ export interface SessionStartOptions {
 }
 
 import type { PlaybackLabels } from "./playback.js";
+
+/** What the runtime hands the explainer stage after each finished sync (console-explainer spec §6.1). */
+export interface PipelineSyncSnapshot {
+  sessionId: string;
+  /** The session's lastEventSeq when the sync finished. */
+  lastSeq: number;
+  changeUnits: ChangeUnit[];
+  decisions: Decision[];
+}
 
 export type IngestibleRecord =
   | NormalizedAgentEvent

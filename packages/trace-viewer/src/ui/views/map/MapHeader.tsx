@@ -3,6 +3,8 @@ import type React from "react";
 
 import type { OverviewModel } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
+import { MapSessionToggle } from "./MapSessionToggle.js";
+import type { MapCardState } from "./overlay.js";
 import { linkSentence, narratorNote, notAnalyzedNote, overviewHeadline, partialNote, scanNote, type SentencePart } from "./map-text.js";
 import styles from "./MapView.module.css";
 
@@ -18,6 +20,8 @@ export interface MapHeaderProps {
   selectedId?: string | null;
   /** Hovering a component link behaves like hovering its card. */
   onHoverComponent?: (id: string | null) => void;
+  /** The session overlay's toggle and legend (lane 07 S-5); absent or null when the session has nothing on the map. */
+  session?: { counts: Readonly<Record<MapCardState, number>>; on: boolean; onToggle(): void } | null;
 }
 
 /** A component link in the narrative. Hovering it behaves like hovering its card; a hovered link that unmounts (the
@@ -66,7 +70,7 @@ function CiteLink({
  * Headline, a row of quiet notes (partial, imports, scan, narrator), then the collapsible narrative (spec §3.4 "Top";
  * the approved Map header): plain sentences whose component names are links, two sentences, then "More".
  */
-export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = null, onHoverComponent }: MapHeaderProps): React.JSX.Element {
+export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = null, onHoverComponent, session = null }: MapHeaderProps): React.JSX.Element {
   const [open, setOpen] = useState(true);
   // Two viewers can mount at once, so the narrative's id is per header.
   const narrativeId = useId();
@@ -84,12 +88,13 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
       <div className={styles.headRow}>
         <Icon name="view-map" size={16} />
         <span className={styles.headline}>{headline.count}</span>
-        {/* The row never wraps; in a narrow Map column the languages give way with an ellipsis, so the toggle fits. */}
+        {/* Without the session toggle the row never wraps: in a narrow column the languages give way with an ellipsis. */}
         {headline.languages === null ? null : (
           <span className={styles.languages} title={headline.languages}>
             {headline.languages}
           </span>
         )}
+        {session === null ? null : <MapSessionToggle counts={session.counts} on={session.on} onToggle={session.onToggle} />}
         {sentences === null ? null : (
           <button type="button" className={styles.toggle} aria-expanded={open} aria-controls={open ? narrativeId : undefined} onClick={() => setOpen((value) => !value)}>
             <span>Overview</span>

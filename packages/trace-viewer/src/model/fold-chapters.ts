@@ -20,6 +20,7 @@ import {
   type Chapter,
   type DecisionDetail,
   type DecisionStableId,
+  type DecisionTradeoff,
   type Step,
   type StepId,
   type StepStatus,
@@ -40,8 +41,22 @@ export function foldChangeUnit(state: FoldState, unit: ChangeUnit, ctx: RowConte
   entry.versions += 1;
 }
 
-function decisionDetail(decision: Decision): DecisionDetail {
+/**
+ * `previous` is the detail the decision's earlier rows built. An option this row lists with no `tradeoffs` field keeps
+ * the ones an earlier row gave it, because the runtime's answered row repeats the options without them (spec §3.5 shows
+ * a decided decision with its tradeoffs; lane 07 S-4); an explicit empty list removes them.
+ */
+function tradeoffsOf(
+  given: readonly DecisionTradeoff[] | undefined,
+  earlier: DecisionTradeoff[] | undefined,
+): { tradeoffs?: DecisionTradeoff[] } {
+  if (given === undefined) return earlier === undefined ? {} : { tradeoffs: earlier };
+  return given.length === 0 ? {} : { tradeoffs: given.map((tradeoff) => ({ dimension: tradeoff.dimension, consequence: tradeoff.consequence })) };
+}
+
+function decisionDetail(decision: Decision, previous?: DecisionDetail): DecisionDetail {
   const chosen = new Set(Object.values(decision.answer?.decision ?? {}));
+  const earlier = new Map(previous?.options.map((option) => [option.id, option.tradeoffs]) ?? []);
   const decidedBy =
     decision.status === "answered" ? "supervisor" : decision.status === "delegated" ? "delegated" : undefined;
   return {
@@ -49,7 +64,12 @@ function decisionDetail(decision: Decision): DecisionDetail {
     title: decision.title,
     severity: decision.severity,
     status: decision.status,
-    options: decision.options.map((option) => ({ id: option.id, label: option.label, chosen: chosen.has(option.id) })),
+    options: decision.options.map((option) => ({
+      id: option.id,
+      label: option.label,
+      chosen: chosen.has(option.id),
+      ...tradeoffsOf(option.tradeoffs, earlier.get(option.id)),
+    })),
     ...(decidedBy !== undefined ? { decidedBy } : {}),
   };
 }
@@ -85,7 +105,7 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     // answered decisions later, and those rows must not stretch it (spec §6.6 "Decision answers").
     const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(state, existing, ctx, false);
-    existing.decision = decisionDetail(decision);
+    existing.decision = decisionDetail(decision, existing.decision);
     if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
     let end: { t: number; sourceTs: string } = ctx;
     if (closes && answer !== null) {

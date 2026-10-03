@@ -5,6 +5,7 @@ import {
   EvidenceFactSchema,
   JevDecisionLogSchema,
   NormalizedAgentEventSchema,
+  ExplainerRecordSchema,
   OverviewSnapshotSchema,
   ValidationResultSchema,
   type EventStoreType,
@@ -18,6 +19,7 @@ import { foldAgentEvent } from "./fold-agent.js";
 import { foldChangeUnit, foldDecision, foldJevDecision } from "./fold-chapters.js";
 import { foldEvidenceFact, foldValidation } from "./fold-evidence.js";
 import { finalizeState, type FinalizeOptions } from "./fold-finalize.js";
+import { foldExplainer } from "./fold-explainer.js";
 import { foldOverviewSnapshot } from "./fold-overview.js";
 import { addGap, advanceClock, clockTs, FoldState, type RowContext } from "./fold-state.js";
 import { ENVELOPE_RULES } from "./registry.js";
@@ -146,6 +148,16 @@ export function accumulate(state: TraceState, row: TraceRow): TraceState {
       // Replace semantics (spec §8.1): no step, no clock move, no turn; an invalid payload is an invalid_row gap.
       const snapshot = parseOrGap(s, row, OverviewSnapshotSchema);
       if (snapshot !== null) foldOverviewSnapshot(s, snapshot, row.seq);
+      break;
+    }
+    case "explainer": {
+      const record = parseOrGap(s, row, ExplainerRecordSchema);
+      if (record === null) break;
+      if (record.sessionId !== s.meta.sessionId) {
+        addGap(s, "invalid_row", row.seq, `explainer row ${row.seq} belongs to another session`);
+        break;
+      }
+      foldExplainer(s.explainer, record, row.seq);
       break;
     }
     default:

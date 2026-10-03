@@ -108,7 +108,7 @@ export function truncateMiddle(text: string, maxGraphemes: number): string {
 
 /** Cuts the end: at most maxGraphemes graphemes including the "…". Segments only the prefix it
  *  keeps. Bidi and control characters become visible tokens first (displayUntrusted). */
-function truncateEnd(text: string, maxGraphemes: number): string {
+export function truncateEnd(text: string, maxGraphemes: number): string {
   const safe = displayUntrusted(text);
   if (safe.length <= maxGraphemes) return safe;
   const kept: string[] = [];

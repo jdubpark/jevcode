@@ -4111,7 +4111,7 @@ const base: NarratorCallRecord = {
 describe("narrator-format", () => {
   it("says what leaves the machine when the setting is on, and that nothing does when it is off", () => {
     expect(narratorSettingNote(true)).toBe(
-      "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent.",
+      "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent.",
     );
     expect(narratorSettingNote(false)).toBe("Rule-based labels only. Nothing leaves this machine.");
   });
@@ -4380,7 +4380,7 @@ import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narr
 
 export function narratorSettingNote(enabled: boolean): string {
   return enabled
-    ? "Sends file paths, symbol names and the first README paragraph to Claude Haiku. File contents are never sent."
+    ? "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent."
     : "Rule-based labels only. Nothing leaves this machine.";
 }
 

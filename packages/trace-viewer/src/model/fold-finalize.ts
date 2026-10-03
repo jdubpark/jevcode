@@ -3,6 +3,7 @@ import type { AgentState } from "@jevcode/contracts";
 import { isTurnClosed, missingEvidence, noiseOf, ownsRunOutcome, problemsOf } from "./classify.js";
 import { buildChapter } from "./fold-chapters.js";
 import { buildEntity } from "./fold-evidence.js";
+import { explainerModelOf } from "./fold-explainer.js";
 import { overviewModelOf } from "./fold-overview.js";
 import { clockTs, type DisplayClock, type FoldState, type StepDraft, type TurnDraft } from "./fold-state.js";
 import { normalizeCommand, stepHeadline } from "./format.js";
@@ -270,6 +271,13 @@ interface ChapterRecord {
   indexedCallIds: readonly string[];
 }
 
+/** A turn's plan and claim marks (turnMarks, signals.ts) over a prefix of its steps, and whether that prefix holds
+ *  an edit: enough to extend the marks over steps appended later. */
+interface TurnMarkState {
+  marks: Pick<Turn, "planStepId" | "claimStepId">;
+  hasEdit: boolean;
+}
+
 interface TurnRecord {
   isLast: boolean;
   closed: boolean;
@@ -277,7 +285,7 @@ interface TurnRecord {
   stepIdsRef: readonly StepId[];
   stepIdsLength: number;
   stepIds: StepId[];
-  marks: Pick<Turn, "planStepId" | "claimStepId">;
+  marks: TurnMarkState;
   out: Turn;
 }
 
@@ -300,10 +308,12 @@ export interface FinalizeWork {
   entities: number;
   /** Steps the signal rules categorized anew (buildSignalScan): the others kept their category. */
   signalSteps: number;
+  /** Steps whose plan and claim marks were read (Turn.planStepId, claimStepId). */
+  marks: number;
 }
 
 class Derived {
-  work: FinalizeWork = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0 };
+  work: FinalizeWork = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0, marks: 0 };
   readonly steps = new Map<StepDraft, StepRecord>();
   readonly stepsById = new Map<StepId, StepRecord>();
   /** Records in FoldState.steps order. */
@@ -338,6 +348,8 @@ class Derived {
   readonly withGaps = new Set<StepRecord>();
   /** Records whose base status is running: their durationMs follows nowMs. */
   readonly running = new Set<StepRecord>();
+  /** turn index -> the records of that turn that read its state (readsTurnState), kept as their bases change. */
+  readonly turnStateSteps = new Map<number, Set<StepRecord>>();
   readonly namedSteps = new Set<StepRecord>();
   readonly namedChapters = new Set<ChapterRecord>();
   readonly findingById = new Map<FindingId, Finding>();
@@ -369,6 +381,13 @@ function runSigOf(step: Step): string {
 
 function isEditDraft(draft: StepDraft): boolean {
   return draft.kind === "edit" && draft.edit !== undefined;
+}
+
+/** True when a step's base or pre reads its turn's state: an open step (its status follows whether its turn is the
+ *  running one, and it is unpaired once it is not) or a step whose evidence is missing once its turn is closed
+ *  (missingEvidence reads only the base). Every other step is the same whatever its turn's state. */
+function readsTurnState(record: StepRecord): boolean {
+  return record.draft.open || missingEvidence(record.base) !== null;
 }
 
 // ------------------------------------------------------------ one finalize
@@ -408,7 +427,7 @@ class Finalizer {
   run(): TraceSession {
     const s = this.s;
     const d = this.d;
-    d.work = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0 };
+    d.work = { steps: 0, stepFields: 0, chapters: 0, validationOnly: 0, entities: 0, signalSteps: 0, marks: 0 };
     const live = this.options.live;
     const turnStates = this.turnStates();
     this.removeSteps();
@@ -452,6 +471,7 @@ class Finalizer {
         unreceived: Math.max(0, loadedThroughSeq - s.received),
       }),
       overview: overviewModelOf(s.overview, previous?.overview ?? null),
+      explainer: explainerModelOf(s.explainer),
     };
     const findings = this.findings(partial, coverage);
     const session: TraceSession = {
@@ -492,12 +512,19 @@ class Finalizer {
     let changed = previous === undefined || previous.length !== this.s.turns.length;
     const turns = this.s.turns.map((turn, index) => {
       const state = states[index] ?? { isLast: false, closed: true, outcome: { outcome: "unknown" as const } };
-      let record = d.turns[index];
-      const sameSteps =
-        record !== undefined && record.stepIdsRef === turn.stepIds && record.stepIdsLength === turn.stepIds.length;
-      const stepIds = sameSteps && record !== undefined ? record.stepIds : [...turn.stepIds];
-      const marks =
-        sameSteps && record !== undefined && !this.marksDirty.has(index) ? record.marks : this.turnMarksOf(turn.stepIds);
+      const previousRecord = d.turns[index];
+      const same = previousRecord !== undefined && previousRecord.stepIdsRef === turn.stepIds ? previousRecord : undefined;
+      const sameSteps = same !== undefined && same.stepIdsLength === turn.stepIds.length;
+      const stepIds = sameSteps ? same.stepIds : [...turn.stepIds];
+      // Steps are only appended to a turn between removals, which replace turn.stepIds; an appended step never
+      // changes the marks of the steps before it, so only the appended ones are read (PL-3). A turn whose first
+      // edit became a test run (marksDirty) is read again in full.
+      let marks: TurnMarkState;
+      if (same !== undefined && !this.marksDirty.has(index)) {
+        marks = sameSteps ? same.marks : this.turnMarksOf(turn.stepIds, same.marks, same.stepIdsLength);
+      } else {
+        marks = this.turnMarksOf(turn.stepIds);
+      }
       const out: Turn = {
         index: turn.index,
         trigger: turn.trigger,
@@ -511,11 +538,11 @@ class Finalizer {
         tMs: turn.tMs,
         endTMs: turn.endTMs,
         stepIds,
-        ...marks,
+        ...marks.marks,
       };
-      const kept = keep(record?.out, out);
+      const kept = keep(previousRecord?.out, out);
       if (kept !== previous?.[index]) changed = true;
-      record = {
+      const record: TurnRecord = {
         isLast: state.isLast,
         closed: state.closed,
         stepIdsRef: turn.stepIds,
@@ -531,12 +558,14 @@ class Finalizer {
     return changed || previous === undefined ? turns : previous;
   }
 
-  private turnMarksOf(stepIds: readonly StepId[]): Pick<Turn, "planStepId" | "claimStepId"> {
+  /** The marks of a turn's steps; with `previous`, the marks of its first `from` steps extended over the rest. */
+  private turnMarksOf(stepIds: readonly StepId[], previous?: TurnMarkState, from = 0): TurnMarkState {
     const records: StepRecord[] = [];
-    for (const id of stepIds) {
-      const record = this.d.stepsById.get(id);
+    for (let index = previous === undefined ? 0 : from; index < stepIds.length; index += 1) {
+      const record = this.d.stepsById.get(stepIds[index] as StepId);
       if (record !== undefined) records.push(record);
     }
+    this.d.work.marks += records.length;
     const marksOf = (step: Step): { plan: boolean; claim: boolean } => {
       const record = this.d.stepsById.get(step.id);
       const text = step.text ?? "";
@@ -546,11 +575,22 @@ class Finalizer {
       }
       return record.marks;
     };
-    return turnMarks(
-      records.map((record) => record.base),
+    const steps = records.map((record) => record.base);
+    const own = turnMarks(
+      steps,
       (step) => marksOf(step).plan,
       (step) => marksOf(step).claim,
     );
+    const hasEdit = (previous?.hasEdit ?? false) || steps.some((step) => step.kind === "edit");
+    if (previous === undefined) return { marks: own, hasEdit };
+    // The appended steps come after every earlier one (seq order). An earlier plan stays the first plan, an earlier
+    // edit keeps every appended message from being one, and an appended claim is later than any earlier claim.
+    const marks: Pick<Turn, "planStepId" | "claimStepId"> = {};
+    const plan = previous.marks.planStepId ?? (previous.hasEdit ? undefined : own.planStepId);
+    const claim = own.claimStepId ?? previous.marks.claimStepId;
+    if (plan !== undefined) marks.planStepId = plan;
+    if (claim !== undefined) marks.claimStepId = claim;
+    return { marks, hasEdit };
   }
 
   // -------------------------------------------------- steps
@@ -570,6 +610,7 @@ class Finalizer {
       if (d.withGaps.delete(record)) this.gapsChanged = true;
       d.namedSteps.delete(record);
       if (record.inferred) d.inferredSteps -= 1;
+      d.turnStateSteps.get(draft.turnIndex)?.delete(record);
     }
     this.reordered = true;
   }
@@ -611,12 +652,12 @@ class Finalizer {
       const record = d.turns[index];
       if (state === undefined) return;
       if (record !== undefined && record.isLast === state.isLast && record.closed === state.closed) return;
-      // A turn that became closed or stopped being the last one changes its steps' missing evidence
-      // and unpaired gaps even when their base did not change.
-      for (const id of turn.stepIds) {
-        const step = d.stepsById.get(id);
-        rebase(step);
-        if (step !== undefined) this.redo.add(step);
+      // A turn that became closed or stopped being the last one changes its open steps (status and unpaired gap)
+      // and its steps' missing evidence, even when their base did not change. No other step reads the turn's
+      // state, so a turn end re-derives those steps only, not every step of the turn (PL-3).
+      for (const step of [...(d.turnStateSteps.get(turn.index) ?? [])]) {
+        if (step.draft.open) rebase(step);
+        this.redo.add(step);
       }
     });
     for (const draft of s.touchedSteps) draft.dirty = false;
@@ -655,6 +696,7 @@ class Finalizer {
       inferred: false,
     };
     this.ownedChapterIds.push(record);
+    this.trackTurnState(record);
     if (base.status === "running") d.running.add(record);
     d.steps.set(draft, record);
     d.stepsById.set(draft.id, record);
@@ -684,9 +726,13 @@ class Finalizer {
   /** Re-derives a known step's base; when it changed, everything that reads it. */
   private rebase(record: StepRecord, running: boolean): void {
     const base = this.baseOf(record.draft, running);
-    if (sameValue(base, record.base)) return;
+    if (sameValue(base, record.base)) {
+      this.trackTurnState(record);
+      return;
+    }
     const wasEdit = record.base.kind === "edit" && record.base.edit !== undefined;
     record.base = base;
+    this.trackTurnState(record);
     if (base.status === "running") this.d.running.add(record);
     else this.d.running.delete(record);
     this.redo.add(record);
@@ -706,6 +752,18 @@ class Finalizer {
         const chapter = this.d.chapters[index];
         if (chapter !== undefined) this.dirtyUnits.add(chapter.unitId);
       }
+    }
+  }
+
+  /** Keeps d.turnStateSteps: whether the record reads its turn's state, after its base or draft changed. */
+  private trackTurnState(record: StepRecord): void {
+    const index = record.draft.turnIndex;
+    let steps = this.d.turnStateSteps.get(index);
+    if (readsTurnState(record)) {
+      if (steps === undefined) this.d.turnStateSteps.set(index, (steps = new Set()));
+      steps.add(record);
+    } else {
+      steps?.delete(record);
     }
   }
 
