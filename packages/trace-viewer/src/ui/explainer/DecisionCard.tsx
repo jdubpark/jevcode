@@ -94,9 +94,13 @@ export function DecisionCard({ card, onAnswer, answer = "idle" }: DecisionCardPr
                   {label}
                 </span>
                 {tradeoffs.length === 0 ? null : (
-                  <span className={styles.tradeoff} title={tradeoffs.join("\n")}>
+                  <span className={styles.tradeoff}>
                     {/* No-break spaces keep the "· +n" count on the line of the tradeoff it follows. */}
-                    {tradeoffs.length > 1 ? `${tradeoffs[0]}\u00a0·\u00a0+${tradeoffs.length - 1}` : tradeoffs[0]}
+                    <span aria-hidden="true" title={tradeoffs.join("\n")}>
+                      {tradeoffs.length > 1 ? `${tradeoffs[0]}\u00a0·\u00a0+${tradeoffs.length - 1}` : tradeoffs[0]}
+                    </span>
+                    {/* The visible line shows one tradeoff; assistive tech reads them all. */}
+                    <span className={styles.srOnly}>{`Tradeoffs: ${tradeoffs.join("; ")}`}</span>
                   </span>
                 )}
                 {answerable ? (

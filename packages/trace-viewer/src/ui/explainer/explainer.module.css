@@ -91,6 +91,19 @@
   color: var(--tv-ink-3);
 }
 
+/* Read by assistive tech, not shown: the full tradeoff list behind a card's one visible line. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Decision card */
 .card {
   display: flex;
