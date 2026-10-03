@@ -528,6 +528,30 @@ describe("storage stores: projection lists (lane 07 PL-3)", () => {
     expect(stores.units.all()).toHaveLength(3);
   });
 
+  it("reads again only the change units whose rows moved, in the order a fresh read gives", () => {
+    const { db, stores } = open();
+    for (let index = 0; index < 20; index += 1) {
+      stores.units.upsert({ ...unit(`cu_${String(index).padStart(2, "0")}`), updatedAt: `2026-10-03T00:00:${String(index).padStart(2, "0")}.000Z` });
+    }
+    expect(stores.units.all()).toEqual(db.listChangeUnits(SESSION));
+    let pointReads = 0;
+    const getUnit = db.getChangeUnit.bind(db);
+    db.getChangeUnit = (id) => {
+      pointReads += 1;
+      return getUnit(id);
+    };
+    const reads = countReads(db);
+    // A label write and the runtime's direct write (acceptChanges): two rows move, one of them to the front.
+    stores.units.upsert({ ...unit("cu_03"), title: "Relabeled", updatedAt: "2026-10-03T00:00:03.000Z" });
+    db.upsertChangeUnit({ ...unit("cu_07", "validated"), updatedAt: "2026-10-03T00:01:00.000Z" });
+    const listed = stores.units.all();
+    expect([reads.units, pointReads]).toEqual([0, 2]);
+    reads.units = 0;
+    expect(listed).toEqual(db.listChangeUnits(SESSION));
+    expect(listed[0]?.id).toBe("cu_07");
+    expect(listed.find((entry) => entry.id === "cu_03")?.title).toBe("Relabeled");
+  });
+
   it("keeps the graph lists equal to a fresh read: its own writes go in place, any other writer's make it read", () => {
     const { db, stores } = open();
     const reads = countReads(db);
