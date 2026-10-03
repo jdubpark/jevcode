@@ -193,14 +193,26 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     [applyWillChange],
   );
 
+  /** Reads the viewport's client origin (at rest only: never in a gesture's first frame). */
+  const measureOrigin = useCallback(() => {
+    const element = viewportRef.current;
+    if (element === null) return;
+    const box = element.getBoundingClientRect();
+    originRef.current = { x: box.left, y: box.top };
+  }, []);
+
   /** At rest the level follows the zoom (spec §8.3); cards keep their place, only their content changes. */
   const settle = useCallback(
     (camera: UniformCamera) => {
       const next = mapLevelForZoom(camera.k);
       if (next !== latest.current.level) setLevel(next);
       registry.notify();
+      // A map moved without resizing (a scrolled ancestor, a shifted panel) must not anchor the next zoom off: measure
+      // once after the settle's paint.
+      const win = viewportRef.current?.ownerDocument.defaultView ?? null;
+      if (win !== null && typeof win.requestAnimationFrame === "function") win.requestAnimationFrame(measureOrigin);
     },
-    [registry],
+    [measureOrigin, registry],
   );
 
   const moveTo = useCallback(
@@ -262,6 +274,8 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     const element = viewportRef.current;
     const win = element?.ownerDocument.defaultView ?? null;
     if (element === null || win === null) return undefined;
+    // A remounted world element has no --map-inv-k yet, whatever k was last written.
+    invKRef.current = null;
     const controller = createViewportController<UniformCamera>({
       element,
       initial: cameraRef.current,
@@ -284,10 +298,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
     controllerRef.current = controller;
     writeCamera(cameraRef.current, "settle");
     // At rest, never in a gesture's first frame: a resize (after layout, so the read is cheap) or the pointer entering.
-    const keepOrigin = (): void => {
-      const box = element.getBoundingClientRect();
-      originRef.current = { x: box.left, y: box.top };
-    };
+    const keepOrigin = measureOrigin;
     const forgetOrigin = (): void => {
       originRef.current = null;
     };
@@ -339,11 +350,26 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
       controller.destroy();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [hasOverview, applyWillChange, fitIfPending, refitIfStillFitted, settle, store, writeCamera]);
+  }, [hasOverview, applyWillChange, fitIfPending, measureOrigin, refitIfStillFitted, settle, store, writeCamera]);
 
   useLayoutEffect(() => {
     fitIfPending();
   }, [overview, active, fitIfPending]);
+
+  // The Map just became the active view: its place may have changed while it was hidden.
+  useLayoutEffect(() => {
+    if (active) measureOrigin();
+  }, [active, measureOrigin]);
+
+  // A focused card that unmounts fires no focusout: drop the focus promotion when focus is no longer inside the map.
+  useLayoutEffect(() => {
+    const element = viewportRef.current;
+    if (element === null || !engagedRef.current.focus) return;
+    const focused = element.ownerDocument.activeElement;
+    if (focused !== null && element.contains(focused)) return;
+    engagedRef.current.focus = false;
+    applyWillChange();
+  }, [layout, applyWillChange]);
 
   // Focus moves only for a pending user request (lessons-w2): never on a new snapshot.
   useLayoutEffect(() => {

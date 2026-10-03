@@ -44,6 +44,22 @@ describe("componentIdForPath (spec §5.2, ruling R6)", () => {
     );
   });
 
+  it("takes repo-relative paths only: an absolute path, a ./ path and an empty path match nothing by root or list", () => {
+    expect(componentIdForPath([server], "/repo/src/server/app.ts")).toBeNull();
+    expect(componentIdForPath([server], "./src/server/app.ts")).toBeNull();
+    expect(componentIdForPath([server], "")).toBeNull();
+    // They are not normalized: only the repo-root component catches them.
+    expect(componentIdForPath([server, root], "./src/server/app.ts")).toBe(root.id);
+  });
+
+  it('resolves the "(other)" component only through its files list', () => {
+    const other = componentOf({ rootPath: "(other)", name: "(other)", files: ["misc/a.ts"] });
+    expect(componentIdForPath([server, other], "misc/a.ts")).toBe(other.id);
+    expect(componentIdForPath([server, other], "misc/b.ts")).toBeNull();
+    expect(componentIdForPath([server, other], "(other)/new.ts")).toBeNull();
+    expect(componentIdForPath([server, other, root], "(other)/new.ts")).toBe(root.id);
+  });
+
   it("names components by the spec id formula", () => {
     expect(server.id).toBe(componentId("src/server"));
     expect(server.id).toMatch(/^cmp_[0-9a-f]{12}$/);

@@ -9,6 +9,9 @@ interface PathIndex {
   rootId: string | null;
 }
 
+/** The catch-all bucket's pseudo root (lane 04's OTHER_ROOT_PATH): not a directory, so it never matches by prefix. */
+const OTHER_ROOT = "(other)";
+
 const indexes = new WeakMap<readonly Component[], PathIndex>();
 
 function indexOf(components: readonly Component[]): PathIndex {
@@ -20,7 +23,7 @@ function indexOf(components: readonly Component[]): PathIndex {
   for (const component of ordered) for (const file of component.files) if (!listed.has(file)) listed.set(file, component.id);
   const index: PathIndex = {
     listed,
-    roots: ordered.filter((component) => component.rootPath !== ".").map((component) => ({ root: component.rootPath, id: component.id })),
+    roots: ordered.filter((component) => component.rootPath !== "." && component.rootPath !== OTHER_ROOT).map((component) => ({ root: component.rootPath, id: component.id })),
     rootId: ordered.find((component) => component.rootPath === ".")?.id ?? null,
   };
   indexes.set(components, index);
@@ -31,6 +34,10 @@ function indexOf(components: readonly Component[]): PathIndex {
  * The component a repo-relative path belongs to (spec §5.2; orchestrator ruling R6: the one path → component rule for
  * the Map, the Brief and the desktop stage). A component that lists the file wins (rule 4: a test joins the component
  * it tests), then the longest root that is a whole-segment prefix, then the repo-root component ("."), else null.
+ *
+ * `path` must be repo-relative with no "./" prefix: an absolute, "./"-prefixed or empty path is not normalized here and
+ * only reaches the repo-root component (callers strip the repo root first). The "(other)" bucket has a pseudo root, so
+ * it owns only the files it lists.
  */
 export function componentIdForPath(components: readonly Component[], path: string): string | null {
   const index = indexOf(components);
