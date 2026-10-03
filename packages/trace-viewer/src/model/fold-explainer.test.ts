@@ -123,6 +123,29 @@ describe("decision tradeoffs", () => {
       { id: "closed", label: "Fail closed", chosen: false },
     ]);
   });
+
+  it("keeps an option's tradeoffs when a later row of the decision omits them, as the runtime's answered row does", () => {
+    const b = started();
+    const withTradeoffs = [
+      { id: "open", label: "Fail open", description: "", tradeoffs: [{ dimension: "availability", consequence: "API stays up." }] },
+      { id: "closed", label: "Fail closed", description: "", tradeoffs: [{ dimension: "abuse", consequence: "Limits hold." }] },
+    ];
+    b.decision({ id: "d1", options: withTradeoffs });
+    b.decision({
+      id: "d1",
+      status: "answered",
+      options: [
+        { id: "open", label: "Fail open", description: "" },
+        { id: "closed", label: "Fail closed", description: "", tradeoffs: [{ dimension: "abuse", consequence: "Limits always hold." }] },
+      ],
+      answer: { decisionId: "d1", decision: { policy: "open" }, evidence: [] },
+    });
+    const step = fold(b).steps.find((candidate) => candidate.decision !== undefined);
+    expect(step?.decision?.options).toEqual([
+      { id: "open", label: "Fail open", chosen: true, tradeoffs: [{ dimension: "availability", consequence: "API stays up." }] },
+      { id: "closed", label: "Fail closed", chosen: false, tradeoffs: [{ dimension: "abuse", consequence: "Limits always hold." }] },
+    ]);
+  });
 });
 
 type Op =
