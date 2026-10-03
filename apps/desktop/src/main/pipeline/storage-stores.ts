@@ -47,9 +47,9 @@ export function createStorageStores(
 
 /**
  * A projection list read from the database and reused while the database applies no row of its type (lane 07 PL-3).
- * One sync pass read the session's change units seven times at a turn end (the rebuild, the snapshots, the session
- * state), 15 ms each at 1,459 units. The list is the database's own read, so it holds what a new read would, in the
- * same order; each caller gets its own array. The objects are shared: no reader changes them.
+ * Every snapshot listed the graph, 17 ms at 1,459 units. The list holds what a new read would, in the same order;
+ * each caller gets its own array. The objects are shared: no reader changes them. The change units use
+ * ChangeUnitList below, for the same reason (seven reads per turn end before).
  */
 class ProjectionCache<T extends { id: string }> {
   private version = -1;
@@ -112,15 +112,64 @@ function graphEdgeOf(record: GraphEdgeRecord): GraphEdge {
   };
 }
 
+/** Above this share of changed rows, the unit list is read whole rather than row by row. */
+const UNIT_FULL_READ_SHARE = 0.25;
+
+/**
+ * The session's change units as listChangeUnits returns them, read again only when a change unit was written
+ * (projectionVersion), and then only the rows whose seq moved: the order comes from listChangeUnitVersions, the
+ * same query without the units (lane 07 PL-3). A full read and parse takes 31-35 ms at 2,937 units; a pass's label
+ * writes change a fraction of them.
+ */
+class ChangeUnitList {
+  private version = -1;
+  private items: ChangeUnit[] = [];
+  private byId = new Map<string, { seq: number; unit: ChangeUnit }>();
+
+  constructor(
+    private readonly db: JevcodeDb,
+    private readonly sessionId: string,
+  ) {}
+
+  list(): ChangeUnit[] {
+    const version = this.db.projectionVersion("change_unit");
+    if (version !== this.version) {
+      this.refresh();
+      this.version = version;
+    }
+    return [...this.items];
+  }
+
+  private refresh(): void {
+    const versions = this.db.listChangeUnitVersions(this.sessionId);
+    const changed = versions.filter(({ id, seq }) => this.byId.get(id)?.seq !== seq).length;
+    const whole =
+      changed > versions.length * UNIT_FULL_READ_SHARE
+        ? new Map(this.db.listChangeUnits(this.sessionId).map((unit) => [unit.id, unit]))
+        : null;
+    const items: ChangeUnit[] = [];
+    const byId = new Map<string, { seq: number; unit: ChangeUnit }>();
+    for (const { id, seq } of versions) {
+      const kept = this.byId.get(id);
+      const unit = kept !== undefined && kept.seq === seq ? kept.unit : (whole?.get(id) ?? this.db.getChangeUnit(id));
+      if (unit === undefined) continue;
+      items.push(unit);
+      byId.set(id, { seq, unit });
+    }
+    this.items = items;
+    this.byId = byId;
+  }
+}
+
 class StorageChangeUnitStore implements ChangeUnitStore {
   private readonly lastJson = new Map<string, string>();
-  private readonly units: ProjectionCache<ChangeUnit>;
+  private readonly units: ChangeUnitList;
 
   constructor(
     private readonly db: JevcodeDb,
     sessionId: string,
   ) {
-    this.units = new ProjectionCache(db, "change_unit", () => db.listChangeUnits(sessionId));
+    this.units = new ChangeUnitList(db, sessionId);
   }
 
   upsert(unit: ChangeUnit): void {
