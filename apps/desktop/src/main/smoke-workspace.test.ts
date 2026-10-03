@@ -171,7 +171,7 @@ describe("runWorkspaceSmoke", () => {
       "SMOKE_CONSOLE appends=5 p50_ms=40 p95_ms=40 max_ms=40",
       // 10_000 + 5 x 300 ms; seq 3 is the first row stored, and every paint lands 40 ms after its row.
       "SMOKE_CONSOLE_SLOWEST seq=3 type=unknown stored_at_ms=10300 painted_at_ms=10340 latency_ms=40",
-      "SMOKE_LOOP_DELAY p99_ms=12 max_ms=32",
+      "SMOKE_LOOP_DELAY p99_ms=12 max_ms=32 resolution_ms=10",
       ...shots.map((file) => `SMOKE_SHOT ${file}`),
       "SMOKE_VIEWS selected=step:3 views=canvas,hybrid,map,surfaces,console",
     ]);

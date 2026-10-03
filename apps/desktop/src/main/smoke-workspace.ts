@@ -254,8 +254,13 @@ async function measureAppends(
     return paints.some((paint) => paint.sessionId === sessionId && paint.throughSeq >= last.seq);
   };
   deps.loopDelay?.reset();
-  await waitUntil(deps, settled, APPEND_PHASE_TIMEOUT_MS, "the session's last row painted in the Console");
-  const loop = deps.loopDelay?.snapshot();
+  let loop: { p99Ms: number; maxMs: number } | undefined;
+  try {
+    await waitUntil(deps, settled, APPEND_PHASE_TIMEOUT_MS, "the session's last row painted in the Console");
+  } finally {
+    // snapshot() also disables the histogram, so a timed-out phase does not leave it sampling.
+    loop = deps.loopDelay?.snapshot();
+  }
   const appends = deps.appends.entries(sessionId).filter((entry) => entry.atMs >= readyAt);
   const { latencies, unpainted } = appendLatencies(
     appends,
@@ -279,7 +284,8 @@ async function measureAppends(
     );
   }
   if (loop !== undefined) {
-    deps.log(`SMOKE_LOOP_DELAY p99_ms=${Math.round(loop.p99Ms)} max_ms=${Math.round(loop.maxMs)}`);
+    // The histogram samples every 10 ms, so a value includes up to that resolution on top of the stall itself.
+    deps.log(`SMOKE_LOOP_DELAY p99_ms=${Math.round(loop.p99Ms)} max_ms=${Math.round(loop.maxMs)} resolution_ms=10`);
   }
   if (p95 > CONSOLE_APPEND_P95_BUDGET_MS) {
     throw new Error(`Console append p95 ${Math.round(p95)} ms is over the ${CONSOLE_APPEND_P95_BUDGET_MS} ms budget`);

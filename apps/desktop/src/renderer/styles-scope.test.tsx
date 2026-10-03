@@ -173,7 +173,9 @@ describe("the main window's stylesheet never reaches the embedded viewer (lane 0
     // The probes above cover 52 tags; this covers selectors they cannot enumerate (`[aria-checked]`, `[role]`,
     // `[data-tone]`, `details[open]`, `input[type]`, `:checked`) that would reach the viewer if written bare.
     const GUARD = ":where(:not([data-trace-viewer]";
-    const hasClassOrId = (selector: string): boolean => /[.#][_a-zA-Z-]/.test(selector.replace(/\[[^\]]*\]/g, ""));
+    // A class or id inside :not()/:is()/:where()/:has() does not scope the rule (`button:not(.x)` still reaches the viewer).
+    const hasClassOrId = (selector: string): boolean =>
+      /[.#][_a-zA-Z-]/.test(selector.replace(/\[[^\]]*\]/g, "").replace(/:(?:not|is|where|has)\([^()]*\)/g, ""));
     const isRoot = (selector: string): boolean => /^(?::root|html|body)(?::{1,2}[\w-]+)*$/.test(selector);
     const unscoped = selectors(CSS).filter(
       (selector) => !selector.includes(GUARD) && !hasClassOrId(selector) && !isRoot(selector),
