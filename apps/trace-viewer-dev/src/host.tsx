@@ -172,12 +172,24 @@ function ViewerBody({
     return () => probe.stop();
   }, [probe]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
+  const showBrief = useMemo(() => new URLSearchParams(window.location.search).get("brief") === "1", []);
   const host = useMemo<ViewerHost>(
     () => ({
       onLocation: (next) => history.replaceState(null, "", locationToHash(next)),
+      // ?brief=1 (screenshots only): Esc up to an empty selection, so the right panel shows the Brief (spec E4).
+      ...(showBrief
+        ? {
+            onReady: () => {
+              // After the open defaults select a step (spec §7.8): Esc collapses, goes to the parent, then clears.
+              window.setTimeout(() => {
+                for (let i = 0; i < 4; i += 1) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+              }, 300);
+            },
+          }
+        : {}),
       ...(test === null ? {} : test.host),
     }),
-    [test],
+    [test, showBrief],
   );
   const viewer = (
     <TraceViewer
