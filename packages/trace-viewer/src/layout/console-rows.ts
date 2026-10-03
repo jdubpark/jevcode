@@ -45,18 +45,24 @@ export function consoleRowStepIds(row: ConsoleRow): readonly string[] {
   return [row.stepId];
 }
 
+/** The seq a row arrived at: its first step's first seq, or a summary's story row seq (key `summary:<seq>`). */
+function arrivalSeq(row: ConsoleRow, index: TraceIndex): number | undefined {
+  if (row.kind === "summary") return Number(row.key.slice("summary:".length));
+  const first = consoleRowStepIds(row)[0];
+  return first === undefined ? undefined : index.entry(first)?.firstSeq;
+}
+
 /**
  * Rows that arrived after `afterSeq`, counted back from the end (the Console's "N new" pill): a row is new when its
- * first step starts after it. A read group counts once and a silent Jev step not at all, unlike the step count.
+ * first step starts after it, a ◆ Summary when its story row does (a row the reader scrolls past like any other). A read
+ * group counts once and a silent Jev step not at all, unlike the step count.
  */
 export function consoleNewRowCount(state: ConsoleRowsState, index: TraceIndex, afterSeq: number): number {
   let count = 0;
   for (let i = state.rows.length - 1; i >= 0; i -= 1) {
     const row = state.rows[i];
-    const first = row === undefined ? undefined : consoleRowStepIds(row)[0];
-    if (first === undefined) continue;
-    const entry = index.entry(first);
-    if (entry === undefined || entry.firstSeq <= afterSeq) break;
+    const seq = row === undefined ? undefined : arrivalSeq(row, index);
+    if (seq === undefined || seq <= afterSeq) break;
     count += 1;
   }
   return count;

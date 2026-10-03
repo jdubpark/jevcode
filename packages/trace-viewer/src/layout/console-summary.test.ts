@@ -127,10 +127,13 @@ describe("buildConsoleRows with story rows", () => {
     expect(buildConsoleRows(full, index, next)).toBe(next);
   });
 
-  it("leaves summary rows out of the Console's \"N new\" row count", () => {
+  it("counts a summary row in the Console's \"N new\" rows once its story row is past the reader's mark", () => {
     const full = session();
     const index = buildTraceIndex(full);
-    // After seq 2: the message at seq 4 is new; the summaries at seqs 3 and 5 are not rows of agent work.
-    expect(consoleNewRowCount(buildConsoleRows(full, index), index, 2)).toBe(1);
+    const state = buildConsoleRows(full, index);
+    // Rows: instruction 1, message 2, summary 3, message 4, summary 5. After seq 2 the last three are new.
+    expect(consoleNewRowCount(state, index, 2)).toBe(3);
+    expect(consoleNewRowCount(state, index, 4)).toBe(1);
+    expect(consoleNewRowCount(state, index, 5)).toBe(0);
   });
 });
