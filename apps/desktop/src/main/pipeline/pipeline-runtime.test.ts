@@ -7,6 +7,7 @@ import type {
   EvidenceFact,
   NormalizedAgentEvent,
 } from "@jevcode/contracts";
+import { MainToRendererChannels } from "@jevcode/contracts";
 import { DegradeClient } from "@jevcode/jev-router";
 import type {
   AttentionInput,
@@ -1626,6 +1627,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
   async function runTurnEnd(
     name: string,
     arm: (db: JevcodeDb) => void = () => {},
+    inspect: (db: JevcodeDb, collected: Collected, sessionId: string) => void = () => {},
   ): Promise<ReturnType<typeof rowSummary>> {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
     rmSync(dir, { recursive: true, force: true });
@@ -1634,7 +1636,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     db.upsertRepository({ id: "repo-pr", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
     db.createSession({ id: sessionId, repoId: "repo-pr", prompt: "demo" });
     arm(db);
-    const { emit } = collectEmit();
+    const { emit, collected } = collectEmit();
     const runtime = new PipelineRuntime({
       db,
       emit,
@@ -1653,6 +1655,7 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
       );
       // The pass after the turn end, as the next debounce or answer would run it.
       await runtime.syncAll();
+      inspect(db, collected, sessionId);
       return rowSummary(db, sessionId);
     } finally {
       await runtime.stopSession(sessionId);
@@ -1683,6 +1686,20 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(failing.unitSurfaces).toEqual(clean.unitSurfaces);
     expect(clean.completionSnapshots).toBe(1);
     expect(failing.completionSnapshots).toBe(1);
+  }, 60_000);
+
+  it("sends the Jev debug panel the latest decisions once per pass, not once per decision", async () => {
+    let debug: unknown[] = [];
+    let latest: unknown[] = [];
+    const rows = await runTurnEnd("pass-jev-debug", () => {}, (db, collected, sessionId) => {
+      debug = collected.channels.get(MainToRendererChannels.jevDebug) ?? [];
+      latest = db.latestJevDecisions(sessionId, 50);
+    });
+
+    // One pass ran the Jev stage (the pass after it found no changed unit) and wrote six decisions.
+    expect(rows.jevDecisions).toHaveLength(6);
+    expect(debug).toHaveLength(1);
+    expect(debug[0]).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
   }, 60_000);
 
   it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
