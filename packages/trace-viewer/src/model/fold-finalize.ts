@@ -348,6 +348,8 @@ class Derived {
   readonly withGaps = new Set<StepRecord>();
   /** Records whose base status is running: their durationMs follows nowMs. */
   readonly running = new Set<StepRecord>();
+  /** turn index -> the records of that turn that read its state (readsTurnState), kept as their bases change. */
+  readonly turnStateSteps = new Map<number, Set<StepRecord>>();
   readonly namedSteps = new Set<StepRecord>();
   readonly namedChapters = new Set<ChapterRecord>();
   readonly findingById = new Map<FindingId, Finding>();
@@ -608,6 +610,7 @@ class Finalizer {
       if (d.withGaps.delete(record)) this.gapsChanged = true;
       d.namedSteps.delete(record);
       if (record.inferred) d.inferredSteps -= 1;
+      d.turnStateSteps.get(draft.turnIndex)?.delete(record);
     }
     this.reordered = true;
   }
@@ -652,9 +655,7 @@ class Finalizer {
       // A turn that became closed or stopped being the last one changes its open steps (status and unpaired gap)
       // and its steps' missing evidence, even when their base did not change. No other step reads the turn's
       // state, so a turn end re-derives those steps only, not every step of the turn (PL-3).
-      for (const id of turn.stepIds) {
-        const step = d.stepsById.get(id);
-        if (step === undefined || !readsTurnState(step)) continue;
+      for (const step of [...(d.turnStateSteps.get(turn.index) ?? [])]) {
         if (step.draft.open) rebase(step);
         this.redo.add(step);
       }
@@ -695,6 +696,7 @@ class Finalizer {
       inferred: false,
     };
     this.ownedChapterIds.push(record);
+    this.trackTurnState(record);
     if (base.status === "running") d.running.add(record);
     d.steps.set(draft, record);
     d.stepsById.set(draft.id, record);
@@ -724,9 +726,13 @@ class Finalizer {
   /** Re-derives a known step's base; when it changed, everything that reads it. */
   private rebase(record: StepRecord, running: boolean): void {
     const base = this.baseOf(record.draft, running);
-    if (sameValue(base, record.base)) return;
+    if (sameValue(base, record.base)) {
+      this.trackTurnState(record);
+      return;
+    }
     const wasEdit = record.base.kind === "edit" && record.base.edit !== undefined;
     record.base = base;
+    this.trackTurnState(record);
     if (base.status === "running") this.d.running.add(record);
     else this.d.running.delete(record);
     this.redo.add(record);
@@ -746,6 +752,18 @@ class Finalizer {
         const chapter = this.d.chapters[index];
         if (chapter !== undefined) this.dirtyUnits.add(chapter.unitId);
       }
+    }
+  }
+
+  /** Keeps d.turnStateSteps: whether the record reads its turn's state, after its base or draft changed. */
+  private trackTurnState(record: StepRecord): void {
+    const index = record.draft.turnIndex;
+    let steps = this.d.turnStateSteps.get(index);
+    if (readsTurnState(record)) {
+      if (steps === undefined) this.d.turnStateSteps.set(index, (steps = new Set()));
+      steps.add(record);
+    } else {
+      steps?.delete(record);
     }
   }
 
