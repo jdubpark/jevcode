@@ -132,7 +132,9 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
         }
         case "toggle":
           if (target?.closest(OWNS_ENTER) != null) return;
-          if (state.selection !== null) store.dispatch({ type: "expand/toggle", key: state.selection });
+          if (state.selection === null) return;
+          if (port?.toggle?.(state.selection) === true) return;
+          store.dispatch({ type: "expand/toggle", key: state.selection });
           return;
         case "esc":
           if (latest.current.helpOpen) {

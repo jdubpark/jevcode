@@ -1,18 +1,19 @@
 import { ViewKindSchema } from "../state/location.js";
 import type { ViewKind } from "../state/view-state.js";
 import { CanvasView } from "./canvas/CanvasView.js";
+import { ConsoleView } from "./console/ConsoleView.js";
 import { HybridView } from "./hybrid/HybridView.js";
-import { ConsolePlaceholder, MapPlaceholder } from "./placeholder/ViewPlaceholder.js";
+import { MapPlaceholder } from "./placeholder/ViewPlaceholder.js";
 import type { ViewDefinition } from "./view-port.js";
 
 export type { ViewDefinition, ViewProps } from "./view-port.js";
 
 /**
- * Switch and key order (spec §3.7, §8.6, interfaces §6.2): Console 0, Canvas 1, Hybrid 2, Map 3. The Console and Map
- * slots hold quiet placeholders until V-4 (ConsoleView) and lane 06 (MapView) replace them, so the keys never move.
+ * Switch and key order (spec §3.7, §8.6, interfaces §6.2): Console 0, Canvas 1, Hybrid 2, Map 3. The Map slot holds a
+ * quiet placeholder until lane 06's MapView replaces it, so the keys never move.
  */
 export const VIEWS: readonly ViewDefinition[] = [
-  { kind: "console", label: "Console", icon: "view-console", Component: ConsolePlaceholder },
+  { kind: "console", label: "Console", icon: "view-console", Component: ConsoleView },
   { kind: "canvas", label: "Canvas", icon: "view-canvas", Component: CanvasView },
   { kind: "hybrid", label: "Hybrid", icon: "view-hybrid", Component: HybridView },
   { kind: "map", label: "Map", icon: "view-map", Component: MapPlaceholder },

@@ -35,6 +35,8 @@ export interface ViewPort {
   reveal(id: SelectionId, options: { animate: boolean }): void;
   captureCamera(): CanvasCamera | HybridCamera | null;
   focusSelected(): void;
+  /** Enter on the selection: true when the view handled it (the Console expands a row); else the store's expand applies. */
+  toggle?(id: SelectionId): boolean;
   zoom: ZoomPort;
 }
 

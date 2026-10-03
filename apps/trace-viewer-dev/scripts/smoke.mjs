@@ -33,9 +33,9 @@ function parseArgs(argv) {
       i += 1;
     } else throw new Error(`unknown argument ${arg}`);
   }
-  if (options.views.length === 0) throw new Error("--views needs hybrid, canvas or both");
+  if (options.views.length === 0) throw new Error("--views needs hybrid, canvas or console");
   for (const view of options.views) {
-    if (view !== "hybrid" && view !== "canvas") throw new Error(`unknown view ${view}`);
+    if (view !== "hybrid" && view !== "canvas" && view !== "console") throw new Error(`unknown view ${view}`);
   }
   return options;
 }
