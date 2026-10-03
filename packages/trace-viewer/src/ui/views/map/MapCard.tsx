@@ -8,7 +8,7 @@ import type { MapCard as MapCardBox, MapLevel } from "../../../layout/map-layout
 import { displayUntrusted, truncateMiddle } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
 import { ROLE_ICON, ROLE_LABEL } from "../../icons/kind-icons.js";
-import type { MapCardState } from "./overlay.js";
+import { MARK_WORD, type MapCardState } from "./overlay.js";
 import styles from "./MapView.module.css";
 
 export interface MapCardProps {
@@ -21,24 +21,18 @@ export interface MapCardProps {
   maxFiles: number;
   /** Distinct importers when this component is a hub (the glyph shows on the detail level), else null. */
   hubImporters: number | null;
-  state: MapCardState | null;
+  /** The session marks of this card in drawing order (new or changed, decided, failing); null without an overlay. */
+  states: readonly MapCardState[] | null;
   onSelect(id: string): void;
   onHover(id: string | null): void;
 }
-
-const STATE_WORD: { readonly [K in MapCardState]: string } = {
-  new: "new in this session",
-  changed: "changed in this session",
-  decision: "touched by a decision",
-  failing: "failing test",
-};
 
 /**
  * One component (spec §3.4, revised Map mockup). Same box at every level; the content follows it. Chip: name and a footer
  * of role icon and file bar. Card: plus the count. Detail: plus the purpose, the top two packages, "n files" and the hub
  * glyph. A session state mark (lane 07) replaces the count in the footer.
  */
-function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubImporters, state, onSelect, onHover }: MapCardProps): React.JSX.Element {
+function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubImporters, states, onSelect, onHover }: MapCardProps): React.JSX.Element {
   const name = displayUntrusted(component.name);
   const purpose = component.purpose === null ? null : displayUntrusted(component.purpose);
   const root = displayUntrusted(component.rootPath);
@@ -55,7 +49,7 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
     files,
     packageNames === null ? null : `packages ${packageNames}`,
     importers === null ? null : `imported by ${importers} components`,
-    state === null ? null : STATE_WORD[state],
+    states === null ? null : states.map((state) => MARK_WORD[state]).join(" and "),
   ]
     .filter((part): part is string => part !== null)
     .join(", ");
@@ -114,8 +108,12 @@ function MapCardView({ box, component, level, selected, tabStop, maxFiles, hubIm
         <span className={styles.track} aria-hidden="true">
           <i data-map-bar="" style={{ width: `${fileBarPercent(component.fileCount, maxFiles)}%` }} />
         </span>
-        {state !== null ? (
-          <span className={styles.stateDot} data-state={state} aria-hidden="true" />
+        {states !== null ? (
+          <span className={styles.marks} aria-hidden="true">
+            {states.map((state) => (
+              <span key={state} className={styles.stateDot} data-state={state} />
+            ))}
+          </span>
         ) : level === "chip" ? null : (
           <span className={styles.count} data-map-count="">
             {level === "detail" ? files : count}

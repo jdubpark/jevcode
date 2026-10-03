@@ -584,7 +584,7 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
                   tabStop={box.id === tabStop}
                   maxFiles={maxFiles}
                   hubImporters={hubs.has(box.id) ? (importers.get(box.id) ?? 0) : null}
-                  state={overlay?.cardState.get(box.id) ?? null}
+                  states={overlay?.cardState.get(box.id) ?? null}
                   onSelect={onSelectCard}
                   onHover={setHoverId}
                 />

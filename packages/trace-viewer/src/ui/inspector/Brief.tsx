@@ -31,6 +31,7 @@ import type { AnswerState } from "../views/console/ConsoleRowView.js";
 import { narratorNote } from "../views/map/map-text.js";
 import { ViewDefinitionsContext } from "../views/view-port.js";
 import styles from "./Brief.module.css";
+import { BriefArchitectureSection, type BriefMapSession } from "./BriefMapSession.js";
 import { MapThumbnail } from "./MapThumbnail.js";
 
 /** Changes the list shows before "n more" (the Changes list is a summary; the views hold the rest). */
@@ -62,6 +63,8 @@ export interface BriefViewProps {
   onAnswer?(decisionId: string, optionId: string): void;
   /** Where each decision's answer stands, by decision id (absent: "idle"). */
   answers?: ReadonlyMap<string, AnswerState>;
+  /** Set while the Map is the shown view: the last part lists this session's components (lane 07 S-5). */
+  mapSession?: BriefMapSession;
 }
 
 function stepOf(session: TraceSession, index: TraceIndex, id: string | null): Step | undefined {
@@ -453,13 +456,9 @@ export function BriefView(props: BriefViewProps): JSX.Element {
         {more > 0 ? <p className={styles.quietSmall}>{`${more} more in the views`}</p> : null}
         {model.changes.length > 0 && edited.length > 0 ? <EditedFiles files={edited} onSelect={onSelect} /> : null}
       </section>
-      <section className={styles.part} aria-labelledby={`${id}-architecture`}>
-        <h3 id={`${id}-architecture`} className={styles.partTitle}>
-          <Icon name="route" size={14} />
-          Architecture
-        </h3>
+      <BriefArchitectureSection id={id} session={session} mapSession={props.mapSession}>
         <Architecture architecture={model.architecture} overview={session.overview} onOpenMap={props.onOpenMap} mapAvailable={props.mapAvailable} />
-      </section>
+      </BriefArchitectureSection>
     </section>
   );
 }
@@ -470,6 +469,7 @@ export function Brief(): JSX.Element {
   const dispatch = useDispatch();
   const views = useContext(ViewDefinitionsContext);
   const onMap = useView((state) => state.view === "map");
+  const mapSelection = useView((state) => state.mapSelection);
   const [, tick] = useReducer((n: number) => n + 1, 0);
   const loadingId = useId();
   const model = useMemo(() => (session === null ? null : buildBrief(session, index)), [session, index]);
@@ -538,6 +538,7 @@ export function Brief(): JSX.Element {
       onOpenMap={() => dispatch({ type: "view/switch", view: "map" })}
       mapAvailable={!onMap && views.some((view) => view.kind === "map")}
       answers={answers}
+      {...(onMap ? { mapSession: { selectedId: mapSelection, onSelectComponent: (componentId: string) => dispatch({ type: "map/select", componentId }) } } : {})}
       {...(host.answerDecision !== undefined ? { onAnswer: answer } : {})}
     />
   );

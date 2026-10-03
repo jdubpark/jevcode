@@ -126,9 +126,10 @@ export function buildExplainerBundles(file) {
       sessionId, kind: "highlights", basisSeq: full.at(-1).seq,
       components: [
         { id: server.id, state: "changed", unitIds: unitIds.slice(0, 1) },
-        { id: middleware.id, state: "new", unitIds: unitIds.slice(0, 2) },
-        { id: redis.id, state: "decision", unitIds: unitIds.slice(1, 2) },
-        { id: tests.id, state: "failing", unitIds: [] },
+        // As the H3 Map mockup: cards carry several marks (new and decided; new and failing).
+        { id: middleware.id, state: "decision", states: ["new", "decision"], unitIds: unitIds.slice(0, 2) },
+        { id: redis.id, state: "decision", states: ["new", "decision"], unitIds: unitIds.slice(1, 2) },
+        { id: tests.id, state: "failing", states: ["new", "failing"], unitIds: [] },
       ],
     },
   });

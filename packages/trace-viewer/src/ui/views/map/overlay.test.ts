@@ -33,8 +33,8 @@ function sessionOf(options: { highlights: boolean; other?: boolean }): TraceSess
       basisSeq: 2,
       components: [
         { id: componentId("src/server"), state: "changed", unitIds: ["u1"] },
-        { id: componentId("src/middleware"), state: "new", unitIds: ["u1"] },
-        { id: componentId("src/redis"), state: "failing", unitIds: [] },
+        { id: componentId("src/middleware"), state: "decision", states: ["new", "decision"], unitIds: ["u1"] },
+        { id: componentId("src/redis"), state: "failing", states: ["new", "failing"], unitIds: [] },
         { id: UNKNOWN_ID, state: "decision", unitIds: ["u2"] },
         { id: componentId("(other)"), state: "decision", unitIds: ["u2"] },
       ],
@@ -48,19 +48,19 @@ describe("mapOverlayOf", () => {
     const overlay = mapOverlayOf(sessionOf({ highlights: true }));
     expect(new Map(overlay?.cardState)).toEqual(
       new Map([
-        [componentId("src/server"), "changed"],
-        [componentId("src/middleware"), "new"],
-        [componentId("src/redis"), "failing"],
+        [componentId("src/server"), ["changed"]],
+        [componentId("src/middleware"), ["new", "decision"]],
+        [componentId("src/redis"), ["new", "failing"]],
       ]),
     );
     expect([...(overlay?.emphasizedEdges ?? [])].sort()).toEqual(
       [`${componentId("src/server")}>${componentId("src/middleware")}`, `${componentId("src/middleware")}>${componentId("src/redis")}`].sort(),
     );
-    expect(overlay === null ? null : overlayCounts(overlay)).toEqual({ new: 1, changed: 1, decision: 0, failing: 1 });
+    expect(overlay === null ? null : overlayCounts(overlay)).toEqual({ new: 2, changed: 1, decision: 1, failing: 1 });
   });
 
   it("marks the (other) component when the snapshot lists it, and skips it when it does not", () => {
-    expect(mapOverlayOf(sessionOf({ highlights: true, other: true }))?.cardState.get(componentId("(other)"))).toBe("decision");
+    expect(mapOverlayOf(sessionOf({ highlights: true, other: true }))?.cardState.get(componentId("(other)"))).toEqual(["decision"]);
     expect(mapOverlayOf(sessionOf({ highlights: true }))?.cardState.has(componentId("(other)"))).toBe(false);
   });
 
