@@ -261,10 +261,28 @@ function stringArrayJson(value: readonly string[]): string {
 export class JevcodeDb {
   readonly dbPath: string;
   private readonly db: BetterSqlite3.Database;
+  /**
+   * Prepares each fixed SQL string once per connection and reuses the statement (better-sqlite3
+   * statements are reusable). Preparing on every call was a large share of a small write: a turn-end
+   * batch appends hundreds of rows with four or more statements each (lane 03 PL-2). SQL built from a
+   * variable number of placeholders keeps calling this.db.prepare.
+   */
+  private readonly statements: { prepare(sql: string): BetterSqlite3.Statement };
 
   constructor(dbPath: string, db: BetterSqlite3.Database) {
     this.dbPath = dbPath;
     this.db = db;
+    const prepared = new Map<string, BetterSqlite3.Statement>();
+    this.statements = {
+      prepare: (sql) => {
+        let statement = prepared.get(sql);
+        if (statement === undefined) {
+          statement = db.prepare(sql);
+          prepared.set(sql, statement);
+        }
+        return statement;
+      },
+    };
   }
 
   /**
@@ -329,18 +347,18 @@ export class JevcodeDb {
       ts: nowIso(),
     };
     const apply = this.db.transaction(() => {
-      const seqRow = this.db
+      const seqRow = this.statements
         .prepare(
           "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE sessionId = ?",
         )
         .get(sessionId) as { next: number };
       event.seq = seqRow.next;
-      this.db
+      this.statements
         .prepare(
           "INSERT INTO events (id, sessionId, seq, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(event.id, event.sessionId, event.seq, event.type, event.payloadJson, event.ts);
-      this.db
+      this.statements
         .prepare("UPDATE sessions SET lastEventSeq = ? WHERE id = ?")
         .run(event.seq, sessionId);
       this.applyProjection(toStoredEvent(event));
@@ -352,7 +370,7 @@ export class JevcodeDb {
   listEvents(sessionId: string, opts?: { fromSeq?: number; limit?: number }): StoredEvent[] {
     const fromSeq = opts?.fromSeq ?? 0;
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, sessionId, seq, type, payloadJson, ts FROM events WHERE sessionId = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
       )
@@ -361,14 +379,14 @@ export class JevcodeDb {
   }
 
   getEventCount(sessionId: string): number {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT COUNT(*) AS n FROM events WHERE sessionId = ?")
       .get(sessionId) as { n: number };
     return row.n;
   }
 
   getLatestSeq(sessionId: string): number {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE sessionId = ?")
       .get(sessionId) as { seq: number };
     return row.seq;
@@ -479,7 +497,7 @@ export class JevcodeDb {
   // ------------------------------------------------------------------
 
   rebuildSession(sessionId: string): RebuildStats {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, sessionId, seq, type, payloadJson, ts FROM events WHERE sessionId = ? ORDER BY seq ASC",
       )
@@ -498,7 +516,7 @@ export class JevcodeDb {
     const cutoff = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
     // Sessionless rows (sessionId "") hold telemetry written before a session
     // existed; they are replayed too so their projections survive a boot.
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT DISTINCT sessionId FROM events WHERE ts >= ? ORDER BY sessionId ASC",
       )
@@ -520,7 +538,7 @@ export class JevcodeDb {
         baseCommit: input.baseCommit ?? existing.baseCommit,
         lastOpenedAt: nowIso(),
       };
-      this.db
+      this.statements
         .prepare(
           "UPDATE repositories SET gitRoot = ?, branch = ?, baseCommit = ?, lastOpenedAt = ? WHERE id = ?",
         )
@@ -537,7 +555,7 @@ export class JevcodeDb {
       lastOpenedAt: nowIso(),
       createdAt: nowIso(),
     };
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO repositories (id, path, gitRoot, name, branch, baseCommit, lastOpenedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -555,7 +573,7 @@ export class JevcodeDb {
   }
 
   findRepositoryByPath(repoPath: string): RepositoryRecord | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT id, path, gitRoot, name, branch, baseCommit, lastOpenedAt, createdAt FROM repositories WHERE path = ?",
       )
@@ -564,7 +582,7 @@ export class JevcodeDb {
   }
 
   getRepository(id: string): RepositoryRecord | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT id, path, gitRoot, name, branch, baseCommit, lastOpenedAt, createdAt FROM repositories WHERE id = ?",
       )
@@ -573,7 +591,7 @@ export class JevcodeDb {
   }
 
   listRecentRepositories(limit = 10): RepositoryRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, path, gitRoot, name, branch, baseCommit, lastOpenedAt, createdAt FROM repositories ORDER BY lastOpenedAt DESC LIMIT ?",
       )
@@ -596,7 +614,7 @@ export class JevcodeDb {
       executionClaimTs: null,
       resumeAttempts: 0,
     };
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO sessions (id, repoId, prompt, baseCommit, branch, state, lastEventSeq, startedAt, endedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -616,7 +634,7 @@ export class JevcodeDb {
   }
 
   getSession(id: string): SessionRecord | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT id, repoId, prompt, baseCommit, branch, state, lastEventSeq, startedAt, endedAt, createdAt, execution_claim_ts AS executionClaimTs, resume_attempts AS resumeAttempts FROM sessions WHERE id = ?",
       )
@@ -625,7 +643,7 @@ export class JevcodeDb {
   }
 
   listSessions(repoId: string, limit = 50): SessionRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, repoId, prompt, baseCommit, branch, state, lastEventSeq, startedAt, endedAt, createdAt, execution_claim_ts AS executionClaimTs, resume_attempts AS resumeAttempts FROM sessions WHERE repoId = ? ORDER BY startedAt DESC LIMIT ?",
       )
@@ -645,17 +663,17 @@ export class JevcodeDb {
   }
 
   setSessionState(id: string, state: AgentState): void {
-    this.db.prepare("UPDATE sessions SET state = ? WHERE id = ?").run(state, id);
+    this.statements.prepare("UPDATE sessions SET state = ? WHERE id = ?").run(state, id);
   }
 
   setExecutionClaim(id: string, ts: string | null): void {
-    this.db
+    this.statements
       .prepare("UPDATE sessions SET execution_claim_ts = ? WHERE id = ?")
       .run(ts, id);
   }
 
   incrementResumeAttempts(id: string): number {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "UPDATE sessions SET resume_attempts = resume_attempts + 1 WHERE id = ? RETURNING resume_attempts",
       )
@@ -664,18 +682,18 @@ export class JevcodeDb {
   }
 
   getResumeAttempts(id: string): number {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT resume_attempts FROM sessions WHERE id = ?")
       .get(id) as { resume_attempts: number } | undefined;
     return row?.resume_attempts ?? 0;
   }
 
   setSessionPrompt(id: string, prompt: string): void {
-    this.db.prepare("UPDATE sessions SET prompt = ? WHERE id = ?").run(prompt, id);
+    this.statements.prepare("UPDATE sessions SET prompt = ? WHERE id = ?").run(prompt, id);
   }
 
   setSessionEnded(id: string, endedAt = nowIso()): void {
-    this.db.prepare("UPDATE sessions SET endedAt = ? WHERE id = ?").run(endedAt, id);
+    this.statements.prepare("UPDATE sessions SET endedAt = ? WHERE id = ?").run(endedAt, id);
   }
 
   // ------------------------------------------------------------------
@@ -715,12 +733,12 @@ export class JevcodeDb {
         // overwrites text, seq, or a terminal (delivered/cancelled) status.
         return existing;
       }
-      const seqRow = this.db
+      const seqRow = this.statements
         .prepare(
           "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM instruction_inbox WHERE sessionId = ?",
         )
         .get(input.sessionId) as { next: number };
-      this.db
+      this.statements
         .prepare(
           "INSERT INTO instruction_inbox (sessionId, instructionId, mode, text, status, seq, createdAt, deliveredAt) VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL)",
         )
@@ -738,7 +756,7 @@ export class JevcodeDb {
   }
 
   markInstructionDelivered(sessionId: string, instructionId: string): void {
-    this.db
+    this.statements
       .prepare(
         "UPDATE instruction_inbox SET status = 'delivered', deliveredAt = ? WHERE sessionId = ? AND instructionId = ?",
       )
@@ -746,7 +764,7 @@ export class JevcodeDb {
   }
 
   markInstructionCancelled(sessionId: string, instructionId: string): void {
-    this.db
+    this.statements
       .prepare(
         "UPDATE instruction_inbox SET status = 'cancelled' WHERE sessionId = ? AND instructionId = ?",
       )
@@ -759,7 +777,7 @@ export class JevcodeDb {
 
   listAgentEvents(sessionId: string, opts?: { limit?: number }): NormalizedAgentEvent[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM agent_events WHERE sessionId = ? ORDER BY seq ASC LIMIT ?",
       )
@@ -770,7 +788,7 @@ export class JevcodeDb {
   }
 
   latestAgentEvents(sessionId: string, n: number): NormalizedAgentEvent[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM agent_events WHERE sessionId = ? ORDER BY seq DESC LIMIT ?",
       )
@@ -781,7 +799,7 @@ export class JevcodeDb {
   }
 
   getChangeUnit(id: string): ChangeUnit | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT sessionId, title, intent, category, status, behaviorBefore, behaviorAfter, filesJson, symbolsJson, interfacesChangedJson, schemaChangesJson, dependencyChangesJson, relatedDecisionsJson, validationResultsJson, blastRadiusJson, importance, relevance, interruption, uncertainty, mentalModelChange, evidenceJson, createdAt, updatedAt FROM change_units WHERE id = ?",
       )
@@ -791,7 +809,7 @@ export class JevcodeDb {
   }
 
   listChangeUnits(sessionId: string): ChangeUnit[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, sessionId, title, intent, category, status, behaviorBefore, behaviorAfter, filesJson, symbolsJson, interfacesChangedJson, schemaChangesJson, dependencyChangesJson, relatedDecisionsJson, validationResultsJson, blastRadiusJson, importance, relevance, interruption, uncertainty, mentalModelChange, evidenceJson, createdAt, updatedAt FROM change_units WHERE sessionId = ? ORDER BY updatedAt DESC",
       )
@@ -804,7 +822,7 @@ export class JevcodeDb {
   }
 
   getDecision(id: string): Decision | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT sessionId, title, context, severity, status, affectedChangeUnitsJson, evidenceJson, answerJson, createdAt, updatedAt FROM decisions WHERE id = ?",
       )
@@ -814,7 +832,7 @@ export class JevcodeDb {
   }
 
   listDecisions(sessionId: string): Decision[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT id, sessionId, title, context, severity, status, affectedChangeUnitsJson, evidenceJson, answerJson, createdAt, updatedAt FROM decisions WHERE sessionId = ? ORDER BY updatedAt DESC",
       )
@@ -823,7 +841,7 @@ export class JevcodeDb {
   }
 
   private listDecisionOptions(decisionId: string): Decision["options"] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT optionId, label, description, tradeoffsJson FROM decision_options WHERE decisionId = ? ORDER BY optionId ASC",
       )
@@ -852,7 +870,7 @@ export class JevcodeDb {
 
   listValidations(sessionId: string, opts?: { limit?: number }): ValidationResult[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM validations WHERE sessionId = ? ORDER BY ts DESC LIMIT ?",
       )
@@ -868,7 +886,7 @@ export class JevcodeDb {
 
   listFailures(sessionId: string, opts?: { limit?: number }): FailureRecord[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM failures WHERE sessionId = ? ORDER BY ts DESC LIMIT ?",
       )
@@ -880,7 +898,7 @@ export class JevcodeDb {
 
   listJevDecisions(sessionId: string, opts?: { limit?: number }): JevDecisionLog[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM jev_decisions WHERE sessionId = ? ORDER BY seq DESC LIMIT ?",
       )
@@ -895,7 +913,7 @@ export class JevcodeDb {
   }
 
   getUiIntent(id: string): UiIntentRecord | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT payloadJson FROM ui_intents WHERE id = ?")
       .get(id) as { payloadJson: string } | undefined;
     if (!row) return undefined;
@@ -903,7 +921,7 @@ export class JevcodeDb {
   }
 
   listUiIntents(sessionId: string): UiIntentRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM ui_intents WHERE sessionId = ? ORDER BY seq ASC",
       )
@@ -915,7 +933,7 @@ export class JevcodeDb {
 
   listUiSnapshots(sessionId: string, opts?: { limit?: number }): UiSnapshot[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM ui_snapshots WHERE sessionId = ? ORDER BY seq DESC LIMIT ?",
       )
@@ -926,7 +944,7 @@ export class JevcodeDb {
   }
 
   listGraphNodes(sessionId: string): GraphNodeRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare("SELECT payloadJson FROM graph_nodes WHERE sessionId = ?")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
@@ -935,7 +953,7 @@ export class JevcodeDb {
   }
 
   listGraphEdges(sessionId: string): GraphEdgeRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare("SELECT payloadJson FROM graph_edges WHERE sessionId = ?")
       .all(sessionId) as { payloadJson: string }[];
     return rows.map((row, i) =>
@@ -945,7 +963,7 @@ export class JevcodeDb {
 
   listCommands(sessionId: string, opts?: { limit?: number }): CommandRecord[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM commands WHERE sessionId = ? ORDER BY seq ASC LIMIT ?",
       )
@@ -956,7 +974,7 @@ export class JevcodeDb {
   }
 
   latestCommands(sessionId: string, n: number): CommandRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM commands WHERE sessionId = ? ORDER BY seq DESC LIMIT ?",
       )
@@ -968,7 +986,7 @@ export class JevcodeDb {
 
   listSemanticEvents(sessionId: string, opts?: { limit?: number }): SemanticEventRecord[] {
     const limit = opts?.limit ?? 1000;
-    const rows = this.db
+    const rows = this.statements
       .prepare(
         "SELECT payloadJson FROM semantic_events WHERE sessionId = ? ORDER BY seq ASC LIMIT ?",
       )
@@ -981,12 +999,12 @@ export class JevcodeDb {
   listTelemetry(opts?: { sessionId?: string; limit?: number }): TelemetryEvent[] {
     const limit = opts?.limit ?? 1000;
     const rows = opts?.sessionId
-      ? (this.db
+      ? (this.statements
           .prepare(
             "SELECT payloadJson FROM telemetry_events WHERE sessionId = ? ORDER BY ts DESC LIMIT ?",
           )
           .all(opts.sessionId, limit) as { payloadJson: string }[])
-      : (this.db
+      : (this.statements
           .prepare("SELECT payloadJson FROM telemetry_events ORDER BY ts DESC LIMIT ?")
           .all(limit) as { payloadJson: string }[]);
     return rows.map((row, i) =>
@@ -1009,7 +1027,7 @@ export class JevcodeDb {
     componentId: string,
     contentHash: string,
   ): ComponentTextValue | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT purpose, role, model FROM component_text_cache WHERE repo_root = ? AND component_id = ? AND content_hash = ?",
       )
@@ -1029,7 +1047,7 @@ export class JevcodeDb {
     if (!parsed.success) {
       throw new TypeError(`putComponentText(${componentId}): invalid value: ${parsed.error.message}`);
     }
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO component_text_cache (repo_root, component_id, content_hash, purpose, role, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT(repo_root, component_id, content_hash) DO UPDATE SET purpose = excluded.purpose, role = excluded.role, model = excluded.model, created_at = excluded.created_at",
@@ -1038,7 +1056,7 @@ export class JevcodeDb {
   }
 
   getOverviewState(repoRoot: string): OverviewStateValue | undefined {
-    const row = this.db
+    const row = this.statements
       .prepare(
         "SELECT snapshot_json, narrative_inputs_hash, narrative_json FROM overview_state WHERE repo_root = ?",
       )
@@ -1071,7 +1089,7 @@ export class JevcodeDb {
         `putOverviewState(${repoRoot}): snapshot repoRoot ${snapshot.repoRoot} does not match`,
       );
     }
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO overview_state (repo_root, snapshot_json, narrative_inputs_hash, narrative_json, updated_at) VALUES (?, ?, ?, ?, ?) " +
           "ON CONFLICT(repo_root) DO UPDATE SET snapshot_json = excluded.snapshot_json, narrative_inputs_hash = excluded.narrative_inputs_hash, narrative_json = excluded.narrative_json, updated_at = excluded.updated_at",
@@ -1091,7 +1109,7 @@ export class JevcodeDb {
 
   setPreference(key: string, value: unknown): PreferenceRecord {
     const record: PreferenceRecord = { key, value, updatedAt: nowIso() };
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO preferences (key, valueJson, updatedAt) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET valueJson = excluded.valueJson, updatedAt = excluded.updatedAt",
       )
@@ -1100,7 +1118,7 @@ export class JevcodeDb {
   }
 
   getPreference(key: string): unknown {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT valueJson FROM preferences WHERE key = ?")
       .get(key) as { valueJson: string } | undefined;
     if (!row) return undefined;
@@ -1108,7 +1126,7 @@ export class JevcodeDb {
   }
 
   listPreferences(): PreferenceRecord[] {
-    const rows = this.db
+    const rows = this.statements
       .prepare("SELECT key, valueJson, updatedAt FROM preferences")
       .all() as { key: string; valueJson: string; updatedAt: string }[];
     return rows.map((row) =>
@@ -1121,7 +1139,7 @@ export class JevcodeDb {
   }
 
   schemaVersion(): number {
-    const row = this.db
+    const row = this.statements
       .prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_version")
       .get() as { version: number };
     return row.version;
@@ -1197,7 +1215,7 @@ export class JevcodeDb {
       event.payloadJson,
       `agent_event ${event.id}`,
     );
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO agent_events (id, sessionId, seq, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, type = excluded.type, payloadJson = excluded.payloadJson, ts = excluded.ts",
       )
@@ -1212,7 +1230,7 @@ export class JevcodeDb {
         isDestructive: destructive,
         ts: parsed.ts,
       });
-      this.db
+      this.statements
         .prepare(
           "INSERT INTO commands (id, sessionId, seq, command, exitCode, isDestructive, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, command = excluded.command, exitCode = excluded.exitCode, isDestructive = excluded.isDestructive, ts = excluded.ts, payloadJson = excluded.payloadJson",
         )
@@ -1235,7 +1253,7 @@ export class JevcodeDb {
       event.payloadJson,
       `evidence_fact ${event.id}`,
     );
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO evidence_facts (id, repoId, sessionId, seq, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET repoId = excluded.repoId, sessionId = excluded.sessionId, seq = excluded.seq, type = excluded.type, payloadJson = excluded.payloadJson, ts = excluded.ts",
       )
@@ -1254,7 +1272,7 @@ export class JevcodeDb {
         skipped: parsed.skipped,
         ts: parsed.ts,
       });
-      this.db
+      this.statements
         .prepare(
           "INSERT INTO validations (id, sessionId, kind, command, status, passed, failed, skipped, ts, payloadJson) VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, command = excluded.command, status = excluded.status, passed = excluded.passed, failed = excluded.failed, skipped = excluded.skipped, ts = excluded.ts, payloadJson = excluded.payloadJson",
         )
@@ -1280,7 +1298,7 @@ export class JevcodeDb {
           message: failure.message,
           ts: parsed.ts,
         });
-        this.db
+        this.statements
           .prepare(
             "INSERT INTO failures (id, sessionId, validationId, file, testName, message, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, validationId = excluded.validationId, file = excluded.file, testName = excluded.testName, message = excluded.message, ts = excluded.ts, payloadJson = excluded.payloadJson",
           )
@@ -1297,7 +1315,7 @@ export class JevcodeDb {
         isDestructive: parsed.isDestructive,
         ts: parsed.ts,
       });
-      this.db
+      this.statements
         .prepare(
           "INSERT INTO commands (id, sessionId, seq, command, exitCode, isDestructive, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, command = excluded.command, exitCode = excluded.exitCode, isDestructive = excluded.isDestructive, ts = excluded.ts, payloadJson = excluded.payloadJson",
         )
@@ -1316,7 +1334,7 @@ export class JevcodeDb {
 
   private applyChangeUnit(event: StoredEvent): void {
     const unit = parseWith(ChangeUnitSchema, event.payloadJson, `change_unit ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO change_units (id, sessionId, seq, title, intent, category, status, behaviorBefore, behaviorAfter, filesJson, symbolsJson, interfacesChangedJson, schemaChangesJson, dependencyChangesJson, relatedDecisionsJson, validationResultsJson, blastRadiusJson, importance, relevance, interruption, uncertainty, mentalModelChange, evidenceJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, title = excluded.title, intent = excluded.intent, category = excluded.category, status = excluded.status, behaviorBefore = excluded.behaviorBefore, behaviorAfter = excluded.behaviorAfter, filesJson = excluded.filesJson, symbolsJson = excluded.symbolsJson, interfacesChangedJson = excluded.interfacesChangedJson, schemaChangesJson = excluded.schemaChangesJson, dependencyChangesJson = excluded.dependencyChangesJson, relatedDecisionsJson = excluded.relatedDecisionsJson, validationResultsJson = excluded.validationResultsJson, blastRadiusJson = excluded.blastRadiusJson, importance = excluded.importance, relevance = excluded.relevance, interruption = excluded.interruption, uncertainty = excluded.uncertainty, mentalModelChange = excluded.mentalModelChange, evidenceJson = excluded.evidenceJson, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt",
       )
@@ -1347,19 +1365,19 @@ export class JevcodeDb {
         unit.createdAt,
         unit.updatedAt,
       );
-    this.db
+    this.statements
       .prepare("DELETE FROM change_unit_files WHERE changeUnitId = ?")
       .run(unit.id);
-    const insertFile = this.db.prepare(
+    const insertFile = this.statements.prepare(
       "INSERT INTO change_unit_files (changeUnitId, file, sessionId) VALUES (?, ?, ?)",
     );
     for (const file of unit.files) {
       insertFile.run(unit.id, file, event.sessionId);
     }
-    this.db
+    this.statements
       .prepare("DELETE FROM change_unit_symbols WHERE changeUnitId = ?")
       .run(unit.id);
-    const insertSymbol = this.db.prepare(
+    const insertSymbol = this.statements.prepare(
       "INSERT INTO change_unit_symbols (changeUnitId, symbolId, name, path, kind, sessionId) VALUES (?, ?, ?, ?, ?, ?)",
     );
     for (const symbol of unit.symbols) {
@@ -1369,7 +1387,7 @@ export class JevcodeDb {
 
   private applyDecision(event: StoredEvent): void {
     const decision = parseWith(DecisionSchema, event.payloadJson, `decision ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO decisions (id, sessionId, seq, title, context, severity, status, affectedChangeUnitsJson, evidenceJson, answerJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, title = excluded.title, context = excluded.context, severity = excluded.severity, status = excluded.status, affectedChangeUnitsJson = excluded.affectedChangeUnitsJson, evidenceJson = excluded.evidenceJson, answerJson = excluded.answerJson, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt",
       )
@@ -1387,10 +1405,10 @@ export class JevcodeDb {
         event.ts,
         event.ts,
       );
-    this.db
+    this.statements
       .prepare("DELETE FROM decision_options WHERE decisionId = ?")
       .run(decision.id);
-    const insertOption = this.db.prepare(
+    const insertOption = this.statements.prepare(
       "INSERT INTO decision_options (decisionId, optionId, label, description, tradeoffsJson) VALUES (?, ?, ?, ?, ?)",
     );
     for (const option of decision.options) {
@@ -1410,7 +1428,7 @@ export class JevcodeDb {
       event.payloadJson,
       `validation ${event.id}`,
     );
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO validations (id, sessionId, kind, command, status, passed, failed, skipped, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, kind = excluded.kind, command = excluded.command, status = excluded.status, passed = excluded.passed, failed = excluded.failed, skipped = excluded.skipped, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1432,7 +1450,7 @@ export class JevcodeDb {
     const failure = parseWith(FailureRecordSchema, event.payloadJson, `failure ${event.id}`);
     const id = failure.id ?? failureId(failure.validationId, failure.file, failure.testName);
     const full = JSON.stringify({ ...failure, id });
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO failures (id, sessionId, validationId, file, testName, message, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, validationId = excluded.validationId, file = excluded.file, testName = excluded.testName, message = excluded.message, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1441,7 +1459,7 @@ export class JevcodeDb {
 
   private applyJevDecision(event: StoredEvent): void {
     const log = parseWith(JevDecisionLogSchema, event.payloadJson, `jev_decision ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO jev_decisions (id, sessionId, seq, changeUnitId, inputHash, outputJson, confidence, probabilitiesJson, latencyMs, clientKind, clampsJson, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, changeUnitId = excluded.changeUnitId, inputHash = excluded.inputHash, outputJson = excluded.outputJson, confidence = excluded.confidence, probabilitiesJson = excluded.probabilitiesJson, latencyMs = excluded.latencyMs, clientKind = excluded.clientKind, clampsJson = excluded.clampsJson, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1464,7 +1482,7 @@ export class JevcodeDb {
 
   private applyUiIntent(event: StoredEvent): void {
     const record = parseWith(UiIntentRecordSchema, event.payloadJson, `ui_intent ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO ui_intents (id, sessionId, seq, changeUnitId, intentJson, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, changeUnitId = excluded.changeUnitId, intentJson = excluded.intentJson, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1481,7 +1499,7 @@ export class JevcodeDb {
 
   private applyUiSnapshot(event: StoredEvent): void {
     const snapshot = parseWith(UiSnapshotSchema, event.payloadJson, `ui_snapshot ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO ui_snapshots (id, sessionId, seq, surfaceId, changeUnitId, semanticEventId, intentJson, specJson, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, surfaceId = excluded.surfaceId, changeUnitId = excluded.changeUnitId, semanticEventId = excluded.semanticEventId, intentJson = excluded.intentJson, specJson = excluded.specJson, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1501,7 +1519,7 @@ export class JevcodeDb {
 
   private applyGraphNode(event: StoredEvent): void {
     const node = parseWith(GraphNodeRecordSchema, event.payloadJson, `graph_node ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO graph_nodes (id, sessionId, nodeType, payloadJson, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, nodeType = excluded.nodeType, payloadJson = excluded.payloadJson, ts = excluded.ts",
       )
@@ -1510,7 +1528,7 @@ export class JevcodeDb {
 
   private applyGraphEdge(event: StoredEvent): void {
     const edge = parseWith(GraphEdgeRecordSchema, event.payloadJson, `graph_edge ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO graph_edges (id, sessionId, fromId, toId, edgeType, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, fromId = excluded.fromId, toId = excluded.toId, edgeType = excluded.edgeType, payloadJson = excluded.payloadJson, ts = excluded.ts",
       )
@@ -1519,7 +1537,7 @@ export class JevcodeDb {
 
   private applyCommand(event: StoredEvent): void {
     const command = parseWith(CommandRecordSchema, event.payloadJson, `command ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO commands (id, sessionId, seq, command, exitCode, isDestructive, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, command = excluded.command, exitCode = excluded.exitCode, isDestructive = excluded.isDestructive, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1541,7 +1559,7 @@ export class JevcodeDb {
       event.payloadJson,
       `semantic_event ${event.id}`,
     );
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO semantic_events (id, sessionId, seq, kind, summary, changeUnitId, evidenceJson, filesJson, symbolsJson, createdAt, ts, payloadJson) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, seq = excluded.seq, kind = excluded.kind, summary = excluded.summary, changeUnitId = excluded.changeUnitId, evidenceJson = excluded.evidenceJson, filesJson = excluded.filesJson, symbolsJson = excluded.symbolsJson, createdAt = excluded.createdAt, ts = excluded.ts, payloadJson = excluded.payloadJson",
       )
@@ -1563,7 +1581,7 @@ export class JevcodeDb {
 
   private applyTelemetry(event: StoredEvent): void {
     const telemetry = parseWith(TelemetryEventSchema, event.payloadJson, `telemetry ${event.id}`);
-    this.db
+    this.statements
       .prepare(
         "INSERT INTO telemetry_events (id, sessionId, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sessionId = excluded.sessionId, type = excluded.type, payloadJson = excluded.payloadJson, ts = excluded.ts",
       )
