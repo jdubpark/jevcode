@@ -4,7 +4,8 @@ import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narr
 export function narratorSettingNote(availability: NarratorAvailability): string {
   switch (availability) {
     case "on":
-      return "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions and the first README paragraph (redacted). File contents are never sent.";
+      // Lane 07 fix I-1: the session explainer sends session text, redacted as the README paragraph is.
+      return "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent.";
     case "off_setting":
       return "Rule-based labels only. Nothing leaves this machine.";
     case "off_no_key":
