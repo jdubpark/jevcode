@@ -588,30 +588,83 @@ describe("narrator off or offline (Review Focus 5)", () => {
     ]);
   });
 
-  it("keeps the rule-based value after a component's second schema-invalid answer, with no backoff (spec §6.3)", async () => {
+  it("keeps the rule-based value after a component's second schema-invalid answer on a working provider, with no backoff (spec §6.3)", async () => {
+    const raw = snapshot(21);
+    const lone = raw.components[20]!;
+    // The provider works (the first batch of 20 is answered); only the lone 21st component is refused.
+    const refuseLone = (input: unknown): unknown =>
+      (input as ComponentBrief[]).some((brief) => brief.id === lone.id) ? FAKE_SCHEMA_INVALID : echoDescribe(input);
     const client = createFakeNarratorClient({
-      describeComponents: [FAKE_SCHEMA_INVALID, FAKE_SCHEMA_INVALID],
+      describeComponents: Array.from({ length: 3 }, () => refuseLone),
       overviewNarrative: [echoNarrative],
     });
-    const describes = () => client.calls.filter((call) => call.method === "describeComponents").length;
+    const loneCalls = () =>
+      client.calls.filter((call) => (call.input as ComponentBrief[]).some?.((brief) => brief.id === lone.id)).length;
     const h = harness({ narrator: client });
+    h.feed(raw);
+    await vi.advanceTimersByTimeAsync(0);
+    await h.narration.idle();
+    expect(loneCalls()).toBe(2);
+    expect(h.records.filter((record) => record.error === "schema")).toHaveLength(2);
+    expect(h.db.getComponentText(REPO, lone.id, lone.contentHash)).toEqual({ purpose: null, role: "domain", model: NARRATOR_MODEL });
+    expect(h.narration.status()).toMatchObject({ state: "ready", described: 21, total: 21, retryAt: null });
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(loneCalls()).toBe(2);
+  });
+
+  it("brakes on a provider that answers every call schema-invalid: 3 calls, a backoff, nothing stored, then heals (spec §6.6)", async () => {
+    let broken = true;
+    const answer = (input: unknown): unknown => (broken ? FAKE_SCHEMA_INVALID : echoDescribe(input));
+    const narrate = (input: unknown): unknown => (broken ? FAKE_SCHEMA_INVALID : echoNarrative(input));
+    const client = createFakeNarratorClient({
+      describeComponents: Array.from({ length: 40 }, () => answer),
+      overviewNarrative: Array.from({ length: 5 }, () => narrate),
+    });
+    const db = openDb({ dbPath: ":memory:" });
+    const textWrites = vi.spyOn(db, "putComponentText");
+    const stateWrites = vi.spyOn(db, "putOverviewState");
+    const h = harness({ narrator: client, db, availability: "on" });
+    const raw = snapshot(200);
+    h.feed(raw);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.calls).toHaveLength(3);
+    expect(h.records.map((record) => record.error)).toEqual(["schema", "schema", "schema"]);
+    expect(h.narration.status()).toMatchObject({ state: "backoff", described: 0, retryAt: Date.now() + 30_000 });
+    expect(h.narration.narratorStatus()).toBe("unavailable");
+    expect(textWrites).not.toHaveBeenCalled();
+    expect(stateWrites).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(client.calls).toHaveLength(3);
+
+    broken = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.narration.idle();
+    expect(h.narration.status()).toMatchObject({ state: "ready", described: 200, total: 200, retryAt: null });
+    expect(raw.components.every((entry) => h.db.getComponentText(REPO, entry.id, entry.contentHash)?.purpose !== null)).toBe(true);
+    expect(h.published.at(-1)!.narrative?.provenance).toBe("model");
+  });
+
+  it("keeps a lone refusal before any valid answer in memory only, and asks again once an answer is valid", async () => {
+    const client = createFakeNarratorClient({
+      describeComponents: [FAKE_SCHEMA_INVALID, FAKE_SCHEMA_INVALID, echoDescribe],
+      overviewNarrative: [echoNarrative],
+    });
+    const db = openDb({ dbPath: ":memory:" });
+    const textWrites = vi.spyOn(db, "putComponentText");
+    const h = harness({ narrator: client, db });
     const raw = snapshot(1);
     h.feed(raw);
     await vi.advanceTimersByTimeAsync(0);
     await h.narration.idle();
-    expect(describes()).toBe(2);
-    expect(h.records.filter((record) => record.question === "describeComponents").map((record) => [record.error, record.discarded])).toEqual([
-      ["schema", true],
-      ["schema", true],
+    // Two refusals, the narrative (a valid answer: the provider works), then the component again.
+    expect(client.calls.map((call) => call.method)).toEqual([
+      "describeComponents", "describeComponents", "overviewNarrative", "describeComponents",
     ]);
-    expect(h.db.getComponentText(REPO, raw.components[0]!.id, raw.components[0]!.contentHash)).toEqual({
-      purpose: null,
-      role: "domain",
-      model: NARRATOR_MODEL,
-    });
+    expect(textWrites.mock.calls.every((call) => call[3].purpose !== null)).toBe(true);
+    expect(h.db.getComponentText(REPO, raw.components[0]!.id, raw.components[0]!.contentHash)?.purpose).toBe(
+      "Handles the packages/p0 package.",
+    );
     expect(h.narration.status()).toMatchObject({ state: "ready", described: 1, total: 1, retryAt: null });
-    await vi.advanceTimersByTimeAsync(3_600_000);
-    expect(describes()).toBe(2);
   });
 
   it("halves a batch that timed out before backing off", async () => {
