@@ -120,6 +120,20 @@ class World {
     this.db.appendEvent(SESSION, "overview_snapshot", snapshot(components));
   }
 
+  /**
+   * A row already on disk that today's schema rejects (an older build wrote it). appendEvent validates,
+   * so this writes through the store's SQLite handle, as appendEvent itself does.
+   */
+  storedRow(type: string, payload: unknown): void {
+    interface Statement { get(...params: unknown[]): unknown; run(...params: unknown[]): unknown }
+    const sqlite = (this.db as unknown as { db: { prepare(sql: string): Statement } }).db;
+    const { next } = sqlite.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE sessionId = ?").get(SESSION) as { next: number };
+    sqlite
+      .prepare("INSERT INTO events (id, sessionId, seq, type, payloadJson, ts) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(`evt_stored_${next}`, SESSION, next, type, JSON.stringify(payload), this.ts());
+    sqlite.prepare("UPDATE sessions SET lastEventSeq = ? WHERE id = ?").run(next, SESSION);
+  }
+
   tests(failed: number, file = "tests/a.test.ts"): void {
     this.agent({ type: "test_started", command: "pnpm test" });
     this.agent({ type: "test_completed", command: "pnpm test", exitCode: failed > 0 ? 1 : 0 });
@@ -297,6 +311,21 @@ describe("session explainer: highlights", () => {
     explainer.onPipelineSync(w.sync([u1, u2, u3], [d1]));
     await explainer.idle();
     expect(w.rows("highlights")).toHaveLength(1);
+  });
+
+  it("takes the \"new\" baseline from the first snapshot that passes the overview schema, not from a row the fold drops", async () => {
+    // Review fix 6: a first snapshot row that fails OverviewSnapshotSchema is an invalid_row gap in the fold.
+    const w = new World();
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.storedRow("overview_snapshot", { ...snapshot([SERVER, MIDDLEWARE]), generatedAt: "x".repeat(100) });
+    w.overview([SERVER]);
+    w.overview([SERVER, MIDDLEWARE]);
+    const unit = w.unit("u1", ["src/middleware/rate-limiter.ts"]);
+    expect(w.fold().gaps.some((gap) => gap.kind === "invalid_row")).toBe(true);
+    const explainer = createSessionExplainer(w.deps(null));
+    explainer.onPipelineSync(w.sync([unit], []));
+    await explainer.idle();
+    expect(w.rows("highlights").at(-1)?.record).toMatchObject({ components: [{ id: MIDDLEWARE.id, state: "new", unitIds: ["u1"] }] });
   });
 
   it("computes nothing without an overview and caps unit ids at 50", () => {

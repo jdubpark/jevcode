@@ -1,4 +1,12 @@
-import { isTraceRowType, type ChangeUnit, type ExplainerRecord, type NarrativeSentence, type TraceSessionSummary } from "@jevcode/contracts";
+import {
+  OverviewSnapshotSchema,
+  isTraceRowType,
+  type ChangeUnit,
+  type ExplainerRecord,
+  type NarrativeSentence,
+  type OverviewSnapshot,
+  type TraceSessionSummary,
+} from "@jevcode/contracts";
 import {
   NARRATOR_MODEL,
   NarratorUnavailableError,
@@ -128,16 +136,9 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function componentIdsOf(payload: unknown): ReadonlySet<string> | null {
-  if (payload === null || typeof payload !== "object") return null;
-  const components = (payload as { components?: unknown }).components;
-  if (!Array.isArray(components) || components.length === 0) return null;
-  const ids = new Set<string>();
-  for (const component of components) {
-    const id = (component as { id?: unknown } | null)?.id;
-    if (typeof id === "string") ids.add(id);
-  }
-  return ids.size > 0 ? ids : null;
+/** The "new" baseline: a snapshot's component ids, or null when it has none (a scan still running). */
+function componentIdsOf(snapshot: OverviewSnapshot): ReadonlySet<string> | null {
+  return snapshot.components.length > 0 ? new Set(snapshot.components.map((component) => component.id)) : null;
 }
 
 function countRuns(session: TraceSession): number {
@@ -256,7 +257,11 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
         t.cursor = event.seq;
         if (!isTraceRowType(event.type)) continue;
         const payload = JSON.parse(event.payloadJson) as unknown;
-        if (event.type === "overview_snapshot" && t.initialComponentIds === null) t.initialComponentIds = componentIdsOf(payload);
+        if (event.type === "overview_snapshot" && t.initialComponentIds === null) {
+          // The fold drops a snapshot that fails the contract schema (an invalid_row gap), so the baseline does too.
+          const parsed = OverviewSnapshotSchema.safeParse(payload);
+          if (parsed.success) t.initialComponentIds = componentIdsOf(parsed.data);
+        }
         accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
       }
       if (events.length < FOLD_PAGE) break;
