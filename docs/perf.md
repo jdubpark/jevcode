@@ -457,3 +457,87 @@ The Electron evidence smoke had 0 such rows and 1,051–1,055 trace rows in the 
 (Console appends 1,052–1,053 in the 3 check (e) runs); the remaining spread is distinct updates to the first few units
 (modules 2–7) whose timing follows the coordinator's real-time rebuilds. The
 guard is `storage-stores.test.ts` ("a change unit that leaves the projection").
+
+## Phase C (session explainer), lane 07 S-6, 2026-10-03
+
+Spec §11 and the §13 phase C exit, measured on `ce/07-session` (05d29b9 plus S-6) on the reference machine while other
+lanes ran (one-minute load average given per measure). The Console and pipeline sections above keep their own numbers;
+this section adds only what the session explainer changes.
+
+| Measure (spec §11, §13) | Budget | Measured | Status |
+|---|---|---|---|
+| Story row after a trigger, live mock session (story interval shortened to 1.5 s) | ≤ interval + 600 ms sync debounce + 1 s = 3.1 s | 4 and 4 ms after the answered decision, 7 and 18 ms after `agent_completed` (2 runs) | PASS |
+| Highlights row after the first change unit | ≤ 600 ms + 1 s | 914 and 915 ms; 2–3 ms after the sync pass that first carried a unit | PASS |
+| Story calls per interval | ≤ 1 per 1.5 s | 5 calls per run, closest pair 1,616 and 1,631 ms apart | PASS |
+| Decision why with resolvable citations | every answered decision | 1 of 1; every story citation resolves as well | PASS |
+| `mergeSummaryRows`, 10,000 rows and 500 stories | small part of a Console rebuild | mean 0.33 ms, p99 0.52 ms (load 6.3) | PASS |
+| Console append p95 with summary rows (`console-10k` plus 420 story rows, V-6 harness) | ≤ 150 ms, ≥ 300 samples | p95 28.8 ms, median of 3 runs (29.2, 28.8, 21.7 ms; append median 21.7, 20.1, 16.9 ms), 300 samples each; scroll 0.55, 0.00, 0.00% dropped | PASS |
+| Ingest soak ratio, stage on, narrator off (rule-based stories), sync passes during ingestion | ≤ 1.10 | 1.04: median `ingestMs` 16,014 ms against 15,422 ms | PASS |
+| Console append in the Electron main window with the session explainer hook (80-step evidence smoke) | p95 ≤ 150 ms | p95 73 and 89 ms, max 89 and 104 ms (load 4.25 and 3.42 before the runs); interleaved hook off / on at load 4.0–5.5: p95 89, 86 / 90, 79 ms | PASS |
+| Longest main-process block at a turn end, long session (spec §6.1) | ≤ 50 ms | 116–125 ms at 1,459 units (default and trace profiles); 441 ms at 2,937 units | MISS, ruling pending |
+
+**Live smoke.** `explainer-live.e2e.test.ts` runs the PRD §58 rate-limit demo through the real `PipelineRuntime`, the
+mock adapter and the real explainer stage (`storyIntervalMs` 1,500) on a 9-file git repository, with a stub narrator
+that cites the step and component ids it was shown. The script keeps the fixture's own gaps between records, each
+capped at 1 s, so the session pauses where the recorded agent paused: the runtime's 600 ms sync debounce is trailing,
+and a fixed 150 ms spacing gave only 4 sync passes and 2 story calls in the whole session. With the fixture's gaps
+the session has 20 passes and 5 story calls, so the interval limit is exercised. The test prints one
+`EXPLAINER_LIVE` line with the gaps above. RED: with `storyIntervalMs` 20,000 the story-window assertion fails
+(`expected 18402 to be less than or equal to 3100`).
+
+**Console perf with summary rows.** `CONSOLE_STORY_EVERY=5` (S-4's switch in `console-bundle.mjs`) writes a story
+row after every fifth unit: 420 stories, about 13 of them in the 600-row drip window, so the commits merge summary
+rows while they are measured. Load 5.3, 7.6 and 6.1 before the three runs. One earlier run stopped at the drip
+selftest with a 37 px drift on the `oauth` bundle, which has no story rows: the transient described in the Console
+section. The next three runs read 0 px.
+
+**Ingest soak.** Guard A's ingest loop never yields, so no sync pass runs while it ingests, and the session explainer,
+which starts from a completed pass, adds nothing to its `ingestMs` (checked: 0 hook calls during ingestion at 1,000
+events, 2 after it). The ratio therefore uses guard B's shape with a repository whose scan finishes early:
+`JEVCODE_SOAK_EVENTS=3000 JEVCODE_SOAK_EXPLAINER=1 JEVCODE_SOAK_EXPLAINER_FILES=200 JEVCODE_SOAK_YIELD_EVERY=10
+JEVCODE_SOAK_PAUSE_EVERY=100 JEVCODE_SOAK_PAUSE_FROM=300 node scripts/soak.mjs` (2,978 records, 1,459 units, about
+45,500 stored rows, 25 pauses from record 500). The head runs 24 sync passes through the session explainer during
+ingestion (`explainer.duringIngest.pipelineSyncs`). The base is the same soak without its `onPipelineSync` option:
+the stage then runs as on the merge base, and lane 07's other code is idle without the hook.
+
+| Run (alternating, `uptime` before) | Base `ingestMs` | Head `ingestMs` |
+|---|---|---|
+| 1 (load 6.4 / 7.3) | 15,512 | 16,174 |
+| 2 (load 8.4 / 14.3) | 21,719, not matched: its scan finished only at record 700, so it paused 23 times instead of 25 | 15,765 |
+| 3 (load 11.3 / 9.0) | 15,338 | 16,014 |
+| 4 (load 7.1), replaces base run 2 | 15,422 | |
+| Median | 15,422 | 16,014 |
+
+Event loop delay over ingestion, head against base medians: p99 126.6 against 123.9 ms (1.02), max 656.9 against
+660.1 ms (1.00); the max is the pipeline's own rebuild in both. `syncMs` after ingestion: 1,561 against 1,292 ms
+(median), the explainer folding the last passes while `syncAll` runs.
+
+**Electron.** `ANTHROPIC_API_KEY="" JEVCODE_NARRATOR=off node apps/desktop/scripts/smoke-workspace.mjs`, started once
+the one-minute load fell under 4 (it read 4.25 when the first run started). Both runs are above lane 03 PL-2's runs in
+the Console row, so four more runs alternated a build whose `index.js` passes `onPipelineSync: undefined` (temporary,
+restored byte for byte afterwards) with the normal build: hook off p95 89 and 86 ms (max 104, 99), hook on 90 and
+79 ms (max 103, 89), 1,052–1,053 appends each, no `sync failed` or `explainer hook failed` line. The hook adds nothing
+measurable to an 80-step session; the spread against PL-2 is the machine's state on the day.
+
+**Turn-end block on a long session (spec §6.1: no synchronous block over 50 ms).** Method as lane 03's PL-2 probe,
+not committed: the soak's stream ingested with yields and pauses as above, the work settled, then a `setImmediate`
+loop from `agent_completed` until 3 s after the turn-end pass; the block is the longest gap between ticks, and
+timing wrappers on the coordinator, the database, the runtime's steps and the session explainer's steps name the
+phases. Lane 03's 80-unit smoke measured 22–29 ms.
+
+| Session | Turn end: longest block | Phases of the blocks over 50 ms |
+|---|---|---|
+| 2,978 records, 1,459 units, 28,569 trace rows | 117.3 ms (2 runs: 116.0, 117.3) | session explainer `finalize` 115.6 ms; `agent_completed` ingest plus `coordinator.flush` 113.5 ms (flush 96.6, of which 3 `listChangeUnits` 46.8; `emitSessionState` 15.7); `coordinator.snapshot` plus `emitSessionState` 50.8 and 53.6 ms (snapshot 32–35, of which 2 `listChangeUnits` 30–31) |
+| Trace profile, 3,008 records, 1,459 units, 30,325 trace rows | 125.4 ms | `coordinator.flush` 107.8 ms (3 `listChangeUnits` 49.1); `coordinator.snapshot` plus `emitSessionState` 79.7 ms (the explainer's `finalize` took 17.4 ms here) |
+| 5,990 records, 2,937 units, 77,527 trace rows | 441.3 ms | session explainer `finalize` 331.5 ms run back to back with the next pass's `coordinator.snapshot` 71.3 ms; `coordinator.flush` 242.0 ms (3 `listChangeUnits` 100.9); snapshot plus `emitSessionState` 107.8 ms |
+
+`listChangeUnits` reads and parses every stored unit (about 15 ms at 1,459 units, 32 ms at 2,937); a turn end calls it
+7 times. The explainer's `finalize` is the viewer model's incremental fold, run in main (S-2). At the turn end it re-derives
+far more than the few new rows (0.8–1.8 ms on the next pass); why was not traced. Before the turn end its slowest
+`finalize` was 117 ms (default profile, 5,990 records) and 83 ms (trace profile). `listAgentEvents` stayed under 1 ms (its 1,000-row cap; the soak
+has under 60 agent events). Not fixed here; the orchestrator rules on it.
+
+Reproduce: `pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts`,
+`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`,
+`CONSOLE_STORY_EVERY=5 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf`, the soak
+command above with and without its `onPipelineSync` option, and `node apps/desktop/scripts/smoke-workspace.mjs`.

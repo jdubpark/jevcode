@@ -493,7 +493,8 @@ async function main() {
   let explainerRows = 0;
   let ingesting = false;
   let scansDone = 0;
-  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0 };
+  let pipelineSyncs = 0;
+  const duringIngest = { changes: 0, rewrites: 0, scansDone: 0, snapshots: 0, rows: 0, pausesBeforeScan: 0, pipelineSyncs: 0 };
   if (EXPLAINER) {
     explainerRepo = makeExplainerRepo(EXPLAINER_FILES);
     extractor = createImportExtractor();
@@ -548,6 +549,14 @@ async function main() {
     evidence: false,
     log: () => {},
     onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => paths.forEach(forwardFileChange) : undefined,
+    // Lane 07 S-6: the session explainer folds the session after every completed sync pass (narrator off: rule stories).
+    onPipelineSync: EXPLAINER
+      ? (_repoPath, sync) => {
+          pipelineSyncs += 1;
+          if (ingesting) duringIngest.pipelineSyncs += 1;
+          explainer?.onPipelineSync(sync);
+        }
+      : undefined,
   });
 
   await runtime.startSession({
@@ -769,7 +778,7 @@ async function main() {
         firstPauseAt,
         pausedMs,
         eventLoopDelayMs,
-        explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, yieldEvery: YIELD_EVERY, duringIngest } : null,
+        explainer: EXPLAINER ? { files: EXPLAINER_FILES, rows: explainerRows, pipelineSyncs, yieldEvery: YIELD_EVERY, duringIngest } : null,
         traceReadMs,
         traceReadRunsMs,
         traceRows: trace.rows.length,
