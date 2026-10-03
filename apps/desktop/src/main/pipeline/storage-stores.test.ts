@@ -157,7 +157,13 @@ describe("storage stores: unchanged re-upserts append no rows", () => {
 // and runs the tests; the trace must grow by a bounded number of rows per step, not by one
 // row per earlier run or unit.
 describe("storage stores under the coordinator: one long bucket", () => {
-  it("writes each passing run once and a bounded number of change-unit rows per step", () => {
+  const SHAPES = [
+    { name: "one repeated passing command", command: () => "pnpm test", fails: () => false },
+    { name: "a per-file passing command", command: (step: number) => `pnpm test -- module-${step}`, fails: () => false },
+    { name: "every second run failing", command: () => "pnpm test", fails: (step: number) => step % 2 === 1 },
+  ];
+
+  it.each(SHAPES)("writes each run once and a bounded number of change-unit rows per step: $name", (shape) => {
     const { db, stores } = open();
     let now = Date.parse(TS);
     const coordinator = new PipelineCoordinator({ stores, clock: () => now });
@@ -182,24 +188,28 @@ describe("storage stores under the coordinator: one long bucket", () => {
         isConfigOnly: false,
         isLockfile: false,
       });
+      const failed = shape.fails(step);
       ingest({
         ...common,
         type: "test_result",
         ts: iso(t + 450),
         runner: "vitest",
-        command: "pnpm test",
+        command: shape.command(step),
         passed: 3,
-        failed: 0,
+        failed: failed ? 1 : 0,
         skipped: 0,
-        failures: [],
+        failures: failed
+          ? [{ file: `src/module-${step}.test.ts`, testName: `module ${step} works`, message: "boom" }]
+          : [],
       });
     }
     now += 10_000;
     coordinator.flush();
 
     expect(rowsOf(db, "validation")).toBe(steps);
-    // A step changes the edited file's unit, then gives that unit the new run. Before
-    // PL-1 every rebuild rewrote every unit (steps * (steps + 1) / 2 rows).
+    // A step changes the edited file's unit and gives it the new run; a failing run also
+    // adds a unit for its failing test file, and the next pass reaches the unit it failed.
+    // Attaching runs bucket-wide rewrote every unit on every rebuild (steps * (steps + 1) / 2).
     expect(rowsOf(db, "change_unit")).toBeLessThanOrEqual(3 * steps);
   });
 });
