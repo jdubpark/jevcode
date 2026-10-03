@@ -32,6 +32,7 @@ import {
   computeHighlights,
   decisionWhyInput,
   repoRelative,
+  ruleStory,
   sessionStoryInput,
 } from "./explainer-session-rules.js";
 import type { ExplainerLogEvent } from "./explainer-stage.js";
@@ -546,6 +547,23 @@ describe("session explainer: narrator off, offline or hostile", () => {
     // Records carry the reason code, never the provider's message.
     expect(w.calls.map((call) => call.error)).toEqual(["unavailable", "unavailable", "unavailable"]);
     expect([backoffMs(1), backoffMs(2), backoffMs(3), backoffMs(9)]).toEqual([...NARRATOR_BACKOFF_MS, 600_000]);
+  });
+
+  it("never puts a component name that fails the plain-text check into a rule sentence", () => {
+    // Review fix 1: component names are untrusted (spec §6.3); a hostile name falls back to the counted form.
+    for (const name of ["see https://evil.example", "**urgent**", "[docs](x)", "<b>x</b>"]) {
+      const w = new World();
+      w.agent({ type: "agent_started", prompt: PROMPT });
+      w.overview([component("cmp_000000000009", "src/limiter", name)]);
+      const unit = w.unit("u1", ["src/limiter/index.ts"]);
+      w.tests(0);
+      const session = w.fold();
+      const highlights = computeHighlights({ units: [unit], decisions: [], overview: session.overview, initialComponentIds: null, failingFiles: new Set() });
+      const input = sessionStoryInput(session, [], highlights);
+      const sentences = ruleStory(session, input, [unit], highlights);
+      expect(sentences[0]?.text).toBe("Changed 1 file in 1 component.");
+      for (const sentence of sentences) expect(plainTextViolation(sentence.text)).toBeNull();
+    }
   });
 
   it("drops hostile narrator output and writes the rule story instead", async () => {

@@ -1,5 +1,11 @@
 import type { ChangeUnit, Citation, Decision, ExplainerRecord, NarrativeSentence } from "@jevcode/contracts";
-import { NarratorUnavailableError, SESSION_LIMITS, type DecisionWhyInput, type SessionStoryInput } from "@jevcode/jev-router";
+import {
+  NarratorUnavailableError,
+  SESSION_LIMITS,
+  plainTextViolation,
+  type DecisionWhyInput,
+  type SessionStoryInput,
+} from "@jevcode/jev-router";
 import { componentIdForPath, truncateMiddle, type OverviewModel, type Step, type TraceSession } from "@jevcode/trace-viewer/model";
 
 import { NARRATOR_BACKOFF_MS } from "./explainer-narration.js";
@@ -264,8 +270,11 @@ export function ruleStory(
     const shown = changed.slice(0, RULE_NAMES_SHOWN).map((entry) => truncateMiddle(names?.get(entry.id)?.name ?? entry.id, RULE_NAME_MAX));
     const more = changed.length > RULE_NAMES_SHOWN ? ` and ${changed.length - RULE_NAMES_SHOWN} more` : "";
     const named = `Changed ${plural(files.size, "file")} in ${shown.join(", ")}${more}.`;
+    // Component names are untrusted (spec §6.3): a name or sentence that fails the narrator's plain-text
+    // check (a link, Markdown, HTML, control characters), or is too long, gives the counted form instead.
+    const plain = shown.every((name) => plainTextViolation(name) === null) && plainTextViolation(named) === null;
     sentences.push({
-      text: named.length <= SENTENCE_MAX ? named : `Changed ${plural(files.size, "file")} in ${plural(changed.length, "component")}.`,
+      text: plain && named.length <= SENTENCE_MAX ? named : `Changed ${plural(files.size, "file")} in ${plural(changed.length, "component")}.`,
       citations: changed.slice(0, MAX_CITATIONS).map((entry): Citation => ({ kind: "component", id: entry.id })),
     });
   } else if (lastStep !== undefined) {
