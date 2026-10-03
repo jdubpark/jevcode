@@ -15,6 +15,14 @@ export function showsBrief(state: ViewState): boolean {
   return state.selection === null || state.brief;
 }
 
+/** What the panel shows: the Brief, a Map component's Inspector or the step and unit Inspector. */
+type PanelContent = "brief" | "component" | "inspector";
+
+function panelContentOf(state: ViewState): PanelContent {
+  if (showsBrief(state)) return "brief";
+  return state.view === "map" && state.mapSelection !== null ? "component" : "inspector";
+}
+
 function isNowhere(doc: Document): boolean {
   const active = doc.activeElement;
   return active === null || active === doc.body || active === doc.documentElement;
@@ -24,9 +32,12 @@ function isNowhere(doc: Document): boolean {
  * Spec §3.3, E4: the Brief whenever nothing is selected or Shift+B pinned it; the Inspector for a selection. The two are
  * different trees, so a switch while focus is inside the panel (Esc, Shift+B, a Brief item that selects) would drop
  * focus to <body>: it moves to the Brief, or to the active view's tab stop when the Inspector comes back (lane fix I-5).
+ * A Map component's Inspector is a third tree: a change row that opens its step keeps focus in the panel, on the step
+ * Inspector's tab panel (lane 06 fix, minor 2).
  */
 export function RightPanel({ host }: { host: ViewerHost }): JSX.Element {
-  const showBrief = useView(showsBrief);
+  const content = useView(panelContentOf);
+  const showBrief = content === "brief";
   const store = useViewStore();
   const registry = useContext(ViewPortRegistryContext);
   const wrapper = useRef<HTMLDivElement>(null);
@@ -60,23 +71,27 @@ export function RightPanel({ host }: { host: ViewerHost }): JSX.Element {
     };
   }, []);
 
-  const shown = useRef(showBrief);
+  const shown = useRef(content);
   useLayoutEffect(() => {
     const before = shown.current;
-    shown.current = showBrief;
+    shown.current = content;
     const node = wrapper.current;
     const doc = node?.ownerDocument;
-    if (before === showBrief || !focusInside.current || node === null || doc === undefined || !isNowhere(doc)) return;
-    if (showBrief) {
+    if (before === content || !focusInside.current || node === null || doc === undefined || !isNowhere(doc)) return;
+    if (content === "brief") {
       node.querySelector<HTMLElement>("[data-brief]")?.focus({ preventScroll: true });
       return;
+    }
+    if (before === "component" && content === "inspector") {
+      node.querySelector<HTMLElement>('[role="tabpanel"]')?.focus({ preventScroll: true });
+      if (!isNowhere(doc)) return;
     }
     registry?.get(store.get().view)?.focusSelected();
     if (isNowhere(doc)) {
       const scope: ParentNode = node.closest("[data-trace-viewer]") ?? doc;
       scope.querySelector<HTMLElement>('[data-region="main"]')?.focus({ preventScroll: true });
     }
-  }, [showBrief]);
+  }, [content]);
 
   return (
     // display: contents keeps the panel's layout as it was; the element only scopes the focus bookkeeping.
