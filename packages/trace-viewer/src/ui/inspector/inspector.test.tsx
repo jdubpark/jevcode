@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { foldRows, KIND_META, type TraceSession } from "../../model/index.js";
 import { sentence } from "../../test-support/explainer-fixtures.js";
-import { overviewSnapshot } from "../../test-support/overview-builder.js";
+import { componentOf, overviewSnapshot } from "../../test-support/overview-builder.js";
 import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import { foldFixture, renderHarness, stubLayout, type LayoutStub } from "../../test-support/ui-harness.js";
 import { FINDING_TITLE } from "./finding-copy.js";
@@ -379,7 +379,7 @@ describe("Inspector decision explanation (phase C)", () => {
     expect(within(section("Components")).getByText("middleware")).toBeTruthy();
     fireEvent.click(within(section("Components")).getByRole("button", { name: "Open middleware on the Map" }));
     expect(h.store.get().view).toBe("map");
-    expect(h.store.get().mapSelection).not.toBeNull();
+    expect(h.store.get().mapSelection).toBe(componentOf({ rootPath: "src/middleware" }).id);
   });
 
   it("an answered decision without a why says the narrator state quietly", () => {

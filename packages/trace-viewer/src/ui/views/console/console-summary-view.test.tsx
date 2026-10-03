@@ -44,7 +44,11 @@ describe("Console summary rows (live)", () => {
     });
     render(<TraceViewer source={source} initialView="console" pollMs={50} initialFollow={false} />);
     await waitFor(() => expect(screen.getAllByRole("region", { name: "Session summary" })).toHaveLength(1));
-    const focused = document.activeElement;
+    // The reader sits on the Console's tab stop while rows and summaries arrive.
+    const focused = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[tabindex="0"]');
+    if (focused === null) throw new Error("the Console has no tab stop");
+    act(() => focused.focus());
+    expect(document.activeElement).toBe(focused);
     for (let seq = firstStory + 1; seq <= lastStory; seq += 1) act(() => source.tick());
     await waitFor(() => expect(screen.getAllByRole("region", { name: "Session summary" })).toHaveLength(2));
     expect(screen.queryByText("Stale story.")).toBeNull();
