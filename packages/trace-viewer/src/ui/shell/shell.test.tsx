@@ -355,4 +355,32 @@ describe("DecisionAnnouncer (lane fix m6)", () => {
     });
     expect(h.announcements).toHaveLength(1);
   });
+
+  it("still announces a decision that arrives in the commit where an answer message is absorbed (steps shrink and grow)", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "d0", title: "Keep email login?" });
+    b.agent({ type: "agent_message", role: "user", text: "Keep both" });
+    const fold = (): TraceSession =>
+      foldRows(testMeta({ state: "running", lastEventSeq: b.rows.length }), b.rows, { live: true, nowMs: Date.parse("2026-09-18T09:30:00.000Z") });
+    const first = fold();
+    const h = createHarness(first, { state: { loaded: true } });
+    const tree = (session: TraceSession) => (
+      <ViewStoreContext.Provider value={h.store}>
+        <SessionContext.Provider value={{ ...h.view, session, index: buildTraceIndex(session) }}>
+          <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+            <DecisionAnnouncer />
+          </LiveRegion>
+        </SessionContext.Provider>
+      </ViewStoreContext.Provider>
+    );
+    const result = render(tree(first));
+    // The answer closes d0 and absorbs the user message step (removeStep); d1 opens in the same commit.
+    b.decision({ id: "d0", title: "Keep email login?", status: "answered", answer: { decisionId: "d0", decision: { choice: "a" }, evidence: [] } });
+    b.decision({ id: "d1", title: "Rotate the signing key?" });
+    const second = fold();
+    expect(second.steps).toHaveLength(first.steps.length);
+    result.rerender(tree(second));
+    await waitFor(() => expect(h.announcements).toEqual(["Decision needed: Rotate the signing key?"]));
+  });
 });
