@@ -1,9 +1,13 @@
+import { displayUntrusted } from "@jevcode/trace-viewer/model";
 import { useEffect, useState } from "react";
 
 import type { RepositorySummary } from "../../shared/local-channels.js";
 import { getBridge } from "../bridge.js";
+import { Glyph } from "./glyph.js";
 
 interface RecentReposProps {
+  /** The open repository, tinted in the list. */
+  selectedRepoId?: string | null;
   onSelect: (path: string) => void;
 }
 
@@ -23,16 +27,22 @@ export function RecentRepos(props: RecentReposProps) {
 
   return (
     <section className="panel">
-      <h2>Recent repositories</h2>
+      <h2>Recent repos</h2>
       {repos.length === 0 ? (
-        <p className="dim">None yet. Open a local repository to begin.</p>
+        <p className="side-empty">None yet. Open a local repository to begin.</p>
       ) : (
-        <ul className="repo-list">
+        <ul className="side-list">
           {repos.map((repo) => (
             <li key={repo.repoId}>
-              <button type="button" onClick={() => props.onSelect(repo.path)}>
-                <span className="repo-list-name">{repo.name}</span>
-                <span className="repo-list-path dim">{repo.path}</span>
+              <button
+                type="button"
+                className={`side-row${repo.repoId === props.selectedRepoId ? " on" : ""}`}
+                title={displayUntrusted(repo.path)}
+                aria-current={repo.repoId === props.selectedRepoId ? "true" : undefined}
+                onClick={() => props.onSelect(repo.path)}
+              >
+                <Glyph name="list" />
+                <span className="side-label">{displayUntrusted(repo.name)}</span>
               </button>
             </li>
           ))}

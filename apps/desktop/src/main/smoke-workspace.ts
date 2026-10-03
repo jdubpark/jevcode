@@ -1,0 +1,318 @@
+import path from "node:path";
+
+/**
+ * JEVCODE_SMOKE_WORKSPACE=1 (spec §12 "Electron smoke"). The phase drives the
+ * real main window through the real IPC path:
+ * 1. open a git repo, start a scripted mock session, wait for WORKSPACE_READY
+ * 2. measure Console append latency, from main's append clock to the
+ *    renderer's CONSOLE_PAINT lines (p95 ≤ 150 ms over ≥ minSamples rows)
+ * 3. capture the window at 1440 and 1000 px while nothing is selected, so the
+ *    right panel shows the Brief (the approved main-window mockup)
+ * 4. select a step and walk every view by key, checking the selection survives
+ * Electron is reached only through WorkspaceSmokeDeps.
+ */
+
+export const WORKSPACE_READY_TIMEOUT_MS = 30_000;
+export const SHOT_WIDTHS = [1440, 1000] as const;
+export const SHOT_HEIGHT = 900;
+export const SMOKE_PROMPT = "Smoke: show the Console while the mock agent works";
+/** Spec §11: Console append latency, row stored → line painted, with the push hint. */
+export const CONSOLE_APPEND_P95_BUDGET_MS = 150;
+/** docs/perf.md: a p95 budget needs at least 300 samples. */
+export const DEFAULT_MIN_SAMPLES = 300;
+/** The mock run is over once no row has been stored for this long. */
+export const APPEND_QUIET_MS = 3_000;
+export const APPEND_PHASE_TIMEOUT_MS = 180_000;
+export const VIEW_STEP_TIMEOUT_MS = 5_000;
+/** Spec §3.7 and §8.6 keys, ending back on Console. */
+export const VIEW_KEYS = [
+  { code: "Digit1", key: "1", view: "canvas" },
+  { code: "Digit2", key: "2", view: "hybrid" },
+  { code: "Digit3", key: "3", view: "map" },
+  { code: "Digit4", key: "4", view: "surfaces" },
+  { code: "Digit0", key: "0", view: "console" },
+] as const;
+
+export interface AppendRecord {
+  seq: number;
+  atMs: number;
+}
+
+export interface AppendLog {
+  record(sessionId: string, seq: number): void;
+  entries(sessionId: string): readonly AppendRecord[];
+}
+
+/** Main's wall clock at each committed trace-row append (fed by observeTraceAppends). */
+export function createAppendLog(now: () => number): AppendLog {
+  const bySession = new Map<string, AppendRecord[]>();
+  return {
+    record(sessionId, seq) {
+      const list = bySession.get(sessionId) ?? [];
+      list.push({ seq, atMs: now() });
+      bySession.set(sessionId, list);
+    },
+    entries: (sessionId) => bySession.get(sessionId) ?? [],
+  };
+}
+
+export interface ConsolePaint {
+  sessionId: string;
+  throughSeq: number;
+  atMs: number;
+}
+
+export interface WorkspaceLocation {
+  view: string;
+  selected: string | null;
+}
+
+export interface WorkspaceSmokeDeps {
+  /** mainWindow.webContents.executeJavaScript(script, true). */
+  exec(script: string): Promise<unknown>;
+  /** Every main-window console line; returns the unsubscribe. */
+  onConsole(listener: (message: string) => void): () => void;
+  /** Resizes the window's content to width × height, lets it settle, returns a PNG. */
+  capture(width: number, height: number): Promise<Uint8Array>;
+  writeFile(filePath: string, data: Uint8Array): void;
+  appends: AppendLog;
+  /** Date.now(): the clock both the append log and CONSOLE_PAINT use. */
+  wallNow(): number;
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+  log(line: string): void;
+}
+
+export interface WorkspaceSmokeOptions {
+  repoPath: string;
+  shotsDir: string | null;
+  minSamples: number;
+}
+
+export function parseWorkspaceReady(message: string): number | null {
+  const match = /^WORKSPACE_READY (\d+)$/.exec(message);
+  return match === null ? null : Number(match[1]);
+}
+
+export function parseConsolePaint(message: string): ConsolePaint | null {
+  const match = /^CONSOLE_PAINT (\S+) (\d+) (\d+)$/.exec(message);
+  if (match === null) return null;
+  return { sessionId: match[1] ?? "", throughSeq: Number(match[2]), atMs: Number(match[3]) };
+}
+
+export function parseWorkspaceLocation(message: string): WorkspaceLocation | null {
+  const prefix = "WORKSPACE_LOCATION ";
+  if (!message.startsWith(prefix)) return null;
+  try {
+    const value: unknown = JSON.parse(message.slice(prefix.length));
+    if (typeof value !== "object" || value === null) return null;
+    const { view, selected } = value as { view?: unknown; selected?: unknown };
+    if (typeof view !== "string") return null;
+    return { view, selected: typeof selected === "string" ? selected : null };
+  } catch {
+    return null;
+  }
+}
+
+/** For each stored row, the time until the first paint whose throughSeq covers it; rows no paint covers are unpainted. */
+export function appendLatencies(
+  appends: readonly AppendRecord[],
+  paints: readonly ConsolePaint[],
+): { latencies: number[]; unpainted: number[] } {
+  const ordered = [...paints].sort((a, b) => a.atMs - b.atMs);
+  const latencies: number[] = [];
+  const unpainted: number[] = [];
+  for (const append of appends) {
+    const paint = ordered.find((candidate) => candidate.throughSeq >= append.seq);
+    if (paint === undefined) unpainted.push(append.seq);
+    else latencies.push(Math.max(0, paint.atMs - append.atMs));
+  }
+  return { latencies, unpainted };
+}
+
+/** Nearest-rank percentile; NaN for no values. */
+export function percentile(values: readonly number[], p: number): number {
+  if (values.length === 0) return Number.NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.min(sorted.length, Math.max(1, Math.ceil(p * sorted.length)));
+  return sorted[rank - 1] ?? Number.NaN;
+}
+
+export function openRepoScript(repoPath: string): string {
+  return `window.jevcode.repo.open(${JSON.stringify(repoPath)})`;
+}
+
+export function startSessionScript(prompt: string): string {
+  return `(async () => {
+    const [repo] = await window.jevcode.repo.listRecent(1);
+    if (repo === undefined) throw new Error("no recent repo after repo:open");
+    await window.jevcode.session.start(repo.repoId, ${JSON.stringify(prompt)});
+    return repo.repoId;
+  })()`;
+}
+
+/** The newest session is the one repo:open created and session:start ran. */
+export const NEWEST_SESSION_SCRIPT =
+  "window.jevcode.trace.listSessions({ limit: 1 }).then((sessions) => sessions[0]?.sessionId ?? null)";
+
+/** A key press as the viewer's KeyboardLayer sees it, never inside a text field (viewer spec §7.9). */
+export function pressKeyScript(code: string, key: string): string {
+  return `(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    const init = { key: ${JSON.stringify(key)}, code: ${JSON.stringify(code)}, bubbles: true, cancelable: true };
+    document.body.dispatchEvent(new KeyboardEvent("keydown", init));
+    document.body.dispatchEvent(new KeyboardEvent("keyup", init));
+    return true;
+  })()`;
+}
+
+export function waitForLine<T>(
+  deps: Pick<WorkspaceSmokeDeps, "onConsole" | "setTimeout" | "clearTimeout">,
+  parse: (message: string) => T | null,
+  timeoutMs: number,
+  what: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let timer: unknown = null;
+    const off = deps.onConsole((message) => {
+      const value = parse(message);
+      if (value === null) return;
+      if (timer !== null) deps.clearTimeout(timer);
+      off();
+      resolve(value);
+    });
+    timer = deps.setTimeout(() => {
+      off();
+      reject(new Error(`${what} not seen within ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+  });
+}
+
+function waitUntil(
+  deps: Pick<WorkspaceSmokeDeps, "setTimeout">,
+  condition: () => boolean,
+  timeoutMs: number,
+  what: string,
+  intervalMs = 250,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let waited = 0;
+    const check = (): void => {
+      if (condition()) {
+        resolve();
+        return;
+      }
+      if (waited >= timeoutMs) {
+        reject(new Error(`${what} not reached within ${timeoutMs / 1000}s`));
+        return;
+      }
+      waited += intervalMs;
+      deps.setTimeout(check, intervalMs);
+    };
+    check();
+  });
+}
+
+async function measureAppends(
+  deps: WorkspaceSmokeDeps,
+  options: WorkspaceSmokeOptions,
+  sessionId: string,
+  readyAt: number,
+  paints: readonly ConsolePaint[],
+): Promise<void> {
+  const settled = (): boolean => {
+    const last = deps.appends.entries(sessionId).at(-1);
+    if (last === undefined || deps.wallNow() - last.atMs < APPEND_QUIET_MS) return false;
+    return paints.some((paint) => paint.sessionId === sessionId && paint.throughSeq >= last.seq);
+  };
+  await waitUntil(deps, settled, APPEND_PHASE_TIMEOUT_MS, "the session's last row painted in the Console");
+  const appends = deps.appends.entries(sessionId).filter((entry) => entry.atMs >= readyAt);
+  const { latencies, unpainted } = appendLatencies(
+    appends,
+    paints.filter((paint) => paint.sessionId === sessionId),
+  );
+  if (unpainted.length > 0) throw new Error(`rows never painted: ${unpainted.slice(0, 10).join(", ")}`);
+  if (latencies.length < options.minSamples) {
+    throw new Error(`only ${latencies.length} append samples (need ${options.minSamples})`);
+  }
+  const p50 = percentile(latencies, 0.5);
+  const p95 = percentile(latencies, 0.95);
+  const max = Math.max(...latencies);
+  deps.log(
+    `SMOKE_CONSOLE appends=${latencies.length} p50_ms=${Math.round(p50)} p95_ms=${Math.round(p95)} max_ms=${Math.round(max)}`,
+  );
+  if (p95 > CONSOLE_APPEND_P95_BUDGET_MS) {
+    throw new Error(`Console append p95 ${Math.round(p95)} ms is over the ${CONSOLE_APPEND_P95_BUDGET_MS} ms budget`);
+  }
+}
+
+async function walkViews(deps: WorkspaceSmokeDeps): Promise<void> {
+  const firstSelection = waitForLine(
+    deps,
+    (message) => {
+      const location = parseWorkspaceLocation(message);
+      return location !== null && location.selected !== null ? location : null;
+    },
+    VIEW_STEP_TIMEOUT_MS,
+    "a selection after j",
+  );
+  firstSelection.catch(() => undefined);
+  await deps.exec(pressKeyScript("KeyJ", "j"));
+  const selected = (await firstSelection).selected;
+  for (const step of VIEW_KEYS) {
+    const seen = waitForLine(
+      deps,
+      (message) => {
+        const location = parseWorkspaceLocation(message);
+        return location !== null && location.view === step.view ? location : null;
+      },
+      VIEW_STEP_TIMEOUT_MS,
+      `view ${step.view} after key ${step.key}`,
+    );
+    seen.catch(() => undefined);
+    await deps.exec(pressKeyScript(step.code, step.key));
+    const location = await seen;
+    if (location.selected !== selected) {
+      throw new Error(`selection changed on ${step.view}: ${selected} → ${location.selected}`);
+    }
+  }
+  deps.log(`SMOKE_VIEWS selected=${selected} views=${VIEW_KEYS.map((step) => step.view).join(",")}`);
+}
+
+export async function captureShots(
+  deps: Pick<WorkspaceSmokeDeps, "capture" | "writeFile" | "log">,
+  shotsDir: string | null,
+): Promise<void> {
+  if (shotsDir === null) return;
+  for (const width of SHOT_WIDTHS) {
+    const png = await deps.capture(width, SHOT_HEIGHT);
+    const file = path.join(shotsDir, `main-console-${width}.png`);
+    deps.writeFile(file, png);
+    deps.log(`SMOKE_SHOT ${file}`);
+  }
+}
+
+export async function runWorkspaceSmoke(deps: WorkspaceSmokeDeps, options: WorkspaceSmokeOptions): Promise<void> {
+  const paints: ConsolePaint[] = [];
+  const offPaints = deps.onConsole((message) => {
+    const paint = parseConsolePaint(message);
+    if (paint !== null) paints.push(paint);
+  });
+  try {
+    const ready = waitForLine(deps, parseWorkspaceReady, WORKSPACE_READY_TIMEOUT_MS, "WORKSPACE_READY");
+    ready.catch(() => undefined);
+    await deps.exec(openRepoScript(options.repoPath));
+    await deps.exec(startSessionScript(SMOKE_PROMPT));
+    const rows = await ready;
+    const readyAt = deps.wallNow();
+    const sessionId = await deps.exec(NEWEST_SESSION_SCRIPT);
+    if (typeof sessionId !== "string") throw new Error("could not read the smoke session id");
+    deps.log(`SMOKE_WORKSPACE session=${sessionId} ready_rows=${rows}`);
+    await measureAppends(deps, options, sessionId, readyAt, paints);
+    await captureShots(deps, options.shotsDir);
+    await walkViews(deps);
+  } finally {
+    offPaints();
+  }
+}

@@ -44,12 +44,17 @@
 }
 
 .headline {
+  flex: none;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
+/* The one part of the nowrap row that gives way (lane 03 fix wave minor 2): the full list is the tooltip. */
 .languages {
+  min-width: 0;
+  overflow: hidden;
   color: var(--tv-ink-3);
+  text-overflow: ellipsis;
 }
 
 .notes {
@@ -88,6 +93,7 @@
 
 .toggle {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 4px;
   height: 24px;

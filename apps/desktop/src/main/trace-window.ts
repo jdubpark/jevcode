@@ -6,6 +6,15 @@ import type {
 
 export const TRACE_WINDOW_MIN_WIDTH = 1000;
 export const TRACE_WINDOW_BACKGROUND = "#FFFFFF";
+/** The main window's native background: LIGHT_TOKENS.canvas, so no dark flash before the page paints (spec E6). */
+export const MAIN_WINDOW_BACKGROUND = "#F4F5F7";
+/**
+ * The main window's minimum width. Below about 870 px the embedded viewer bar (switcher, Review/Live, Brief) no longer
+ * fits beside the sidebar, which styles.css narrows from 220 to 200 px below a 1120 px window: at 880 px the bar is
+ * 680 px wide (lane 03 D-6; re-measured in Electron in the fix wave, and the dev-host smoke checks the bar at 680 px).
+ * styles.css `.app` holds the page to the same width.
+ */
+export const MAIN_WINDOW_MIN_WIDTH = 880;
 
 /**
  * Renderer isolation shared by the main window and every trace window
@@ -55,6 +64,8 @@ export interface TraceWindowRegistry {
   isTraceSender(webContentsId: number): boolean;
   /** The session a trace window shows, by its webContents.id; undefined for any other sender. */
   sessionForSender(webContentsId: number): string | undefined;
+  /** webContents ids of the open trace windows that show sessionId (trace:rowsAvailable recipients). */
+  sendersForSession(sessionId: string): number[];
   closeAll(): void;
   count(): number;
 }
@@ -110,6 +121,13 @@ export function createTraceWindowRegistry(deps: TraceWindowRegistryDeps): TraceW
     },
     sessionForSender(webContentsId) {
       return senders.get(webContentsId);
+    },
+    sendersForSession(sessionId) {
+      const ids: number[] = [];
+      for (const [webContentsId, shown] of senders) {
+        if (shown === sessionId) ids.push(webContentsId);
+      }
+      return ids;
     },
     closeAll() {
       for (const window of [...bySession.values()]) {

@@ -19,3 +19,4 @@ export { useSessionView, type SessionView } from "./ui/shell/session-context.js"
 export type { SelectionId } from "./layout/trace-index.js";
 export { INITIAL_SELECTION_PAINTED, PERF, markAfterPaint } from "./ui/shell/perf.js";
 export * from "./sources/index.js";
+export { FONT_MONO, FONT_SANS, LIGHT_TOKENS, TOKEN_VARS, tokenStyle, type TokenName, type Tokens } from "./ui/tokens/tokens.js";

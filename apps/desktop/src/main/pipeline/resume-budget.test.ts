@@ -47,17 +47,18 @@ describe("resume budget", () => {
   it("increments resume_attempts and fails the session on the third resume", async () => {
     const db = createTempDb();
     const { emit, collected } = collectEmit();
+    const sink = {
+      ensure: () => {},
+      data: (_sessionId: string, data: string) => {
+        collected.terminal.push(data);
+      },
+    };
     const runtime = new PipelineRuntime({
       db,
       emit,
       evidence: false,
       log: () => {},
-      terminal: {
-        data: (_sessionId, data) => {
-          collected.terminal.push(data);
-        },
-        ensure: () => {},
-      },
+      terminal: sink,
     });
 
     const sessionId = "sess_budget";
@@ -103,9 +104,8 @@ describe("resume budget", () => {
       []) as { state: string }[];
     expect(agentStates.at(-1)?.state).toBe("failed");
 
-    expect(collected.terminal).toContain(
-      "[agent] failed: resume budget exhausted",
-    );
+    // The failure is a trace row and an agent:event; the user's shell stays untouched (spec E7).
+    expect(collected.terminal).toEqual([]);
 
     // The failure is in the event log, not only on the renderer channel.
     const stored = db

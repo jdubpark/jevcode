@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, webContents } from "electron";
 import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
 import { openDb, openTraceReader } from "@jevcode/storage";
@@ -21,7 +21,10 @@ import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry }
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
+import { SMOKE_SCRIPT_DEFAULTS, smokeMockScript } from "./pipeline/smoke-script.js";
 import type { TerminalSink } from "./pipeline/types.js";
+import { createRowsAvailableEmitter, observeTraceAppends, rowsAvailableTargets } from "./rows-available.js";
+import type { RowsAvailableEmitter } from "./rows-available.js";
 import { sweepStaleSessions } from "./session-recovery.js";
 import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
@@ -32,8 +35,15 @@ import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
 import { forwardTracePerf, runSmoke } from "./smoke.js";
-import { createTraceWindowRegistry, sharedWebPreferences } from "./trace-window.js";
+import {
+  MAIN_WINDOW_BACKGROUND,
+  MAIN_WINDOW_MIN_WIDTH,
+  createTraceWindowRegistry,
+  sharedWebPreferences,
+} from "./trace-window.js";
 import type { TraceWindowRegistry } from "./trace-window.js";
+import { createAppendLog } from "./smoke-workspace.js";
+import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRELOAD_PATH = path.join(dirname, "../preload/index.cjs");
@@ -62,6 +72,40 @@ const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
 /** Prints trace windows' TRACE_PERF lines (docs/perf.md live-tick samples). */
 const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
 
+/** JEVCODE_SMOKE_WORKSPACE=1: the smoke drives the main window through a scripted mock session (smoke-workspace.ts). */
+const SMOKE_WORKSPACE = SMOKE && process.env["JEVCODE_SMOKE_WORKSPACE"] === "1";
+const SMOKE_STEPS = Number.parseInt(process.env["JEVCODE_SMOKE_STEPS"] ?? "", 10) || SMOKE_SCRIPT_DEFAULTS.steps;
+/** The workspace smoke's append clock: main's wall time at each committed trace row (Console append latency, D-6). */
+const smokeAppends = SMOKE_WORKSPACE ? createAppendLog(() => Date.now()) : null;
+
+function workspaceSmokeDeps(window: BrowserWindow): WorkspaceSmokeDeps {
+  return {
+    exec: (script) => window.webContents.executeJavaScript(script, true) as Promise<unknown>,
+    onConsole: (listener) => {
+      const handler = (_event: unknown, _level: number, message: string): void => listener(message);
+      window.webContents.on("console-message", handler);
+      return () => {
+        window.webContents.off("console-message", handler);
+      };
+    },
+    capture: async (width, height) => {
+      window.setContentSize(width, height);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const image = await window.webContents.capturePage();
+      return image.toPNG();
+    },
+    writeFile: (filePath, data) => {
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, data);
+    },
+    appends: smokeAppends ?? createAppendLog(() => Date.now()),
+    wallNow: () => Date.now(),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    log: (line) => console.log(line),
+  };
+}
+
 let mainWindow: BrowserWindow | null = null;
 let terminals: TerminalManager | null = null;
 let db: JevcodeDb | null = null;
@@ -70,13 +114,15 @@ let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
 let explainer: ExplainerRegistry | null = null;
 let importExtractor: ImportExtractor | null = null;
+let rowsAvailable: RowsAvailableEmitter | null = null;
 const state = createAppState();
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    backgroundColor: "#14161a",
+    minWidth: MAIN_WINDOW_MIN_WIDTH,
+    backgroundColor: MAIN_WINDOW_BACKGROUND,
     show: false,
     webPreferences: sharedWebPreferences(PRELOAD_PATH),
   });
@@ -91,7 +137,10 @@ function createWindow(): BrowserWindow {
       traceWindows?.closeAll();
     }
   });
-  void window.loadFile(path.join(dirname, "../renderer/src/renderer/index.html"));
+  void window.loadFile(
+    path.join(dirname, "../renderer/src/renderer/index.html"),
+    SMOKE_WORKSPACE ? { query: { smoke: "1" } } : undefined,
+  );
   return window;
 }
 
@@ -114,6 +163,30 @@ app.whenReady().then(() => {
     `rebuildOnBoot: ${rebuild.length} session(s), ${rebuild.reduce((sum, entry) => sum + entry.replayed, 0)} events`,
   );
 
+  // Spec E5 and §7: push-triggered pulls. Every trace row the writer commits
+  // raises a coalesced hint to the windows that show its session.
+  const emitter = createRowsAvailableEmitter({
+    targets: (sessionId) => {
+      const main = mainWindow;
+      return rowsAvailableTargets(sessionId, {
+        main: main !== null && !main.isDestroyed() ? main.webContents : null,
+        mainSessionId: state.session?.id ?? null,
+        traceSenderIds: traceWindows?.sendersForSession(sessionId) ?? [],
+        fromId: (id) => webContents.fromId(id) ?? null,
+      });
+    },
+    now: () => performance.now(),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    log: (message) => console.log(`[rows] ${message}`),
+  });
+  rowsAvailable = emitter;
+  // Each trace row is hinted as it commits; the pipeline writes without transactions (lane 03 PL-2).
+  observeTraceAppends(db, (event) => {
+    emitter.notify(event.sessionId, event.seq);
+    smokeAppends?.record(event.sessionId, event.seq);
+  });
+
   // Crash recovery: any session left running/paused by a dead process is
   // either failed now or kept only while its execution claim is fresh.
   const swept = sweepStaleSessions(db, new Date());
@@ -129,11 +202,8 @@ app.whenReady().then(() => {
     sendToRenderer(MainToRendererChannels.terminalData, { sessionId, data });
   });
 
+  // The person's shell only: the pipeline may start it, never write agent text into it (spec E7).
   const terminalSink: TerminalSink = {
-    data: (sessionId, data) => {
-      sendToRenderer(MainToRendererChannels.terminalData, { sessionId, data });
-      terminals?.scrollback(sessionId).push(data);
-    },
     ensure: (sessionId, cwd) => {
       terminals?.ensure(sessionId, { cwd });
     },
@@ -159,10 +229,9 @@ app.whenReady().then(() => {
       scan: scanRepo,
       scanPaths,
       extract: extractor.extract,
-      // Lane 03 D-6 Step 1 replaces this direct send with a no-op: D-1's observeTraceAppends already
-      // hints every committed trace row through the coalesced emitter, which also reaches trace windows.
-      emitRowsAvailable: (sessionId, lastSeq) =>
-        sendToRenderer(MainToRendererChannels.traceRowsAvailable, { sessionId, lastSeq }),
+      // D-1's observeTraceAppends hints every committed trace row through the coalesced emitter,
+      // so the stage needs no direct send (a direct send would bypass the 50 ms coalescing).
+      emitRowsAvailable: () => {},
       now: () => Date.now(),
       schedule: {
         setTimeout: (fn, ms) => setTimeout(fn, ms),
@@ -185,6 +254,9 @@ app.whenReady().then(() => {
     terminal: terminalSink,
     log: (message) => console.log(`[pipeline] ${message}`),
     onRepoFilesChanged: (repoPath, paths) => explainerRegistry.filesChanged(repoPath, paths),
+    mockScriptFor: SMOKE_WORKSPACE
+      ? (input) => smokeMockScript(input, { steps: SMOKE_STEPS, spacingMs: SMOKE_SCRIPT_DEFAULTS.spacingMs })
+      : undefined,
   });
 
   const instructionRouter = new InstructionRouter({
@@ -264,6 +336,7 @@ app.whenReady().then(() => {
       error: (line) => console.error(line),
       succeed: () => app.quit(),
       fail: () => app.exit(1),
+      workspace: SMOKE_WORKSPACE ? workspaceSmokeDeps(mainWindow) : undefined,
     });
   }
 
@@ -282,7 +355,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  const stopping = { explainer, importExtractor, terminals, traceReader, db };
+  const stopping = { rowsAvailable, explainer, importExtractor, terminals, traceReader, db };
+  rowsAvailable = null;
   explainer = null;
   importExtractor = null;
   terminals = null;
@@ -293,6 +367,7 @@ app.on("will-quit", () => {
   // that throws is logged and the rest still run.
   runShutdown(
     [
+      { name: "rows available", run: () => stopping.rowsAvailable?.dispose() },
       { name: "explainer", run: () => stopping.explainer?.dispose() },
       { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
       { name: "terminals", run: () => stopping.terminals?.disposeAll() },

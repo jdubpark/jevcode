@@ -18,6 +18,7 @@ import styles from "./host.module.css";
 import { loadOverview, withOverview } from "./overview-sample.js";
 import { PerfHud } from "./perf-hud.js";
 import { createSelftest, selftestDrip, type SelftestResult } from "./selftest.js";
+import { createBarProbe, createMapHeadProbe, type BarProbeResult, type MapHeadProbeResult } from "./selftest-bar.js";
 import { claimStepIdOf, createOpenProbe, type OpenProbeResult } from "./selftest-open.js";
 
 /** A dropped file is untrusted input: refuse anything past this before reading it. The 177 MB soak bundle fits. */
@@ -43,6 +44,52 @@ const VIEW_KIND = /^[a-z][a-z0-9-]{0,31}$/;
 /** `?view=console` etc.: the opening view when the hash names none (TraceViewerProps.initialView). */
 export function parseView(value: string | null): ViewKind | undefined {
   return value !== null && VIEW_KIND.test(value) ? value : undefined;
+}
+
+/** `?gaps=N` (1 to 50): the count of unknown-type rows to append, so the fold reports N gaps and the title bar shows its chip. */
+export function parseGaps(value: string | null): number {
+  const count = Number(value);
+  return value !== null && Number.isInteger(count) && count > 0 && count <= 50 ? count : 0;
+}
+
+/** Appends `count` rows of a type no build knows after the last row; the fold turns each into an unknown_row_type gap. */
+export function withGapRows(bundle: TraceBundle, count: number): TraceBundle {
+  if (count === 0) return bundle;
+  const last = bundle.rows.at(-1);
+  const lastSeq = last?.seq ?? 0;
+  const ts = last?.ts ?? new Date(0).toISOString();
+  const extra = Array.from({ length: count }, (_, index) => ({
+    seq: lastSeq + index + 1,
+    type: "dev_host_gap",
+    ts,
+    payload: {},
+  }));
+  return { ...bundle, rows: [...bundle.rows, ...extra] };
+}
+
+/**
+ * `?frame=N` (320 to 2400): the embedded viewer's width in px, the main window's workspace column beside its sidebar.
+ * The main window at its 880 px minimum gives the viewer 880 − 200 = 680 px (lane 03 fix wave minor 1).
+ */
+export function parseFrame(value: string | null): number | undefined {
+  const width = Number(value);
+  return value !== null && Number.isInteger(width) && width >= 320 && width <= 2400 ? width : undefined;
+}
+
+/**
+ * `?approx=1`: each change unit cites fact ids no row carries and no agent call, as a session recorded before exact
+ * step links did; the fold then joins its chapters by time window and the title bar shows the approximate-joins chip.
+ */
+export function withApproximateJoins(bundle: TraceBundle): TraceBundle {
+  const rows = bundle.rows.map((row) => {
+    if (row.type !== "change_unit" || typeof row.payload !== "object" || row.payload === null) return row;
+    const payload = row.payload as { evidence?: unknown };
+    const evidence = Array.isArray(payload.evidence)
+      ? payload.evidence.map((id, index) => (typeof id === "string" && id.startsWith("fact_") ? `fact_devhost_unlinked_${index}` : id))
+      : payload.evidence;
+    return { ...row, payload: { ...payload, evidence, agentCallIds: [] } };
+  });
+  return { ...bundle, rows };
 }
 
 /** Spec §10 live tick run: "starting at lastSeq − 2000" is `?drip=20,1000,-2000`. */
@@ -76,12 +123,18 @@ async function loadBundle(name: string): Promise<Loaded> {
   }
 }
 
+/** `?languages=A,B,C`: the overview's languages by file count, for a header whose list is longer than the fixture's. */
+export function parseLanguages(value: string | null): string[] | null {
+  const languages = (value ?? "").split(",").map((language) => language.trim()).filter((language) => language !== "");
+  return languages.length === 0 ? null : languages.slice(0, 8);
+}
+
 /** ?overview=<name>: appends its overview_snapshot rows to the loaded bundle (dev host only). */
-async function attachOverview(bundle: TraceBundle, name: string): Promise<Loaded> {
+async function attachOverview(bundle: TraceBundle, name: string, languages: string[] | null): Promise<Loaded> {
   const snapshots = await loadOverview(name, bundle.session.sessionId);
-  return snapshots === null
-    ? { kind: "error", message: `Unknown overview "${name}"` }
-    : { kind: "ready", bundle: snapshots.reduce(withOverview, bundle) };
+  if (snapshots === null) return { kind: "error", message: `Unknown overview "${name}"` };
+  const shown = languages === null ? snapshots : snapshots.map((snapshot) => ({ ...snapshot, counts: { ...snapshot.counts, languages } }));
+  return { kind: "ready", bundle: shown.reduce(withOverview, bundle) };
 }
 
 /**
@@ -94,6 +147,10 @@ function Viewer({
   hash,
   selftest,
   openProbe,
+  barProbe,
+  mapHeadProbe,
+  approx,
+  frame,
   chrome,
   view,
 }: {
@@ -102,6 +159,10 @@ function Viewer({
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  barProbe: boolean;
+  mapHeadProbe: boolean;
+  approx: boolean;
+  frame: number | undefined;
   chrome: "full" | "embedded";
   view: ViewKind | undefined;
 }) {
@@ -126,6 +187,10 @@ function Viewer({
       hash={hash}
       selftest={selftest}
       openProbe={openProbe}
+      barProbe={barProbe}
+      mapHeadProbe={mapHeadProbe}
+      approx={approx}
+      frame={frame}
       chrome={chrome}
       view={view}
     />
@@ -139,6 +204,10 @@ function ViewerBody({
   hash,
   selftest,
   openProbe,
+  barProbe,
+  mapHeadProbe,
+  approx,
+  frame,
   chrome,
   view,
 }: {
@@ -148,6 +217,10 @@ function ViewerBody({
   hash: string;
   selftest: boolean;
   openProbe: boolean;
+  barProbe: boolean;
+  mapHeadProbe: boolean;
+  approx: boolean;
+  frame: number | undefined;
   chrome: "full" | "embedded";
   view: ViewKind | undefined;
 }) {
@@ -171,6 +244,20 @@ function ViewerBody({
     probe.start();
     return () => probe.stop();
   }, [probe]);
+  const [bar, setBar] = useState<BarProbeResult | null>(null);
+  const [barRun] = useState(() => (barProbe ? createBarProbe(setBar, { approx }) : null));
+  useEffect(() => {
+    if (barRun === null) return undefined;
+    barRun.start();
+    return () => barRun.stop();
+  }, [barRun]);
+  const [mapHead, setMapHead] = useState<MapHeadProbeResult | null>(null);
+  const [mapHeadRun] = useState(() => (mapHeadProbe ? createMapHeadProbe(setMapHead) : null));
+  useEffect(() => {
+    if (mapHeadRun === null) return undefined;
+    mapHeadRun.start();
+    return () => mapHeadRun.stop();
+  }, [mapHeadRun]);
   const location = useMemo(() => locationFromHash(hash, bundle.session.sessionId), [hash, bundle]);
   const showBrief = useMemo(() => new URLSearchParams(window.location.search).get("brief") === "1", []);
   const host = useMemo<ViewerHost>(
@@ -205,7 +292,7 @@ function ViewerBody({
   return (
     <>
       {chrome === "embedded" ? (
-        <div className={styles.embedded}>
+        <div className={styles.embedded} style={frame === undefined ? undefined : { right: "auto", width: frame }}>
           <div className={styles.embeddedBody}>{viewer}</div>
           {/* A stand-in for lane 03's prompt dock, so screenshots match the main-window mockup's frame. */}
           <div className={styles.embeddedDock} aria-hidden="true">
@@ -227,6 +314,16 @@ function ViewerBody({
           {opened === null ? "" : JSON.stringify(opened)}
         </pre>
       ) : null}
+      {barProbe ? (
+        <pre id="selftest" className={styles.result}>
+          {bar === null ? "" : JSON.stringify(bar)}
+        </pre>
+      ) : null}
+      {mapHeadProbe ? (
+        <pre id="selftest" className={styles.result}>
+          {mapHead === null ? "" : JSON.stringify(mapHead)}
+        </pre>
+      ) : null}
     </>
   );
 }
@@ -238,9 +335,15 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   const perf = params.get("perf") === "1";
   const selftest = params.get("selftest") === "drip";
   const openProbe = params.get("selftest") === "open";
+  const barProbe = params.get("selftest") === "bar";
+  const mapHeadProbe = params.get("selftest") === "maphead";
+  const gapRows = parseGaps(params.get("gaps"));
+  const approx = params.get("approx") === "1";
+  const frame = parseFrame(params.get("frame"));
   const chrome = params.get("chrome") === "embedded" ? "embedded" : "full";
   const view = parseView(params.get("view"));
   const overviewName = params.get("overview");
+  const languagesParam = params.get("languages");
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   // Each bundle request (a ?bundle= fetch or a drop) takes a token; only the latest may write.
   const requestToken = useRef(0);
@@ -248,7 +351,9 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
   useEffect(() => {
     const token = (requestToken.current += 1);
     void loadBundle(bundleName)
-      .then((next) => (next.kind === "ready" && overviewName !== null ? attachOverview(next.bundle, overviewName) : next))
+      .then((next) =>
+        next.kind === "ready" && overviewName !== null ? attachOverview(next.bundle, overviewName, parseLanguages(languagesParam)) : next,
+      )
       .then((next) => {
         if (requestToken.current === token) setLoaded(next);
       });
@@ -256,7 +361,13 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
       // A later token (a drop or a new bundle name) supersedes this fetch.
       if (requestToken.current === token) requestToken.current += 1;
     };
-  }, [bundleName, overviewName]);
+  }, [bundleName, overviewName, languagesParam]);
+
+  const shownBundle = useMemo(() => {
+    if (loaded.kind !== "ready" || (gapRows === 0 && !approx)) return null;
+    const withGaps = withGapRows(loaded.bundle, gapRows);
+    return approx ? withApproximateJoins(withGaps) : withGaps;
+  }, [loaded, gapRows, approx]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
@@ -288,11 +399,15 @@ export function DevHost({ search, hash }: { search: string; hash: string }) {
       {loaded.kind === "ready" ? (
         <Viewer
           key={`${loaded.bundle.session.sessionId}:${loaded.bundle.exportedAt}`}
-          bundle={loaded.bundle}
+          bundle={shownBundle ?? loaded.bundle}
           drip={drip}
           hash={hash}
           selftest={selftest}
           openProbe={openProbe}
+          barProbe={barProbe}
+          mapHeadProbe={mapHeadProbe}
+          approx={approx}
+          frame={frame}
           chrome={chrome}
           view={view}
         />

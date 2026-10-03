@@ -60,7 +60,7 @@ async function call<T>(channel: TraceChannel, run: () => Promise<T>): Promise<T>
 /**
  * summary() → trace.listSessions({sessionId, limit: 1}) (TraceSourceError
  * UNKNOWN_SESSION when empty); rows → trace.rows; payloads → trace.payloads;
- * now() → Date.now(). Stateless: the viewer's DataController owns paging, the
+ * onRowsAvailable → trace.onRowsAvailable for this session; now() → Date.now(). Stateless: the viewer's DataController owns paging, the
  * 1 s live poll, backoff and the terminal-state stop (spec §5.5, §8.3).
  */
 export function createIpcTraceSource(bridge: JevcodeApi["trace"], sessionId: string): TraceSource {
@@ -96,5 +96,11 @@ export function createIpcTraceSource(bridge: JevcodeApi["trace"], sessionId: str
       });
     },
     now: () => Date.now(),
+    // Spec E5: main's push hint, narrowed to this source's session. The
+    // DataController polls at once when lastSeq is past its cursor.
+    onRowsAvailable: (listener) =>
+      bridge.onRowsAvailable((payload) => {
+        if (payload.sessionId === sessionId) listener(payload.lastSeq);
+      }),
   };
 }

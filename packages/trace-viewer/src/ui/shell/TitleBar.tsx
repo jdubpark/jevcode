@@ -22,6 +22,9 @@ export interface TitleBarProps {
   showSwitch?: boolean;
 }
 
+/** Chapters joined to steps by time window (D11); the compact embedded chip keeps it as name and tooltip. */
+const APPROX_TEXT = "Approximate joins";
+
 const GAP_LABEL: Record<GapKind, string> = {
   invalid_row: "row could not be read",
   unknown_row_type: "unknown row type",
@@ -105,6 +108,8 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
       ? 0
       : session.findings.filter((finding) => finding.severity === "critical" && finding.anchorSeq > lastSeenSeq).length;
   const gaps = session?.gaps ?? [];
+  const gapsText = gaps.length === 1 ? "1 gap" : `${gaps.length} gaps`;
+  const liveLabel = terminal && state !== undefined ? agentStateLabel(state) : "Live";
   const approximate = session?.coverage.approximateJoins ?? false;
 
   const jumpToSeq = (seq: number): void => {
@@ -145,16 +150,26 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           <button
             type="button"
             ref={approxPopover.triggerRef}
-            className={styles.chip}
+            className={embedded ? `${styles.chip} ${styles.chipCompact}` : styles.chip}
             data-tone="neutral"
             aria-expanded={approxOpen}
             aria-haspopup="dialog"
+            // Embedded (the main window, from 880 px): an icon and a short word, the full text as name and tooltip.
+            aria-label={embedded ? APPROX_TEXT : undefined}
+            title={embedded ? APPROX_TEXT : undefined}
             onClick={() => setApproxOpen((open) => !open)}
           >
-            ≈ Approximate joins
+            {embedded ? (
+              <>
+                <Icon name="clock" size={12} />
+                Approx.
+              </>
+            ) : (
+              `≈ ${APPROX_TEXT}`
+            )}
           </button>
           {approxOpen ? (
-            <div role="dialog" aria-label="Approximate joins" className={styles.note}>
+            <div role="dialog" aria-label={APPROX_TEXT} className={styles.note}>
               Some chapters were joined to steps by time window, because this session was recorded before the
               exact step links existed. The window is an edit to one of the unit's files within 5 s of the unit's
               createdAt–updatedAt span, else that file's latest earlier edit. Their step lists can be slightly off.
@@ -168,12 +183,22 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
           <button
             type="button"
             ref={gapsPopover.triggerRef}
-            className={styles.chip}
+            className={embedded ? `${styles.chip} ${styles.chipCompact}` : styles.chip}
             data-tone="neutral"
             aria-expanded={gapsOpen}
+            // Embedded (the main window, from 880 px): icon and count only, the full text as name and tooltip.
+            aria-label={embedded ? gapsText : undefined}
+            title={embedded ? gapsText : undefined}
             onClick={() => setGapsOpen((open) => !open)}
           >
-            {gaps.length === 1 ? "1 gap" : `${gaps.length} gaps`}
+            {embedded ? (
+              <>
+                <Icon name="eyeoff" size={12} />
+                {gaps.length}
+              </>
+            ) : (
+              gapsText
+            )}
           </button>
           {gapsOpen ? (
             <ul className={styles.popover} aria-label="Gaps">
@@ -198,25 +223,28 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
 
       {!embedded && showSwitch ? <ViewSwitch /> : null}
 
-      <div role="group" aria-label="Follow" className={styles.segmented}>
+      <div role="group" aria-label="Follow" className={`${styles.segmented} ${styles.follow}`}>
         <button
           type="button"
           aria-pressed={!follow}
           className={styles.segment}
+          // A narrow embedded bar shows the icon only (TitleBar.module.css); the tooltip keeps the word.
+          title={embedded ? "Review" : undefined}
           onClick={() => dispatch({ type: "follow/set", follow: false })}
         >
           <Icon name="clock" size={14} />
-          <span>Review</span>
+          <span className={styles.label}>Review</span>
         </button>
         <button
           type="button"
           aria-pressed={follow}
           className={styles.segment}
           disabled={!running}
+          title={embedded ? liveLabel : undefined}
           onClick={goLive}
         >
           <Icon name="live" size={14} />
-          <span>{terminal && state !== undefined ? agentStateLabel(state) : "Live"}</span>
+          <span className={styles.label}>{liveLabel}</span>
         </button>
       </div>
 
@@ -302,7 +330,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
         onClick={() => dispatch({ type: "brief/toggle" })}
       >
         <Icon name="brief" size={14} />
-        <span>Brief</span>
+        <span className={styles.label}>Brief</span>
       </button>
     </div>
   );

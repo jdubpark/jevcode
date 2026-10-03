@@ -40,6 +40,7 @@ function setup() {
     isTraceSender: () => false,
     sessionForSender: (id) =>
       id === TRACE_SENDER ? "sess_1" : id === STALE_SENDER ? "sess_missing" : undefined,
+    sendersForSession: () => [],
     closeAll: () => undefined,
     count: () => 0,
   };

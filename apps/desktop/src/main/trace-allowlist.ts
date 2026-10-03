@@ -27,3 +27,17 @@ export function isChannelAllowed(channel: string, sender: SenderKind): boolean {
       return false;
   }
 }
+
+/** main → renderer pushes a trace window may receive (spec §7). Everything else goes to the main window only. */
+export const TRACE_WINDOW_PUSH_CHANNELS: readonly string[] = ["trace:rowsAvailable"];
+
+export function isPushAllowed(channel: string, receiver: SenderKind): boolean {
+  switch (receiver) {
+    case "main":
+      return true;
+    case "trace":
+      return TRACE_WINDOW_PUSH_CHANNELS.includes(channel);
+    case "other":
+      return false;
+  }
+}

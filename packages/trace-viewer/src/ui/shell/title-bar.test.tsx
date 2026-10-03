@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TraceSession } from "../../model/index.js";
@@ -294,5 +297,67 @@ describe("TitleBar", () => {
     expect(screen.queryByRole("radiogroup", { name: "View" })).toBeNull();
     expect(screen.queryByText(firstLine)).toBeNull();
     expect(screen.getByRole("group", { name: "Follow" })).toBeTruthy();
+  });
+
+  it("the embedded bar shows the gaps chip as its icon and count, with the full text as name and tooltip (lane 03 D-6)", () => {
+    const base = foldFixture("oauth");
+    const gaps = Array.from({ length: 160 }, (_, position) => ({ kind: "missing_evidence" as const, atSeq: position + 1, message: "x" }));
+    const session: TraceSession = { ...base, gaps };
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" />, session, { views: [canvas, hybrid] });
+    const chip = screen.getByRole("button", { name: "160 gaps" });
+    expect(chip.textContent).toBe("160");
+    expect(chip.getAttribute("title")).toBe("160 gaps");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    fireEvent.click(chip);
+    expect(screen.getByRole("list", { name: "Gaps" }).children).toHaveLength(160);
+    cleanup();
+
+    // The trace window's full chrome keeps the worded chip.
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    const full = screen.getByRole("button", { name: "160 gaps" });
+    expect(full.textContent).toBe("160 gaps");
+    expect(full.getAttribute("aria-label")).toBeNull();
+  });
+
+  it("the embedded bar shows the approximate-joins chip as an icon and a short word, with the full text as name and tooltip (lane 03 fix wave minor 1)", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = { ...base, coverage: { ...base.coverage, approximateJoins: true } };
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" />, session, { views: [canvas, hybrid] });
+    const chip = screen.getByRole("button", { name: "Approximate joins" });
+    expect(chip.textContent).toBe("Approx.");
+    expect(chip.getAttribute("title")).toBe("Approximate joins");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    fireEvent.click(chip);
+    expect(screen.getByRole("dialog", { name: "Approximate joins" }).textContent).toContain("time window");
+    cleanup();
+
+    // The trace window's full chrome keeps the worded chip.
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    const full = screen.getByRole("button", { name: "≈ Approximate joins" });
+    expect(full.getAttribute("aria-label")).toBeNull();
+  });
+
+  it("the embedded bar keeps the Follow and Brief words as names and tooltips for its narrow, icon-only layout (lane 03 D-6)", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = { ...base, gaps: [{ kind: "missing_evidence", atSeq: 3, message: "x" }] };
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" />, session, { views: [canvas, hybrid] });
+    const follow = screen.getByRole("group", { name: "Follow" });
+    const review = within(follow).getByRole("button", { name: "Review" });
+    expect(review.getAttribute("title")).toBe("Review");
+    const live = within(follow).getAllByRole("button")[1];
+    expect(live?.getAttribute("title")).toBe(live?.textContent);
+    expect(screen.getByRole("button", { name: "Brief" }).getAttribute("title")).toBe("Brief (Shift+B)");
+    cleanup();
+
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    expect(within(screen.getByRole("group", { name: "Follow" })).getByRole("button", { name: "Review" }).getAttribute("title")).toBeNull();
+  });
+
+  it("hides the words only visually below a 760 px embedded bar, never with display: none (names must survive)", () => {
+    const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "TitleBar.module.css"), "utf8");
+    expect(css).toMatch(/\.bar\[data-chrome="embedded"\]\s*\{[^}]*container:\s*tv-embedded-bar \/ inline-size;/);
+    const narrow = /@container tv-embedded-bar \(max-width: 759px\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    expect(narrow).toMatch(/\.label\s*\{[^}]*clip-path:\s*inset\(50%\)/);
+    expect(narrow).not.toMatch(/display:\s*none/);
   });
 });

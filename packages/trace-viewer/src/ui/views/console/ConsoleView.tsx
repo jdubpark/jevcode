@@ -148,6 +148,10 @@ export function ConsoleView({ active }: ViewProps) {
     paddingStart: LOG_PADDING_TOP_PX,
     paddingEnd: LOG_PADDING_BOTTOM_PX,
     ...spineVirtualOptions(follow && active),
+    // Row measurements run in the next frame, not inside the ResizeObserver delivery. Measured inside it, a size change
+    // while following re-lays out the rows in the same delivery, and Chromium reports "ResizeObserver loop completed
+    // with undelivered notifications" as a console error (the Electron main-window smoke, lane 03 D-6).
+    useAnimationFrameWithResizeObserver: true,
   });
 
   // Coalesced per frame: remember the top row (drift), and let the reader's own scroll turn Live off and on.

@@ -3,7 +3,6 @@ import type {
   ChangeUnit,
   Decision,
   EvidenceFact,
-  JevDecisionLog,
   NormalizedAgentEvent,
   StructuredDecision,
 } from "@jevcode/contracts";
@@ -77,6 +76,48 @@ import type {
 
 const SYNC_DEBOUNCE_MS = 600;
 
+/**
+ * A sync pass yields to the event loop once it has run this long without a break, so IPC, the renderer's rows
+ * requests among it, is answered during a long pass. Spec §6.1 caps a synchronous block at 50 ms (lane 03 PL-2).
+ */
+const SYNC_SLICE_MS = 20;
+
+/** Thrown by a pass's pace() once its session is stopped: the pass ends there and writes nothing more. */
+class PassStopped extends Error {
+  constructor() {
+    super("session stopped during the sync pass");
+  }
+}
+
+interface Slicer {
+  /**
+   * Yields (setImmediate) when the current slice has run SYNC_SLICE_MS or longer, calling beforeYield first. Then
+   * throws PassStopped if the session has been stopped, whether during this yield or during an earlier await.
+   */
+  pace(): Promise<void>;
+  /** How many times pace() has yielded. */
+  readonly yields: number;
+}
+
+function createSlicer(isStopped: () => boolean, beforeYield: () => void, sliceMs = SYNC_SLICE_MS): Slicer {
+  let sliceStart = performance.now();
+  let yields = 0;
+  return {
+    async pace() {
+      if (performance.now() - sliceStart >= sliceMs) {
+        beforeYield();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        yields += 1;
+        sliceStart = performance.now();
+      }
+      if (isStopped()) throw new PassStopped();
+    },
+    get yields() {
+      return yields;
+    },
+  };
+}
+
 const RESUME_BUDGET = 3;
 
 interface ActiveSession {
@@ -142,16 +183,13 @@ export class PipelineRuntime {
     let adapterKind: ActiveSession["adapterKind"] = "none";
 
     if (mode === "mock") {
-      const script = input.mockScript ?? defaultMockScript(input);
+      const script = input.mockScript ?? this.opts.mockScriptFor?.(input) ?? defaultMockScript(input);
       adapter = new MockAgentAdapter(script, {
         entryDelayMs: 1,
         threadId: input.mockThreadId,
         hooks: {
           onRecord: (record) => {
             this.ingestRecord(sessionId, record);
-          },
-          onTerminal: (data) => {
-            this.opts.terminal?.data(sessionId, data);
           },
         },
       });
@@ -165,16 +203,13 @@ export class PipelineRuntime {
         adapter = codex;
         adapterKind = "codex";
       } else if (mode === "auto") {
-        const script = input.mockScript ?? defaultMockScript(input);
+        const script = input.mockScript ?? this.opts.mockScriptFor?.(input) ?? defaultMockScript(input);
         adapter = new MockAgentAdapter(script, {
           entryDelayMs: 1,
           threadId: input.mockThreadId,
           hooks: {
             onRecord: (record) => {
               this.ingestRecord(sessionId, record);
-            },
-            onTerminal: (data) => {
-              this.opts.terminal?.data(sessionId, data);
             },
           },
         });
@@ -225,7 +260,7 @@ export class PipelineRuntime {
       prompt: input.prompt,
       adapter,
       adapterKind,
-      coordinator: new PipelineCoordinator({ stores }),
+      coordinator: new PipelineCoordinator({ stores, onRebuildError: (error) => this.log(`pipeline rebuild failed (retried on the next sync): ${String(error)}`) }),
       client: this.opts.jevClient ?? createJevClient(),
       facts: [],
       unitState: new Map(),
@@ -348,7 +383,7 @@ export class PipelineRuntime {
       }
       this.recordTelemetry(session, "fact_count", {});
       session.facts.push(fact);
-      session.coordinator.ingest(fact);
+      this.ingestIntoCoordinator(session, fact);
       if (fact.type === "file_changed") this.notifyRepoFilesChanged(session, fact.path);
       this.scheduleSync(session);
       return;
@@ -358,11 +393,7 @@ export class PipelineRuntime {
       this.opts.db.appendAgentEvent(sessionId, event);
       this.recordTelemetry(session, "agent_event_count", {});
       this.opts.emit(MainToRendererChannels.agentEvent, event);
-      const terminalLine = formatAgentEventForTerminal(event);
-      if (terminalLine !== null) {
-        this.opts.terminal?.data(sessionId, terminalLine);
-      }
-      session.coordinator.ingest(event);
+      this.ingestIntoCoordinator(session, event);
       this.observeAgentEventForEvidence(session, event);
       this.applyTerminalAgentState(session, event);
       this.scheduleSync(session);
@@ -372,7 +403,7 @@ export class PipelineRuntime {
       const decision = record as Decision;
       const wasOpen = session.openDecisions.has(decision.id);
       this.opts.db.upsertDecision(decision);
-      session.coordinator.ingest(decision);
+      this.ingestIntoCoordinator(session, decision);
       if (decision.status === "open" && !wasOpen) {
         session.openDecisions.add(decision.id);
         this.opts.emit(MainToRendererChannels.decisionOpen, {
@@ -408,11 +439,28 @@ export class PipelineRuntime {
       return;
     }
     if (SemanticEventSchema.safeParse(record).success) {
-      session.coordinator.ingest(record);
+      this.ingestIntoCoordinator(session, record);
       this.scheduleSync(session);
       return;
     }
     this.log(`session ${sessionId}: dropped unrecognized record`);
+  }
+
+  /**
+   * The coordinator keeps a record whose ingest flushed a window and threw in that window's rebuild, and runs the
+   * rebuild again at the next flush (scheduleSync). So the failure is logged here and the record's other steps still
+   * run: agent_completed still ends the turn, a decision still opens, an answered decision still resumes the agent
+   * (lane 03 fix wave I-2).
+   */
+  private ingestIntoCoordinator(session: ActiveSession, record: PipelineRecord): void {
+    try {
+      session.coordinator.ingest(record);
+    } catch (error) {
+      session.ingestFailures += 1;
+      this.log(
+        `session ${session.sessionId}: rebuild failed while ingesting ${recordType(record as IngestibleRecord)}; the record is kept and the next sync retries: ${String(error)}`,
+      );
+    }
   }
 
   ingestPipelineRecord(sessionId: string, record: PipelineRecord): void {
@@ -513,10 +561,6 @@ export class PipelineRuntime {
       // ingestRecord, which would rerun the terminal transition.
       this.opts.db.appendAgentEvent(sessionId, failed);
       this.opts.emit(MainToRendererChannels.agentEvent, failed);
-      this.opts.terminal?.data(
-        sessionId,
-        "[agent] failed: resume budget exhausted",
-      );
       this.emitAgentState(session);
       this.emitSessionState(sessionId);
       return;
@@ -600,7 +644,7 @@ export class PipelineRuntime {
       ts: this.nowIso(),
     };
     this.opts.db.upsertDecision(answered);
-    session.coordinator.ingest(answered);
+    this.ingestIntoCoordinator(session, answered);
     session.openDecisions.delete(decision.id);
     this.recordTelemetry(session, "decision_answered", {});
     this.opts.emit(MainToRendererChannels.decisionResolved, {
@@ -641,7 +685,7 @@ export class PipelineRuntime {
       ts: this.nowIso(),
     };
     this.opts.db.upsertDecision(delegated);
-    session.coordinator.ingest(delegated);
+    this.ingestIntoCoordinator(session, delegated);
     session.openDecisions.delete(decision.id);
     this.recordTelemetry(session, "decision_delegated", {});
     this.opts.emit(MainToRendererChannels.decisionResolved, {
@@ -825,9 +869,7 @@ export class PipelineRuntime {
           this.opts.db.setExecutionClaim(session.sessionId, null);
           this.emitAgentState(session);
           this.emitSessionState(session.sessionId);
-          void this.syncSession(session).then(() => {
-            this.emitCompletionSurface(session);
-          });
+          void this.syncSession(session, { completing: true });
         }
         break;
       case "agent_failed":
@@ -878,9 +920,7 @@ export class PipelineRuntime {
       this.opts.db.setExecutionClaim(session.sessionId, null);
       this.emitAgentState(session);
       this.emitSessionState(session.sessionId);
-      void this.syncSession(session).then(() => {
-        this.emitCompletionSurface(session);
-      });
+      void this.syncSession(session, { completing: true });
       return;
     }
     if (
@@ -946,7 +986,8 @@ export class PipelineRuntime {
     }, SYNC_DEBOUNCE_MS);
   }
 
-  private syncSession(session: ActiveSession): Promise<void> {
+  /** completing: the turn ended; the pass ends with the completion surface (lane 03 D-6). */
+  private syncSession(session: ActiveSession, options: { completing?: boolean } = {}): Promise<void> {
     // Serialize syncs per session: the 600ms debounce, answerDecision, and
     // completion paths can all request a sync nearly simultaneously, and a
     // concurrent second pass would re-derive the same Jev calls and emit
@@ -954,14 +995,48 @@ export class PipelineRuntime {
     if (session.stopping) {
       return session.syncChain;
     }
-    session.syncChain = session.syncChain.then(() => this.runSync(session));
+    const completing = options.completing === true;
+    session.syncChain = session.syncChain.then(() => this.runSync(session, completing));
     return session.syncChain;
   }
 
-  private async runSync(session: ActiveSession): Promise<void> {
+  /**
+   * One sync pass. Each write commits on its own as it happens, and each committed trace row is hinted at once
+   * (observeTraceAppends): the Jev stage stores a unit's decisions and labels as its answers arrive, before the next
+   * unit's client call. Lane 03 D-6 ran the pass in two transactions and deferred the Jev writes past the client's
+   * last await; PL-2 dropped both (D-6 review I-1, I-2). A rollback undid rows that the stores' and this runtime's
+   * caches still counted as written, so later passes skipped them for good, and a networked client held every live
+   * decision back until its last call. The transactions saved about 20 ms of commits at a turn end.
+   *
+   * Errors: a throw ends the pass with the earlier rows committed. Every cache that lets a later pass skip work (the
+   * stores' last payloads, unitState, surfaces, completionEmitted) is updated only after the writes it stands for,
+   * so the next pass writes what this one did not.
+   *
+   * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions at each slice that yields and once after
+   * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below).
+   *
+   * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
+   * surface, and once before the decision, validation and completion steps, which run together. When the slice is
+   * spent it sends unsent Jev decisions to the debug panel and yields (setImmediate), so no block of a turn end's pass
+   * runs past spec §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev
+   * client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
+   * stage, across their own yields; the snapshot is read again before the decision step only if the surfaces yielded.
+   * Each check also ends the pass (PassStopped) once the session is stopped, so a suspended pass writes nothing after
+   * a stop and never interrupts a stopped adapter.
+   */
+  private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
+    let jevUnsent = false;
+    const sendJevDebug = (): void => {
+      if (!jevUnsent || session.stopping) return;
+      jevUnsent = false;
+      this.emitJevDebug(session);
+    };
+    const slicer = createSlicer(() => session.stopping, sendJevDebug);
+    const pace = (): Promise<void> => slicer.pace();
     try {
       session.coordinator.flush();
+      await pace();
       const snapshot = session.coordinator.snapshot();
       const ctx = this.buildUiContext(session, snapshot);
       const changedUnits = snapshot.units.filter((unit) => {
@@ -974,8 +1049,9 @@ export class PipelineRuntime {
           previous.version !== version
         );
       });
+      let current = snapshot;
       if (changedUnits.length > 0) {
-        const result = await runJevStage({
+        const stage = runJevStage({
           db: this.opts.db,
           coordinator: session.coordinator,
           client: session.client,
@@ -988,42 +1064,75 @@ export class PipelineRuntime {
           resolveSlug: session.playbackLabels
             ? (files, symbols) => session.playbackLabels?.match(files, symbols)
             : undefined,
-          onJevLog: (log) => this.emitJevDebug(session, log),
+          snapshot,
+          pace,
+          onJevLog: () => {
+            jevUnsent = true;
+          },
           onRedaction: (count) => {
             this.recordTelemetry(session, "redaction", { count });
           },
         });
-        this.syncOutcomes(session, result, ctx);
+        let result: Awaited<typeof stage>;
+        try {
+          result = await stage;
+        } finally {
+          sendJevDebug();
+        }
+        await pace();
+        // Read after the stage's label writes. Surfaces, decision surfaces and telemetry change none of the
+        // coordinator's stores, so this read serves the steps below unless a decision interrupts the agent.
+        current = session.coordinator.snapshot();
+        const yieldsAtRead = slicer.yields;
+        await this.syncOutcomes(session, result, ctx, current, pace);
+        await pace();
+        if (slicer.yields !== yieldsAtRead) current = session.coordinator.snapshot();
       }
-      this.emitDecisions(session, ctx);
-      this.emitValidations(session);
+      if (this.emitDecisions(session, ctx, current)) current = session.coordinator.snapshot();
+      this.emitValidations(session, current);
+      if (completing) this.emitCompletionSurface(session, current);
       this.emitSessionState(session.sessionId);
     } catch (error) {
+      // Stopped mid-pass: the stop owns the session from here.
+      if (error instanceof PassStopped) return;
       this.log(`sync failed for ${session.sessionId}: ${String(error)}`);
+      // As before, a turn end shows its completion surface even when the sync failed.
+      if (completing) {
+        try {
+          this.emitCompletionSurface(session);
+        } catch (surfaceError) {
+          this.log(`completion surface failed for ${session.sessionId}: ${String(surfaceError)}`);
+        }
+      }
     }
   }
 
-  private syncOutcomes(
+  private async syncOutcomes(
     session: ActiveSession,
     result: Awaited<ReturnType<typeof runJevStage>>,
     ctx: UiStageContext,
-  ): void {
-    const snapshot = session.coordinator.snapshot();
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
+    pace: () => Promise<void>,
+  ): Promise<void> {
     for (const outcome of result.outcomes) {
+      await pace();
       const unit = snapshot.units.find(
         (candidate) => candidate.id === outcome.unitId,
       );
       if (unit === undefined) continue;
-      const core = coreSignature(unit);
-      session.unitState.set(outcome.unitId, {
-        ...outcome.state,
-        coreSignature: core,
-      });
+      // Recorded once the unit's rows are written: a throw before then leaves the unit to the next pass.
+      const settle = (): void => {
+        session.unitState.set(outcome.unitId, {
+          ...outcome.state,
+          coreSignature: coreSignature(unit),
+        });
+      };
       this.opts.emit(MainToRendererChannels.changeUnitUpsert, {
         sessionId: session.sessionId,
         changeUnit: unit,
       });
       if (!outcome.state.shouldSurface || outcome.intent === undefined) {
+        settle();
         continue;
       }
       const linkedDecision = outcome.intent.representation === "decision"
@@ -1035,20 +1144,24 @@ export class PipelineRuntime {
           ctx.decisions[0]
         : undefined;
       if (outcome.intent.representation === "decision" && linkedDecision === undefined) {
+        settle();
         continue;
       }
       const surfaceId =
         linkedDecision !== undefined
           ? surfaceIdForDecision(linkedDecision.id)
           : surfaceIdForUnit(unit.id);
-      if (session.dismissed.has(surfaceId)) continue;
+      if (session.dismissed.has(surfaceId)) {
+        settle();
+        continue;
+      }
       const spec =
         linkedDecision !== undefined
           ? compileDecisionSurface(linkedDecision, ctx)
           : compileChangeUnitSurface(unit, outcome.intent, ctx);
       const hash = specHash(spec);
       const previous = session.surfaces.get(surfaceId);
-      session.surfaces.set(surfaceId, {
+      const surface: SurfaceRecord = {
         surfaceId,
         spec,
         specHash: hash,
@@ -1056,7 +1169,7 @@ export class PipelineRuntime {
         intent: outcome.intent,
         renderedAt: this.nowIso(),
         replaySlug: outcome.replaySlug,
-      });
+      };
       this.opts.db.upsertUiIntent(session.sessionId, {
         changeUnitId: unit.id,
         intent: outcome.intent,
@@ -1086,6 +1199,9 @@ export class PipelineRuntime {
           renderMode: outcome.intent.renderMode,
         });
       }
+      // After the surface's rows: a surface the runtime holds is patched next time, without a surface_shown row.
+      session.surfaces.set(surfaceId, surface);
+      settle();
     }
   }
 
@@ -1107,19 +1223,21 @@ export class PipelineRuntime {
     };
   }
 
-  private emitCompletionSurface(session: ActiveSession): void {
+  private emitCompletionSurface(
+    session: ActiveSession,
+    current?: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): void {
     if (session.stopping || session.completionEmitted) return;
-    session.completionEmitted = true;
-    const snapshot = session.coordinator.snapshot();
+    const snapshot = current ?? session.coordinator.snapshot();
     const ctx = this.buildUiContext(session, snapshot);
     const spec = compileCompletionSurface(ctx);
     const hash = specHash(spec);
-    session.surfaces.set(COMPLETION_SURFACE_ID, {
+    const surface: SurfaceRecord = {
       surfaceId: COMPLETION_SURFACE_ID,
       spec,
       specHash: hash,
       renderedAt: this.nowIso(),
-    });
+    };
     this.opts.db.upsertUiSnapshot(session.sessionId, {
       surfaceId: COMPLETION_SURFACE_ID,
       spec,
@@ -1134,23 +1252,31 @@ export class PipelineRuntime {
       confidence: 1,
       renderMode: "generic",
     });
+    // Marked after its rows: a throw above lets the turn end's catch, or a later call, write them.
+    session.surfaces.set(COMPLETION_SURFACE_ID, surface);
+    session.completionEmitted = true;
   }
 
-  private emitDecisions(session: ActiveSession, ctx: UiStageContext): void {
-    const snapshot = session.coordinator.snapshot();
+  /** Returns true when it interrupted the agent for a decision: the interrupt may ingest an agent event. */
+  private emitDecisions(
+    session: ActiveSession,
+    ctx: UiStageContext,
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): boolean {
+    let interrupted = false;
     for (const decision of snapshot.decisions) {
       if (decision.status === "open" && session.openDecisions.has(decision.id)) {
         const surfaceId = surfaceIdForDecision(decision.id);
         const already = session.surfaces.has(surfaceId);
         if (!session.dismissed.has(surfaceId) && !already) {
           const spec = compileDecisionSurface(decision, ctx);
-          session.surfaces.set(surfaceId, {
+          const surface: SurfaceRecord = {
             surfaceId,
             spec,
             specHash: specHash(spec),
             changeUnitId: decision.affectedChangeUnits[0],
             renderedAt: this.nowIso(),
-          });
+          };
           this.opts.db.upsertUiSnapshot(session.sessionId, {
             surfaceId,
             changeUnitId: decision.affectedChangeUnits[0],
@@ -1161,6 +1287,8 @@ export class PipelineRuntime {
             surfaceId,
             spec,
           });
+          // After its row: a decision surface the runtime holds is not written again.
+          session.surfaces.set(surfaceId, surface);
         }
         if (
           this.opts.interruptAgentOnDecision !== false &&
@@ -1169,6 +1297,7 @@ export class PipelineRuntime {
           session.agentState !== "waiting_decision"
         ) {
           void session.adapter?.interrupt();
+          interrupted = true;
           session.agentState = "waiting_decision";
           session.interruptedForDecision = true;
           this.opts.db.setSessionState(session.sessionId, "waiting_decision");
@@ -1176,10 +1305,13 @@ export class PipelineRuntime {
         }
       }
     }
+    return interrupted;
   }
 
-  private emitValidations(session: ActiveSession): void {
-    const snapshot = session.coordinator.snapshot();
+  private emitValidations(
+    session: ActiveSession,
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): void {
     const fresh = snapshot.validations.filter(
       (validation) => !session.emittedValidationIds.has(validation.id),
     );
@@ -1193,7 +1325,8 @@ export class PipelineRuntime {
     });
   }
 
-  private emitJevDebug(session: ActiveSession, _log: JevDecisionLog): void {
+  /** The latest 50 Jev decisions, read and sent at a pass's yields and after its Jev stage (lane 03 PL-2). */
+  private emitJevDebug(session: ActiveSession): void {
     this.opts.emit(MainToRendererChannels.jevDebug, {
       sessionId: session.sessionId,
       decisions: this.opts.db.latestJevDecisions(session.sessionId, 50),
@@ -1377,37 +1510,6 @@ function buildDecisionInstruction(
   return `${decision.title} — the developer chose ${
     entries.length > 0 ? entries.join(", ") : "to delegate"
   }. Continue the task accordingly.`;
-}
-
-function formatAgentEventForTerminal(event: NormalizedAgentEvent): string | null {
-  switch (event.type) {
-    case "agent_message":
-      return `[agent] ${event.text.trim()}`;
-    case "command_started":
-      return `$ ${event.command}`;
-    case "command_completed":
-      return `(exit ${event.exitCode})`;
-    case "file_read":
-      return `read ${event.path}`;
-    case "file_changed":
-      return `changed ${event.path}`;
-    case "tool_started":
-      return `[tool] ${event.tool}`;
-    case "agent_completed":
-      return "[agent] completed";
-    case "agent_failed":
-      return `[agent] failed: ${event.error}`;
-    case "agent_interrupted":
-      return event.reason === "stop"
-        ? "[agent] stopped"
-        : event.reason === "steer"
-          ? "[agent] redirected"
-          : "[agent] paused";
-    case "approval_requested":
-      return `[approval] ${event.command}`;
-    default:
-      return null;
-  }
 }
 
 function recordType(record: IngestibleRecord): string {
