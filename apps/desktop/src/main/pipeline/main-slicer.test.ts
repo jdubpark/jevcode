@@ -89,6 +89,35 @@ describe("main slicer", () => {
     }
   });
 
+  it("does not wedge when a resumed task finishes or throws without yielding back: the next one runs a turn later", async () => {
+    const slicer = createMainSlicer();
+    const counter = turnCounter();
+    const ran: { task: string; turn: number }[] = [];
+    const finishes = (async () => {
+      await slicer.yield();
+      ran.push({ task: "finishes", turn: counter.turn });
+    })();
+    const throws = (async () => {
+      await slicer.yield();
+      ran.push({ task: "throws", turn: counter.turn });
+      throw new Error("pass failed");
+    })();
+    const yieldsBack = (async () => {
+      await slicer.yield();
+      ran.push({ task: "yields back", turn: counter.turn });
+      await slicer.yield();
+      ran.push({ task: "yields back, resumed", turn: counter.turn });
+    })();
+    const wedged = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the slicer wedged")), 2_000));
+    await Promise.race([Promise.all([finishes, throws.catch(() => undefined), yieldsBack]), wedged]);
+    counter.stop();
+    await expect(throws).rejects.toThrow("pass failed");
+    expect(ran.map((entry) => entry.task)).toEqual(["finishes", "throws", "yields back", "yields back, resumed"]);
+    // Each next task runs one event-loop turn after the previous one, whether that one finished, threw or yielded.
+    const turns = ran.map((entry) => entry.turn);
+    expect(turns.slice(1).map((turn, index) => turn - (turns[index] ?? 0))).toEqual([1, 1, 1]);
+  });
+
   it("resumes a yield in a later event-loop turn, in queue order", async () => {
     const slicer = createMainSlicer();
     const order: string[] = [];
