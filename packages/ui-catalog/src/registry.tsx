@@ -55,13 +55,23 @@ function childElementTypes(children: ReactNode): string[] {
   return types;
 }
 
-const catalogActions = Object.fromEntries(
+/**
+ * One ActionProvider handler per catalog action. Each forwards to the
+ * dispatcher the app shell registered with setActionDispatcher().
+ */
+export const catalogActionHandlers: Record<
+  string,
+  (params: Record<string, unknown>) => Promise<void>
+> = Object.fromEntries(
   CATALOG_ACTION_NAMES.map((name) => [
     name,
-    (params: unknown) =>
-      dispatchCatalogAction(name, (params ?? {}) as Record<string, unknown>),
+    (params?: Record<string, unknown>) =>
+      dispatchCatalogAction(name, params ?? {}),
   ]),
-) as unknown as Actions<typeof jevcodeCatalog>;
+);
+
+const catalogActions =
+  catalogActionHandlers as unknown as Actions<typeof jevcodeCatalog>;
 
 export const {
   registry,
