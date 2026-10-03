@@ -97,8 +97,10 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
   state.pendingAnswer = null;
   setDecisionUnits(state, decision.id, decision.affectedChangeUnits);
   const closes = decision.status === "answered" || decision.status === "delegated";
-  if (closes) turn.decisionAnswered = true;
   const existing = state.chapters.decisionSteps.get(decision.id);
+  // The turn stopped on a decision only when this row closes an open one or creates one already closed. A re-emit of a
+  // closed decision in a later turn says nothing about that turn (it would read "waiting" and its successor "resume").
+  if (closes && (existing === undefined || existing.status === "running")) turn.decisionAnswered = true;
   if (existing !== undefined) {
     const answerSeq = existing.decision?.answerSeq;
     const decidedSeq = existing.decision?.decidedSeq;
