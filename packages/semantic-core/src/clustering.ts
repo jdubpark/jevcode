@@ -38,7 +38,7 @@ interface TestRun {
   bucketIndex: number;
   /** The fact's 500ms batch window. */
   window: number;
-  /** The previous-run key: the trimmed command. */
+  /** Tells a command's first run in its bucket from a repeat: the trimmed command. */
   command: string;
   failed: boolean;
   hosts: string[];
@@ -901,24 +901,24 @@ export function clusterSession(input: SessionInput): SemanticProjection {
   }
 
   // SPEC §6.3 run attachment, per idle bucket and keyed on 500ms batch windows, never
-  // seq, so reordering facts within a bucket changes nothing (§6.1):
-  // - a failing run attaches to every unit with a file in its bucket;
-  // - a passing run attaches to the units changed since the previous run of the same
-  //   command (from the bucket start when the command has not run yet in the bucket),
-  //   and to every unit whose latest attached run of the bucket failed (red to green,
-  //   flaky rerun). "Latest" is by window; a failure in that window wins.
-  // Every run of a window is decided from earlier windows only. Attaching every run to
-  // every unit in a long bucket grew each unit by every run (PL-1).
-  const bucketFilesByIndex = new Map<number, Set<string>>();
+  // seq, so reordering facts within a bucket changes nothing (§6.1). A run, passing or
+  // failing, reaches the units with a file changed in its range:
+  // - when its command already ran earlier in the bucket, the windows after the
+  //   previous run of any command, up to and including its own;
+  // - on its command's first run in the bucket, the windows after the last run that
+  //   came before the most recent change. With edits since the previous run that is
+  //   the same range; with none, it is the batch the previous run covered.
+  // A passing run also reaches every unit whose latest attached run of the bucket
+  // failed (red to green, flaky rerun); "latest" is by window, and a failure in that
+  // window wins. Every run of a window is decided from earlier windows only. Attaching
+  // runs bucket-wide grew each unit by every run (PL-1).
   const bucketWindowFiles = new Map<number, Map<number, Set<string>>>();
   for (let index = 0; index < buckets.length; index += 1) {
     const bucket = buckets[index];
     if (bucket === undefined) continue;
-    const files = new Set<string>();
     const windows = new Map<number, Set<string>>();
     for (const entry of bucket.facts) {
       for (const file of factFiles(entry.fact)) {
-        files.add(file);
         let windowFiles = windows.get(entry.batchId);
         if (windowFiles === undefined) {
           windowFiles = new Set();
@@ -927,7 +927,6 @@ export function clusterSession(input: SessionInput): SemanticProjection {
         windowFiles.add(file);
       }
     }
-    bucketFilesByIndex.set(index, files);
     bucketWindowFiles.set(index, windows);
   }
 
@@ -964,18 +963,30 @@ export function clusterSession(input: SessionInput): SemanticProjection {
     runsByBucket.set(testRun.bucketIndex, bucketRuns);
   }
   for (const [bucketIndex, bucketRuns] of runsByBucket) {
-    const bucketFiles = bucketFilesByIndex.get(bucketIndex) ?? new Set<string>();
     const windowFiles = bucketWindowFiles.get(bucketIndex) ?? new Map<number, Set<string>>();
     const runsByWindow = new Map<number, TestRun[]>();
-    const windowsByCommand = new Map<string, number[]>();
+    const firstWindowByCommand = new Map<string, number>();
     for (const testRun of bucketRuns) {
       const inWindow = runsByWindow.get(testRun.window) ?? [];
       inWindow.push(testRun);
       runsByWindow.set(testRun.window, inWindow);
-      const commandWindows = windowsByCommand.get(testRun.command) ?? [];
-      commandWindows.push(testRun.window);
-      windowsByCommand.set(testRun.command, commandWindows);
+      const first = firstWindowByCommand.get(testRun.command);
+      if (first === undefined || testRun.window < first) firstWindowByCommand.set(testRun.command, testRun.window);
     }
+    const latestRunBefore = (bound: number): number => {
+      let latest = Number.NEGATIVE_INFINITY;
+      for (const window of runsByWindow.keys()) if (window < bound && window > latest) latest = window;
+      return latest;
+    };
+    const rangeStart = (testRun: TestRun): number => {
+      const first = firstWindowByCommand.get(testRun.command);
+      if (first !== undefined && first < testRun.window) return latestRunBefore(testRun.window);
+      let latestChange = Number.NEGATIVE_INFINITY;
+      for (const window of windowFiles.keys()) {
+        if (window <= testRun.window && window > latestChange) latestChange = window;
+      }
+      return latestRunBefore(latestChange);
+    };
     const latestRun = new Map<string, { window: number; failed: boolean }>();
     const noteRun = (unitId: string, window: number, failed: boolean): void => {
       const latest = latestRun.get(unitId);
@@ -986,16 +997,13 @@ export function clusterSession(input: SessionInput): SemanticProjection {
       }
     };
     const hostsFor = (testRun: TestRun): string[] => {
-      if (testRun.failed) return unitsTouching(bucketFiles);
-      let previousWindow = Number.NEGATIVE_INFINITY;
-      for (const window of windowsByCommand.get(testRun.command) ?? []) {
-        if (window < testRun.window && window > previousWindow) previousWindow = window;
-      }
+      const start = rangeStart(testRun);
       const changed = new Set<string>();
       for (const [window, files] of windowFiles) {
-        if (window <= previousWindow || window > testRun.window) continue;
+        if (window <= start || window > testRun.window) continue;
         for (const file of files) changed.add(file);
       }
+      if (testRun.failed) return unitsTouching(changed);
       return unitsTouching(changed, (id) => latestRun.get(id)?.failed === true);
     };
     for (const window of [...runsByWindow.keys()].sort((a, b) => a - b)) {
