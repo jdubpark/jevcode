@@ -353,6 +353,14 @@ machine fell to a 30 Hz compositor under load), so its frame-based and paint-bas
 Runs on 2026-10-03, a shared development Mac under multi-lane load, load average 9.5–17.4 (`uptime` before each run:
 9.94, 9.52, 17.39 for the one-minute figure). The numbers are upper bounds for a quiet machine.
 
+Under CPU load (lane 03 D-6 minors, 2026-10-03): the dev-host selftest drift stayed at 0 px (budget <= 1 px) in all 8 A/B runs,
+with `useAnimationFrameWithResizeObserver` on (A) and off (B), at 4 busy loops (3 runs each, one-minute load 8.1 to 32.8
+before the runs) and at 14 busy loops, one per core (1 run each, load 19.4 and 25.2). Append p95 was 14.8 to 16.8 ms
+against <= 150 ms in every run. Scroll dropped 0.00% in 7 runs; B at 14 busy loops dropped 5.26% against <= 5% (A: 0.00%).
+One earlier run at 14 busy loops, load 15.6, read 37 px drift (A, selftest only) and did not reproduce in 5 further runs; it
+looks like a transient stall of the headless frame loop, not the rAF-deferred measurement, which B does not beat. Run with
+`JEVCODE_SMOKE_DRIFT_SOFT=1` to log an over-budget drift (`DRIFT_OVER_BUDGET`) and still reach the perf step.
+
 The Console's per-frame drift anchor (a `getBoundingClientRect` of the top row and the scroller on every scroll frame)
 runs only when diagnostics are enabled, that is in the dev host's selftest. The runs above measured it; production
 frames since the lane 02b fix wave (triage t1) do no layout read in the frame handler, so the scroll result is an upper
