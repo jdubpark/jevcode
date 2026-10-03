@@ -88,7 +88,7 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
       <div className={styles.headRow}>
         <Icon name="view-map" size={16} />
         <span className={styles.headline}>{headline.count}</span>
-        {/* The row never wraps; in a narrow Map column the languages give way with an ellipsis, so the toggle fits. */}
+        {/* Without the session toggle the row never wraps: in a narrow column the languages give way with an ellipsis. */}
         {headline.languages === null ? null : (
           <span className={styles.languages} title={headline.languages}>
             {headline.languages}

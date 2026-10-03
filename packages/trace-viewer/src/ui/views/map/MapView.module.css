@@ -37,11 +37,16 @@
 
 .headRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 4px 8px;
   min-height: 22px;
   white-space: nowrap;
+}
+
+/* The session overlay's toggle and legend (lane 07 S-5) make the row too long for a narrow Map column, so it wraps
+   them onto a second line. Without them the row never wraps and the languages give way (lane 03 fix wave minor 2). */
+.headRow:has(.sessionToggle) {
+  flex-wrap: wrap;
 }
 
 .headline {

@@ -707,6 +707,9 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(rule("languages")).toMatch(/text-overflow: ellipsis;/);
     expect(rule("toggle")).toMatch(/flex: none;/);
     expect(rule("headline")).toMatch(/flex: none;/);
+    // Only the session overlay's toggle and legend wrap the row (lane 07 S-5); the row on its own never does.
+    expect(rule("headRow")).not.toMatch(/flex-wrap: wrap;/);
+    expect(css).toMatch(/\n\.headRow:has\(\.sessionToggle\) \{\s*flex-wrap: wrap;\s*\}/);
   });
 
   it("each header's Overview toggle controls its own narrative, and only while it is open", async () => {
