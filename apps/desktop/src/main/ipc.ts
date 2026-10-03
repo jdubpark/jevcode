@@ -31,6 +31,7 @@ import {
   applyPreferencesPatch,
   readAgentPreferences,
 } from "../shared/prefs.js";
+import type { AgentPreferences, PreferencesView } from "../shared/prefs.js";
 import { dispatchAction } from "./pipeline/action-dispatcher.js";
 import type { InstructionRouter } from "./pipeline/instruction-router.js";
 import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
@@ -268,8 +269,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     };
   });
 
+  /** Spec §10 disclosure: the settings note reads what leaves the machine from main's switch. */
+  const withNarratorAvailability = (prefs: AgentPreferences): PreferencesView =>
+    deps.narrator === undefined ? prefs : { ...prefs, narratorAvailability: deps.narrator.availability() };
+
   handle(RendererToMainLocalChannels.preferencesGet, () => {
-    return readAgentPreferences((key) => deps.db.getPreference(key));
+    return withNarratorAvailability(readAgentPreferences((key) => deps.db.getPreference(key)));
   });
 
   handle(RendererToMainLocalChannels.preferencesSet, (patch) => {
@@ -281,8 +286,9 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
     deps.db.setPreference(EXPLAIN_WITH_MODEL_PREF_KEY, next.explainWithModel);
     deps.narrator?.setEnabled(next.explainWithModel);
-    sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, next);
-    return next;
+    const view = withNarratorAvailability(next);
+    sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, view);
+    return view;
   });
 
   handle(RendererToMainChannels.sessionStart, async ({ repoId, prompt, model, reasoningEffort, approvalMode }) => {

@@ -780,6 +780,8 @@ export interface ExplainerRegistry {
   filesChanged(repoRoot: string, paths: readonly string[]): void;
   /** Ignored unless `repoRoot` is the open repo, so a renderer cannot start a scan elsewhere. */
   rescan(repoRoot: string): void;
+  /** R4, spec E15: the narrator switch reaches the active stage, whichever repo it belongs to. */
+  setNarrator(narrator: NarratorClient | null): void;
   get(repoRoot: string): ExplainerStage | undefined;
   dispose(): void;
 }
@@ -821,6 +823,7 @@ export function createExplainerRegistry(
     sessionStarted: (repoRoot, sessionId) => ensure(repoRoot).onSessionStarted(sessionId),
     filesChanged: (repoRoot, paths) => existing(repoRoot)?.onFilesChanged(paths),
     rescan: (repoRoot) => existing(repoRoot)?.rescan(),
+    setNarrator: (narrator) => active?.stage.setNarrator(narrator),
     get: existing,
     dispose: release,
   };

@@ -3,6 +3,7 @@ import { OverviewSnapshotSchema } from "@jevcode/contracts";
 import { createFakeNarratorClient, NARRATOR_MODEL } from "@jevcode/jev-router";
 import type { ComponentBrief, OverviewNarrativeInput } from "@jevcode/jev-router";
 import { openDb } from "@jevcode/storage";
+import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { NarratorAvailability } from "../../shared/narrator-log.js";
@@ -12,9 +13,11 @@ import type { NarrationContext, NarrationSeam, OverviewView } from "./explainer-
 const REPO = "/work/seam-fixture";
 const hex = (n: number, width: number): string => n.toString(16).padStart(width, "0");
 const seams: NarrationSeam[] = [];
+const dbs: JevcodeDb[] = [];
 
 afterEach(() => {
   for (const seam of seams.splice(0)) seam.dispose();
+  for (const db of dbs.splice(0)) db.close();
 });
 
 function component(index: number): Component {
@@ -80,9 +83,11 @@ function viewOf(components: Component[]): OverviewView {
 
 function contextOf(): { ctx: NarrationContext; refreshes: () => number } {
   let refreshes = 0;
+  const db = openDb({ dbPath: ":memory:" });
+  dbs.push(db);
   const ctx: NarrationContext = {
     repoRoot: REPO,
-    db: openDb({ dbPath: ":memory:" }),
+    db,
     now: () => Date.now(),
     schedule: {
       setTimeout: (fn, ms) => setTimeout(fn, ms),

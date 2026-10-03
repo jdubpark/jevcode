@@ -226,7 +226,10 @@ export const PreferencesSetPayloadSchema = z
 
 export type PreferencesSetPayload = z.infer<typeof PreferencesSetPayloadSchema>;
 
-export const PreferencesUpdatedPayloadSchema = AgentPreferencesSchema;
+/** PreferencesView: the stored preferences plus main's read-only narrator availability. */
+export const PreferencesUpdatedPayloadSchema = AgentPreferencesSchema.extend({
+  narratorAvailability: z.enum(NARRATOR_AVAILABILITY).optional(),
+});
 
 export type PreferencesUpdatedPayload = z.infer<
   typeof PreferencesUpdatedPayloadSchema

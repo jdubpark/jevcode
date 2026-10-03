@@ -6,11 +6,12 @@ import type { IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
 import { deserializeIpcError } from "../shared/api.js";
-import { registerIpcHandlers } from "./ipc.js";
+import { registerIpcHandlers, setMainWindow } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { createNarratorCallLog } from "./pipeline/narrator-call-log.js";
 import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
+import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
@@ -238,6 +239,7 @@ describe("explainer wiring (console-explainer M-6)", () => {
       sessionStarted: (repoRoot, sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
       filesChanged: () => {},
       rescan: (repoRoot) => void calls.push(`rescan ${repoRoot}`),
+      setNarrator: () => {},
       get: () => undefined,
       dispose: () => {},
     };
@@ -350,6 +352,33 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
     expect(setEnabled).toHaveBeenCalledWith(false);
     expect(db.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)).toBe(false);
     db.close();
+  });
+
+  it("preferences:get, the preferences:set reply and the preferences:updated broadcast carry the narrator availability", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    // No key: the switch never builds a client and never reads process.env.
+    const narrator = createNarratorSwitch({ enabled: true, env: {} });
+    const send = vi.fn();
+    setMainWindow({ isDestroyed: () => false, webContents: { send } } as unknown as Parameters<typeof setMainWindow>[0]);
+    try {
+      const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), narrator });
+      await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({
+        explainWithModel: true,
+        narratorAvailability: "off_no_key",
+      });
+      await expect(handlers.get("preferences:set")!(TRUSTED_EVENT, { explainWithModel: false })).resolves.toMatchObject({
+        explainWithModel: false,
+        narratorAvailability: "off_setting",
+      });
+      expect(send).toHaveBeenCalledWith(
+        "preferences:updated",
+        expect.objectContaining({ explainWithModel: false, narratorAvailability: "off_setting" }),
+      );
+    } finally {
+      setMainWindow(null);
+      db.close();
+    }
   });
 
   it("debug:listNarratorCalls returns availability and the newest calls first", async () => {

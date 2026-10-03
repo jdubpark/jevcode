@@ -6,7 +6,7 @@ import {
   DEFAULT_AGENT_PREFERENCES,
   agentSummaryLabel,
 } from "../shared/prefs.js";
-import type { AgentPreferences } from "../shared/prefs.js";
+import type { PreferencesView } from "../shared/prefs.js";
 import { getBridge } from "./bridge.js";
 import { traceOpenErrorMessage } from "./trace-open-error.js";
 import { AgentSettings } from "./components/AgentSettings.js";
@@ -28,7 +28,7 @@ export function App() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [activePrompt, setActivePrompt] = useState("");
   const [traceError, setTraceError] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<AgentPreferences>(
+  const [prefs, setPrefs] = useState<PreferencesView>(
     DEFAULT_AGENT_PREFERENCES,
   );
 
@@ -126,7 +126,11 @@ export function App() {
         <aside className="sidebar">
           <RecentRepos onSelect={(path) => void bridge.repo.open(path)} />
           <SessionSwitcher repo={repo} sessionState={sessionState} />
-          <AgentSettings prefs={prefs} onSet={(patch) => void bridge.prefs.set(patch)} />
+          <AgentSettings
+            prefs={prefs}
+            narratorAvailability={prefs.narratorAvailability}
+            onSet={(patch) => void bridge.prefs.set(patch)}
+          />
         </aside>
         <main className="workspace-column">
           {traceError !== null ? (
