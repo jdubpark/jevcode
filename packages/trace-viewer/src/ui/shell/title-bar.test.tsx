@@ -353,6 +353,37 @@ describe("TitleBar", () => {
     expect(within(screen.getByRole("group", { name: "Follow" })).getByRole("button", { name: "Review" }).getAttribute("title")).toBeNull();
   });
 
+  it.each(["full", "embedded"] as const)(
+    "the %s bar's Brief toggle follows the panel on the Map: a selected component unpresses it and lets it pin the Brief (final review E I-1)",
+    (chrome) => {
+      const map: ViewDefinition = { kind: "map", label: "Map", icon: "view-map", Component: () => null };
+      const h = renderHarness(<TitleBar onRetry={noop} chrome={chrome} />, foldFixture("oauth"), {
+        views: [map, hybrid],
+        state: { view: "map" },
+      });
+      const toggle = screen.getByRole("button", { name: "Brief" });
+      // Nothing selected: the Brief already shows, so the toggle is pressed and has nothing to do.
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      expect(toggle.hasAttribute("disabled")).toBe(true);
+
+      // A selected component takes the panel (the Component Inspector): unpressed, and it can pin the Brief over it.
+      act(() => h.store.dispatch({ type: "map/select", componentId: "cmp_0123456789ab" }));
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+      expect(toggle.hasAttribute("disabled")).toBe(false);
+      fireEvent.click(toggle);
+      expect(h.store.get().brief).toBe(true);
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      fireEvent.click(toggle);
+      expect(h.store.get().brief).toBe(false);
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+
+      // Off the Map the component selection no longer holds the panel.
+      act(() => h.store.dispatch({ type: "view/switch", view: "hybrid" }));
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      expect(toggle.hasAttribute("disabled")).toBe(true);
+    },
+  );
+
   it("hides the words only visually below a 760 px embedded bar, never with display: none (names must survive)", () => {
     const css = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "TitleBar.module.css"), "utf8");
     expect(css).toMatch(/\.bar\[data-chrome="embedded"\]\s*\{[^}]*container:\s*tv-embedded-bar \/ inline-size;/);
