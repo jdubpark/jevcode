@@ -6,6 +6,8 @@ export const PERF = {
   overviewPaint: "tv:overview-paint",
   viewSwitch: "tv:view-switch",
   liveTick: "tv:live-tick",
+  /** Spec 2026-10-02 §11: row stored (ROWS_RELEASED_MARK) → Console line painted. */
+  consoleAppend: "tv:console-append",
 } as const;
 
 /**
@@ -81,4 +83,30 @@ export function markNextFrame(name: string): () => void {
     performance.mark(name);
   });
   return () => cancelAnimationFrame(frame);
+}
+
+/**
+ * Like measureAfterPaint, but from the OLDEST pending `startMark`, and clears them all: when several releases land
+ * before one commit, the append latency is the wait of the oldest row (spec 2026-10-02 §11 "row stored → line painted").
+ */
+export function measureFromFirstAfterPaint(name: string, startMark: string): void {
+  if (
+    typeof performance === "undefined" ||
+    typeof requestAnimationFrame === "undefined" ||
+    typeof MessageChannel === "undefined"
+  ) {
+    return;
+  }
+  const start = performance.getEntriesByName(startMark, "mark")[0];
+  if (start === undefined) return;
+  performance.clearMarks(startMark);
+  const startTime = start.startTime;
+  requestAnimationFrame(() => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      performance.measure(name, { start: startTime, end: performance.now() });
+    };
+    channel.port2.postMessage(null);
+  });
 }

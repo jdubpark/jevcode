@@ -3,7 +3,7 @@ import {
   type TraceBundle, type TraceRow, type TraceRowsPage, type TraceSessionSummary,
 } from "@jevcode/contracts";
 
-import type { TraceRowsRequest, TraceSource } from "../source.js";
+import { ROWS_RELEASED_MARK, type TraceRowsRequest, type TraceSource } from "../source.js";
 import { TraceSourceError } from "./errors.js";
 
 export type ParsedBundle =
@@ -84,6 +84,7 @@ export function createStaticBundleSource(bundle: TraceBundle, options: { drip?: 
     released = Math.min(rows.length, released + perTick);
     if (done()) stop();
     if (released === before) return;
+    if (typeof performance !== "undefined" && typeof performance.mark === "function") performance.mark(ROWS_RELEASED_MARK);
     const seq = lastReleasedSeq();
     for (const listener of [...listeners]) listener(seq);
   };

@@ -132,7 +132,9 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
         }
         case "toggle":
           if (target?.closest(OWNS_ENTER) != null) return;
-          if (state.selection !== null) store.dispatch({ type: "expand/toggle", key: state.selection });
+          if (state.selection === null) return;
+          if (port?.toggle?.(state.selection) === true) return;
+          store.dispatch({ type: "expand/toggle", key: state.selection });
           return;
         case "esc":
           if (latest.current.helpOpen) {
@@ -173,6 +175,8 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
           revealSelection();
           return;
         case "last":
+          // The Console goes Live at its tail without selecting (lane ruling I-1); Hybrid and Canvas select the tail.
+          if (port?.goToTail?.() === true) return;
           store.dispatch({ type: "nav/last" });
           if (view.summary !== null && !view.terminal) store.dispatch({ type: "follow/set", follow: true });
           revealSelection();

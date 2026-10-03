@@ -35,6 +35,15 @@ export interface ViewPort {
   reveal(id: SelectionId, options: { animate: boolean }): void;
   captureCamera(): CanvasCamera | HybridCamera | null;
   focusSelected(): void;
+  /** Enter on the selection: true when the view handled it (the Console expands a row); else the store's expand applies. */
+  toggle?(id: SelectionId): boolean;
+  /**
+   * G, the "N new" pills and the title bar's Live: true when the view went to its tail itself. The Console turns Live on
+   * and scrolls to the tail without selecting (the Brief stays; a selection is kept); otherwise nav/last applies.
+   */
+  goToTail?(): boolean;
+  /** The view's own "N new" count when it is not the step count (the Console counts rows); the title bar shows it. */
+  newCount?(): number;
   zoom: ZoomPort;
 }
 

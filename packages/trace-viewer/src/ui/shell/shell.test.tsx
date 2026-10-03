@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createStaticBundleSource } from "../../sources/static-bundle.js";
+import { buildTraceIndex } from "../../layout/trace-index.js";
+import { foldRows, type TraceSession } from "../../model/index.js";
+import { TraceBuilder, testMeta } from "../../test-support/trace-builder.js";
 import {
+  createHarness,
   fixtureBundle,
   foldFixture,
   renderHarness,
@@ -12,8 +16,11 @@ import {
 } from "../../test-support/ui-harness.js";
 import type { ViewerLocation } from "../state/location.js";
 import type { ViewDefinition } from "../views/view-port.js";
+import { ViewStoreContext } from "../state/store.js";
+import { DecisionAnnouncer } from "./DecisionAnnouncer.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
-import { useAnnounce } from "./LiveRegion.js";
+import { LiveRegion, useAnnounce } from "./LiveRegion.js";
+import { SessionContext } from "./session-context.js";
 import { INITIAL_SELECTION_PAINTED } from "./perf.js";
 import { appendCapped, MAX_REPORTED_ERRORS } from "./Shell.js";
 import { TraceViewer } from "./TraceViewer.js";
@@ -42,7 +49,8 @@ describe("Shell", () => {
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Outline" })).toBeTruthy();
     expect(screen.getByRole("main")).toBeTruthy();
-    expect(screen.getByRole("complementary", { name: "Inspector" })).toBeTruthy();
+    // The right panel is named after what it shows (lane fix m3): the Brief until a selection opens the Inspector.
+    expect(screen.getByRole("complementary", { name: /^(Brief|Inspector)$/ })).toBeTruthy();
     const root = container.querySelector<HTMLElement>("[data-trace-viewer]");
     expect(root?.style.getPropertyValue("--tv-accent")).toBe("#2F6BFF");
     expect(root?.style.getPropertyValue("--tv-ink-3")).toBe("#676D78");
@@ -300,5 +308,79 @@ describe("Shell", () => {
     expect(list).toHaveLength(50);
     expect(list[0]).toBe("e10");
     expect(list.at(-1)).toBe("e59");
+  });
+
+  it("names the right panel after what it shows: Inspector for a selection, Brief once Esc clears it (lane fix m3)", async () => {
+    render(<TraceViewer source={createStaticBundleSource(fixtureBundle("oauth"))} />);
+    // A finished session opens with its top finding selected (viewer spec §7.8), so the Inspector shows.
+    expect(await screen.findByRole("complementary", { name: "Inspector" })).toBeTruthy();
+    for (let i = 0; i < 4 && screen.queryByRole("complementary", { name: "Brief" }) === null; i += 1) {
+      fireEvent.keyDown(document.body, { code: "Escape", key: "Escape" });
+    }
+    expect(screen.getByRole("complementary", { name: "Brief" })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Inspector" })).toBeNull();
+  });
+});
+
+describe("DecisionAnnouncer (lane fix m6)", () => {
+  it("announces a decision that becomes pending after the load once, as untrusted text, and none pending at load", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "d0", title: "Already open" });
+    const fold = (): TraceSession =>
+      foldRows(testMeta({ state: "running", lastEventSeq: b.rows.length }), b.rows, { live: true, nowMs: Date.parse("2026-09-18T09:30:00.000Z") });
+    const first = fold();
+    const h = createHarness(first, { state: { loaded: true } });
+    const tree = (session: TraceSession) => (
+      <ViewStoreContext.Provider value={h.store}>
+        <SessionContext.Provider value={{ ...h.view, session, index: buildTraceIndex(session) }}>
+          <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+            <DecisionAnnouncer />
+          </LiveRegion>
+        </SessionContext.Provider>
+      </ViewStoreContext.Provider>
+    );
+    const result = render(tree(first));
+    expect(h.announcements).toEqual([]);
+
+    b.decision({ id: "d1", title: "Keep \u202Eemail login?" });
+    result.rerender(tree(fold()));
+    await waitFor(() => expect(h.announcements).toEqual(["Decision needed: Keep ⟨U+202E⟩email login?"]));
+
+    b.agent({ type: "agent_message", role: "assistant", text: "more" });
+    b.decision({ id: "d1", title: "Keep \u202Eemail login?" });
+    result.rerender(tree(fold()));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(h.announcements).toHaveLength(1);
+  });
+
+  it("still announces a decision that arrives in the commit where an answer message is absorbed (steps shrink and grow)", async () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "d0", title: "Keep email login?" });
+    b.agent({ type: "agent_message", role: "user", text: "Keep both" });
+    const fold = (): TraceSession =>
+      foldRows(testMeta({ state: "running", lastEventSeq: b.rows.length }), b.rows, { live: true, nowMs: Date.parse("2026-09-18T09:30:00.000Z") });
+    const first = fold();
+    const h = createHarness(first, { state: { loaded: true } });
+    const tree = (session: TraceSession) => (
+      <ViewStoreContext.Provider value={h.store}>
+        <SessionContext.Provider value={{ ...h.view, session, index: buildTraceIndex(session) }}>
+          <LiveRegion onAnnounce={(message) => h.announcements.push(message)}>
+            <DecisionAnnouncer />
+          </LiveRegion>
+        </SessionContext.Provider>
+      </ViewStoreContext.Provider>
+    );
+    const result = render(tree(first));
+    // The answer closes d0 and absorbs the user message step (removeStep); d1 opens in the same commit.
+    b.decision({ id: "d0", title: "Keep email login?", status: "answered", answer: { decisionId: "d0", decision: { choice: "a" }, evidence: [] } });
+    b.decision({ id: "d1", title: "Rotate the signing key?" });
+    const second = fold();
+    expect(second.steps).toHaveLength(first.steps.length);
+    result.rerender(tree(second));
+    await waitFor(() => expect(h.announcements).toEqual(["Decision needed: Rotate the signing key?"]));
   });
 });

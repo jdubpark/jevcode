@@ -156,6 +156,26 @@ describe("selection, playhead and brush", () => {
   });
 });
 
+describe("revealRev (a request to reveal the already-selected item)", () => {
+  const selected = run(initialViewState({ live: false }), [applied(index, { terminal: true, initialSelection: claim.id }), { type: "select", id: claim.id, by: "shell" }]);
+
+  it("bumps only for a same-id select by the shell (Outline, Brief)", () => {
+    const again = reduce(selected, { type: "select", id: claim.id, by: "shell" }, index);
+    expect(again.revealRev).toBe(selected.revealRev + 1);
+  });
+
+  it("does not bump for a same-id select by a view, or for a live commit", () => {
+    for (const by of ["hybrid", "console", "canvas"] as const) {
+      expect(reduce(selected, { type: "select", id: claim.id, by }, index).revealRev).toBe(selected.revealRev);
+    }
+    expect(reduce(selected, applied(index), index).revealRev).toBe(selected.revealRev);
+  });
+
+  it("does not bump for a select of a different item", () => {
+    expect(reduce(selected, { type: "select", id: test.id, by: "shell" }, index).revealRev).toBe(selected.revealRev);
+  });
+});
+
 describe("expansion, esc and live bookkeeping", () => {
   it("a collapsed critical finding stays collapsed across session/applied", () => {
     const findingId = claim.findingIds[0] ?? "";
@@ -279,6 +299,20 @@ describe("Brief pin (spec §3.3, E4) and the opening view", () => {
     expect(s.brief).toBe(false);
     s = run(s, [{ type: "brief/toggle" }, { type: "select", id: null, by: "shell" }]);
     expect(s).toMatchObject({ selection: null, brief: false });
+  });
+
+  it("Esc with the Brief pinned clears the selection, skipping collapse and parent; unpinned it still steps out", () => {
+    const selected = run(initialViewState({ live: false }), [
+      { type: "select", id: test.id, by: "shell" },
+      { type: "expand/set", key: test.id, expanded: true },
+    ]);
+    expect(index.entry(test.id)?.parent).toBe("unit:u-linking-test");
+    const pinned = reduce(reduce(selected, { type: "brief/toggle" }, index), { type: "esc" }, index);
+    expect(pinned.selection).toBeNull();
+    const unpinned = reduce(selected, { type: "esc" }, index);
+    expect(unpinned.selection).toBe(test.id);
+    expect(isKeyExpanded(test.id, index, unpinned.expanded, unpinned.collapsed)).toBe(false);
+    expect(reduce(unpinned, { type: "esc" }, index)).toMatchObject({ selection: "unit:u-linking-test", brief: false });
   });
 
   it("view switches keep the pin", () => {
