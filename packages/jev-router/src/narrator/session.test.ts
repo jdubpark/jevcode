@@ -69,7 +69,7 @@ describe("sessionStory", () => {
     const long: SessionStoryInput = {
       prompt: "p".repeat(5_000),
       recentSteps: Array.from({ length: 20 }, (_, i) => ({ id: `step:${i + 1}`, headline: "h".repeat(400) })),
-      decisions: [{ id: "dec_secret", title: "t".repeat(500), status: "open" }],
+      decisions: [{ id: "dec_secret", title: "t".repeat(500), status: "answered", answer: "a".repeat(500) }],
       tests: null,
       touchedComponents: [{ id: "cmp_000000000001", name: "n".repeat(300) }],
     };
@@ -87,6 +87,7 @@ describe("sessionStory", () => {
     expect(state.steps.map((step) => step.key)).toEqual(Array.from({ length: 12 }, (_, i) => `s${i + 1}`));
     expect(Math.max(...state.steps.map((step) => step.headline.length))).toBe(SESSION_LIMITS.headlineChars);
     expect(state.decisions.map((decision) => decision.key)).toEqual(["d1"]);
+    expect((state.decisions[0] as { answer: string }).answer).toHaveLength(SESSION_LIMITS.titleChars);
     expect(state.components.map((component) => component.key)).toEqual(["c1"]);
     expect(buildSessionStoryState(long).cite.get("s1")).toEqual({ kind: "step", id: "step:9" });
   });
@@ -98,6 +99,16 @@ describe("sessionStory", () => {
     expect(guard.total).toBe(5);
     expect(guard.dropped).toBe(4);
     expect(guard.discarded).toBe(true);
+    expect(guard.reasons).toEqual(["0:markup", "1:markup", "2:uncited", "3:unresolved_citation", "batch_discarded"]);
+  });
+
+  it("sends the chosen answer and a citable test key", async () => {
+    const { transport, requests } = answering({ sentences: [] });
+    await createNarratorClient(transport).sessionStory(story.input);
+    const state = JSON.parse(requests[0]?.user ?? "{}") as { decisions: { answer: string }[]; tests: { key: string; passed: number } };
+    expect(state.decisions[0]?.answer).toBe("Fail open");
+    expect(state.tests).toEqual({ key: "t1", passed: 14, failed: 1 });
+    expect(buildSessionStoryState(story.input).cite.get("t1")).toEqual({ kind: "step", id: "step:19" });
   });
 
   it("makes no call for an empty session and rejects when the transport fails", async () => {
@@ -123,15 +134,49 @@ describe("decisionWhy", () => {
     expect(result.value?.citations).toEqual([{ kind: "step", id: "step:14" }, { kind: "decision", id: "dec_redis_policy" }]);
     expect(guardDecisionWhy(result.value, why.input).accepted).toHaveLength(1);
     expect(requests[0]?.system).toBe(DECISION_WHY_SYSTEM_PROMPT);
-    const sent = JSON.parse(requests[0]?.user ?? "{}") as { nearby: { key: string; text: string }[] };
+    const sent = JSON.parse(requests[0]?.user ?? "{}") as { chosenBy: string; nearby: { key: string; text: string }[] };
     expect(sent.nearby.map((item) => item.key)).toEqual(["n1", "n2", "n3"]);
+    expect(sent.chosenBy).toBe("developer");
   });
 
-  it("resolves null with schemaValid false when the answer has no sentence", async () => {
+  it("sends no ids and clips nearby text to 600 characters", async () => {
+    const { transport, requests } = answering(why.output);
+    await createNarratorClient(transport).decisionWhy({
+      ...why.input,
+      nearby: [{ id: "step:77", kind: "message", text: "x".repeat(2_000) }],
+    });
+    const user = requests[0]?.user ?? "";
+    expect(user).not.toMatch(/step:\d|dec_redis_policy|fail_open/);
+    const sent = JSON.parse(user) as { nearby: { text: string }[] };
+    expect(sent.nearby[0]?.text).toHaveLength(SESSION_LIMITS.nearbyChars);
+  });
+
+  it("rejects when the transport fails", async () => {
+    const offline: NarratorTransport = { complete: () => Promise.reject(new NarratorUnavailableError("offline", "down")) };
+    await expect(createNarratorClient(offline).decisionWhy(why.input)).rejects.toBeInstanceOf(NarratorUnavailableError);
+  });
+
+  it("makes no call and resolves null when nothing is nearby", async () => {
+    const { transport, requests } = answering(why.output);
+    const result = await createNarratorClient(transport).decisionWhy({ ...why.input, nearby: [] });
+    expect(result).toMatchObject({ value: null, schemaValid: true });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("drops a sentence that cites only the decision", () => {
+    const only = { text: "Failing open keeps the API available.", citations: [{ kind: "decision", id: "dec_redis_policy" }] };
+    expect(guardDecisionWhy(only, why.input)).toMatchObject({ accepted: [], dropped: 1, discarded: true });
+    const grounded = { ...only, citations: [...only.citations, { kind: "step", id: "step:14" }] };
+    expect(guardDecisionWhy(grounded, why.input).accepted).toHaveLength(1);
+  });
+
+  it("resolves null with schemaValid true for an empty sentences array and false for a malformed answer", async () => {
     const { transport } = answering({ sentences: [] });
     const result = await createNarratorClient(transport).decisionWhy(why.input);
     expect(result.value).toBeNull();
-    expect(result.schemaValid).toBe(false);
+    expect(result.schemaValid).toBe(true);
+    const bad = await createNarratorClient(answering({ nonsense: 1 }).transport).decisionWhy(why.input);
+    expect(bad).toMatchObject({ value: null, schemaValid: false });
     expect(guardDecisionWhy(result.value, why.input).accepted).toEqual([]);
   });
 });

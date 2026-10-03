@@ -212,19 +212,22 @@ export function createNarratorClient(transport: NarratorTransport, options: Narr
       );
     },
     decisionWhy(input, call) {
+      // No nearby message or plan step means nothing to ground a reason in: no call.
+      if (input.nearby.length === 0) return Promise.resolve(emptyResult<NarrativeSentence | null>(null, model));
       const keyed = buildDecisionWhyState(input);
-      return ask<NarrativeSentence | null>(
+      // Schema-valid with no sentence is a legitimate "no reason found" (null, schemaValid true); only a
+      // schema-invalid answer is schemaValid false.
+      return ask<NarrativeSentence[]>(
         {
           system: DECISION_WHY_SYSTEM_PROMPT,
           state: keyed.state,
           schema: SENTENCES_OUTPUT_JSON_SCHEMA,
           maxTokens: DECISION_WHY_MAX_TOKENS,
-          empty: null,
-          // An answer without a sentence counts as schema-invalid: value null, schemaValid false.
-          parse: (json) => parseSentences(json, keyed)?.[0] ?? null,
+          empty: [],
+          parse: (json) => parseSentences(json, keyed),
         },
         call,
-      );
+      ).then((result): NarratorResult<NarrativeSentence | null> => ({ ...result, value: result.value[0] ?? null }));
     },
   };
 }
