@@ -271,6 +271,21 @@ describe("decisions and Jev", () => {
     expect(stepAt(fold(b), first)).toMatchObject({ tMs: 0, endTMs: 5_000, durationMs: 5_000 });
   });
 
+  it("drops a message answer when the decision reopens, as decidedSeq is dropped (review minor)", () => {
+    const b = new TraceBuilder();
+    b.agent({ type: "agent_started", prompt: "p" });
+    const asked = b.decision({ id: "dec-1" });
+    const message = b.agent({ type: "agent_message", role: "user", text: "Use A." });
+    b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "a" }, evidence: [] } });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBe(message);
+    b.decision({ id: "dec-1", status: "open" });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
+    // Answered again without a message: no answerSeq comes back.
+    const again = b.decision({ id: "dec-1", status: "answered", answer: { decisionId: "dec-1", decision: { q: "b" }, evidence: [] } });
+    expect(stepAt(fold(b), asked).decision).toMatchObject({ decidedSeq: again });
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
+  });
+
   it("a supervisor message before a re-emit of an answered decision stays an instruction (R25: only an open decision takes an answer)", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
@@ -305,6 +320,7 @@ describe("decisions and Jev", () => {
 
     const reopened = b.decision({ id: "dec-1", status: "open" });
     expect(stepAt(fold(b), asked).decision?.decidedSeq).toBeUndefined();
+    expect(stepAt(fold(b), asked).decision?.answerSeq).toBeUndefined();
     const again = b.decision({ id: "dec-1", status: "delegated" });
     expect(stepAt(fold(b), asked).decision?.decidedSeq).toBe(again);
     expect(again).toBeGreaterThan(reopened);

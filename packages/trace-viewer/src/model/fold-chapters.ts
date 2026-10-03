@@ -107,8 +107,9 @@ export function foldDecision(state: FoldState, decision: Decision, ctx: RowConte
     const closing = existing.status === "running" && decisionStatus(decision) !== "running";
     addRowToStep(state, existing, ctx, false);
     existing.decision = decisionDetail(decision, existing.decision);
-    if (answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
-    // The first closing row decides; a re-emit of the closed decision keeps that seq (final review D I-1).
+    // Both stay only while the decision stays answered or delegated: a reopening row drops them, and the next close sets
+    // them again. The first closing row decides; a re-emit of the closed decision keeps that seq (final review D I-1).
+    if (closes && answerSeq !== undefined) existing.decision.answerSeq = answerSeq;
     if (closes) existing.decision.decidedSeq = decidedSeq ?? ctx.seq;
     let end: { t: number; sourceTs: string } = ctx;
     // R25: the message answers only a decision this row closes. A re-emit of an already answered decision after a
