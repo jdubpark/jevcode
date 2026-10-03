@@ -6,7 +6,7 @@ import type { NarratorAvailability } from "../../shared/narrator-log.js";
 import { DEFAULT_AGENT_PREFERENCES } from "../../shared/prefs.js";
 import { AgentSettings } from "./AgentSettings.js";
 
-const NOTE_ON = "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions and the first README paragraph (redacted). File contents are never sent.";
+const NOTE_ON = "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent.";
 const NOTE_OFF = "Rule-based labels only. Nothing leaves this machine.";
 const NOTE_NO_KEY = "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine.";
 

@@ -6,9 +6,17 @@ import {
   type DecisionWhyInput,
   type SessionStoryInput,
 } from "@jevcode/jev-router";
-import { componentIdForPath, truncateMiddle, type OverviewModel, type Step, type TraceSession } from "@jevcode/trace-viewer/model";
+import {
+  componentIdForPath,
+  stepHeadline,
+  truncateMiddle,
+  type OverviewModel,
+  type Step,
+  type TraceSession,
+} from "@jevcode/trace-viewer/model";
 
 import { NARRATOR_BACKOFF_MS } from "./explainer-narration.js";
+import { redactText } from "./redactor.js";
 
 // Rule-based parts of the session explainer (spec §6.1, §6.5): highlights, narrator inputs and the
 // rule-based story used when the narrator is off, offline or its output is dropped. Pure.
@@ -188,6 +196,39 @@ export function storyDecisions(session: TraceSession, decisions: readonly Decisi
     .map((entry) => entry.decision);
 }
 
+/**
+ * Lane fix I-1: session text leaves the machine only after the redactor the Jev stage uses (redactor.ts) has run over
+ * it. Ids are never passed through it: the guards check the ids exactly as the session holds them.
+ */
+function redact(text: string): string {
+  return redactText(text).text;
+}
+
+/**
+ * A step's headline with secrets redacted. The viewer's headline cuts a long command or message, and a cut secret no
+ * longer matches the redactor's patterns, so a step whose full command, path, text or decision title holds a secret
+ * gets its headline made again by the viewer's rule (stepHeadline) from the redacted text.
+ */
+function redactedHeadline(step: Step): string {
+  const target = step.target === undefined ? undefined : redactText(step.target);
+  const text = step.text === undefined ? undefined : redactText(step.text);
+  const title = step.decision === undefined ? undefined : redactText(step.decision.title);
+  if ((target?.count ?? 0) + (text?.count ?? 0) + (title?.count ?? 0) === 0) return redact(step.headline);
+  const tests = step.tests;
+  return redact(
+    stepHeadline({
+      kind: step.kind,
+      ...(target !== undefined ? { target: target.text } : {}),
+      ...(text !== undefined ? { text: text.text } : {}),
+      ...(tests !== undefined ? { tests: { passed: tests.passed, failed: tests.failed, skipped: tests.skipped } } : {}),
+      ...(step.command !== undefined ? { exitCode: step.command.exitCode } : {}),
+      ...(title !== undefined ? { decisionTitle: title.text } : {}),
+      ...(step.guardrail !== undefined ? { clampIds: step.guardrail.clampIds } : {}),
+    }),
+  );
+}
+
+/** The story's narrator input, every free-text field redacted (lane fix I-1). */
 export function sessionStoryInput(
   session: TraceSession,
   decisions: readonly Decision[],
@@ -217,20 +258,21 @@ export function sessionStoryInput(
     .sort((a, b) => STATE_RANK[b.state] - STATE_RANK[a.state] || compareText(a.id, b.id))
     .slice(0, SESSION_LIMITS.components);
   return {
-    prompt: session.meta.prompt,
-    recentSteps: recent.map((step) => ({ id: step.id, headline: step.headline })),
-    decisions: storyDecisions(session, decisions).map((decision) => ({
-      id: decision.id,
-      title: decision.title,
-      status: decision.status,
-      answer: decision.status === "open" ? null : chosenLabel(decision),
-    })),
+    prompt: redact(session.meta.prompt),
+    recentSteps: recent.map((step) => ({ id: step.id, headline: redactedHeadline(step) })),
+    decisions: storyDecisions(session, decisions).map((decision) => {
+      const answer = decision.status === "open" ? null : chosenLabel(decision);
+      return { id: decision.id, title: redact(decision.title), status: decision.status, answer: answer === null ? null : redact(answer) };
+    }),
     tests,
-    touchedComponents: touched.map((entry) => ({ id: entry.id, name: names?.get(entry.id)?.name ?? entry.id })),
+    touchedComponents: touched.map((entry) => ({ id: entry.id, name: redact(names?.get(entry.id)?.name ?? entry.id) })),
   };
 }
 
-/** The decision, its options, the chosen label, who chose and the agent messages nearest the answer (spec §6.2). */
+/**
+ * The decision, its options, the chosen label, who chose and the agent messages nearest the answer (spec §6.2), every
+ * free-text field redacted (lane fix I-1).
+ */
 export function decisionWhyInput(session: TraceSession, decision: Decision): DecisionWhyInput | null {
   const step = session.steps.find((candidate) => candidate.decision?.decisionId === decision.id);
   if (step?.decision === undefined) return null;
@@ -245,15 +287,15 @@ export function decisionWhyInput(session: TraceSession, decision: Decision): Dec
     .map(({ candidate }) => ({
       id: candidate.id,
       kind: plans.has(candidate.id) ? ("step" as const) : ("message" as const),
-      text: candidate.text ?? "",
+      text: redact(candidate.text ?? ""),
     }));
   const delegated = decision.status === "delegated";
   const answer = chosenLabel(decision) ?? (delegated ? "Delegated to the agent" : "No answer recorded");
   return {
     decisionId: decision.id,
-    title: decision.title,
-    options: decision.options.map((option) => ({ id: option.id, label: option.label })),
-    answer,
+    title: redact(decision.title),
+    options: decision.options.map((option) => ({ id: option.id, label: redact(option.label) })),
+    answer: redact(answer),
     chosenBy: delegated ? "agent" : "developer",
     nearby,
   };

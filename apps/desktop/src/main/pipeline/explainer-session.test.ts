@@ -102,12 +102,19 @@ class World {
     return unit;
   }
 
-  decision(id: string, status: Decision["status"], affected: string[], chosen?: string): Decision {
+  decision(
+    id: string,
+    status: Decision["status"],
+    affected: string[],
+    chosen?: string,
+    text: { title?: string; labels?: readonly [string, string] } = {},
+  ): Decision {
+    const [open, closed] = text.labels ?? ["Fail open", "Fail closed"];
     const decision: Decision = {
-      id, sessionId: SESSION, title: "What should the API do when Redis is unavailable?", context: "", severity: "required",
+      id, sessionId: SESSION, title: text.title ?? "What should the API do when Redis is unavailable?", context: "", severity: "required",
       options: [
-        { id: "fail_open", label: "Fail open", description: "" },
-        { id: "fail_closed", label: "Fail closed", description: "" },
+        { id: "fail_open", label: open, description: "" },
+        { id: "fail_closed", label: closed, description: "" },
       ],
       affectedChangeUnits: affected, evidence: [], status,
       ...(chosen !== undefined ? { answer: { decisionId: id, decision: { policy: chosen }, evidence: [] } } : {}),
@@ -761,6 +768,80 @@ describe("session explainer: narrator off, offline or hostile", () => {
     expect(w.calls.map((call) => call.question)).toEqual(["sessionStory", "decisionWhy"]);
     for (const call of w.calls) expect(call.model).toHaveLength(NARRATOR_RECORD_TEXT_MAX);
     expect(new Set(w.calls.map((call) => call.id)).size).toBe(2);
+  });
+});
+
+describe("session explainer: redaction (lane fix I-1)", () => {
+  // Shapes the Jev stage's redactor catches (redactor.ts): a provider key, a bearer token, a GitHub token, a password
+  // and an api_key assignment.
+  const KEY = `sk-ant-api03-${"A1b2".repeat(8)}`;
+  const BEARER = "Zq9".repeat(8);
+  const GITHUB = `ghp_${"x7Y".repeat(12)}`;
+  const PASSWORD = "hunter2hunter2";
+  const API_KEY = "Qw".repeat(10);
+
+  it("never sends a planted key or token from the prompt, a step headline, a decision or an agent message", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    const prompt = `Call the billing API with ${KEY} and add a limiter.`;
+    w.db.setSessionPrompt(SESSION, prompt);
+    w.agent({ type: "agent_started", prompt });
+    const command = `curl -H "Authorization: Bearer ${BEARER}" https://api.example.com/v1/limits`;
+    w.agent({ type: "command_started", command });
+    w.agent({ type: "command_completed", command, exitCode: 0, stdout: "", stderr: "" });
+    w.agent({ type: "agent_message", role: "assistant", text: `I exported GITHUB_TOKEN=${GITHUB} for the push.` });
+    const decision = w.decision("d1", "answered", [], "fail_open", {
+      title: `Rotate password=${PASSWORD} now?`,
+      labels: [`Keep api_key=${API_KEY}`, "Rotate"],
+    });
+    w.agent({ type: "agent_message", role: "assistant", text: `Keeping it; GITHUB_TOKEN=${GITHUB} stays set.` });
+    // The viewer's headline cuts this message (80 characters) inside the token, where no pattern matches the rest.
+    const long = `Pushing the limiter branch to origin with GITHUB_TOKEN=${GITHUB} exported for this shell.`;
+    w.agent({ type: "agent_message", role: "assistant", text: long });
+    expect(w.fold().steps.at(-1)?.headline).toContain(GITHUB.slice(0, 10));
+    w.tests(0);
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], [decision]));
+    await explainer.idle();
+
+    expect(narrator.storyCalls).toHaveLength(1);
+    expect(narrator.whyCalls).toHaveLength(1);
+    const story = narrator.storyCalls[0]?.input;
+    const why = narrator.whyCalls[0]?.input;
+    const sent = JSON.stringify([story, why]);
+    // Not even a cut piece of one (the first ten characters).
+    for (const secret of [KEY, BEARER, GITHUB, PASSWORD, API_KEY]) expect(sent).not.toContain(secret.slice(0, 10));
+    expect(story?.prompt).toBe("Call the billing API with [REDACTED:provider_key] and add a limiter.");
+    expect(story?.recentSteps.some((step) => step.headline.includes("Bearer [REDACTED:bearer]"))).toBe(true);
+    expect(story?.recentSteps.some((step) => step.headline.includes("GITHUB_TOKEN=[REDACTED:github_token]"))).toBe(true);
+    expect(story?.decisions).toEqual([
+      { id: "d1", title: "Rotate password=[REDACTED:password] now?", status: "answered", answer: "Keep api_key=[REDACTED:token]" },
+    ]);
+    expect(why).toMatchObject({ decisionId: "d1", title: "Rotate password=[REDACTED:password] now?", answer: "Keep api_key=[REDACTED:token]" });
+    expect(why?.options.map((option) => option.label)).toEqual(["Keep api_key=[REDACTED:token]", "Rotate"]);
+    expect(why?.nearby).toHaveLength(3);
+    expect(why?.nearby.every((item) => item.text.includes("GITHUB_TOKEN=[REDACTED:github_token]"))).toBe(true);
+    // The guards ran against the redacted inputs that were sent: both answers were accepted.
+    expect(storyOf(w.rows("story")[0]).provenance).toBe("model");
+    expect(w.rows("decision_why")).toHaveLength(1);
+  });
+
+  it("leaves every id the guards check untouched, even one shaped like a token", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    narrator.story = async (input) => [{ text: "The decision is settled.", citations: [{ kind: "decision", id: input.decisions[0]?.id ?? "" }] }];
+    const id = `ghp_${"k4M".repeat(12)}`;
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Redis is a single point of failure here." });
+    const decision = w.decision(id, "answered", [], "fail_open");
+    const explainer = createSessionExplainer(w.deps(narrator));
+    explainer.onPipelineSync(w.sync([], [decision]));
+    await explainer.idle();
+
+    expect(narrator.storyCalls[0]?.input.decisions.map((entry) => entry.id)).toEqual([id]);
+    expect(narrator.whyCalls[0]?.input.decisionId).toBe(id);
+    expect(storyOf(w.rows("story")[0]).sentences[0]?.citations).toEqual([{ kind: "decision", id }]);
+    expect(w.rows("decision_why").map((row) => (row.record.kind === "decision_why" ? row.record.decisionId : null))).toEqual([id]);
   });
 });
 
