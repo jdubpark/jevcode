@@ -87,6 +87,7 @@ export function ConsoleView({ active }: ViewProps) {
   const expanded = useView((state) => state.expanded);
   const search = useView((state) => state.search);
   const focusBy = useView((state) => state.focusBy);
+  const revealRev = useView((state) => state.revealRev);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
   const [, rerender] = useReducer((n: number) => n + 1, 0);
 
@@ -283,16 +284,18 @@ export function ConsoleView({ active }: ViewProps) {
   useRegisterViewPort("console", port);
 
   // Opening (or showing) the Console: a following Console starts at the tail, a reviewing one at its selection.
+  // The reset lives in the cleanup: under <Activity mode="hidden"> React runs cleanups but never the body of an
+  // effect rendered while hidden, so an `!active` branch would not run and a re-shown Console would keep its old place.
   const positioned = useRef(false);
   useLayoutEffect(() => {
-    if (!active) {
-      positioned.current = false;
-      return;
-    }
-    if (positioned.current || rows.length === 0) return;
+    if (!active) return undefined;
+    if (positioned.current || rows.length === 0) return undefined;
     positioned.current = true;
     if (store.get().follow) virtualizer.scrollToIndex(rows.length - 1, { align: "end", behavior: "auto" });
     else if (selectedIndex >= 0) reveal(selectedIndex);
+    return () => {
+      positioned.current = false;
+    };
   }, [active, rows.length === 0]);
 
   // A selection written elsewhere (keys, search, another view, the Brief) reveals its row. A Console click never
@@ -308,6 +311,16 @@ export function ConsoleView({ active }: ViewProps) {
     const target = selectedIndex >= 0 ? selectedIndex : selection === index.tailStepId ? rows.length - 1 : -1;
     if (target >= 0) reveal(target);
   }, [focusBy, active, selectedIndex, selection]);
+
+  // The Outline or the Brief picked the item that is already selected: no selection change, but the reader asked to see it.
+  const lastRevealRev = useRef(revealRev);
+  useLayoutEffect(() => {
+    const before = lastRevealRev.current;
+    lastRevealRev.current = revealRev;
+    if (before === revealRev || !active) return;
+    const target = selectedIndex >= 0 ? selectedIndex : selection !== null && selection === index.tailStepId ? rows.length - 1 : -1;
+    if (target >= 0) reveal(target);
+  }, [revealRev, active]);
 
   // Live turning on (the pill, G, the title bar) goes to the tail; the reader's own scroll there is already at it.
   const wasFollowing = useRef(follow);
@@ -495,6 +508,7 @@ export function ConsoleView({ active }: ViewProps) {
                   answer={row.kind === "decision" ? (answers.get(row.decisionId) ?? "idle") : "idle"}
                   payloads={fetchPayloads}
                   onToggle={() => dispatch({ type: "expand/toggle", key: expandKey(row) })}
+                  onSelectStep={(id) => dispatch({ type: "select", id: id as SelectionId, by: "console" })}
                   onOpenDiff={() => {
                     selectRow(row);
                     dispatch({ type: "inspector/tab", tab: "evidence" });
@@ -512,6 +526,7 @@ export function ConsoleView({ active }: ViewProps) {
             count={newCount}
             problems={newProblems}
             afterRange={false}
+            noun="row"
             onActivate={() => {
               dispatch({ type: "nav/last" });
               if (!terminal) dispatch({ type: "follow/set", follow: true });

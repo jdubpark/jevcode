@@ -32,6 +32,8 @@ export interface ViewState {
   /** +1 on every selection, brush or level write a hidden view must catch up with; never on programmatic camera moves. */
   focusRev: number;
   focusBy: FocusBy;
+  /** +1 when the Outline or the Brief (by "shell") picks the item that is already selected: a request to reveal it, with no selection change. */
+  revealRev: number;
   /** Expanded row, frame and finding keys. */
   expanded: ReadonlySet<string>;
   /** Finding ids the reader collapsed; later folds never re-expand them. */
@@ -108,6 +110,7 @@ export function initialViewState(input: InitialViewStateInput): ViewState {
     brush: location?.brush ?? { kind: "session" },
     focusRev: 0,
     focusBy: "shell",
+    revealRev: 0,
     expanded: EMPTY,
     collapsed: EMPTY,
     inspectorTab: "summary",
@@ -229,7 +232,10 @@ function isTail(id: SelectionId, index: TraceIndex): boolean {
 
 function selectId(state: ViewState, id: SelectionId | null, by: FocusBy, origin: PlayheadOrigin, index: TraceIndex): ViewState {
   if (id !== null && index.entry(id) === undefined) return state;
-  if (id === state.selection && (id === null || state.playhead.kind === "selection")) return state;
+  const same = id !== null && id === state.selection && by === "shell";
+  if (id === state.selection && (id === null || state.playhead.kind === "selection")) {
+    return same ? { ...state, revealRev: state.revealRev + 1 } : state;
+  }
   const prevP = effectivePlayheadSeq(state.playhead, state.selection, index);
   const follow = state.follow && (id === null || isTail(id, index));
   let playhead: Playhead;
@@ -244,6 +250,7 @@ function selectId(state: ViewState, id: SelectionId | null, by: FocusBy, origin:
     playheadOrigin: origin,
     focusRev: state.focusRev + 1,
     focusBy: by,
+    revealRev: same ? state.revealRev + 1 : state.revealRev,
     inspectorTab: state.inspectorTab === "raw" && id !== state.selection ? "summary" : state.inspectorTab,
     brief: false,
     follow,

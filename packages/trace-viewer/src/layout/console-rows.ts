@@ -18,7 +18,7 @@ export type ConsoleRow =
   | { kind: "lifecycle"; key: string; stepId: string; state: "waiting" | "completed" | "failed" | "interrupted"; text: string }
   | { kind: "finding"; key: string; stepId: string; findingId: string }
   /** Consecutive warning guardrail-clamp flag lines folded into one "Jev review · n guardrails" line (V-4 fix round 1). */
-  | { kind: "guardrails"; key: string; stepIds: string[]; findingIds: string[] }
+  | { kind: "guardrails"; key: string; stepIds: string[]; findingIds: string[]; findingStepIds: string[] }
   | { kind: "summary"; key: string; sentences: NarrativeSentence[]; provenance?: "rule" | "model" };
 
 export interface ConsoleRowsState {
@@ -250,18 +250,19 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
     const finding = findingsById.get(row.findingId as FindingId);
     return finding?.ruleId === "guardrail_clamp" && finding.severity !== "critical";
   };
-  const runs: { at: number; stepIds: string[]; findingIds: string[] }[] = [];
+  const runs: { at: number; stepIds: string[]; findingIds: string[]; findingStepIds: string[] }[] = [];
   const pushFindings = (stepId: string, findings: readonly ConsoleRow[]): void => {
     for (const row of findings) {
       const run = runs.at(-1);
       if (foldable(row) && run !== undefined && run.at === rows.length - 1) {
         if (!run.stepIds.includes(stepId)) run.stepIds.push(stepId);
         run.findingIds.push(row.findingId);
+        run.findingStepIds.push(stepId);
         if (!byStep.has(stepId)) byStep.set(stepId, run.at);
         continue;
       }
       if (!byStep.has(stepId)) byStep.set(stepId, rows.length);
-      if (foldable(row)) runs.push({ at: rows.length, stepIds: [stepId], findingIds: [row.findingId] });
+      if (foldable(row)) runs.push({ at: rows.length, stepIds: [stepId], findingIds: [row.findingId], findingStepIds: [stepId] });
       rows.push(row);
     }
   };
@@ -308,9 +309,9 @@ export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?
     const key = `guardrails:${run.findingIds[0] ?? ""}`;
     const old = cache?.folds.get(key);
     const row: GuardrailsRow =
-      old !== undefined && sameStrings(old.stepIds, run.stepIds) && sameStrings(old.findingIds, run.findingIds)
+      old !== undefined && sameStrings(old.stepIds, run.stepIds) && sameStrings(old.findingIds, run.findingIds) && sameStrings(old.findingStepIds, run.findingStepIds)
         ? old
-        : { kind: "guardrails", key, stepIds: run.stepIds, findingIds: run.findingIds };
+        : { kind: "guardrails", key, stepIds: run.stepIds, findingIds: run.findingIds, findingStepIds: run.findingStepIds };
     folds.set(key, row);
     rows[run.at] = row;
   }

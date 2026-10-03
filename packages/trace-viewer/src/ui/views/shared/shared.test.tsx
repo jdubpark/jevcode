@@ -110,6 +110,21 @@ describe("NewBadge", () => {
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
+  it("names its noun: Hybrid keeps steps, the Console says rows", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-28T10:00:00.000Z"));
+    const h = renderHarness(<NewBadge count={1} problems={0} afterRange={false} onActivate={() => undefined} />, null);
+    h.result.rerender(
+      h.wrap(<NewBadge count={4} problems={1} afterRange={false} noun="row" onActivate={() => undefined} />),
+    );
+    expect(h.announcements).toEqual(["4 new rows, 1 problem"]);
+    h.result.rerender(h.wrap(<NewBadge count={1} problems={2} afterRange={false} noun="row" onActivate={() => undefined} />));
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(h.announcements.at(-1)).toBe("1 new row, 2 problems");
+  });
+
   it("reads after range and renders nothing at zero", () => {
     const h = renderHarness(<NewBadge count={2} problems={0} afterRange onActivate={() => undefined} />, null);
     expect(screen.getByRole("button").textContent).toBe("↓ 2 new after range");
