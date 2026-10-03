@@ -705,6 +705,34 @@ describe("ConsoleView V-6 pre-step (carried from V-4 review)", () => {
     expect(m.h.store.get().selection).toBe(stepIds[0]);
   });
 
+  it("j/k reach the folded Jev review row by its first step and Enter expands it, with no pointer (E M-3)", async () => {
+    const { session, stepIds } = guardrailSession();
+    const m = mountConsole(session, { state: { view: "console", follow: false, loaded: true }, keys: true });
+    await frames();
+    const press = (code: string, key: string): void => {
+      act(() => {
+        fireEvent.keyDown(document.body, { code, key });
+      });
+    };
+    const order = session.steps.filter((step) => step.kind === "instruction" || step.kind === "message").map((step) => step.id);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(order[0]);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(stepIds[0]);
+    await frames();
+    const feed = within(screen.getByRole("feed", { name: "Console" }));
+    const row = screen.getByRole("feed", { name: "Console" }).querySelector<HTMLElement>('article[data-kind="guardrails"]');
+    expect(row?.hasAttribute("data-selected")).toBe(true);
+    press("Enter", "Enter");
+    await frames();
+    expect(feed.getByRole("button", { name: "Collapse guardrails" }).getAttribute("aria-expanded")).toBe("true");
+    expect(feed.getAllByRole("button", { name: /^Flag:/ })).toHaveLength(2);
+    press("KeyJ", "j");
+    expect(m.h.store.get().selection).toBe(order[1]);
+    press("KeyK", "k");
+    expect(m.h.store.get().selection).toBe(stepIds[0]);
+  });
+
   it("an Outline or Brief click on the already-selected item reveals it in the Console", async () => {
     const b = messages(120);
     const session = live(b);
