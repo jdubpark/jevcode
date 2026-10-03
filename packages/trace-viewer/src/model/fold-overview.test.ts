@@ -5,6 +5,7 @@ import { overviewSnapshot } from "../test-support/overview-builder.js";
 import { SESSION_ID, TraceBuilder, testMeta } from "../test-support/trace-builder.js";
 import { accumulateAll, createTraceState, finalize, foldRows } from "./fold.js";
 import { COMPONENT_KEYS, sameComponent } from "./fold-overview.js";
+import { overviewStatusOf } from "./overview-status.js";
 import type { TraceSession } from "./types.js";
 
 // Spec §8.1: the fold keeps the latest overview_snapshot row (replace semantics); unchanged components keep their
@@ -44,6 +45,15 @@ describe("overview_snapshot fold (spec §8.1)", () => {
     expect(session.overview?.seq).toBe(seqB);
     expect(session.overview?.snapshot).toEqual(B);
     expect([...(session.overview?.componentById.keys() ?? [])]).toEqual(B.components.map((component) => component.id));
+  });
+
+  it("folds a snapshot row without status: status stays undefined and overviewStatusOf gives the R3 default", () => {
+    const b = started();
+    b.overview(A);
+    const snapshot = foldRows(testMeta({ lastEventSeq: b.rows.length }), b.rows, { live: false }).overview?.snapshot;
+    if (snapshot === undefined) throw new Error("no overview");
+    expect(snapshot.status).toBeUndefined();
+    expect(overviewStatusOf(snapshot)).toEqual({ scan: { state: "done", scanned: snapshot.counts.files, total: snapshot.counts.files }, narrator: "pending" });
   });
 
   it("makes no step, moves no clock and counts nowhere in hidden", () => {

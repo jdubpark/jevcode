@@ -653,6 +653,78 @@ describe("MapView (spec §3.4, E13)", () => {
       }
     });
 
+    it("keeps the ring variable when the world element remounts (overview, then none, then overview)", async () => {
+      const frames = stubAnimationFrames();
+      const harness = renderMap(WEB_API_DB);
+      await act(async () => frames.flush());
+      const k = (): string => world()?.style.getPropertyValue("--map-inv-k") ?? "";
+      expect(k()).not.toBe("");
+      act(() => harness.setSession(sessionWith(null)));
+      expect(world()).toBeNull();
+      act(() => harness.setSession(sessionWith(WEB_API_DB)));
+      act(() => resize.resize(1200, 800));
+      await act(async () => frames.flush());
+      expect(k()).not.toBe("");
+    });
+
+    it("measures the client origin again when the map becomes active and once at settle, so a moved map keeps its zoom anchor", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const frames = stubAnimationFrames();
+        const harness = renderMap(WEB_API_DB);
+        harness.setUi(
+          <>
+            <MapView active={false} />
+            <Inspector host={{}} />
+          </>,
+        );
+        await act(async () => frames.flush());
+        const measure = vi.mocked(Element.prototype.getBoundingClientRect);
+        measure.mockClear();
+        harness.setUi(
+          <>
+            <MapView active />
+            <Inspector host={{}} />
+          </>,
+        );
+        expect(measure).toHaveBeenCalled();
+        await act(async () => frames.flush());
+        measure.mockClear();
+        act(() => zoomWheel());
+        act(() => frames.flush());
+        expect(measure).not.toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(200));
+        await act(async () => frames.flush());
+        expect(measure).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("drops the focus promotion when the focused card unmounts", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const frames = stubAnimationFrames();
+        const harness = renderMap(WEB_API_DB);
+        await act(async () => frames.flush());
+        act(() => cardOf("scripts").focus());
+        expect(world()?.style.willChange).toBe("transform");
+        const without = overviewSnapshot({
+          components: [
+            { rootPath: "apps/web", role: "ui" },
+            { rootPath: "packages/api", role: "api" },
+            { rootPath: "packages/db", role: "storage" },
+          ],
+          edges: [{ from: "apps/web", to: "packages/api", count: 3 }],
+        });
+        act(() => harness.setSession(sessionWith(without)));
+        expect(document.querySelector(`[data-map-card="${componentId("scripts")}"]`)).toBeNull();
+        expect(world()?.style.willChange).toBe("");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("writes --map-inv-k only when k changed", () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
