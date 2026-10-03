@@ -86,7 +86,9 @@ describe("Surfaces host view (spec E3)", () => {
     expect(short.getAttribute("aria-label")).toBe(short.getAttribute("title"));
     const clipped = screen.getByText(/ok /);
     expect(clipped.textContent).not.toContain("\u202E");
-    expect(clipped.textContent).toContain("\u200B");
+    // Lane 02b I-4: displayUntrusted shows zero-width characters as visible tokens.
+    expect(clipped.textContent).not.toContain("\u200B");
+    expect(clipped.textContent).toContain("⟨U+200B⟩");
     expect(clipped.getAttribute("title")).toBe(displayUntrusted(hostile, { multiline: true }));
     expect(clipped.getAttribute("title")).toContain("x".repeat(2000));
   });
