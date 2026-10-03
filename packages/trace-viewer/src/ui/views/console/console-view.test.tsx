@@ -528,6 +528,23 @@ describe("ConsoleView fix round 1", () => {
       expect(decisionArticle().tabIndex).toBe(0);
     });
 
+    it("leaves focus alone when the reader pressed outside the row while the disabled option still held focus (review minor)", async () => {
+      const b = decisionSession();
+      const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });
+      await frames();
+      // A pointer Choose: the option takes focus, then it is disabled while the answer is on its way.
+      act(() => option("Option A").focus());
+      fireEvent.click(option("Option A"));
+      await waitFor(() => expect(inFeed().getByText("Answer sent")).toBeTruthy());
+      // A press on empty, non-focusable space outside the Console: the reader left, though no focus event says so.
+      fireEvent.pointerDown(document.body);
+      answered(b);
+      m.update(live(b));
+      await frames();
+      expect(screen.queryByRole("button", { name: "Option A" })).toBeNull();
+      expect(screen.getByRole("feed", { name: "Console" }).contains(document.activeElement)).toBe(false);
+    });
+
     it("leaves focus alone when the reader had already left the option for nowhere", async () => {
       const b = decisionSession();
       const m = mountConsole(live(b), { host: { answerDecision: vi.fn(async () => undefined) }, state: { follow: false, loaded: true } });

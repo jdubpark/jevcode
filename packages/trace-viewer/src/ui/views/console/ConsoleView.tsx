@@ -280,6 +280,21 @@ export function ConsoleView({ active }: ViewProps) {
     if (findNode(last.key) === undefined) rerender();
   });
 
+  // A press outside the row that last held focus is the reader leaving on purpose, even while a disabled option still
+  // looks focused and no focus event fires (the Brief's rule, Brief.tsx useDecisionFocusRepair): the repair forgets it.
+  useEffect(() => {
+    const doc = scrollRef.current?.ownerDocument;
+    if (doc === undefined) return undefined;
+    const onPointerDown = (event: PointerEvent): void => {
+      const last = lastFocus.current;
+      if (last === null) return;
+      const row = findNode(last.key);
+      if (!(event.target instanceof Node) || row === undefined || !row.contains(event.target)) lastFocus.current = null;
+    };
+    doc.addEventListener("pointerdown", onPointerDown, true);
+    return () => doc.removeEventListener("pointerdown", onPointerDown, true);
+  }, [session === null]);
+
   // Consumes a pending focus request once its row is mounted (focusKey keeps the row in the range meanwhile).
   useLayoutEffect(() => {
     const key = pendingFocus.current;
