@@ -4,8 +4,8 @@
   "scanId": "fixture",
   "partial": false,
   "counts": {
-    "files": 721,
-    "totalFiles": 721,
+    "files": 770,
+    "totalFiles": 770,
     "components": 22,
     "edges": 54,
     "languages": [
@@ -23,7 +23,7 @@
       "id": "cmp_f1dc43a02c16",
       "rootPath": "apps/desktop/src/renderer",
       "name": "desktop renderer",
-      "fileCount": 25,
+      "fileCount": 28,
       "files": [
         "apps/desktop/src/renderer/App.tsx",
         "apps/desktop/src/renderer/bridge.ts",
@@ -36,8 +36,11 @@
         "apps/desktop/src/renderer/components/TaskPrompt.tsx",
         "apps/desktop/src/renderer/components/TerminalPanel.tsx",
         "apps/desktop/src/renderer/components/WorkspaceHost.tsx",
+        "apps/desktop/src/renderer/components/agent-settings.test.ts",
         "apps/desktop/src/renderer/components/composer-prefill.test.ts",
         "apps/desktop/src/renderer/components/composer-prefill.ts",
+        "apps/desktop/src/renderer/components/narrator-format.test.ts",
+        "apps/desktop/src/renderer/components/narrator-format.ts",
         "apps/desktop/src/renderer/index.html",
         "apps/desktop/src/renderer/main.tsx",
         "apps/desktop/src/renderer/payload-types.ts",
@@ -56,22 +59,22 @@
       "role": "ui",
       "purpose": "Main window: workspace, composer, surfaces and the embedded trace viewer.",
       "provenance": "model",
-      "contentHash": "498ce1fc387a40c0a12eb551a9b7668408502cc4",
+      "contentHash": "a63308ff32225ee9bf01f9d4d389959f68a9531f",
       "externalDeps": [
         {
           "name": "react",
-          "count": 9
+          "count": 10
         },
         {
           "name": "vitest",
-          "count": 4
-        },
-        {
-          "name": "@xterm/xterm",
-          "count": 2
+          "count": 6
         },
         {
           "name": "react-dom",
+          "count": 3
+        },
+        {
+          "name": "@xterm/xterm",
           "count": 2
         },
         {
@@ -94,11 +97,12 @@
       "id": "cmp_d310ea320463",
       "rootPath": "apps/trace-viewer-dev",
       "name": "trace-viewer-dev",
-      "fileCount": 25,
+      "fileCount": 26,
       "files": [
         "apps/trace-viewer-dev/.gitignore",
         "apps/trace-viewer-dev/index.html",
         "apps/trace-viewer-dev/package.json",
+        "apps/trace-viewer-dev/scripts/console-bundle.mjs",
         "apps/trace-viewer-dev/scripts/smoke.mjs",
         "apps/trace-viewer-dev/scripts/spike-electron.cjs",
         "apps/trace-viewer-dev/spike.html",
@@ -127,7 +131,7 @@
       "role": "ui",
       "purpose": "Dev host that loads trace bundles into the viewer for smoke tests.",
       "provenance": "model",
-      "contentHash": "56b55fd589ea556847bf5c26a98050c0c919d1eb",
+      "contentHash": "ffa910ed1a6b7dd6e55b6171f9da31a72a55f769",
       "externalDeps": [
         {
           "name": "react",
@@ -155,7 +159,7 @@
       "id": "cmp_03cac6d3205d",
       "rootPath": "packages/trace-viewer/src/ui",
       "name": "trace-viewer ui",
-      "fileCount": 157,
+      "fileCount": 170,
       "files": [
         "packages/trace-viewer/src/ui/graphics/ClaimVsObserved.tsx",
         "packages/trace-viewer/src/ui/graphics/DiffBar.tsx",
@@ -176,19 +180,27 @@
         "packages/trace-viewer/src/ui/icons/icons.test.tsx",
         "packages/trace-viewer/src/ui/icons/kind-icons.ts",
         "packages/trace-viewer/src/ui/icons/paths.ts",
+        "packages/trace-viewer/src/ui/inspector/Brief.module.css",
+        "packages/trace-viewer/src/ui/inspector/Brief.tsx",
         "packages/trace-viewer/src/ui/inspector/ComponentInspector.module.css",
         "packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx",
         "packages/trace-viewer/src/ui/inspector/Evidence.tsx",
         "packages/trace-viewer/src/ui/inspector/Inspector.module.css",
         "packages/trace-viewer/src/ui/inspector/Inspector.tsx",
+        "packages/trace-viewer/src/ui/inspector/MapThumbnail.module.css",
+        "packages/trace-viewer/src/ui/inspector/MapThumbnail.tsx",
         "packages/trace-viewer/src/ui/inspector/Raw.tsx",
+        "packages/trace-viewer/src/ui/inspector/RightPanel.tsx",
         "packages/trace-viewer/src/ui/inspector/Summary.tsx",
+        "packages/trace-viewer/src/ui/inspector/architecture-card.test.tsx",
+        "packages/trace-viewer/src/ui/inspector/brief.test.tsx",
         "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx",
         "packages/trace-viewer/src/ui/inspector/evidence-raw.test.tsx",
         "packages/trace-viewer/src/ui/inspector/finding-copy.ts",
         "packages/trace-viewer/src/ui/inspector/inspector.test.tsx",
         "packages/trace-viewer/src/ui/inspector/review-note.test.ts",
         "packages/trace-viewer/src/ui/inspector/review-note.ts",
+        "packages/trace-viewer/src/ui/shell/DecisionAnnouncer.tsx",
         "packages/trace-viewer/src/ui/shell/ErrorBoundary.tsx",
         "packages/trace-viewer/src/ui/shell/KeyboardLayer.tsx",
         "packages/trace-viewer/src/ui/shell/LiveRegion.tsx",
@@ -208,8 +220,10 @@
         "packages/trace-viewer/src/ui/shell/data-controller.test.ts",
         "packages/trace-viewer/src/ui/shell/data-controller.ts",
         "packages/trace-viewer/src/ui/shell/embedded.test.tsx",
+        "packages/trace-viewer/src/ui/shell/host-context.ts",
         "packages/trace-viewer/src/ui/shell/host.ts",
         "packages/trace-viewer/src/ui/shell/keyboard.test.tsx",
+        "packages/trace-viewer/src/ui/shell/perf.test.ts",
         "packages/trace-viewer/src/ui/shell/perf.ts",
         "packages/trace-viewer/src/ui/shell/regions.ts",
         "packages/trace-viewer/src/ui/shell/session-context.ts",
@@ -256,6 +270,10 @@
         "packages/trace-viewer/src/ui/views/canvas/frame.test.tsx",
         "packages/trace-viewer/src/ui/views/canvas/spike-rulings.ts",
         "packages/trace-viewer/src/ui/views/canvas/world.test.tsx",
+        "packages/trace-viewer/src/ui/views/console/ConsoleRowView.tsx",
+        "packages/trace-viewer/src/ui/views/console/ConsoleView.module.css",
+        "packages/trace-viewer/src/ui/views/console/ConsoleView.tsx",
+        "packages/trace-viewer/src/ui/views/console/console-view.test.tsx",
         "packages/trace-viewer/src/ui/views/hybrid/HybridView.module.css",
         "packages/trace-viewer/src/ui/views/hybrid/HybridView.tsx",
         "packages/trace-viewer/src/ui/views/hybrid/hybrid-crash.test.tsx",
@@ -297,14 +315,13 @@
         "packages/trace-viewer/src/ui/views/map/map-edge-pairs.test.ts",
         "packages/trace-viewer/src/ui/views/map/map-edge-pairs.ts",
         "packages/trace-viewer/src/ui/views/map/map-fixture.test.ts",
+        "packages/trace-viewer/src/ui/views/map/map-layouts.ts",
         "packages/trace-viewer/src/ui/views/map/map-nav.test.ts",
         "packages/trace-viewer/src/ui/views/map/map-nav.ts",
         "packages/trace-viewer/src/ui/views/map/map-text.test.ts",
         "packages/trace-viewer/src/ui/views/map/map-text.ts",
         "packages/trace-viewer/src/ui/views/map/map-view.test.tsx",
         "packages/trace-viewer/src/ui/views/map/overlay.ts",
-        "packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.module.css",
-        "packages/trace-viewer/src/ui/views/placeholder/ViewPlaceholder.tsx",
         "packages/trace-viewer/src/ui/views/registry.ts",
         "packages/trace-viewer/src/ui/views/shared/LevelControl.tsx",
         "packages/trace-viewer/src/ui/views/shared/NewBadge.tsx",
@@ -320,23 +337,23 @@
       "role": "ui",
       "purpose": "Trace viewer views, Inspector, shell and keyboard layer.",
       "provenance": "model",
-      "contentHash": "c795dd38488ea9354eb3ad22f937b39f07d80dc3",
+      "contentHash": "9acccd35bd1f66553dc9c550cfd871a0a7c95eae",
       "externalDeps": [
         {
           "name": "react",
-          "count": 78
+          "count": 89
         },
         {
           "name": "vitest",
-          "count": 47
+          "count": 51
         },
         {
           "name": "@testing-library/react",
-          "count": 27
+          "count": 30
         },
         {
           "name": "@testing-library/user-event",
-          "count": 5
+          "count": 6
         },
         {
           "name": "fast-check",
@@ -344,7 +361,7 @@
         },
         {
           "name": "@tanstack/react-virtual",
-          "count": 2
+          "count": 3
         },
         {
           "name": "react-dom",
@@ -488,7 +505,7 @@
       "id": "cmp_f12bdb7b5a14",
       "rootPath": "apps/desktop/src/main",
       "name": "desktop main",
-      "fileCount": 69,
+      "fileCount": 80,
       "files": [
         "apps/desktop/src/main/actions.test.ts",
         "apps/desktop/src/main/actions.ts",
@@ -502,9 +519,16 @@
         "apps/desktop/src/main/pipeline/demo-e2e.test.ts",
         "apps/desktop/src/main/pipeline/evidence-runtime.test.ts",
         "apps/desktop/src/main/pipeline/evidence-runtime.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.test.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-sources.test.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-sources.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration.test.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration.ts",
         "apps/desktop/src/main/pipeline/explainer-overview.bench.ts",
         "apps/desktop/src/main/pipeline/explainer-overview.test.ts",
         "apps/desktop/src/main/pipeline/explainer-overview.ts",
+        "apps/desktop/src/main/pipeline/explainer-stage.narration.test.ts",
         "apps/desktop/src/main/pipeline/explainer-stage.test.ts",
         "apps/desktop/src/main/pipeline/explainer-stage.ts",
         "apps/desktop/src/main/pipeline/instruction-router.test.ts",
@@ -517,6 +541,10 @@
         "apps/desktop/src/main/pipeline/model-resolution.test.ts",
         "apps/desktop/src/main/pipeline/model-resolution.ts",
         "apps/desktop/src/main/pipeline/model-selection.ts",
+        "apps/desktop/src/main/pipeline/narrator-call-log.test.ts",
+        "apps/desktop/src/main/pipeline/narrator-call-log.ts",
+        "apps/desktop/src/main/pipeline/narrator-switch.test.ts",
+        "apps/desktop/src/main/pipeline/narrator-switch.ts",
         "apps/desktop/src/main/pipeline/pipeline-runtime.test.ts",
         "apps/desktop/src/main/pipeline/pipeline-runtime.ts",
         "apps/desktop/src/main/pipeline/playback.ts",
@@ -565,11 +593,11 @@
       "role": "api",
       "purpose": "Electron main process: IPC handlers, sessions and the event pipeline.",
       "provenance": "model",
-      "contentHash": "0c6a2c0dcecc483b28c94e5ca3d9b4342f6218d4",
+      "contentHash": "8ad5c600faf3937725c5d76d1895dda4b347acbe",
       "externalDeps": [
         {
           "name": "vitest",
-          "count": 33
+          "count": 39
         },
         {
           "name": "electron",
@@ -581,7 +609,7 @@
         },
         {
           "name": "zod",
-          "count": 4
+          "count": 5
         },
         {
           "name": "better-sqlite3",
@@ -607,7 +635,7 @@
       "id": "cmp_27ce274f853f",
       "rootPath": "apps/desktop",
       "name": "desktop shell",
-      "fileCount": 25,
+      "fileCount": 27,
       "files": [
         "apps/desktop/package.json",
         "apps/desktop/scripts/native-abi.mjs",
@@ -622,6 +650,8 @@
         "apps/desktop/src/shared/ipc-registry.test.ts",
         "apps/desktop/src/shared/ipc-registry.ts",
         "apps/desktop/src/shared/local-channels.ts",
+        "apps/desktop/src/shared/narrator-ipc.test.ts",
+        "apps/desktop/src/shared/narrator-log.ts",
         "apps/desktop/src/shared/prefs-ipc.test.ts",
         "apps/desktop/src/shared/prefs.test.ts",
         "apps/desktop/src/shared/prefs.ts",
@@ -640,15 +670,15 @@
       "role": "api",
       "purpose": "Preload bridge, shared IPC types and the app build config.",
       "provenance": "model",
-      "contentHash": "d44c00ebd3912b7e57a1eb5136f938b6a58e0d1b",
+      "contentHash": "efe019016bae9e8d69333ef1f8451433e218e5ff",
       "externalDeps": [
         {
           "name": "vitest",
-          "count": 5
+          "count": 6
         },
         {
           "name": "zod",
-          "count": 3
+          "count": 4
         },
         {
           "name": "vite",
@@ -761,7 +791,7 @@
       "id": "cmp_b66601070199",
       "rootPath": "packages/jev-router",
       "name": "jev-router",
-      "fileCount": 30,
+      "fileCount": 42,
       "files": [
         "packages/jev-router/package.json",
         "packages/jev-router/src/batch.test.ts",
@@ -777,6 +807,17 @@
         "packages/jev-router/src/mapping.ts",
         "packages/jev-router/src/model-policy.test.ts",
         "packages/jev-router/src/model-policy.ts",
+        "packages/jev-router/src/narrator/anthropic-transport.test.ts",
+        "packages/jev-router/src/narrator/anthropic-transport.ts",
+        "packages/jev-router/src/narrator/client.test.ts",
+        "packages/jev-router/src/narrator/client.ts",
+        "packages/jev-router/src/narrator/errors.ts",
+        "packages/jev-router/src/narrator/guardrails.test.ts",
+        "packages/jev-router/src/narrator/guardrails.ts",
+        "packages/jev-router/src/narrator/index.ts",
+        "packages/jev-router/src/narrator/narrator.live.test.ts",
+        "packages/jev-router/src/narrator/prompts.ts",
+        "packages/jev-router/src/narrator/types.ts",
         "packages/jev-router/src/patterns.ts",
         "packages/jev-router/src/policy.test.ts",
         "packages/jev-router/src/policy.ts",
@@ -787,6 +828,7 @@
         "packages/jev-router/src/state.test.ts",
         "packages/jev-router/src/state.ts",
         "packages/jev-router/src/testing/inputs.ts",
+        "packages/jev-router/src/testing/narrator-recorded.ts",
         "packages/jev-router/src/types.ts",
         "packages/jev-router/src/typesafe-client.test.ts",
         "packages/jev-router/src/typesafe-client.ts",
@@ -799,14 +841,26 @@
       "role": "agent",
       "purpose": "Routes Jev questions to the model through a typed client with guardrails.",
       "provenance": "model",
-      "contentHash": "78440d7782491234032d2631cb19e80aafab3d5d",
+      "contentHash": "a02c734867c4c5d48ec31df79987a69ecf529bff",
       "externalDeps": [
         {
           "name": "vitest",
-          "count": 12
+          "count": 16
+        },
+        {
+          "name": "@anthropic-ai/sdk",
+          "count": 1
         },
         {
           "name": "@typesafe-ai/sdk",
+          "count": 1
+        },
+        {
+          "name": "fast-check",
+          "count": 1
+        },
+        {
+          "name": "zod",
           "count": 1
         }
       ],
@@ -1069,7 +1123,7 @@
       "role": "domain",
       "purpose": "Cuts the repository into components, edges and roles for the Map.",
       "provenance": "model",
-      "contentHash": "a8014e56f62759e0e36a03dd7ca16d01bd302248",
+      "contentHash": "1b17e6ff43717adce593cd63865facf1985cd1e1",
       "externalDeps": [
         {
           "name": "vitest",
@@ -1163,7 +1217,7 @@
       "role": "domain",
       "purpose": "Folds trace rows into turns, steps, chapters and findings.",
       "provenance": "model",
-      "contentHash": "46469d473254606667e16707884066631d388562",
+      "contentHash": "be9c28784f04c2706a78c37952e5b07aff739e1c",
       "externalDeps": [
         {
           "name": "vitest",
@@ -1185,8 +1239,12 @@
       "id": "cmp_381d69b6cafc",
       "rootPath": "packages/trace-viewer/src/layout",
       "name": "trace-viewer layout",
-      "fileCount": 43,
+      "fileCount": 50,
       "files": [
+        "packages/trace-viewer/src/layout/brief-architecture.test.ts",
+        "packages/trace-viewer/src/layout/brief-architecture.ts",
+        "packages/trace-viewer/src/layout/brief.test.ts",
+        "packages/trace-viewer/src/layout/brief.ts",
         "packages/trace-viewer/src/layout/canvas-items.test.ts",
         "packages/trace-viewer/src/layout/canvas-layout.bench.ts",
         "packages/trace-viewer/src/layout/canvas-layout.property.test.ts",
@@ -1201,6 +1259,9 @@
         "packages/trace-viewer/src/layout/canvas-routes.test.ts",
         "packages/trace-viewer/src/layout/canvas-routes.ts",
         "packages/trace-viewer/src/layout/chapter-label.ts",
+        "packages/trace-viewer/src/layout/console-rows.property.test.ts",
+        "packages/trace-viewer/src/layout/console-rows.test.ts",
+        "packages/trace-viewer/src/layout/console-rows.ts",
         "packages/trace-viewer/src/layout/map-details.test.ts",
         "packages/trace-viewer/src/layout/map-details.ts",
         "packages/trace-viewer/src/layout/map-layout.bench.ts",
@@ -1236,15 +1297,15 @@
       "role": "domain",
       "purpose": "Pure layouts for the Canvas, the Hybrid spine and the Map.",
       "provenance": "model",
-      "contentHash": "79f92cd9a1ab419e33dc0d1ff80d182551f7351b",
+      "contentHash": "ebe3c54c03d5a9265a9ace47328c672469c5ece6",
       "externalDeps": [
         {
           "name": "vitest",
-          "count": 28
+          "count": 32
         },
         {
           "name": "fast-check",
-          "count": 9
+          "count": 11
         }
       ],
       "entryPoints": [],
@@ -1295,7 +1356,7 @@
       "role": "domain",
       "purpose": "Package entry, sources and test support for the trace viewer.",
       "provenance": "model",
-      "contentHash": "8bcd735eb6fa87fbbf2458cf722960a951b3bb50",
+      "contentHash": "cd716f0e74ea3ee6062d71d120b95b1305b42b41",
       "externalDeps": [
         {
           "name": "vitest",
@@ -1502,7 +1563,7 @@
       "role": "config",
       "purpose": "Workspace, TypeScript, ESLint and editor configuration.",
       "provenance": "model",
-      "contentHash": "0848a67213631f61c91386199fae6b5b4a99208b",
+      "contentHash": "28dd7e509ce9764a8c72a45e629ba9abc327a44b",
       "externalDeps": [
         {
           "name": "@eslint/js",
@@ -1521,17 +1582,17 @@
     {
       "from": "cmp_03cac6d3205d",
       "to": "cmp_381d69b6cafc",
-      "count": 150,
+      "count": 164,
       "examples": [
-        "packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx → packages/trace-viewer/src/layout/map-details.ts",
-        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/trace-viewer/src/layout/trace-index.ts",
-        "packages/trace-viewer/src/ui/inspector/Inspector.tsx → packages/trace-viewer/src/layout/trace-index.ts"
+        "packages/trace-viewer/src/ui/inspector/Brief.tsx → packages/trace-viewer/src/layout/brief.ts",
+        "packages/trace-viewer/src/ui/inspector/Brief.tsx → packages/trace-viewer/src/layout/trace-index.ts",
+        "packages/trace-viewer/src/ui/inspector/ComponentInspector.tsx → packages/trace-viewer/src/layout/map-details.ts"
       ]
     },
     {
       "from": "cmp_03cac6d3205d",
       "to": "cmp_3ff491f81a64",
-      "count": 86,
+      "count": 96,
       "examples": [
         "packages/trace-viewer/src/ui/graphics/ClaimVsObserved.tsx → packages/trace-viewer/src/model/index.ts",
         "packages/trace-viewer/src/ui/graphics/DiffBar.tsx → packages/trace-viewer/src/model/index.ts",
@@ -1541,17 +1602,17 @@
     {
       "from": "cmp_03cac6d3205d",
       "to": "cmp_4f85bffae8dd",
-      "count": 67,
+      "count": 77,
       "examples": [
-        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/canvas-view-harness.tsx",
-        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/overview-builder.ts",
-        "packages/trace-viewer/src/ui/inspector/component-inspector.test.tsx → packages/trace-viewer/src/test-support/session-builder.ts"
+        "packages/trace-viewer/src/ui/inspector/architecture-card.test.tsx → packages/trace-viewer/src/test-support/overview-builder.ts",
+        "packages/trace-viewer/src/ui/inspector/architecture-card.test.tsx → packages/trace-viewer/src/test-support/session-builder.ts",
+        "packages/trace-viewer/src/ui/inspector/architecture-card.test.tsx → packages/trace-viewer/src/test-support/ui-harness.tsx"
       ]
     },
     {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_de23360922b6",
-      "count": 52,
+      "count": 60,
       "examples": [
         "apps/desktop/src/main/index.ts → packages/contracts/src/index.ts",
         "apps/desktop/src/main/ipc.test.ts → packages/contracts/src/index.ts",
@@ -1561,7 +1622,7 @@
     {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_21ca93ae5083",
-      "count": 47,
+      "count": 54,
       "examples": [
         "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
         "apps/desktop/src/main/index.ts → packages/storage/src/index.ts",
@@ -1571,31 +1632,31 @@
     {
       "from": "cmp_381d69b6cafc",
       "to": "cmp_4f85bffae8dd",
-      "count": 45,
+      "count": 52,
       "examples": [
-        "packages/trace-viewer/src/layout/canvas-items.test.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts",
-        "packages/trace-viewer/src/layout/canvas-layout.bench.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts",
-        "packages/trace-viewer/src/layout/canvas-layout.property.test.ts → packages/trace-viewer/src/test-support/canvas-arbitraries.ts"
-      ]
-    },
-    {
-      "from": "cmp_381d69b6cafc",
-      "to": "cmp_3ff491f81a64",
-      "count": 37,
-      "examples": [
-        "packages/trace-viewer/src/layout/canvas-items.test.ts → packages/trace-viewer/src/model/index.ts",
-        "packages/trace-viewer/src/layout/canvas-layout.property.test.ts → packages/trace-viewer/src/model/index.ts",
-        "packages/trace-viewer/src/layout/canvas-layout.soak-shape.test.ts → packages/trace-viewer/src/model/fold.ts"
+        "packages/trace-viewer/src/layout/brief-architecture.test.ts → packages/trace-viewer/src/test-support/overview-builder.ts",
+        "packages/trace-viewer/src/layout/brief-architecture.test.ts → packages/trace-viewer/src/test-support/session-builder.ts",
+        "packages/trace-viewer/src/layout/brief.test.ts → packages/trace-viewer/src/test-support/arbitraries.ts"
       ]
     },
     {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_27ce274f853f",
-      "count": 34,
+      "count": 51,
       "examples": [
         "apps/desktop/src/main/actions.test.ts → apps/desktop/src/shared/errors.ts",
         "apps/desktop/src/main/actions.ts → apps/desktop/src/shared/errors.ts",
         "apps/desktop/src/main/git.test.ts → apps/desktop/src/shared/errors.ts"
+      ]
+    },
+    {
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_3ff491f81a64",
+      "count": 43,
+      "examples": [
+        "packages/trace-viewer/src/layout/brief-architecture.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/layout/brief.test.ts → packages/trace-viewer/src/model/index.ts",
+        "packages/trace-viewer/src/layout/brief.ts → packages/trace-viewer/src/model/index.ts"
       ]
     },
     {
@@ -1609,6 +1670,16 @@
       ]
     },
     {
+      "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_b66601070199",
+      "count": 30,
+      "examples": [
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.test.ts → packages/jev-router/src/index.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.test.ts → packages/jev-router/src/index.ts",
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.ts → packages/jev-router/src/index.ts"
+      ]
+    },
+    {
       "from": "cmp_846ce170a650",
       "to": "cmp_de23360922b6",
       "count": 27,
@@ -1616,6 +1687,26 @@
         "packages/ui-catalog/src/catalog-validation.ts → packages/contracts/src/index.ts",
         "packages/ui-catalog/src/catalog.test.ts → packages/contracts/src/index.ts",
         "packages/ui-catalog/src/catalog.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_b66601070199",
+      "to": "cmp_de23360922b6",
+      "count": 27,
+      "examples": [
+        "packages/jev-router/src/degrade.ts → packages/contracts/src/index.ts",
+        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts",
+        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_03cac6d3205d",
+      "count": 25,
+      "examples": [
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/viewport/controller.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/state/location.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/shell/TraceViewer.tsx"
       ]
     },
     {
@@ -1639,23 +1730,23 @@
       ]
     },
     {
-      "from": "cmp_4f85bffae8dd",
-      "to": "cmp_03cac6d3205d",
-      "count": 21,
+      "from": "cmp_f1dc43a02c16",
+      "to": "cmp_27ce274f853f",
+      "count": 20,
       "examples": [
-        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/viewport/controller.ts",
-        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/state/location.ts",
-        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/ui/shell/TraceViewer.tsx"
+        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
+        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
+        "apps/desktop/src/renderer/bridge.ts → apps/desktop/src/shared/api.ts"
       ]
     },
     {
-      "from": "cmp_b66601070199",
+      "from": "cmp_03cac6d3205d",
       "to": "cmp_de23360922b6",
       "count": 19,
       "examples": [
-        "packages/jev-router/src/degrade.ts → packages/contracts/src/index.ts",
-        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts",
-        "packages/jev-router/src/guardrails.test.ts → packages/contracts/src/index.ts"
+        "packages/trace-viewer/src/ui/icons/icons.test.tsx → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/ui/icons/kind-icons.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/contracts/src/index.ts"
       ]
     },
     {
@@ -1670,22 +1761,22 @@
     },
     {
       "from": "cmp_f12bdb7b5a14",
+      "to": "cmp_7773132844d4",
+      "count": 17,
+      "examples": [
+        "apps/desktop/src/main/index.ts → packages/evidence-engine/src/index.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts",
+        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts"
+      ]
+    },
+    {
+      "from": "cmp_f12bdb7b5a14",
       "to": "cmp_44240dbada3f",
       "count": 16,
       "examples": [
         "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
         "apps/desktop/src/main/pipeline/demo-e2e.test.ts → packages/semantic-core/src/index.ts",
         "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/semantic-core/src/index.ts"
-      ]
-    },
-    {
-      "from": "cmp_03cac6d3205d",
-      "to": "cmp_de23360922b6",
-      "count": 15,
-      "examples": [
-        "packages/trace-viewer/src/ui/icons/icons.test.tsx → packages/contracts/src/index.ts",
-        "packages/trace-viewer/src/ui/icons/kind-icons.ts → packages/contracts/src/index.ts",
-        "packages/trace-viewer/src/ui/inspector/Evidence.tsx → packages/contracts/src/index.ts"
       ]
     },
     {
@@ -1699,43 +1790,23 @@
       ]
     },
     {
-      "from": "cmp_f1dc43a02c16",
-      "to": "cmp_27ce274f853f",
-      "count": 14,
-      "examples": [
-        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
-        "apps/desktop/src/renderer/App.tsx → apps/desktop/src/shared/prefs.ts",
-        "apps/desktop/src/renderer/bridge.ts → apps/desktop/src/shared/api.ts"
-      ]
-    },
-    {
-      "from": "cmp_f12bdb7b5a14",
-      "to": "cmp_b66601070199",
-      "count": 13,
-      "examples": [
-        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/jev-router/src/index.ts",
-        "apps/desktop/src/main/pipeline/jev-stage.test.ts → packages/jev-router/src/index.ts",
-        "apps/desktop/src/main/pipeline/jev-stage.ts → packages/jev-router/src/index.ts"
-      ]
-    },
-    {
-      "from": "cmp_f12bdb7b5a14",
-      "to": "cmp_7773132844d4",
-      "count": 12,
-      "examples": [
-        "apps/desktop/src/main/index.ts → packages/evidence-engine/src/index.ts",
-        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts",
-        "apps/desktop/src/main/pipeline/evidence-runtime.test.ts → packages/evidence-engine/src/index.ts"
-      ]
-    },
-    {
       "from": "cmp_f12bdb7b5a14",
       "to": "cmp_c13abffb8548",
-      "count": 11,
+      "count": 15,
       "examples": [
         "apps/desktop/src/main/index.ts → packages/codebase-map/src/node/index.ts",
-        "apps/desktop/src/main/pipeline/explainer-overview.bench.ts → packages/codebase-map/package.json",
-        "apps/desktop/src/main/pipeline/explainer-overview.bench.ts → packages/codebase-map/src/node/index.ts"
+        "apps/desktop/src/main/pipeline/explainer-narration-seam.test.ts → packages/codebase-map/package.json",
+        "apps/desktop/src/main/pipeline/explainer-narration.ts → packages/codebase-map/package.json"
+      ]
+    },
+    {
+      "from": "cmp_4f85bffae8dd",
+      "to": "cmp_381d69b6cafc",
+      "count": 12,
+      "examples": [
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/viewport.ts",
+        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/trace-index.ts",
+        "packages/trace-viewer/src/test-support/canvas-arbitraries.ts → packages/trace-viewer/src/layout/canvas-layout.ts"
       ]
     },
     {
@@ -1749,13 +1820,13 @@
       ]
     },
     {
-      "from": "cmp_4f85bffae8dd",
-      "to": "cmp_381d69b6cafc",
-      "count": 10,
+      "from": "cmp_381d69b6cafc",
+      "to": "cmp_de23360922b6",
+      "count": 9,
       "examples": [
-        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/viewport.ts",
-        "packages/trace-viewer/src/index.ts → packages/trace-viewer/src/layout/trace-index.ts",
-        "packages/trace-viewer/src/test-support/canvas-arbitraries.ts → packages/trace-viewer/src/layout/canvas-layout.ts"
+        "packages/trace-viewer/src/layout/brief.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/layout/canvas-live-tick.equivalence.property.test.ts → packages/contracts/src/index.ts",
+        "packages/trace-viewer/src/layout/console-rows.property.test.ts → packages/contracts/src/index.ts"
       ]
     },
     {
@@ -1839,16 +1910,6 @@
       ]
     },
     {
-      "from": "cmp_381d69b6cafc",
-      "to": "cmp_de23360922b6",
-      "count": 6,
-      "examples": [
-        "packages/trace-viewer/src/layout/canvas-live-tick.equivalence.property.test.ts → packages/contracts/src/index.ts",
-        "packages/trace-viewer/src/layout/map-details.ts → packages/contracts/src/index.ts",
-        "packages/trace-viewer/src/layout/map-layout.property.test.ts → packages/contracts/src/index.ts"
-      ]
-    },
-    {
       "from": "cmp_99a2f6525f7f",
       "to": "cmp_4cf1fb937bae",
       "count": 6,
@@ -1869,6 +1930,16 @@
       ]
     },
     {
+      "from": "cmp_d310ea320463",
+      "to": "cmp_de23360922b6",
+      "count": 5,
+      "examples": [
+        "apps/trace-viewer-dev/scripts/console-bundle.mjs → packages/contracts/src/index.ts",
+        "apps/trace-viewer-dev/src/host.tsx → packages/contracts/src/index.ts",
+        "apps/trace-viewer-dev/src/overview-sample.ts → packages/contracts/src/index.ts"
+      ]
+    },
+    {
       "from": "cmp_f1dc43a02c16",
       "to": "cmp_de23360922b6",
       "count": 5,
@@ -1886,16 +1957,6 @@
         "apps/desktop/src/shared/api.ts → packages/contracts/src/index.ts",
         "apps/desktop/src/shared/api.ts → packages/contracts/src/index.ts",
         "apps/desktop/src/shared/ipc-registry.ts → packages/contracts/src/index.ts"
-      ]
-    },
-    {
-      "from": "cmp_d310ea320463",
-      "to": "cmp_de23360922b6",
-      "count": 4,
-      "examples": [
-        "apps/trace-viewer-dev/src/host.tsx → packages/contracts/src/index.ts",
-        "apps/trace-viewer-dev/src/overview-sample.ts → packages/contracts/src/index.ts",
-        "apps/trace-viewer-dev/src/selftest-open.ts → packages/contracts/src/index.ts"
       ]
     },
     {
@@ -2044,15 +2105,15 @@
       "usedBy": [
         {
           "componentId": "cmp_03cac6d3205d",
-          "count": 47
+          "count": 51
         },
         {
           "componentId": "cmp_f12bdb7b5a14",
-          "count": 33
+          "count": 39
         },
         {
           "componentId": "cmp_381d69b6cafc",
-          "count": 28
+          "count": 32
         },
         {
           "componentId": "cmp_3ff491f81a64",
@@ -2063,16 +2124,16 @@
           "count": 16
         },
         {
+          "componentId": "cmp_b66601070199",
+          "count": 16
+        },
+        {
           "componentId": "cmp_de23360922b6",
           "count": 14
         },
         {
           "componentId": "cmp_c13abffb8548",
           "count": 13
-        },
-        {
-          "componentId": "cmp_b66601070199",
-          "count": 12
         },
         {
           "componentId": "cmp_44240dbada3f",
@@ -2095,12 +2156,16 @@
           "count": 7
         },
         {
+          "componentId": "cmp_27ce274f853f",
+          "count": 6
+        },
+        {
           "componentId": "cmp_4cf1fb937bae",
           "count": 6
         },
         {
-          "componentId": "cmp_27ce274f853f",
-          "count": 5
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 6
         },
         {
           "componentId": "cmp_64bacb15ef37",
@@ -2113,10 +2178,6 @@
         {
           "componentId": "cmp_88cac31c4ffc",
           "count": 4
-        },
-        {
-          "componentId": "cmp_f1dc43a02c16",
-          "count": 4
         }
       ]
     },
@@ -2125,11 +2186,11 @@
       "usedBy": [
         {
           "componentId": "cmp_03cac6d3205d",
-          "count": 78
+          "count": 89
         },
         {
           "componentId": "cmp_f1dc43a02c16",
-          "count": 9
+          "count": 10
         },
         {
           "componentId": "cmp_846ce170a650",
@@ -2170,11 +2231,11 @@
         },
         {
           "componentId": "cmp_f12bdb7b5a14",
-          "count": 4
+          "count": 5
         },
         {
           "componentId": "cmp_27ce274f853f",
-          "count": 3
+          "count": 4
         },
         {
           "componentId": "cmp_88cac31c4ffc",
@@ -2205,6 +2266,10 @@
           "count": 1
         },
         {
+          "componentId": "cmp_b66601070199",
+          "count": 1
+        },
+        {
           "componentId": "cmp_f1dc43a02c16",
           "count": 1
         }
@@ -2215,7 +2280,7 @@
       "usedBy": [
         {
           "componentId": "cmp_03cac6d3205d",
-          "count": 27
+          "count": 30
         },
         {
           "componentId": "cmp_846ce170a650",
@@ -2232,7 +2297,7 @@
       "usedBy": [
         {
           "componentId": "cmp_381d69b6cafc",
-          "count": 9
+          "count": 11
         },
         {
           "componentId": "cmp_3ff491f81a64",
@@ -2256,6 +2321,10 @@
         },
         {
           "componentId": "cmp_44240dbada3f",
+          "count": 1
+        },
+        {
+          "componentId": "cmp_b66601070199",
           "count": 1
         }
       ]
@@ -2304,27 +2373,14 @@
       ]
     },
     {
-      "name": "@json-render/react",
-      "usedBy": [
-        {
-          "componentId": "cmp_846ce170a650",
-          "count": 6
-        },
-        {
-          "componentId": "cmp_f1dc43a02c16",
-          "count": 1
-        }
-      ]
-    },
-    {
       "name": "react-dom",
       "usedBy": [
         {
-          "componentId": "cmp_d310ea320463",
-          "count": 2
+          "componentId": "cmp_f1dc43a02c16",
+          "count": 3
         },
         {
-          "componentId": "cmp_f1dc43a02c16",
+          "componentId": "cmp_d310ea320463",
           "count": 2
         },
         {
@@ -2337,6 +2393,19 @@
         },
         {
           "componentId": "cmp_f12bdb7b5a14",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@json-render/react",
+      "usedBy": [
+        {
+          "componentId": "cmp_846ce170a650",
+          "count": 6
+        },
+        {
+          "componentId": "cmp_f1dc43a02c16",
           "count": 1
         }
       ]
@@ -2359,7 +2428,7 @@
       "usedBy": [
         {
           "componentId": "cmp_03cac6d3205d",
-          "count": 5
+          "count": 6
         }
       ]
     },
@@ -2373,6 +2442,15 @@
         {
           "componentId": "cmp_d310ea320463",
           "count": 2
+        }
+      ]
+    },
+    {
+      "name": "@tanstack/react-virtual",
+      "usedBy": [
+        {
+          "componentId": "cmp_03cac6d3205d",
+          "count": 3
         }
       ]
     },
@@ -2416,15 +2494,6 @@
       ]
     },
     {
-      "name": "@tanstack/react-virtual",
-      "usedBy": [
-        {
-          "componentId": "cmp_03cac6d3205d",
-          "count": 2
-        }
-      ]
-    },
-    {
       "name": "@vitejs/plugin-react",
       "usedBy": [
         {
@@ -2464,6 +2533,15 @@
       "usedBy": [
         {
           "componentId": "cmp_44240dbada3f",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "@anthropic-ai/sdk",
+      "usedBy": [
+        {
+          "componentId": "cmp_b66601070199",
           "count": 1
         }
       ]
@@ -2677,8 +2755,8 @@
   "status": {
     "scan": {
       "state": "done",
-      "scanned": 721,
-      "total": 721
+      "scanned": 770,
+      "total": 770
     },
     "narrator": "ready"
   },
