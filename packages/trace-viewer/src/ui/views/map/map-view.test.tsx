@@ -190,6 +190,66 @@ describe("MapView (spec §3.4, E13)", () => {
     expect(document.querySelector("[data-lit], [data-dim]")).toBeNull();
   });
 
+  it("a stale hover or selection never leaves the edges dimmed (lane 06 fix, minor 1)", async () => {
+    const user = userEvent.setup();
+    const told = overviewSnapshot({
+      components: [
+        { rootPath: "apps/web", role: "ui" },
+        { rootPath: "packages/api", role: "api" },
+        { rootPath: "packages/db", role: "storage" },
+        { rootPath: "scripts", role: "tooling" },
+      ],
+      edges: [
+        { from: "apps/web", to: "packages/api", count: 3 },
+        { from: "packages/api", to: "packages/db", count: 12 },
+        { from: "apps/web", to: "packages/db", count: 1 },
+      ],
+      narrative: { provenance: "model", sentences: [{ text: "web talks to api.", citations: [{ kind: "component", id: componentId("packages/api") }] }] },
+    });
+    const harness = renderMap(told);
+    const quiet = (): boolean => document.querySelector("[data-map-edge][data-dim], [data-map-edge][data-lit]") === null;
+    // A hovered narrative link that unmounts (the Overview collapses under it) ends its hover.
+    const link = document.querySelector<HTMLElement>(`[data-map-cite="${componentId("packages/api")}"]`);
+    if (link === null) throw new Error("no api link");
+    await user.hover(link);
+    expect(quiet()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(document.querySelector("[data-map-narrative]")).toBeNull();
+    expect(quiet()).toBe(true);
+    // A hovered card that leaves the snapshot.
+    await user.hover(cardOf("packages/db"));
+    expect(quiet()).toBe(false);
+    const withoutDb = overviewSnapshot({
+      components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "packages/api", role: "api" }, { rootPath: "scripts", role: "tooling" }],
+      edges: [{ from: "apps/web", to: "packages/api", count: 3 }],
+    });
+    act(() => harness.setSession(sessionWith(withoutDb)));
+    expect(quiet()).toBe(true);
+    // A hover when the Map is hidden.
+    await user.hover(cardOf("packages/api"));
+    expect(quiet()).toBe(false);
+    harness.setUi(
+      <>
+        <MapView active={false} />
+        <Inspector host={{}} />
+      </>,
+    );
+    harness.setUi(
+      <>
+        <MapView active />
+        <Inspector host={{}} />
+      </>,
+    );
+    expect(quiet()).toBe(true);
+    // A selected component that leaves the snapshot.
+    act(() => harness.store.dispatch({ type: "map/select", componentId: componentId("packages/api") }));
+    expect(quiet()).toBe(false);
+    act(() => harness.setSession(sessionWith(overviewSnapshot({ components: [{ rootPath: "apps/web", role: "ui" }, { rootPath: "packages/db", role: "storage" }], edges: [{ from: "apps/web", to: "packages/db", count: 1 }] }))));
+    expect(harness.store.get().mapSelection).toBe(componentId("packages/api"));
+    expect(document.querySelectorAll("[data-map-edge]")).toHaveLength(1);
+    expect(quiet()).toBe(true);
+  });
+
   it("at rest draws band-to-band edges that do not enter a hub; a hub shows a stub, and its edges and same-band edges join on selection", async () => {
     const user = userEvent.setup();
     const importers = ["apps/web", "srv/api", "pkg/agent", "pkg/store", "pkg/a", "pkg/b"];
