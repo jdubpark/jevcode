@@ -7,7 +7,7 @@
  * drives every path with fakes.
  */
 
-import { runWorkspaceSmoke } from "./smoke-workspace.js";
+import { DEFAULT_MIN_SAMPLES, runWorkspaceSmoke } from "./smoke-workspace.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
 export interface SmokeWebContents {
@@ -50,7 +50,7 @@ export interface SmokeDeps {
 
 export const SMOKE_MAIN_TIMEOUT_MS = 15_000;
 export const SMOKE_TRACE_TIMEOUT_MS = 30_000;
-export const SMOKE_WORKSPACE_TIMEOUT_MS = 60_000;
+export const SMOKE_WORKSPACE_TIMEOUT_MS = 240_000;
 /** Errors that arrive just after the last page (a late chunk, a CSP report) still fail the run. */
 export const SMOKE_SETTLE_MS = 500;
 
@@ -189,7 +189,12 @@ export function runSmoke(deps: SmokeDeps): void {
       fail(`workspace phase did not finish within ${SMOKE_WORKSPACE_TIMEOUT_MS / 1000}s`);
     });
     const shots = deps.env["JEVCODE_SMOKE_SHOTS"] ?? "";
-    runWorkspaceSmoke(deps.workspace, { repoPath, shotsDir: shots.length > 0 ? shots : null }).then(
+    const minSamples = Number.parseInt(deps.env["JEVCODE_SMOKE_MIN_SAMPLES"] ?? "", 10);
+    runWorkspaceSmoke(deps.workspace, {
+      repoPath,
+      shotsDir: shots.length > 0 ? shots : null,
+      minSamples: Number.isInteger(minSamples) && minSamples > 0 ? minSamples : DEFAULT_MIN_SAMPLES,
+    }).then(
       () => {
         if (!finished) schedule(SMOKE_SETTLE_MS, succeed);
       },

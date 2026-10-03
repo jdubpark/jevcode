@@ -6,6 +6,7 @@ import { useMemo, useRef } from "react";
 import { getBridge } from "../bridge.js";
 import { createIpcTraceSource } from "../trace/ipc-source.js";
 import { createMainHost } from "./main-host.js";
+import { paintProbe } from "./paint-probe.js";
 import { surfacesView } from "./surfaces-view.js";
 
 /** Host views after the built-in four; key 4 is Surfaces (spec §3.7, §8.6). */
@@ -30,7 +31,10 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
   const latest = useRef(props);
   latest.current = props;
 
-  const source = useMemo(() => createIpcTraceSource(bridge.trace, props.sessionId), [bridge, props.sessionId]);
+  const source = useMemo(() => {
+    const base = createIpcTraceSource(bridge.trace, props.sessionId);
+    return paintProbe()?.wrap(base) ?? base;
+  }, [bridge, props.sessionId]);
   const host = useMemo(
     () =>
       createMainHost({
@@ -39,6 +43,7 @@ export function EmbeddedWorkspace(props: EmbeddedWorkspaceProps) {
         repoRoot: () => latest.current.repoRoot,
         prefill: (text) => latest.current.onRequestChanges(text),
         log: (line) => console.log(line),
+        logLocations: paintProbe() !== null,
       }),
     [bridge, props.sessionId],
   );

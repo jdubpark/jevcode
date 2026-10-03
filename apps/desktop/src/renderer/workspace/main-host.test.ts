@@ -63,3 +63,21 @@ describe("createMainHost (spec §9)", () => {
     expect(lines).toEqual(["WORKSPACE_READY 4"]);
   });
 });
+
+describe("createMainHost smoke locations", () => {
+  it("logs WORKSPACE_LOCATION only when asked", () => {
+    const lines: string[] = [];
+    const base = {
+      bridge: {} as Pick<JevcodeApi, "action" | "trace" | "overview">,
+      sessionId: "s1",
+      repoRoot: () => null,
+      prefill: () => undefined,
+      log: (line: string) => lines.push(line),
+    };
+    const location = { v: 1, sessionId: "s1", view: "map", level: "chapter", selected: "step:3", brush: { kind: "session" } };
+    createMainHost(base).onLocation?.(location as never);
+    expect(lines).toEqual([]);
+    createMainHost({ ...base, logLocations: true }).onLocation?.(location as never);
+    expect(lines).toEqual(['WORKSPACE_LOCATION {"view":"map","selected":"step:3"}']);
+  });
+});

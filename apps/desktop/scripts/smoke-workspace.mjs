@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = path.resolve(APP, "../..");
 const shots = path.resolve(process.argv[2] ?? path.join(REPO_ROOT, ".superpowers", "shots"));
-const KILL_AFTER_MS = Number(process.env.JEVCODE_SMOKE_KILL_MS ?? 200_000);
+// Past the in-app workspace timeout (smoke.ts SMOKE_WORKSPACE_TIMEOUT_MS, 240 s), so the app reports its own failure first.
+const KILL_AFTER_MS = Number(process.env.JEVCODE_SMOKE_KILL_MS ?? 260_000);
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "jevcode-ws-smoke-"));
 const repo = path.join(tmp, "repo");
@@ -34,6 +35,8 @@ const child = spawn(electron, ["."], {
     JEVCODE_SMOKE_WORKSPACE: "1",
     JEVCODE_SMOKE_REPO: repo,
     JEVCODE_SMOKE_SHOTS: shots,
+    // 80 steps = 321 agent rows 150 ms apart: enough append samples for a p95 (docs/perf.md, ≥ 300).
+    JEVCODE_SMOKE_STEPS: process.env.JEVCODE_SMOKE_STEPS ?? "80",
     JEVCODE_DB: path.join(tmp, "smoke.db"),
     JEVC_AGENT: "mock",
     JEVC_JEV_CLIENT: "degrade",
