@@ -1,0 +1,605 @@
+/* Map view (spec §3.4, §3.6; the approved H2 Map mockup, map.html): light, one elevation (shadow), color for state only,
+   no decorative borders, no dot grid. Sizes inside the world are world units chosen to read 11 to 13 px at the zoom of
+   the level, because the camera scales the world. The camera writes the world transform and data-zoom-band directly
+   (MapView writeCamera). --tv-map-edge and --tv-map-lane are proposed tokens; move them to the token sheet with the others. */
+.root {
+  --tv-map-edge: #c4c9d1;
+  --tv-map-lane: rgb(16 24 40 / 0.024);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--tv-canvas);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: auto;
+  color: var(--tv-ink-3);
+  font-size: 13px;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.header {
+  flex: none;
+  padding: 12px 16px 14px;
+  background: var(--tv-panel);
+  box-shadow: inset 0 -1px 0 var(--tv-hair);
+  color: var(--tv-ink);
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  white-space: nowrap;
+}
+
+.headline {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.languages {
+  color: var(--tv-ink-3);
+}
+
+.notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+
+.note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tv-ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* A running scan's progress: a quiet 48 px bar beside its words (the approved Brief strip). */
+.progress {
+  display: inline-flex;
+  width: 48px;
+  height: 3px;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--tv-fill-2);
+  overflow: hidden;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--tv-ink-3);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--tv-ink-3);
+  font: inherit;
+  font-size: 12px;
+}
+
+.toggle:hover {
+  background: var(--tv-fill);
+}
+
+.toggle:focus-visible,
+.ref:focus-visible,
+.more:focus-visible,
+.card:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 2px;
+}
+
+.retry {
+  height: 20px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--tv-fill-2);
+  color: var(--tv-ink-2);
+  font: inherit;
+  font-size: 12px;
+}
+
+.retry:focus-visible {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.stageNote {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--tv-ink-3);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.narrative {
+  max-width: 86ch;
+  margin: 6px 0 0;
+  color: var(--tv-ink-2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* A component name in the narrative: ink with a faint underline; the selected component's link turns accent. */
+.ref {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tv-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgb(16 24 40 / 0.2);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ref[data-selected] {
+  color: var(--tv-accent);
+  text-decoration-color: var(--tv-accent);
+}
+
+.more {
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tv-ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+  background: var(--tv-canvas);
+}
+
+.viewport[data-tool="hand"] {
+  cursor: grab;
+}
+
+/* Sizes inside the world are world px: the camera scales them by k, so on screen they read size × k. --map-wpx is one
+   world px; sizes below 12 world px are written through it because the static 12 px guard (tokens.test.ts) reads a
+   literal px font size as screen px. The detail level starts at k = 1.4, where 8.6 world px read 12 px. */
+.world {
+  --map-wpx: 1px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+/* Each band is a full-height light lane; its header sits inside the top. */
+.lane {
+  position: absolute;
+  border-radius: 16px;
+  background: var(--tv-map-lane);
+  pointer-events: none;
+}
+
+.world[data-level="detail"] .lane {
+  border-radius: 10px;
+}
+
+.band {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tv-ink);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.band svg {
+  color: var(--tv-ink-3);
+}
+
+.bandCount {
+  color: var(--tv-ink-3);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.world[data-level="chip"] .band {
+  gap: 6px;
+  font-size: 19px;
+}
+
+.world[data-level="chip"] .band svg {
+  width: 18px;
+  height: 18px;
+}
+
+.world[data-level="card"] .band {
+  gap: 8px;
+  font-size: 17px;
+}
+
+.world[data-level="card"] .band svg {
+  width: 17px;
+  height: 17px;
+}
+
+.world[data-level="detail"] .band {
+  gap: 5px;
+  font-size: calc(10.5 * var(--map-wpx));
+}
+
+.world[data-level="detail"] .band svg {
+  width: 11px;
+  height: 11px;
+}
+
+.edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--tv-map-edge);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.stub {
+  fill: none;
+  stroke: var(--tv-map-edge);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.edge[data-lit] {
+  stroke: var(--tv-accent);
+}
+
+.edge[data-dim] {
+  opacity: 0.22;
+}
+
+.edge[data-emphasized] {
+  stroke: var(--tv-ink-3);
+}
+
+.card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 12px;
+  background: var(--tv-panel);
+  box-shadow: var(--tv-shadow);
+  color: var(--tv-ink);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  cursor: default;
+}
+
+.card[data-selected] {
+  box-shadow: 0 0 0 2px var(--tv-accent), var(--tv-shadow);
+}
+
+/* The card is two blocks, as in map.html: the head (name, and at the detail level the purpose and packages) and the
+   footer, spaced apart. Neither shrinks, so a long purpose never squeezes under the packages row. */
+.head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.hub {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  color: var(--tv-ink-3);
+  font-weight: 500;
+}
+
+.purpose {
+  color: var(--tv-ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.purpose[data-fallback] {
+  color: var(--tv-ink-3);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.packages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.packages span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.packages svg {
+  flex: none;
+}
+
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tv-ink-3);
+  white-space: nowrap;
+}
+
+.card[data-selected] .foot svg {
+  color: var(--tv-accent);
+}
+
+.track {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.track i {
+  display: block;
+  border-radius: 3px;
+  background: var(--tv-ink-4);
+  opacity: 0.65;
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Session state mark (lane 07) in the footer's count slot: 11 px. */
+.stateDot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--tv-ink-2);
+}
+
+.stateDot[data-state="failing"] {
+  background: var(--tv-bad);
+}
+
+/* Level content. */
+.world[data-level="chip"] .card {
+  padding: 7px 8px 9px;
+}
+
+.world[data-level="chip"] .name {
+  font-size: 20.5px;
+  line-height: 23px;
+}
+
+.world[data-level="chip"] .foot svg {
+  width: 17px;
+  height: 17px;
+}
+
+.world[data-level="chip"] .track i {
+  height: 6px;
+}
+
+.world[data-level="card"] .card {
+  padding: 11px 12px;
+}
+
+.world[data-level="card"] .name {
+  font-size: 17px;
+  line-height: 20px;
+}
+
+.world[data-level="card"] .foot svg {
+  width: 14px;
+  height: 14px;
+}
+
+.world[data-level="card"] .track i {
+  height: 4px;
+}
+
+.world[data-level="card"] .count {
+  font-size: 13.5px;
+}
+
+.world[data-level="detail"] .card {
+  padding: 7px 8px;
+  border-radius: 9px;
+}
+
+.world[data-level="detail"] .top {
+  gap: 4px;
+}
+
+.world[data-level="detail"] .name {
+  font-size: calc(10.5 * var(--map-wpx));
+  line-height: 13px;
+  -webkit-line-clamp: 1;
+}
+
+.world[data-level="detail"] .hub {
+  gap: 2px;
+  font-size: calc(8.6 * var(--map-wpx));
+}
+
+.world[data-level="detail"] .hub svg {
+  width: 9px;
+  height: 9px;
+}
+
+.world[data-level="detail"] .purpose {
+  margin-top: 2px;
+  font-size: calc(8.75 * var(--map-wpx));
+  line-height: 11.5px;
+}
+
+.world[data-level="detail"] .packages {
+  font-size: calc(8.6 * var(--map-wpx));
+  line-height: 11px;
+}
+
+.world[data-level="detail"] .packages svg {
+  width: 8.5px;
+  height: 8.5px;
+}
+
+.world[data-level="detail"] .foot {
+  gap: 4px;
+  font-size: calc(8.6 * var(--map-wpx));
+  line-height: 11px;
+}
+
+.world[data-level="detail"] .foot svg {
+  width: 9px;
+  height: 9px;
+}
+
+.world[data-level="detail"] .track {
+  flex: 0 0 36px;
+}
+
+.world[data-level="detail"] .track i {
+  height: 3px;
+}
+
+.world[data-level="detail"] .count {
+  margin-left: auto;
+}
+
+/* Below MAP_ICON_ONLY_K names hide; the footer icon and bar remain, and the tooltip and accessible name carry the name. */
+.viewport[data-zoom-band="icon"] .name,
+.viewport[data-zoom-band="icon"] .bandName {
+  visibility: hidden;
+}
+
+/* Spec E12: a snapshot that moves placed cards (a band appears or empties, a component joins a column) glides the
+   cards, lanes and band headers to their new place. Edge routes cannot interpolate, so the edge layer fades back in
+   once the cards have arrived; the two keyframe names alternate so back-to-back relayouts replay the fade. */
+.world[data-relayout] .card,
+.world[data-relayout] .lane,
+.world[data-relayout] .band {
+  transition:
+    left var(--tv-dur, 180ms) ease-out,
+    top var(--tv-dur, 180ms) ease-out,
+    width var(--tv-dur, 180ms) ease-out,
+    height var(--tv-dur, 180ms) ease-out;
+}
+
+.world[data-relayout="even"] .edges {
+  animation: tv-map-edges-in-even calc(var(--tv-dur, 180ms) * 2) ease-out both;
+}
+
+.world[data-relayout="odd"] .edges {
+  animation: tv-map-edges-in-odd calc(var(--tv-dur, 180ms) * 2) ease-out both;
+}
+
+@keyframes tv-map-edges-in-even {
+  0%,
+  55% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes tv-map-edges-in-odd {
+  0%,
+  55% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world[data-relayout] .card,
+  .world[data-relayout] .lane,
+  .world[data-relayout] .band {
+    transition: none;
+  }
+
+  .world[data-relayout] .edges {
+    animation: none;
+  }
+}

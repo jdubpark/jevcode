@@ -52,6 +52,8 @@ export interface ViewState {
   cameras: { canvas: CanvasCamera | null; hybrid: HybridCamera | null };
   /** Anchor seq of every unit id held in selection, expanded or collapsed (remaps regrouped units). */
   unitAnchors: Readonly<Record<string, number>>;
+  /** Map view (spec §3.4): the selected component id. Separate from `selection`; not in the location hash. */
+  mapSelection: string | null;
 }
 
 export type ViewAction =
@@ -79,7 +81,8 @@ export type ViewAction =
   | { type: "search/next"; dir: 1 | -1 }
   | { type: "esc" }
   | { type: "brief/toggle" }
-  | { type: "seen"; seq: number };
+  | { type: "seen"; seq: number }
+  | { type: "map/select"; componentId: string | null };
 
 export interface InitialViewStateInput {
   live: boolean;
@@ -123,6 +126,7 @@ export function initialViewState(input: InitialViewStateInput): ViewState {
     loaded: false,
     cameras: { canvas: null, hybrid: null },
     unitAnchors: {},
+    mapSelection: null,
   };
 }
 
@@ -545,6 +549,7 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
     case "esc": {
       if (state.search !== null) return { ...state, search: null };
       if (state.tool === "hand") return { ...state, tool: "select" };
+      if (state.view === "map" && state.mapSelection !== null) return { ...state, mapSelection: null };
       const selection = state.selection;
       if (selection === null) return state;
       // Spec §3.7: with the Brief pinned over a selection, Esc clears it, so the Brief stays (no step out to the parent).
@@ -557,6 +562,8 @@ export function reduce(state: ViewState, action: ViewAction, index: TraceIndex):
     case "brief/toggle":
       // With nothing selected the Brief already fills the panel.
       return state.selection === null ? state : { ...state, brief: !state.brief };
+    case "map/select":
+      return action.componentId === state.mapSelection ? state : { ...state, mapSelection: action.componentId };
     case "seen":
       return action.seq > state.lastSeenSeq ? { ...state, lastSeenSeq: action.seq } : state;
   }
