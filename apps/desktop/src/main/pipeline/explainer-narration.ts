@@ -9,7 +9,6 @@ import {
   guardComponents,
   guardSentences,
   mentionsOtherComponent,
-  narratorCostUsd,
   plainTextViolation,
 } from "@jevcode/jev-router";
 import type {
@@ -22,14 +21,22 @@ import type {
 } from "@jevcode/jev-router";
 import type { JevcodeDb } from "@jevcode/storage";
 
-import { NARRATOR_RECORD_TEXT_MAX } from "../../shared/narrator-log.js";
 import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narrator-log.js";
 import { blurbFrom, exportIdentifiers } from "./explainer-narration-sources.js";
+import { buildNarratorCallRecord } from "./narrator-call-log.js";
 
 export const DESCRIBE_BATCH_SIZE = 20;
 export const DESCRIBE_MAX_IN_FLIGHT = 2;
 export const NARRATOR_BACKOFF_MS = [30_000, 120_000, 600_000] as const;
+/** A changed component is described again only once its new content hash has held this long (spec §6.1). */
+export const DESCRIBE_STABLE_MS = 60_000;
+/** From a key's second schema-invalid answer on, its batch is halved; a lone component is negative-cached (spec §6.3). */
+export const SCHEMA_FAILURES_TO_SPLIT = 2;
+/** The narrative is asked again when at least max(NARRATIVE_MIN_CHANGED, 10%) of components changed (spec §6.1). */
 export const NARRATIVE_CHANGE_FRACTION = 0.1;
+export const NARRATIVE_MIN_CHANGED = 3;
+/** At most one overview narrative call per this interval (spec §6.1). */
+export const NARRATIVE_MIN_INTERVAL_MS = 120_000;
 export const NARRATIVE_TOP_EDGES = 40;
 export const NARRATIVE_MAX_SENTENCES = 8;
 export const BRIEF_EDGE_LIMIT = 10;
@@ -109,7 +116,11 @@ export interface ExplainerNarrationDeps {
 }
 
 export interface ExplainerNarration {
-  /** Synchronous, 0 calls: model purposes and confirmed roles from component_text_cache (NarrationSeam.textFor). */
+  /**
+   * Synchronous, 0 calls: model purposes and confirmed roles from component_text_cache
+   * (NarrationSeam.textFor). While a component's new hash is pending, the text of its last settled
+   * hash is shown, so an edit never flickers the caption or the role band (spec §6.4).
+   */
   textFor(components: readonly ComponentRef[]): ReadonlyMap<string, ModelText>;
   /** Synchronous, 0 calls: the stored narrative while every sentence still passes the guard for this snapshot, else null. */
   narrative(snapshot: OverviewSnapshot): OverviewSnapshot["narrative"];
@@ -239,11 +250,21 @@ export function narrativeStructureHash(snapshot: OverviewSnapshot): string {
   return sha1(snapshot.components.map((component) => `${component.id}:${component.role}`).sort().join("\n"));
 }
 
-export function changedFraction(base: ReadonlyMap<string, string>, current: ReadonlyMap<string, string>): number {
+/** Components whose content hash differs from the base, plus components that are gone. */
+export function changedCount(base: ReadonlyMap<string, string>, current: ReadonlyMap<string, string>): number {
   let changed = 0;
   for (const [id, hash] of current) if (base.get(id) !== hash) changed += 1;
   for (const id of base.keys()) if (!current.has(id)) changed += 1;
-  return changed / Math.max(1, current.size);
+  return changed;
+}
+
+export function changedFraction(base: ReadonlyMap<string, string>, current: ReadonlyMap<string, string>): number {
+  return changedCount(base, current) / Math.max(1, current.size);
+}
+
+/** Spec §6.1: at least max(3, 10%) of components changed since the last narrative. */
+export function contentChangedEnough(base: ReadonlyMap<string, string>, current: ReadonlyMap<string, string>): boolean {
+  return changedCount(base, current) >= Math.max(NARRATIVE_MIN_CHANGED, NARRATIVE_CHANGE_FRACTION * current.size);
 }
 
 export function topEdges(
@@ -287,6 +308,14 @@ function failureReason(error: unknown): string {
   return error instanceof NarratorUnavailableError ? error.reason : "unavailable";
 }
 
+const schemaOutcome = (batchSize: number): Outcome => ({
+  accepted: 0,
+  dropped: batchSize,
+  discarded: true,
+  reasons: [],
+  error: "schema",
+});
+
 /** A source that throws (synchronously or not) contributes nothing. */
 async function settled<T>(read: () => Promise<T>, fallback: T): Promise<T> {
   try {
@@ -295,6 +324,7 @@ async function settled<T>(read: () => Promise<T>, fallback: T): Promise<T> {
     return fallback;
   }
 }
+
 
 export function createExplainerNarration(deps: ExplainerNarrationDeps): ExplainerNarration {
   let narrator = deps.narrator;
@@ -308,9 +338,12 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   let backoffUntil = 0;
   let retryTimer: unknown = null;
   let refreshTimer: unknown = null;
+  let wakeTimer: unknown = null;
+  let wakeDue = Number.POSITIVE_INFINITY;
   let baseline: ReadonlyMap<string, string> | null = null;
   let stored: StoredNarrative | null | undefined;
   let abandonedNarrative: string | null = null;
+  let lastNarrativeAt: number | null = null;
   let lastStatusKey = "";
   const inFlight = new Set<string>();
   /** Components whose batch failed outside the provider call (a bug, not the network); never retried. */
@@ -318,6 +351,17 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   const controllers = new Set<AbortController>();
   /** Every row read or answered in this instance; it holds an answer even when its DB write failed. */
   const textMemo = new Map<string, CachedText>();
+  /** Per component id: the text of its newest settled hash, shown while a newer hash is pending. */
+  const lastSettled = new Map<string, CachedText>();
+  /** Per component id: the content hash that text belongs to; any other current hash is a change. */
+  const settledHash = new Map<string, string>();
+  /** Per component id: its current content hash and when it was first seen (the stability clock). */
+  const hashSince = new Map<string, { hash: string; at: number }>();
+  /** Per id@hash: schema-invalid answers so far, and the batch size cap after a split. */
+  const schemaFails = new Map<string, number>();
+  const batchCap = new Map<string, number>();
+  /** Per narrative structure hash: schema-invalid answers so far. */
+  const narrativeSchemaFails = new Map<string, number>();
   const failingReads = new Set<ReadTarget>();
   const idleWaiters: (() => void)[] = [];
 
@@ -355,10 +399,26 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     return found;
   }
 
-  /** A cached row that fails the read-side guard is a miss: not served, and asked for again. */
+  function settle(component: ComponentRef, text: CachedText): void {
+    lastSettled.set(component.id, text);
+    settledHash.set(component.id, component.contentHash);
+  }
+
+  /** The row for exactly this id@hash; one that fails the read-side guard is a miss (asked again). */
   function lookup(component: ComponentRef, names: ReadonlySet<string>): CachedText | undefined {
     const row = cachedRow(component);
-    return row !== undefined && cachedTextUsable(row, component.name, names) ? row : undefined;
+    if (row === undefined || !cachedTextUsable(row, component.name, names)) return undefined;
+    settle(component, row);
+    return row;
+  }
+
+  /** What is shown: the exact row, else the settled text of the same id while its new hash is pending. */
+  function shownText(component: ComponentRef, names: ReadonlySet<string>): CachedText | undefined {
+    const exact = lookup(component, names);
+    if (exact !== undefined) return exact;
+    const previous = lastSettled.get(component.id);
+    if (previous === undefined || previous.purpose === null) return undefined;
+    return cachedTextUsable(previous, component.name, names) ? previous : undefined;
   }
 
   function writeTexts(entries: readonly (readonly [Component, CachedText])[]): void {
@@ -377,12 +437,26 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     }
   }
 
+  /** The stored overview's model text is each id's settled text, so a reopen does not flicker either. */
+  function seedFrom(snapshot: OverviewSnapshot): void {
+    for (const component of snapshot.components) {
+      if (component.provenance !== "model" || component.purpose === null || lastSettled.has(component.id)) continue;
+      lastSettled.set(component.id, { purpose: component.purpose, role: component.role, model: NARRATOR_MODEL });
+      settledHash.set(component.id, component.contentHash);
+    }
+  }
+
   function storedNarrative(): StoredNarrative | null {
     if (stored !== undefined) return stored;
     try {
       const state = deps.db.getOverviewState(deps.repoRoot);
       failingReads.delete("overview_state");
-      stored = state === undefined ? null : { hash: state.narrativeInputsHash, narrative: state.narrative };
+      if (state === undefined) {
+        stored = null;
+      } else {
+        stored = { hash: state.narrativeInputsHash, narrative: state.narrative };
+        seedFrom(state.snapshot);
+      }
       return stored;
     } catch (error) {
       readFailed("overview_state", error);
@@ -417,10 +491,11 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   }
 
   function textFor(components: readonly ComponentRef[]): ReadonlyMap<string, ModelText> {
+    storedNarrative();
     const names = namesOf(components);
     const out = new Map<string, ModelText>();
     for (const component of components) {
-      const text = lookup(component, names);
+      const text = shownText(component, names);
       if (text !== undefined && text.purpose !== null) {
         out.set(component.id, { purpose: text.purpose, role: text.role, provenance: "model" });
       }
@@ -434,8 +509,9 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   }
 
   function withCachedText(snapshot: OverviewSnapshot): OverviewSnapshot {
+    storedNarrative();
     const names = namesOf(snapshot.components);
-    return applyNarration(snapshot, (component) => lookup(component, names));
+    return applyNarration(snapshot, (component) => shownText(component, names));
   }
 
   function applyCached(snapshot: OverviewSnapshot): OverviewSnapshot {
@@ -447,6 +523,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     return snapshot.components.filter((component) => !isOtherGroup(component));
   }
 
+  /** Components with no settled row for their current hash. */
   function pendingComponents(snapshot: OverviewSnapshot): Component[] {
     const names = namesOf(snapshot.components);
     return narratable(snapshot).filter(
@@ -454,9 +531,40 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     );
   }
 
+  function trackHashes(snapshot: OverviewSnapshot): void {
+    const now = deps.now();
+    for (const component of snapshot.components) {
+      const since = hashSince.get(component.id);
+      if (since === undefined || since.hash !== component.contentHash) {
+        hashSince.set(component.id, { hash: component.contentHash, at: now });
+      }
+    }
+  }
+
+  /**
+   * When a pending component may be described: at once if it has no settled text in this session
+   * (new, or first seen), else once its new hash has held DESCRIBE_STABLE_MS (an agent saving the
+   * same file ten times costs one call, not ten).
+   */
+  function dueAt(component: Component): number {
+    const previous = settledHash.get(component.id);
+    if (previous === undefined || previous === component.contentHash) return Number.NEGATIVE_INFINITY;
+    let since = hashSince.get(component.id);
+    if (since === undefined || since.hash !== component.contentHash) {
+      since = { hash: component.contentHash, at: deps.now() };
+      hashSince.set(component.id, since);
+    }
+    return since.at + DESCRIBE_STABLE_MS;
+  }
+
   function status(): NarrationStatus {
-    const total = latest === null ? 0 : narratable(latest).length;
-    const described = latest === null ? 0 : total - pendingComponents(latest).length;
+    storedNarrative();
+    const components = latest === null ? [] : narratable(latest);
+    const names = latest === null ? new Set<string>() : namesOf(latest.components);
+    const total = components.length;
+    const described = components.filter(
+      (component) => abandoned.has(keyOf(component)) || shownText(component, names) !== undefined,
+    ).length;
     const now = deps.now();
     let state: NarrationState;
     if (narrator === null) state = "off";
@@ -500,6 +608,18 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     }
   }
 
+  /** One timer for deferred work (a hash becoming stable, the narrative interval); the earliest wins. */
+  function wakeAt(at: number): void {
+    if (disposed || at >= wakeDue) return;
+    if (wakeTimer !== null) deps.schedule.clearTimeout(wakeTimer);
+    wakeDue = at;
+    wakeTimer = deps.schedule.setTimeout(() => {
+      wakeTimer = null;
+      wakeDue = Number.POSITIVE_INFINITY;
+      pump();
+    }, Math.max(0, at - deps.now()));
+  }
+
   function busy(): boolean {
     return describeCalls > 0 || narrativeInFlight;
   }
@@ -526,26 +646,24 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       // A failing logger must not lose the call record or the answer.
     }
     recordSeq += 1;
-    const usage = result?.usage ?? null;
+    const entry = buildNarratorCallRecord({
+      id: `narr_${started.toString(36)}_${recordSeq.toString(36)}`,
+      at: deps.now(),
+      repoRoot: deps.repoRoot,
+      question,
+      model: result?.model ?? NARRATOR_MODEL,
+      ms,
+      batchSize,
+      accepted: outcome.accepted,
+      dropped: outcome.dropped,
+      discarded: outcome.discarded,
+      usage: result?.usage ?? null,
+      error: outcome.error,
+      reasons: outcome.reasons,
+    });
+    if (entry === null) return;
     try {
-      deps.recordCall?.({
-        id: `narr_${started.toString(36)}_${recordSeq.toString(36)}`,
-        ts: new Date(deps.now()).toISOString(),
-        repoRoot: deps.repoRoot,
-        question,
-        // The model name comes from the provider; both fields are capped for Inspect (NarratorCallRecordSchema).
-        model: (result?.model ?? NARRATOR_MODEL).slice(0, NARRATOR_RECORD_TEXT_MAX),
-        ms,
-        batchSize,
-        accepted: outcome.accepted,
-        dropped: outcome.dropped,
-        discarded: outcome.discarded,
-        inputTokens: usage?.inputTokens ?? null,
-        outputTokens: usage?.outputTokens ?? null,
-        costUsd: usage === null ? null : narratorCostUsd(usage),
-        error: outcome.error === null ? null : outcome.error.slice(0, NARRATOR_RECORD_TEXT_MAX),
-        reasons: outcome.reasons.slice(0, 40),
-      });
+      deps.recordCall?.(entry);
     } catch {
       // A failing recorder must not undo the call's result.
     }
@@ -564,7 +682,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     backoffUntil = 0;
   }
 
-  /** Provider failures only: a rejected call or a schema-invalid answer. */
+  /** Provider failures only: a rejected call (offline, timeout, rate limit, auth). */
   function onFailure(question: Question, batchSize: number, started: number, reason: string, result: NarratorResult<unknown> | null): void {
     const now = deps.now();
     if (now >= backoffUntil) backoffLevel = Math.min(backoffLevel + 1, NARRATOR_BACKOFF_MS.length);
@@ -577,6 +695,74 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
   /** A call cut off by setNarrator or dispose is still recorded (the provider may bill it), never backed off. */
   function recordAborted(question: Question, batchSize: number, started: number, result: NarratorResult<unknown> | null): void {
     record(question, batchSize, started, { accepted: 0, dropped: batchSize, discarded: true, reasons: [], error: "aborted" }, result);
+  }
+
+  function halve(batch: readonly Component[]): void {
+    const cap = Math.max(1, Math.ceil(batch.length / 2));
+    for (const component of batch) batchCap.set(keyOf(component), cap);
+  }
+
+  /** Memo first (a failed DB write never re-asks the model), then the DB, then one refresh if what is shown changed. */
+  function storeAnswers(entries: readonly (readonly [Component, CachedText])[]): void {
+    let shownChanged = false;
+    for (const [component, text] of entries) {
+      const key = keyOf(component);
+      if (text.purpose !== null || (lastSettled.get(component.id)?.purpose ?? null) !== null) shownChanged = true;
+      textMemo.set(key, text);
+      settle(component, text);
+      schemaFails.delete(key);
+      batchCap.delete(key);
+    }
+    writeTexts(entries);
+    if (shownChanged) refreshStage();
+  }
+
+  /**
+   * Spec §6.3: a schema-invalid answer (a refusal, a cut-off answer) keeps the rule-based value. It
+   * says nothing about the provider being down, so it never raises the backoff. Each key counts its
+   * failures instead: from the second one on, its batch is halved, and a component that fails on
+   * its own is negative-cached. Every key is sent at most twice per batch size.
+   */
+  function onSchemaFailure(batch: readonly Component[], model: string): void {
+    let split = false;
+    for (const component of batch) {
+      const key = keyOf(component);
+      const failures = (schemaFails.get(key) ?? 0) + 1;
+      schemaFails.set(key, failures);
+      if (failures >= SCHEMA_FAILURES_TO_SPLIT) split = true;
+    }
+    if (!split) return;
+    const [only] = batch;
+    if (batch.length === 1 && only !== undefined) {
+      storeAnswers([[only, { purpose: null, role: only.roleGuess, model }]]);
+      return;
+    }
+    halve(batch);
+  }
+
+  /** Failed keys never share a batch with fresh ones, so one refusing batch cannot hold up the rest. */
+  function planBatches(due: readonly Component[]): Component[][] {
+    const groups = new Map<string, { cap: number; failed: boolean; members: Component[] }>();
+    for (const component of due) {
+      const key = keyOf(component);
+      const cap = batchCap.get(key) ?? DESCRIBE_BATCH_SIZE;
+      const failed = schemaFails.has(key);
+      const groupKey = `${failed ? 1 : 0}:${cap}`;
+      let group = groups.get(groupKey);
+      if (group === undefined) {
+        group = { cap, failed, members: [] };
+        groups.set(groupKey, group);
+      }
+      group.members.push(component);
+    }
+    const ordered = [...groups.values()].sort((a, b) => Number(a.failed) - Number(b.failed) || b.cap - a.cap);
+    const batches: Component[][] = [];
+    for (const group of ordered) {
+      for (let start = 0; start < group.members.length; start += group.cap) {
+        batches.push(group.members.slice(start, start + group.cap));
+      }
+    }
+    return batches;
   }
 
   /** Redaction, the 600-character clip and the identifier filter apply to every BriefSources (spec §6.2). */
@@ -608,8 +794,14 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       try {
         result = await client.describeComponents(briefs, { signal: controller.signal });
       } catch (error) {
-        if (gen !== generation || disposed) recordAborted("describeComponents", batch.length, started, null);
-        else onFailure("describeComponents", batch.length, started, failureReason(error), null);
+        if (gen !== generation || disposed) {
+          recordAborted("describeComponents", batch.length, started, null);
+        } else {
+          const reason = failureReason(error);
+          // A slow batch may just be too big: halve it before backing off (spec §6.6).
+          if (reason === "timeout") halve(batch);
+          onFailure("describeComponents", batch.length, started, reason, null);
+        }
         return;
       }
       if (gen !== generation || disposed) {
@@ -617,7 +809,8 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         return;
       }
       if (!result.schemaValid) {
-        onFailure("describeComponents", batch.length, started, "schema", result);
+        record("describeComponents", batch.length, started, schemaOutcome(batch.length), result);
+        onSchemaFailure(batch, result.model);
         return;
       }
       const guarded = guardComponents(result.value, buildCitationUniverse(snapshot), batch.map((component) => component.id));
@@ -631,18 +824,16 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       );
       onSuccess();
       const model = result.model;
-      const texts = batch.map((component) => {
-        const accepted = byId.get(component.id);
-        const text: CachedText =
-          accepted === undefined
-            ? { purpose: null, role: component.roleGuess, model }
-            : { purpose: accepted.purpose, role: accepted.role, model };
-        return [component, text] as const;
-      });
-      // Memo first: a failed DB write must never send the same batch to the model again.
-      for (const [component, text] of texts) textMemo.set(keyOf(component), text);
-      writeTexts(texts);
-      if (byId.size > 0) refreshStage();
+      storeAnswers(
+        batch.map((component) => {
+          const accepted = byId.get(component.id);
+          const text: CachedText =
+            accepted === undefined
+              ? { purpose: null, role: component.roleGuess, model }
+              : { purpose: accepted.purpose, role: accepted.role, model };
+          return [component, text] as const;
+        }),
+      );
     } catch (error) {
       // Only a defect reaches here (sources, guards and sinks are all contained); never retry this batch.
       for (const component of batch) abandoned.add(keyOf(component));
@@ -657,6 +848,39 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     }
   }
 
+  /**
+   * Spec §6.1: the first narrative; a stored one that no longer passes the guard (a cited file is
+   * gone); a new structure (a component added, removed or re-roled); or at least max(3, 10%) of
+   * components with a new content hash since the last narrative.
+   */
+  function narrativeWanted(
+    state: StoredNarrative | null,
+    hash: string,
+    servedBefore: OverviewSnapshot["narrative"],
+    contentHashes: ReadonlyMap<string, string>,
+  ): boolean {
+    if (state === null || state.hash === null) return true;
+    if (state.narrative !== null && servedBefore === null) return true;
+    if (state.hash !== hash) return true;
+    if (baseline === null) baseline = contentHashes;
+    return contentChangedEnough(baseline, contentHashes);
+  }
+
+  function settleNarrative(
+    snapshot: OverviewSnapshot,
+    hash: string,
+    contentHashes: ReadonlyMap<string, string>,
+    next: OverviewSnapshot["narrative"],
+    servedBefore: OverviewSnapshot["narrative"],
+  ): void {
+    // Memo first: a failed DB write must never send the same structure to the model again.
+    baseline = contentHashes;
+    stored = { hash, narrative: next };
+    narrativeSchemaFails.delete(hash);
+    writeNarrative(snapshot, hash, next);
+    if (JSON.stringify(next) !== JSON.stringify(servedBefore)) refreshStage();
+  }
+
   async function narrate(raw: OverviewSnapshot): Promise<void> {
     const client = narrator;
     if (client === null || narrativeInFlight || raw.components.length === 0) return;
@@ -667,11 +891,10 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     const contentHashes = new Map(snapshot.components.map((component) => [component.id, component.contentHash] as const));
     const state = storedNarrative();
     const servedBefore = state === null ? null : servableNarrative(state.narrative, universe);
-    // A stored narrative that no longer passes the guard (a cited file is gone) is a miss.
-    const stale = state !== null && state.narrative !== null && servedBefore === null;
-    if (state !== null && state.hash === hash && !stale) {
-      if (baseline === null) baseline = contentHashes;
-      if (changedFraction(baseline, contentHashes) <= NARRATIVE_CHANGE_FRACTION) return;
+    if (!narrativeWanted(state, hash, servedBefore, contentHashes)) return;
+    if (lastNarrativeAt !== null && deps.now() < lastNarrativeAt + NARRATIVE_MIN_INTERVAL_MS) {
+      wakeAt(lastNarrativeAt + NARRATIVE_MIN_INTERVAL_MS);
+      return;
     }
     const gen = generation;
     const controller = new AbortController();
@@ -688,6 +911,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         edges: topEdges(snapshot),
       };
       const started = deps.now();
+      lastNarrativeAt = started;
       let result: NarratorResult<NarrativeSentence[]>;
       try {
         result = await client.overviewNarrative(input, { signal: controller.signal });
@@ -701,7 +925,11 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         return;
       }
       if (!result.schemaValid) {
-        onFailure("overviewNarrative", 1, started, "schema", result);
+        record("overviewNarrative", 1, started, schemaOutcome(1), result);
+        const failures = (narrativeSchemaFails.get(hash) ?? 0) + 1;
+        narrativeSchemaFails.set(hash, failures);
+        // A second schema-invalid answer for the same structure settles it; the narrative shown so far stays.
+        if (failures >= SCHEMA_FAILURES_TO_SPLIT) settleNarrative(snapshot, hash, contentHashes, servedBefore, servedBefore);
         return;
       }
       const guarded = guardSentences(result.value, universe, { max: NARRATIVE_MAX_SENTENCES });
@@ -715,11 +943,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         result,
       );
       onSuccess();
-      // Memo first: a failed DB write must never send the same structure to the model again.
-      baseline = contentHashes;
-      stored = { hash, narrative: next };
-      writeNarrative(snapshot, hash, next);
-      if (JSON.stringify(next) !== JSON.stringify(servedBefore)) refreshStage();
+      settleNarrative(snapshot, hash, contentHashes, next, servedBefore);
     } catch (error) {
       // Only a defect reaches here; never retry this structure.
       abandonedNarrative = hash;
@@ -736,25 +960,45 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     task.catch((error: unknown) => logError("rebuild", `narration task failed: ${messageOf(error)}`));
   }
 
+  function startCalls(snapshot: OverviewSnapshot): void {
+    storedNarrative();
+    const pending = pendingComponents(snapshot);
+    // While a cache read fails, a call could re-ask what is already cached: start nothing (spec §6.4).
+    if (failingReads.size > 0) return;
+    const now = deps.now();
+    const due: Component[] = [];
+    let wake = Number.POSITIVE_INFINITY;
+    for (const component of pending) {
+      if (inFlight.has(keyOf(component))) continue;
+      const at = dueAt(component);
+      if (at <= now) due.push(component);
+      else wake = Math.min(wake, at);
+    }
+    for (const batch of planBatches(due)) {
+      if (describeCalls >= DESCRIBE_MAX_IN_FLIGHT) break;
+      spawn(describe(snapshot, batch));
+    }
+    if (wake !== Number.POSITIVE_INFINITY) wakeAt(wake);
+    // The narrative waits for every pending component, except those that already failed schema.
+    if (pending.every((component) => schemaFails.has(keyOf(component)))) spawn(narrate(snapshot));
+  }
+
   function pump(): void {
     if (disposed) {
       settleIdle();
       return;
     }
     if (narrator !== null && latest !== null) {
-      if (deps.now() < backoffUntil) {
-        armRetry();
-      } else {
-        const snapshot = latest;
-        const todo = pendingComponents(snapshot).filter((component) => !inFlight.has(keyOf(component)));
-        while (describeCalls < DESCRIBE_MAX_IN_FLIGHT && todo.length > 0) {
-          spawn(describe(snapshot, todo.splice(0, DESCRIBE_BATCH_SIZE)));
-        }
-        if (describeCalls === 0) spawn(narrate(snapshot));
-      }
+      if (deps.now() < backoffUntil) armRetry();
+      else startCalls(latest);
     }
     emitStatus();
     settleIdle();
+  }
+
+  function clearTimer(handle: unknown): null {
+    if (handle !== null) deps.schedule.clearTimeout(handle);
+    return null;
   }
 
   function stopCalls(): void {
@@ -764,10 +1008,9 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
     describeCalls = 0;
     narrativeInFlight = false;
     inFlight.clear();
-    if (retryTimer !== null) {
-      deps.schedule.clearTimeout(retryTimer);
-      retryTimer = null;
-    }
+    retryTimer = clearTimer(retryTimer);
+    wakeTimer = clearTimer(wakeTimer);
+    wakeDue = Number.POSITIVE_INFINITY;
   }
 
   return {
@@ -778,6 +1021,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       if (disposed) return;
       latest = snapshot;
       latestSources = sources ?? deps.sources;
+      trackHashes(snapshot);
       pump();
     },
     setNarrator(next) {
@@ -802,10 +1046,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
       if (disposed) return;
       disposed = true;
       stopCalls();
-      if (refreshTimer !== null) {
-        deps.schedule.clearTimeout(refreshTimer);
-        refreshTimer = null;
-      }
+      refreshTimer = clearTimer(refreshTimer);
       settleIdle();
     },
   };
