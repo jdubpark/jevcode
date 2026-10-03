@@ -127,4 +127,40 @@ describe("runJevStage decision logs", () => {
     ).toEqual(["A", "A", "B"]);
     db.close();
   });
+
+  it("writes no projection row when the session stops while project() is in flight (final review B M-1)", async () => {
+    const db = createDb();
+    const facts = [hunk("src/app.ts", "2026-09-28T10:00:00.000Z", false)];
+    const coordinator = new PipelineCoordinator();
+    for (const fact of facts) coordinator.ingest(fact);
+    coordinator.flush();
+    let stopped = false;
+    // The runtime's pace(): it throws once the session is stopped (pipeline-runtime.ts PassStopped).
+    class StopsDuringProjection extends TypesafeLikeClient {
+      override async project(input: ProjectionInput): Promise<JevResult<UIIntent>> {
+        const result = await super.project(input);
+        stopped = true;
+        return result;
+      }
+    }
+
+    await expect(
+      runJevStage({
+        db,
+        coordinator,
+        client: new StopsDuringProjection(),
+        sessionId: SESSION,
+        taskPrompt: "demo",
+        facts,
+        decisions: [],
+        semanticEvents: [],
+        nowIso: () => "2026-09-28T10:10:00.000Z",
+        pace: async () => {
+          if (stopped) throw new Error("session stopped during the sync pass");
+        },
+      }),
+    ).rejects.toThrow("session stopped");
+    expect(db.listJevDecisions(SESSION).map((log) => log.pass)).toEqual(["A"]);
+    db.close();
+  });
 });
