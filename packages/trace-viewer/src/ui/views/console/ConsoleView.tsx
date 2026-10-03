@@ -19,6 +19,7 @@ import { NewBadge } from "../shared/NewBadge.js";
 import { useRegisterViewPort, ViewPortRegistryContext, type ViewPort, type ViewProps, type ZoomPort } from "../view-port.js";
 import { ConsoleRowView, estimateConsoleRow, expandKey, isExpandable, isRunningRow } from "./ConsoleRowView.js";
 import styles from "./ConsoleView.module.css";
+import { storySentenceIds } from "../../explainer/StoryBlock.js";
 
 const EMPTY_ROWS: ConsoleRowsState = { rows: [], byStep: new Map() };
 /** Wheel, touch, pointer and key input mark the next scroll frames as the reader's own. */
@@ -514,7 +515,7 @@ export function ConsoleView({ active }: ViewProps) {
                 data-match={rowMatches(row, matches) ? "" : undefined}
                 aria-posinset={item.index + 1}
                 aria-setsize={rows.length}
-                aria-labelledby={lineId}
+                aria-labelledby={row.kind === "summary" ? storySentenceIds(lineId, row.sentences.length) : lineId}
                 tabIndex={row.key === tabKey ? 0 : -1}
                 className={styles.slot}
                 style={{ transform: `translateY(${item.start}px)` }}
