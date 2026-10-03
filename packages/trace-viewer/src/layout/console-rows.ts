@@ -1,6 +1,7 @@
 import type { NarrativeSentence } from "@jevcode/contracts";
 
-import { agentEventLabel, type Finding, type FindingId, type Step, type StepId, type TraceSession, type Turn } from "../model/index.js";
+import { agentEventLabel, type Finding, type FindingId, type Step, type StepId, type StoryModel, type TraceSession, type Turn } from "../model/index.js";
+import { mergeSummaryRows } from "./console-summary.js";
 import { anchoredFindings } from "./tone.js";
 import type { TraceIndex } from "./trace-index.js";
 
@@ -25,6 +26,10 @@ export interface ConsoleRowsState {
   rows: readonly ConsoleRow[];
   /** Step id → the row that shows it: its own row, its read group, or the finding row of a Jev step. */
   byStep: ReadonlyMap<string, number>;
+  /** The step rows without summary rows; the next incremental call builds on these (internal, lane 07 deviation 5). */
+  base?: ConsoleRowsState;
+  /** session.explainer.stories this state merged (internal). */
+  stories?: readonly StoryModel[];
 }
 
 /** Output lines a command row shows before it is expanded (spec §3.2). */
@@ -223,11 +228,21 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * The Console rows of a session (spec §8.2). Pure and React-free. With `prev` (the state this function returned for
- * an earlier commit of the same session), steps whose objects did not change keep their row objects; the result
+ * The Console rows of a session (spec §8.2): the step rows, with a `summary` row per story refresh merged where its
+ * story row arrived (phase C, console-summary.ts). Pure and React-free. With `prev` (the state this function returned
+ * for an earlier commit of the same session), steps whose objects did not change keep their row objects; the result
  * always equals a fresh build.
  */
 export function buildConsoleRows(session: TraceSession, index: TraceIndex, prev?: ConsoleRowsState): ConsoleRowsState {
+  const base = buildStepRows(session, index, prev?.base ?? prev);
+  const stories = session.explainer.stories;
+  // Without stories the merge returns `base` itself, which is `prev` when nothing changed.
+  if (prev !== undefined && prev.base === base && prev.stories === stories) return prev;
+  return mergeSummaryRows(base, stories);
+}
+
+/** The step rows (V-3's builder): incremental against `prev`, the step rows of an earlier commit. */
+function buildStepRows(session: TraceSession, index: TraceIndex, prev?: ConsoleRowsState): ConsoleRowsState {
   const findingsById = index.findingsById;
   const cache = prev === undefined ? undefined : CACHE.get(prev);
   if (prev !== undefined && cache !== undefined && cache.session === session && cache.findingsById === findingsById) return prev;
