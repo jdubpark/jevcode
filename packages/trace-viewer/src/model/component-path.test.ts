@@ -54,6 +54,11 @@ describe("componentIdForPath (spec §5.2, ruling R6)", () => {
     expect(componentIdForPath([server], "")).toBeNull();
     // They are not normalized: a "./" path is nested, so not even the repo-root component catches it.
     expect(componentIdForPath([server, root], "./src/server/app.ts")).toBeNull();
+    // No catch-all claims a path that is not repo-relative.
+    const other = componentOf({ rootPath: "(other)", name: "(other)", files: ["misc/a.ts"] });
+    for (const path of ["", "/work/application/src/x.ts", "../outside/x.ts", ".."]) {
+      expect(componentIdForPath([server, root, other], path)).toBeNull();
+    }
   });
 
   it('sends an unclaimed nested path to the "(other)" component, which never matches by prefix (lane 06 fix I-3)', () => {

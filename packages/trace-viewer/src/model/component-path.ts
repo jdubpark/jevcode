@@ -43,9 +43,11 @@ function indexOf(components: readonly Component[]): PathIndex {
  * when it is past the cap.
  *
  * `path` must be repo-relative with no "./" prefix: an absolute or "./"-prefixed path is not normalized here (callers
- * strip the repo root first). The "(other)" bucket has a pseudo root, so it never matches by prefix.
+ * strip the repo root first). An empty, absolute or "../" path resolves to null, never to a catch-all. The "(other)" bucket has a pseudo root, so it never matches by prefix.
  */
 export function componentIdForPath(components: readonly Component[], path: string): string | null {
+  // Not repo-relative (empty, absolute or outside the repo): no catch-all may claim it.
+  if (path === "" || path.startsWith("/") || path === ".." || path.startsWith("../")) return null;
   const index = indexOf(components);
   const listed = index.listed.get(path);
   if (listed !== undefined) return listed;

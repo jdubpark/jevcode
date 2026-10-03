@@ -370,6 +370,8 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   useLayoutEffect(() => {
     if (!active || layout === null) setHoverId(null);
   }, [active, layout]);
+  // The view switcher hides the Map under <Activity mode="hidden">, which runs effect cleanups but no effect bodies.
+  useLayoutEffect(() => () => setHoverId(null), []);
 
   // A focused card that unmounts fires no focusout: drop the focus promotion when focus is no longer inside the map.
   useLayoutEffect(() => {
