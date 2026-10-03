@@ -130,7 +130,16 @@ export class PipelineCoordinator {
         firstTs !== null && currentTs !== null
           ? currentTs - firstTs >= this.batchWindowMs
           : firstTs === null && currentTs === null && this.clock() - this.bufferStartClock >= this.batchWindowMs;
-      if (overWindow || this.buffer.length >= this.maxBatchSize) this.flushWindow();
+      if (overWindow || this.buffer.length >= this.maxBatchSize) {
+        // Buffered even when the flush's rebuild throws: rebuildPending stays set, so the next flush() drains this
+        // record and runs the rebuild again (lane 03 fix wave I-2). The error still reaches the caller.
+        try {
+          this.flushWindow();
+        } finally {
+          this.buffer.push(record);
+        }
+        return;
+      }
     } else {
       this.bufferStartClock = this.clock();
     }

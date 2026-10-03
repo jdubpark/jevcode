@@ -351,6 +351,28 @@ describe("PipelineCoordinator rebuild retry (lane 03 PL-2)", () => {
     expect(stores.units.all().map((unit) => unit.files)).toEqual([["src/a.ts"]]);
   });
 
+  it("keeps the record whose ingest flushed a window and threw: the next flush writes both records' units", () => {
+    const stores = createInMemoryStores();
+    const upsert = stores.units.upsert.bind(stores.units);
+    let throwNext = false;
+    stores.units.upsert = (unit) => {
+      if (throwNext) {
+        throwNext = false;
+        throw new Error("disk full");
+      }
+      upsert(unit);
+    };
+    const coordinator = new PipelineCoordinator({ stores });
+    coordinator.ingest(hunk("src/a.ts", tsOf(0)));
+    throwNext = true;
+    // Two seconds later: past the 500 ms window, so this ingest flushes a.ts and its rebuild throws.
+    expect(() => coordinator.ingest(hunk("src/b.ts", tsOf(0, 2)))).toThrow("disk full");
+    expect(stores.units.all()).toHaveLength(0);
+
+    coordinator.flush();
+    expect(stores.units.all().flatMap((unit) => unit.files).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
   it("reports a rebuild that throws in the debounce timer instead of letting it escape, and the next flush runs it", () => {
     vi.useFakeTimers();
     try {
