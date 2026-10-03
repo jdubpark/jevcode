@@ -443,7 +443,7 @@ button[aria-pressed="true"] {
 
 .task-input::placeholder,
 .session-composer textarea::placeholder {
-  color: var(--tv-ink-4);
+  color: var(--tv-ink-3);
 }
 
 .task-composer:focus-within,
@@ -469,7 +469,7 @@ button[aria-pressed="true"] {
 }
 
 .task-shortcut {
-  color: var(--tv-ink-4);
+  color: var(--tv-ink-3);
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -603,7 +603,7 @@ button[aria-pressed="true"] {
 .workspace-tabs button span,
 .work-products-heading span {
   margin-left: 4px;
-  color: var(--tv-ink-4);
+  color: var(--tv-ink-3);
   font-variant-numeric: tabular-nums;
   font-size: 10px;
 }
@@ -763,7 +763,7 @@ button[aria-pressed="true"] {
 .activity-message-meta time,
 .activity-operation time {
   flex: none;
-  color: var(--tv-ink-4);
+  color: var(--tv-ink-3);
   font-variant-numeric: tabular-nums;
   font-size: 10px;
 }
@@ -1669,6 +1669,7 @@ button[aria-pressed="true"] {
   flex: 1;
   min-height: 0;
   padding: 4px 8px 8px;
+  background: var(--tv-panel);
 }
 
 .terminal-container .xterm {
@@ -1685,7 +1686,7 @@ button[aria-pressed="true"] {
   overflow: hidden;
   border-top: 1px solid var(--tv-hair);
   background: var(--tv-panel);
-  color: var(--tv-ink-4);
+  color: var(--tv-ink-3);
   font: 9px/1.5 var(--mono);
   white-space: nowrap;
 }

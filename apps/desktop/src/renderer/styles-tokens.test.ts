@@ -79,6 +79,19 @@ describe("main window styles use the viewer's light tokens (spec E6, §3.6, §9)
     expect(dead).toEqual([]);
   });
 
+  it("never sets readable text in --tv-ink-4 (2.4:1 on canvas); only decorative separators may", () => {
+    const DECORATIVE = [".jevcode-evidence-count + .jevcode-evidence-count::before"];
+    const offenders = [...withoutComments(CSS).matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter((rule) => /(^|[;\s])color:\s*var\(--tv-ink-4\)/.test(rule[2] ?? ""))
+      .map((rule) => (rule[1] ?? "").trim())
+      .filter((selector) => !DECORATIVE.includes(selector));
+    expect(offenders).toEqual([]);
+  });
+
+  it("paints the terminal container with the same panel color as xterm", () => {
+    expect(/\.terminal-container\s*\{[^}]*background:\s*var\(--tv-panel\)/.test(CSS)).toBe(true);
+  });
+
   it("paints the native window, the page and the shell from the same light tokens", () => {
     expect(MAIN_WINDOW_BACKGROUND).toBe(LIGHT_TOKENS.canvas);
     expect(XTERM_LIGHT_THEME.background).toBe(LIGHT_TOKENS.panel);
