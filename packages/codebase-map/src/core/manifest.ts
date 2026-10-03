@@ -1,7 +1,11 @@
 import { compareText, dirnameOf, normalizePath } from "./paths.js";
 import type { TsconfigPaths, WorkspaceManifest } from "./types.js";
 
-const MAX_DESCRIPTION = 600;
+/**
+ * Raw cap on a package.json description. The narrator redacts the whole text first and only then
+ * clips it to 600 characters (spec §6.2), so a secret straddling character 600 is still caught.
+ */
+export const MAX_DESCRIPTION_CHARS = 4_000;
 const MAX_ENTRY_POINTS = 8;
 const MAX_EXPORT_DEPTH = 4;
 const BUILT_OUTPUT = /^(.*?)\/(?:dist|build|out)\/(.+?)\.(?:c|m)?js$/;
@@ -196,7 +200,7 @@ export function buildManifest(paths: readonly string[], texts: ReadonlyMap<strin
       const name = json["name"];
       const description = json["description"];
       if (typeof name === "string" && name.trim() !== "") packageNames[dir] = name.trim();
-      if (typeof description === "string" && description.trim() !== "") descriptions[dir] = description.trim().slice(0, MAX_DESCRIPTION);
+      if (typeof description === "string" && description.trim() !== "") descriptions[dir] = description.trim().slice(0, MAX_DESCRIPTION_CHARS);
     }
     if (dir === ".") continue;
     const entries = entryPointsFor(dir, json, files, apps.has(dir));

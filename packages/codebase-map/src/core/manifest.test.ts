@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { buildManifest, globToRegExp, parseJsonc, parsePnpmWorkspace, tsconfigFromTexts, workspaceGlobs } from "./manifest.js";
+import {
+  MAX_DESCRIPTION_CHARS,
+  buildManifest,
+  globToRegExp,
+  parseJsonc,
+  parsePnpmWorkspace,
+  tsconfigFromTexts,
+  workspaceGlobs,
+} from "./manifest.js";
 
 describe("parsePnpmWorkspace", () => {
   it("reads block lists with quotes, comments and column-zero items, and flow lists", () => {
@@ -43,6 +51,14 @@ describe("parseJsonc", () => {
 });
 
 describe("buildManifest", () => {
+  it("keeps a long description up to 4,000 characters, so the narrator can redact it before its 600-character clip", () => {
+    const secret = `sk-ant-api03-${"A".repeat(30)}`;
+    const description = `${"d".repeat(590)} ${secret} ${"e".repeat(4_000)}`;
+    const manifest = buildManifest(["package.json"], new Map([["package.json", JSON.stringify({ name: "x", description })]]));
+    expect(manifest.descriptions["."]).toHaveLength(MAX_DESCRIPTION_CHARS);
+    expect(manifest.descriptions["."]).toContain(secret);
+  });
+
   it("finds packages and apps, names, descriptions and entry points", () => {
     const paths = [
       "package.json",
