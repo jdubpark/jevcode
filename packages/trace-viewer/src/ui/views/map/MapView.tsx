@@ -111,7 +111,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   const host = useViewerHost();
   const maxFiles = useMemo(() => overview?.snapshot.components.reduce((most, component) => Math.max(most, component.fileCount), 0) ?? 0, [overview]);
   const onRetry = useMemo(() => (host.rescanOverview === undefined ? undefined : () => host.rescanOverview?.()), [host]);
-  const activeId = hoverId ?? selection;
+  // Only a component on the map lights its edges and dims the rest: a selected component that left the snapshot, or a
+  // hover whose card went away without a pointerleave, must not leave every edge dimmed (lane 06 fix, minor 1).
+  const cardIds = useMemo(() => new Set(layout?.cards.map((card) => card.id) ?? []), [layout]);
+  const placed = (id: string | null): string | null => (id !== null && cardIds.has(id) ? id : null);
+  const activeId = placed(hoverId) ?? placed(selection);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
@@ -361,6 +365,11 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   useLayoutEffect(() => {
     if (active) measureOrigin();
   }, [active, measureOrigin]);
+
+  // A hidden Map, or one with no cards, has nothing under the pointer: forget the hover (no pointerleave reaches it).
+  useLayoutEffect(() => {
+    if (!active || layout === null) setHoverId(null);
+  }, [active, layout]);
 
   // A focused card that unmounts fires no focusout: drop the focus promotion when focus is no longer inside the map.
   useLayoutEffect(() => {

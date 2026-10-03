@@ -1,9 +1,9 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type React from "react";
 
 import type { OverviewModel } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
-import { linkSentence, narratorNote, notAnalyzedNote, overviewHeadline, partialNote, scanNote } from "./map-text.js";
+import { linkSentence, narratorNote, notAnalyzedNote, overviewHeadline, partialNote, scanNote, type SentencePart } from "./map-text.js";
 import styles from "./MapView.module.css";
 
 /** The narrative shows this many sentences; the rest sit behind a quiet "More". */
@@ -18,6 +18,48 @@ export interface MapHeaderProps {
   selectedId?: string | null;
   /** Hovering a component link behaves like hovering its card. */
   onHoverComponent?: (id: string | null) => void;
+}
+
+/** A component link in the narrative. Hovering it behaves like hovering its card; a hovered link that unmounts (the
+ *  narrative collapsed or replaced) ends its hover, since no pointerleave reaches it (lane 06 fix, minor 1). */
+function CiteLink({
+  part,
+  selected,
+  onSelect,
+  onHover,
+}: {
+  part: Extract<SentencePart, { componentId: string }>;
+  selected: boolean;
+  onSelect(id: string): void;
+  onHover: ((id: string | null) => void) | undefined;
+}): React.JSX.Element {
+  const hovering = useRef(false);
+  useEffect(
+    () => () => {
+      if (hovering.current) onHover?.(null);
+    },
+    [onHover],
+  );
+  return (
+    <button
+      type="button"
+      className={"marker" in part ? styles.refMarker : styles.ref}
+      data-map-cite={part.componentId}
+      data-selected={selected ? "" : undefined}
+      title={part.text}
+      onClick={() => onSelect(part.componentId)}
+      onPointerEnter={() => {
+        hovering.current = true;
+        onHover?.(part.componentId);
+      }}
+      onPointerLeave={() => {
+        hovering.current = false;
+        onHover?.(null);
+      }}
+    >
+      {part.text}
+    </button>
+  );
 }
 
 /**
@@ -101,19 +143,7 @@ export function MapHeader({ overview, onSelectComponent, onRetry, selectedId = n
             <span key={index} className={styles.sentence}>
               {linkSentence(sentence, overview).map((part, at) =>
                 "componentId" in part ? (
-                  <button
-                    key={at}
-                    type="button"
-                    className={"marker" in part ? styles.refMarker : styles.ref}
-                    data-map-cite={part.componentId}
-                    data-selected={part.componentId === selectedId ? "" : undefined}
-                    title={part.text}
-                    onClick={() => onSelectComponent(part.componentId)}
-                    onPointerEnter={() => onHoverComponent?.(part.componentId)}
-                    onPointerLeave={() => onHoverComponent?.(null)}
-                  >
-                    {part.text}
-                  </button>
+                  <CiteLink key={at} part={part} selected={part.componentId === selectedId} onSelect={onSelectComponent} onHover={onHoverComponent} />
                 ) : (
                   part.text
                 ),
