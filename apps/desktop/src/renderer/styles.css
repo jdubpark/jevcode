@@ -4,7 +4,15 @@
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-* {
+/*
+ * Host scope. The embedded trace viewer ([data-trace-viewer]) brings its own styles, as it does in a trace window, so a
+ * rule here that is not bound to a host class carries the host-scope guard
+ *   :where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)
+ * which matches every element outside the viewer, and every element of a host view inside it (the Surfaces view's root
+ * carries data-host-view). :where() adds no specificity. ui-catalog markup the viewer renders itself (CodeDiff in the
+ * Inspector) carries the guard too. styles-scope.test.tsx fails on any selector that reaches into the viewer.
+ */
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   box-sizing: border-box;
 }
 
@@ -24,41 +32,41 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection {
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::selection {
   background: var(--tv-accent-soft);
   color: var(--tv-ink);
 }
 
-::-webkit-scrollbar {
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-::-webkit-scrollbar-track {
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::-webkit-scrollbar-thumb {
   background: var(--tv-fill-2);
   border: 3px solid transparent;
   border-radius: 10px;
   background-clip: padding-box;
 }
 
-::-webkit-scrollbar-thumb:hover {
+:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::-webkit-scrollbar-thumb:hover {
   background: var(--tv-mark);
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
-button,
-textarea,
-select,
-input {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+textarea:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+select:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+input:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   font: inherit;
 }
 
-button {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   min-height: 30px;
   padding: 5px 10px;
   border: 1px solid var(--tv-fill-2);
@@ -73,29 +81,29 @@ button {
     box-shadow 140ms ease;
 }
 
-button:hover:not(:disabled) {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):hover:not(:disabled) {
   border-color: var(--tv-mark);
   background: var(--tv-fill);
   color: var(--tv-ink);
 }
 
-button:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
-summary:focus-visible {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):focus-visible,
+textarea:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):focus-visible,
+select:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):focus-visible,
+summary:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):focus-visible {
   outline: 2px solid var(--tv-accent);
   outline-offset: 2px;
 }
 
-button:disabled,
-textarea:disabled,
-select:disabled {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):disabled,
+textarea:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):disabled,
+select:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *):disabled {
   cursor: default;
   opacity: 0.46;
 }
 
-button.active,
-button[aria-pressed="true"] {
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *).active,
+button:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)[aria-pressed="true"] {
   border-color: var(--tv-accent);
   background: var(--tv-accent-soft);
   color: var(--tv-accent-ink);
@@ -1352,14 +1360,14 @@ button[aria-pressed="true"] {
   text-transform: uppercase;
 }
 
-.jevcode-code-diff {
+.jevcode-code-diff:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   max-height: 520px;
   overflow: auto;
   border-radius: 8px;
   background: var(--tv-fill);
 }
 
-.jevcode-code-diff pre {
+.jevcode-code-diff:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) pre {
   margin: 0;
   padding: 12px;
   color: var(--tv-ink-2);
@@ -1367,30 +1375,30 @@ button[aria-pressed="true"] {
   white-space: pre-wrap;
 }
 
-.d2h-wrapper,
-.d2h-file-wrapper,
-.d2h-file-diff,
-.d2h-code-wrapper {
+.d2h-wrapper:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-file-wrapper:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-file-diff:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-code-wrapper:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   background: var(--tv-fill) !important;
   color: var(--tv-ink-2) !important;
 }
 
-.d2h-file-header {
+.d2h-file-header:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   display: none;
 }
 
-.d2h-code-line,
-.d2h-code-side-line,
-.d2h-code-line-ctn,
-.d2h-code-side-line-ctn {
+.d2h-code-line:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-code-side-line:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-code-line-ctn:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+.d2h-code-side-line-ctn:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   font: 10px/1.55 var(--mono) !important;
 }
 
-.d2h-del {
+.d2h-del:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   background: var(--tv-bad-soft) !important;
 }
 
-.d2h-ins {
+.d2h-ins:where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *) {
   background: color-mix(in srgb, var(--tv-good) 10%, transparent) !important;
 }
 
@@ -1545,9 +1553,9 @@ button[aria-pressed="true"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *),
+  :where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::before,
+  :where(:not([data-trace-viewer], [data-trace-viewer] *), [data-host-view], [data-host-view] *)::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;

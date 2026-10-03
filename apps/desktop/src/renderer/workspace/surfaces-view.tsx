@@ -249,7 +249,8 @@ export function SurfacesView({ active }: ViewProps) {
   const openDecisions = entries.filter((entry) => entry.meta.group === "decision").length;
 
   return (
-    <section className="surfaces-view" ref={setRoot} data-active={active ? "true" : "false"} aria-label="Surfaces">
+    // data-host-view: the main window's element rules apply in here, though the view sits inside the viewer (styles.css).
+    <section className="surfaces-view" data-host-view="" ref={setRoot} data-active={active ? "true" : "false"} aria-label="Surfaces">
       <nav className="workspace-tabs" aria-label="Surfaces views">
         <button type="button" aria-pressed={filter === "overview"} onClick={() => setFilter("overview")}>
           Overview
