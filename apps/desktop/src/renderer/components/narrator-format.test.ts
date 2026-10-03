@@ -23,7 +23,9 @@ const base: NarratorCallRecord = {
 
 describe("narrator-format", () => {
   it.each([
-    ["on", "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, and session text (the task prompt, step headlines, decision titles and answers, and short agent messages). README and session text are sent after secrets are redacted. File contents are never sent."],
+    // Final review C M-1 and F item 5: earlier component descriptions (overviewNarrative re-sends each current purpose)
+    // and decision options (decisionWhy) leave too. Paths, names and edges are repo metadata and are not redacted.
+    ["on", "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, earlier component descriptions, and session text (the task prompt, step headlines, decision titles, options and answers, and short agent messages). Package descriptions, README and session text are sent after secrets are redacted. File contents are never sent."],
     ["off_setting", "Rule-based labels only. Nothing leaves this machine."],
     ["off_no_key", "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine."],
     ["off_env", "JEVCODE_NARRATOR=off, so labels stay rule-based. Nothing leaves this machine."],
