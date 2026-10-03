@@ -96,9 +96,28 @@ export function buildExplainerBundles(file) {
     base.rows.find((row) => row.type === "agent_event" && row.payload.type === "command_completed" && row.seq > testRun.firstSeq)?.seq ??
     testRun.lastSeq;
 
-  // Whole session: a story after the first edits, the why after the answer, a story after the test run, highlights.
+  // Whole session: an earlier decision the reader answered (no why yet, so its card shows the narrator words), a story
+  // after the first edits, the why after the answer, a story after the test run, highlights. The Brief keeps both decided
+  // cards, newest first, as the H3 mockup shows.
   const full = [...base.rows];
   insert(full, overview);
+  const plan = messages.find((step) => step.firstSeq > messages[0].firstSeq) ?? messages[0];
+  const keyScheme = {
+    id: "dec-shots-keys", sessionId, title: "Which key scheme should limits use?", context: "", severity: "recommended",
+    options: [
+      { id: "per_api_key", label: "Per API key", description: "", tradeoffs: [{ dimension: "fairness", consequence: "Each client gets its own budget." }] },
+      { id: "per_ip", label: "Per IP", description: "", tradeoffs: [{ dimension: "simplicity", consequence: "No key lookup on each request." }] },
+    ],
+    affectedChangeUnits: [], evidence: [],
+  };
+  const keyOpenSeq = freeSeq(full, plan.lastSeq);
+  const rowTs = (seq) => full.find((row) => row.seq > seq)?.ts ?? full.at(-1).ts;
+  insert(full, { seq: keyOpenSeq, type: "decision", ts: rowTs(keyOpenSeq), payload: { ...keyScheme, status: "open", ts: rowTs(keyOpenSeq) } });
+  const keyAnswerSeq = freeSeq(full, keyOpenSeq);
+  insert(full, {
+    seq: keyAnswerSeq, type: "decision", ts: rowTs(keyAnswerSeq),
+    payload: { ...keyScheme, status: "answered", ts: rowTs(keyAnswerSeq), answer: { decisionId: keyScheme.id, decision: { key_scheme: "per_api_key" }, evidence: [] } },
+  });
   insert(full, explainer(lastEdit.lastSeq, {
     kind: "story", basisSeq: lastEdit.lastSeq,
     sentences: [

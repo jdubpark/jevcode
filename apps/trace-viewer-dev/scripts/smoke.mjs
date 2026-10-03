@@ -430,8 +430,10 @@ async function main() {
       // the Map session overlay (c-map-overlay), the Brief's story and decided card (c-console-summary), the decision in the Inspector (c-decision-inspector), and the
       // pending card with a rule-based summary in a host that answers (c-brief-story).
       const explained = JSON.parse(readFileSync(path.join(bundles, "rate-limit-explainer.json"), "utf8"));
-      const decisionSeq = explained.rows.find((row) => row.type === "decision")?.seq;
-      if (decisionSeq === undefined) throw new Error("the explainer bundle has no decision row");
+      // The decision with a narrator why (the bundle also holds an earlier decision without one).
+      const whyFor = explained.rows.find((row) => row.type === "explainer" && row.payload.kind === "decision_why")?.payload.decisionId;
+      const decisionSeq = explained.rows.find((row) => row.type === "decision" && row.payload.id === whyFor)?.seq;
+      if (decisionSeq === undefined) throw new Error("the explainer bundle has no decision with a why");
       const explainerShots = [
         ["explainer-console", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "console")}`],
         ["explainer-decision", `bundle=rate-limit-explainer&chrome=embedded${locationHash(explained.session.sessionId, "hybrid", `step:${decisionSeq}`)}`],
