@@ -530,8 +530,16 @@ function ConsoleRowViewImpl(props: ConsoleRowViewProps): JSX.Element {
         </div>
       );
     case "summary":
-      // Spec §3.2 phase C: the story refresh as a ◆ Summary block (lane 07 S-4, the approved H3 mockup).
-      return <SummaryBlock id={lineId} sentences={row.sentences} {...(row.provenance !== undefined ? { provenance: row.provenance } : {})} />;
+      // Spec §3.2 phase C: the story refresh as a ◆ Summary block (lane 07 S-4, the approved H3 mockup). Its chips and
+      // Brief link leave the tab order: the feed keeps one tab stop, the row's article (E M-1).
+      return (
+        <SummaryBlock
+          id={lineId}
+          sentences={row.sentences}
+          tabbable={false}
+          {...(row.provenance !== undefined ? { provenance: row.provenance } : {})}
+        />
+      );
   }
 }
 

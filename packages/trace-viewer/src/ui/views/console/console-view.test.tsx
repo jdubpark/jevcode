@@ -9,6 +9,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ROWS_RELEASED_MARK } from "../../../source.js";
 import { buildTraceIndex, type TraceIndex } from "../../../layout/trace-index.js";
 import { displayUntrusted, foldRows, type TraceSession } from "../../../model/index.js";
+import { sentence } from "../../../test-support/explainer-fixtures.js";
 import { TraceBuilder, testMeta } from "../../../test-support/trace-builder.js";
 import {
   createHarness,
@@ -537,19 +538,23 @@ describe("ConsoleView fix round 1", () => {
     expect(answerDecision).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps one tab stop in the feed: chevrons and edit links leave the tab order, pending decision options stay", async () => {
+  it("keeps one tab stop in the feed: chevrons, edit links, summary chips and the Brief link leave the tab order, pending decision options stay", async () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
     b.agent({ type: "command_started", command: "ls src" });
     b.agent({ type: "command_completed", command: "ls src", exitCode: 0, stdout: Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n"), stderr: "" });
-    b.agent({ type: "file_read", path: "src/a.ts" });
+    const read = b.agent({ type: "file_read", path: "src/a.ts" });
     b.agent({ type: "file_changed", path: "src/a.ts" });
     b.fact({ type: "git_hunk", file: "src/a.ts", added: 3, removed: 1, isFormattingOnly: false, isConfigOnly: false, isLockfile: false });
+    // A summary row: its citation chips and its Brief link are buttons, one of each per sentence and row (E M-1).
+    b.explainer({ kind: "story", sentences: [sentence("The agent read a.ts.", { kind: "step", id: `step:${read}` })], basisSeq: b.rows.length });
     b.decision({ id: "d1", title: "Keep email login?" });
     mountConsole(live(b), { host: { answerDecision: async () => undefined }, state: { follow: false, loaded: true } });
     await frames();
     const feed = screen.getByRole("feed", { name: "Console" });
     expect(feed.querySelectorAll("button[aria-expanded]").length).toBeGreaterThanOrEqual(2);
+    expect(within(feed).getByRole("button", { name: "Show the Brief" })).toBeTruthy();
+    expect(within(feed).getAllByRole("button", { name: /^Open / }).length).toBeGreaterThan(0);
     const stops = Array.from(feed.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]")).filter((node) => node.tabIndex >= 0);
     expect(stops.filter((node) => node.tagName === "ARTICLE")).toHaveLength(1);
     expect(stops.filter((node) => node.tagName !== "ARTICLE").map((node) => node.textContent)).toEqual(["Option A", "Option B"]);

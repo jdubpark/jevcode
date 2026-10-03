@@ -24,12 +24,15 @@ export function StoryBlock({
   sentences,
   label,
   provenance,
+  tabbable = true,
 }: {
   /** Set where the sentences name an enclosing element (a Console summary row's aria-labelledby, via storySentenceIds); then no label. */
   id?: string;
   sentences: readonly NarrativeSentence[];
   label?: string;
   provenance?: "rule" | "model";
+  /** false keeps the citation chips out of the tab order (CitationChips `tabbable`). Default true. */
+  tabbable?: boolean;
 }): JSX.Element {
   return (
     <div className={styles.storyWrap}>
@@ -39,7 +42,7 @@ export function StoryBlock({
           return (
             <li key={index} className={styles.storyLine}>
               <span {...(id !== undefined ? { id: storySentenceId(id, index) } : {})} title={text}>{text}</span>
-              <CitationChips citations={item.citations} />
+              <CitationChips citations={item.citations} tabbable={tabbable} />
             </li>
           );
         })}
