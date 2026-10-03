@@ -132,11 +132,82 @@ async function runSweep(): Promise<boolean> {
   return true;
 }
 
+/** Spec 2026-10-02 §11: the Console budgets hold at 10,000 steps; the run needs at least that many. */
+export const CONSOLE_MIN_STEPS = 10_000;
+export const CONSOLE_APPEND_SAMPLES = 300;
+
+interface ConsoleScroll {
+  frames: number;
+  refreshMs: number;
+  droppedPct: number;
+  p95Rounded: number;
+}
+
+function nextFrameTime(): Promise<number> {
+  return new Promise((resolve) => requestAnimationFrame((time) => resolve(time)));
+}
+
+async function frameIntervals(count: number, onFrame: (frame: number) => void): Promise<number[]> {
+  const intervals: number[] = [];
+  let last = await nextFrameTime();
+  for (let frame = 0; frame < count; frame += 1) {
+    onFrame(frame);
+    const now = await nextFrameTime();
+    intervals.push(now - last);
+    last = now;
+  }
+  return intervals;
+}
+
+/** The Console's scroller once it holds at least `minSteps` steps, else null after `timeoutMs`. */
+async function waitForConsole(minSteps: number, timeoutMs: number): Promise<{ scroller: HTMLElement; steps: number } | null> {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
+    const root = document.querySelector<HTMLElement>("[data-console]");
+    const scroller = root?.querySelector<HTMLElement>("[data-console-scroll]") ?? null;
+    const steps = Number(root?.dataset.stepCount ?? "0");
+    if (scroller !== null && steps >= minSteps) return { scroller, steps };
+    if (performance.now() > deadline) return null;
+    await sleep(100);
+  }
+}
+
+/** 3 s of reader scrolling (90 frames up, 90 down), rAF intervals rounded to the idle refresh interval (viewer spec §10 method). */
+async function runConsoleScroll(scroller: HTMLElement): Promise<ConsoleScroll> {
+  const idle = (await frameIntervals(60, () => undefined)).sort((a, b) => a - b);
+  const refreshMs = idle[Math.floor(idle.length / 2)] ?? 1_000 / 60;
+  scroller.scrollTop = scroller.scrollHeight;
+  await nextFrameTime();
+  const intervals = await frameIntervals(180, (frame) => {
+    const delta = frame < 90 ? -900 : 900;
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: delta, bubbles: true }));
+    scroller.scrollTop += delta;
+  });
+  const rounded = intervals.map((ms) => Math.max(1, Math.round(ms / refreshMs))).sort((a, b) => a - b);
+  const total = rounded.reduce((sum, n) => sum + n, 0);
+  const dropped = rounded.reduce((sum, n) => sum + (n - 1), 0);
+  return {
+    frames: intervals.length,
+    refreshMs,
+    droppedPct: total === 0 ? 0 : (100 * dropped) / total,
+    p95Rounded: quantile(rounded, 0.95) ?? 0,
+  };
+}
+
+/** Back to Live (G), then wait for CONSOLE_APPEND_SAMPLES tv:console-append measures from the drip. */
+async function runConsoleAppend(samples: number, timeoutMs: number): Promise<Stat> {
+  performance.clearMeasures(PERF.consoleAppend);
+  press("KeyG", "G", { shiftKey: true });
+  const deadline = performance.now() + timeoutMs;
+  while (measureCount(PERF.consoleAppend) < samples && performance.now() < deadline) await sleep(100);
+  return readStats().find((stat) => stat.name === PERF.consoleAppend) ?? { name: PERF.consoleAppend, count: 0, median: null, p95: null };
+}
+
 function overlayNodes(): number {
   return document.querySelectorAll("[data-overlay-node]").length;
 }
 
-export function PerfHud({ autorun }: { autorun: boolean }) {
+export function PerfHud({ autorun, consoleRun = false }: { autorun: boolean; consoleRun?: boolean }) {
   const [stats, setStats] = useState<Stat[]>(readStats);
   const [nodes, setNodes] = useState({ overlay: 0, total: 0, maxOverlay: 0 });
   const [result, setResult] = useState<string>("");
@@ -185,6 +256,26 @@ export function PerfHud({ autorun }: { autorun: boolean }) {
       clearTimeout(id);
     };
   }, [autorun]);
+
+  // ?perfrun=console (smoke.mjs --console-perf): scroll at 10k steps, then append latency, then one JSON result.
+  useEffect(() => {
+    if (!consoleRun) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const found = await waitForConsole(CONSOLE_MIN_STEPS, 90_000);
+      if (cancelled) return;
+      if (found === null) {
+        setResult(JSON.stringify({ error: `the Console never held ${CONSOLE_MIN_STEPS} steps` }));
+        return;
+      }
+      const scroll = await runConsoleScroll(found.scroller);
+      const append = await runConsoleAppend(CONSOLE_APPEND_SAMPLES, 120_000);
+      if (!cancelled) setResult(JSON.stringify({ steps: found.steps, scroll, append }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [consoleRun]);
 
   return (
     <aside className={styles.hud} aria-label="Performance HUD">

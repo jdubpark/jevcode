@@ -33,3 +33,9 @@ export interface TraceSource {
 export function cursorAfter(page: TraceRowsPage): number {
   return page.nextAfterSeq ?? page.lastSeq;
 }
+
+/**
+ * Marked when a drip source releases rows (the dev host's "row stored", spec §11 Console append latency). The
+ * Console measures from the oldest pending mark to the paint after the commit that applies those rows.
+ */
+export const ROWS_RELEASED_MARK = "tv:rows-released";

@@ -4,11 +4,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import type { TraceRow } from "@jevcode/contracts";
 
 import { buildConsoleRows, consoleNewRowCount, consoleRowStepIds, type ConsoleRow, type ConsoleRowsState } from "../../../layout/console-rows.js";
+import { ROWS_RELEASED_MARK } from "../../../source.js";
 import type { SelectionId, TraceIndex } from "../../../layout/trace-index.js";
 import { buildSearchIndex, type SearchIndex, type TraceSession } from "../../../model/index.js";
 import { Icon } from "../../icons/Icon.js";
 import { useViewerHost } from "../../shell/host-context.js";
 import { useAnnounce } from "../../shell/LiveRegion.js";
+import { measureFromFirstAfterPaint, PERF } from "../../shell/perf.js";
 import { searchMatches } from "../../shell/Outline/outline-rows.js";
 import { useDiagnostics, useSessionView } from "../../shell/session-context.js";
 import { useDispatch, useView, useViewStore } from "../../state/store.js";
@@ -349,6 +351,13 @@ export function ConsoleView({ active }: ViewProps) {
     });
     return () => view.cancelAnimationFrame(id);
   }, [built, diagnostics, active]);
+
+  // Spec §11 append latency: every commit that rebuilt the rows measures from the oldest release to the next paint.
+  // A hidden Console drops pending marks, so a later sample never spans the time it was hidden.
+  useLayoutEffect(() => {
+    if (active) measureFromFirstAfterPaint(PERF.consoleAppend, ROWS_RELEASED_MARK);
+    else if (typeof performance !== "undefined") performance.clearMarks(ROWS_RELEASED_MARK);
+  }, [built, active]);
 
   const [query, setQuery] = useState("");
   useEffect(() => {
