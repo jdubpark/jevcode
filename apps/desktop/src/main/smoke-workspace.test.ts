@@ -19,6 +19,8 @@ import {
   pressKeyScript,
   runWorkspaceSmoke,
   startSessionScript,
+  SURFACES_CLICK_DIFF_SCRIPT,
+  SURFACES_DISMISS_SCRIPT,
 } from "./smoke-workspace.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
@@ -32,6 +34,9 @@ interface FakeOptions {
   rowType?: string;
   /** The embedded viewer never logs WORKSPACE_READY. */
   noReady?: boolean;
+  /** What the renderer DOM probes report in the Surfaces step. */
+  dismissResult?: unknown;
+  clickResult?: unknown;
 }
 
 function fake(options: FakeOptions = {}) {
@@ -63,6 +68,12 @@ function fake(options: FakeOptions = {}) {
           wall += 10_000;
         }, 5);
         return "repo_1";
+      }
+      if (script === SURFACES_DISMISS_SCRIPT) {
+        return options.dismissResult ?? { ids: ["completion"], actions: ["accept_changes", "request_changes", "show_exact_diff"] };
+      }
+      if (script === SURFACES_CLICK_DIFF_SCRIPT) {
+        return options.clickResult ?? { ids: ["completion", "diff:abc"], actions: ["show_exact_diff"] };
       }
       const key = VIEW_KEYS.find((entry) => script.includes(`"${entry.code}"`));
       if (script.includes('"KeyJ"')) queueMicrotask(() => emit('WORKSPACE_LOCATION {"view":"console","selected":"step:3"}'));
@@ -173,6 +184,7 @@ describe("runWorkspaceSmoke", () => {
       "SMOKE_CONSOLE_SLOWEST seq=3 type=unknown stored_at_ms=10300 painted_at_ms=10340 latency_ms=40",
       "SMOKE_LOOP_DELAY p99_ms=12 max_ms=32 resolution_ms=10",
       ...shots.map((file) => `SMOKE_SHOT ${file}`),
+      "SMOKE_SURFACES actions=accept_changes,request_changes,show_exact_diff diff=diff:abc",
       "SMOKE_VIEWS selected=step:3 views=canvas,hybrid,map,surfaces,console",
     ]);
     expect([...run.files.keys()]).toEqual(shots);
@@ -204,6 +216,27 @@ describe("runWorkspaceSmoke", () => {
     const run = fake({ selectedFor: (view) => (view === "hybrid" ? "step:9" : "step:3") });
     await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
       /selection changed on hybrid: step:3 → step:9/,
+    );
+  });
+
+  it("fails when the completion surface's action buttons do not render", async () => {
+    const run = fake({ dismissResult: { ids: ["changeunit:1"], actions: [] } });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /Surfaces step: completion surface action buttons did not render \(surfaces=\[changeunit:1\] actions=\[\]/,
+    );
+  });
+
+  it("fails when no surface renders at all", async () => {
+    const run = fake({ dismissResult: { ids: [], actions: [], timedOut: true } });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /Surfaces step: no surface rendered/,
+    );
+  });
+
+  it("fails when clicking show_exact_diff never yields a diff: surface", async () => {
+    const run = fake({ clickResult: { ids: ["completion"], actions: ["show_exact_diff"], timedOut: true } });
+    await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
+      /Surfaces step: no diff: surface appeared within 8s after clicking show_exact_diff/,
     );
   });
 });
