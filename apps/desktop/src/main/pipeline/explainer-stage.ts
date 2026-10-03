@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@jevcode/contracts";
 import type {
-  ChangeUnit,
   ComponentEdge,
-  Decision,
   ExternalDep,
   NarratorState,
   OverviewSnapshot,
@@ -26,6 +24,7 @@ import type { JevcodeDb } from "@jevcode/storage";
 
 import type { NarratorCallRecord } from "../../shared/narrator-log.js";
 import type { BriefSources } from "./explainer-narration.js";
+import { createSessionExplainer } from "./explainer-session.js";
 import {
   OverviewIndex,
   applyFileChanges,
@@ -37,6 +36,7 @@ import {
   type FileChanges,
   type RepoModel,
 } from "./explainer-overview.js";
+import type { PipelineSyncSnapshot } from "./types.js";
 
 /** Spec §5.5: at most one snapshot row per session every 2 s. */
 export const SNAPSHOT_WRITE_INTERVAL_MS = 2_000;
@@ -69,9 +69,11 @@ export type ExplainerLogEvent =
       dropped: number;
       discarded: boolean;
       error?: string;
+      /** Lane 07: the guard's reason codes (never model text), e.g. "batch_discarded". */
+      reasons?: readonly string[];
     }
   | { kind: "snapshot"; components: number; edges: number; bytes: number }
-  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state" | "dispose"; message: string };
+  | { kind: "error"; where: "scan" | "rebuild" | "write" | "state" | "dispose" | "session"; message: string };
 
 /** Scan progress and failure for the Brief (spec §6.1, §6.6); see the lane's spec gap 1. */
 export interface ExplainerStatus {
@@ -151,6 +153,8 @@ export interface ExplainerStageDeps {
   /** The explainWithModel preference (spec E15); false writes narrator "off". Absent reads as on. */
   explainWithModel?(): boolean;
   onStatus?(status: ExplainerStatus): void;
+  /** Lane 07: minimum time between story narrations (spec §6.1); default 20,000 ms. The live smoke shortens it. */
+  storyIntervalMs?: number;
 }
 
 export interface ExplainerStage {
@@ -160,11 +164,11 @@ export interface ExplainerStage {
   onSessionStarted(sessionId: string): void;
   /** Queues changed repo-relative paths; the rebuild runs 500 ms after the last change. */
   onFilesChanged(paths: readonly string[]): void;
-  /** Lane 07 (S-2) owns this body: story and highlight triggers. */
-  onPipelineSync(sync: { sessionId: string; lastSeq: number; changeUnits: ChangeUnit[]; decisions: Decision[] }): void;
+  /** Lane 07 (S-2): hands the sync to the session explainer (story, decision why and highlight rows). Returns at once. */
+  onPipelineSync(sync: PipelineSyncSnapshot): void;
   /** overview:rescan (spec §6.6 Retry): aborts a running scan and starts a new one. */
   rescan(): void;
-  /** R4: forwards to the narration seam (and, after lane 07 S-2, to the session explainer). */
+  /** R4: forwards to the narration seam and to the session explainer. */
   setNarrator(narrator: NarratorClient | null): void;
   status(): ExplainerStatus;
   /** Resolves when no scan, rebuild or queued row write is in flight. Timers are not awaited. */
@@ -246,6 +250,20 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       const last = built;
       if (!disposed && last !== null) publishBuilt(last.repo, last.overview);
     },
+  });
+
+  // Lane 07 (S-2, ruling R4): the session explainer starts from initialNarrator and follows setNarrator.
+  const sessionExplainer = createSessionExplainer({
+    db: deps.db,
+    repoRoot: deps.repoRoot,
+    sessionId: () => deps.sessionId(),
+    narrator: deps.initialNarrator ?? null,
+    emitRowsAvailable: (sessionId, lastSeq) => deps.emitRowsAvailable(sessionId, lastSeq),
+    now: () => deps.now(),
+    schedule: deps.schedule,
+    log: (event) => deps.log(event),
+    ...(deps.recordNarratorCall !== undefined ? { recordCall: (record: NarratorCallRecord) => deps.recordNarratorCall?.(record) } : {}),
+    ...(deps.storyIntervalMs !== undefined ? { storyIntervalMs: deps.storyIntervalMs } : {}),
   });
 
   function setStatus(next: ExplainerStatus): void {
@@ -727,8 +745,14 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       }
       if (model !== null && scanning === null && dirty.size > 0) scheduleSettle();
     },
-    onPipelineSync(_sync) {
-      // Lane 07 (S-2): story and highlight triggers.
+    onPipelineSync(sync) {
+      if (disposed) return;
+      // Spec §6.1: the stage never blocks ingestion, and its errors never reach the runtime.
+      try {
+        sessionExplainer.onPipelineSync(sync);
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
+      }
     },
     rescan() {
       startScan();
@@ -739,6 +763,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         narration.setNarrator?.(narrator);
       } catch (error) {
         seamFailed(error);
+      }
+      try {
+        sessionExplainer.setNarrator(narrator);
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
       }
     },
     status() {
@@ -766,6 +795,11 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
       // switch or app quit, which still closes the database).
       try {
         narration.dispose();
+      } catch (error) {
+        deps.log({ kind: "error", where: "dispose", message: messageOf(error) });
+      }
+      try {
+        sessionExplainer.dispose();
       } catch (error) {
         deps.log({ kind: "error", where: "dispose", message: messageOf(error) });
       }

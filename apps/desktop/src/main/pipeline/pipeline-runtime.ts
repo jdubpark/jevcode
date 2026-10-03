@@ -1016,7 +1016,8 @@ export class PipelineRuntime {
    * the Jev stage, not once per decision. Snapshots are shared where no store changes in between (see below).
    *
    * Slices (PL-2): the pass checks a SYNC_SLICE_MS slice after the flush, before each Jev batch and unit, before each
-   * surface, and once before the decision, validation and completion steps, which run together. When the slice is
+   * surface, once before the decision, validation and completion steps, which run together, and once after them,
+   * before the explainer hook (onPipelineSync, lane 07 S-2), which only a completed pass reaches. When the slice is
    * spent it sends unsent Jev decisions to the debug panel and yields (setImmediate), so no block of a turn end's pass
    * runs past spec §6.1's 50 ms. Other work may run between slices, as it already could across a networked Jev
    * client's awaits. The Jev stage keeps the snapshot read at the pass's start, and the surfaces the one read after the
@@ -1092,6 +1093,10 @@ export class PipelineRuntime {
       this.emitValidations(session, current);
       if (completing) this.emitCompletionSurface(session, current);
       this.emitSessionState(session.sessionId);
+      // Lane 07 S-2: once per completed pass. The decision, validation and completion steps above run as one block,
+      // so the pass checks its slice (and a stop) again before the hook. current is the pass's last snapshot.
+      await pace();
+      this.notifyPipelineSync(session, current);
     } catch (error) {
       // Stopped mid-pass: the stop owns the session from here.
       if (error instanceof PassStopped) return;
@@ -1323,6 +1328,25 @@ export class PipelineRuntime {
       sessionId: session.sessionId,
       validations: fresh,
     });
+  }
+
+  /**
+   * Console-explainer spec §6.1: the explainer stage reads every completed pass, once, with the snapshot the pass
+   * last held (runSync's current). A hook error never fails the pass.
+   */
+  private notifyPipelineSync(session: ActiveSession, snapshot: ReturnType<PipelineCoordinator["snapshot"]>): void {
+    const hook = this.opts.onPipelineSync;
+    if (hook === undefined) return;
+    try {
+      hook(session.repoPath, {
+        sessionId: session.sessionId,
+        lastSeq: this.opts.db.getSession(session.sessionId)?.lastEventSeq ?? 0,
+        changeUnits: snapshot.units,
+        decisions: snapshot.decisions,
+      });
+    } catch (error) {
+      this.log(`session ${session.sessionId}: explainer hook failed: ${String(error)}`);
+    }
   }
 
   /** The latest 50 Jev decisions, read and sent at a pass's yields and after its Jev stage (lane 03 PL-2). */

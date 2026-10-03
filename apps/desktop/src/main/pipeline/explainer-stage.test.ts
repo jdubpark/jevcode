@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { OVERVIEW_SNAPSHOT_MAX_BYTES, OverviewSnapshotSchema, type OverviewSnapshot } from "@jevcode/contracts";
+import { OVERVIEW_SNAPSHOT_MAX_BYTES, OverviewSnapshotSchema, type ChangeUnit, type ExplainerRecord, type OverviewSnapshot } from "@jevcode/contracts";
 import { componentIdFor, languageOf, type ScannedFile, type WorkspaceManifest } from "@jevcode/codebase-map";
 import type { ScanOptions, scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import type { extractImports } from "@jevcode/evidence-engine";
+import { createFakeNarratorClient, type SessionStoryInput } from "@jevcode/jev-router";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1268,5 +1269,46 @@ describe("ExplainerStage concurrency (M-6 fix round 1)", () => {
       [SESSION_2, "done", 3],
     ]);
     expect(snapshotRows(h.db, SESSION)).toHaveLength(0);
+  });
+});
+
+describe("ExplainerStage session explainer (lane 07 S-2)", () => {
+  it("hands pipeline syncs to the session explainer and forwards setNarrator to it", async () => {
+    const h = harness({ initialNarrator: null });
+    const ts = "2026-10-02T10:00:00.000Z";
+    const file = "packages/core/src/index.ts";
+    h.db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "p", ts });
+    h.db.appendEvent(SESSION, "overview_snapshot", {
+      sessionId: SESSION, repoRoot: REPO_ROOT, scanId: "scan_1", partial: false,
+      counts: { files: 1, components: 1, edges: 0, languages: ["TypeScript"] },
+      components: [{
+        id: CORE, rootPath: "packages/core", name: "@fx/core", fileCount: 1, files: [file], language: "TypeScript",
+        roleGuess: "domain", role: "domain", purpose: null, provenance: "rule", contentHash: "a".repeat(40),
+        externalDeps: [], entryPoints: [], importsAnalyzed: true,
+      }],
+      edges: [], externals: [], narrative: null, generatedAt: ts,
+    });
+    const unit: ChangeUnit = {
+      id: "u1", sessionId: SESSION, title: "Unit", category: "implementation", status: "validated",
+      files: [`${REPO_ROOT}/${file}`], symbols: [], interfacesChanged: [], schemaChanges: [], dependencyChanges: [], relatedDecisions: [],
+      validationResults: [], evidence: [], createdAt: ts, updatedAt: ts,
+    };
+    h.db.upsertChangeUnit(unit);
+    const stage = start(h);
+    const narrator = createFakeNarratorClient({
+      sessionStory: [
+        (input: unknown) => [{ text: "The agent changed core.", citations: [{ kind: "step", id: (input as SessionStoryInput).recentSteps.at(-1)?.id ?? "" }] }],
+      ],
+    });
+    stage.setNarrator(narrator);
+    stage.onPipelineSync({ sessionId: SESSION, lastSeq: h.db.getSession(SESSION)?.lastEventSeq ?? 0, changeUnits: [unit], decisions: [] });
+
+    const explainerRows = (): ExplainerRecord[] =>
+      h.db.listEvents(SESSION).filter((event) => event.type === "explainer").map((event) => JSON.parse(event.payloadJson) as ExplainerRecord);
+    await vi.waitFor(() => expect(explainerRows().map((row) => row.kind)).toEqual(["highlights", "story"]));
+    expect(explainerRows()[0]).toMatchObject({ kind: "highlights", components: [{ id: CORE, state: "changed", unitIds: ["u1"] }] });
+    expect(explainerRows()[1]).toMatchObject({ kind: "story", provenance: "model" });
+    expect(narrator.calls.map((call) => call.method)).toEqual(["sessionStory"]);
+    expect(h.hints.at(-1)?.[0]).toBe(SESSION);
   });
 });

@@ -46,6 +46,12 @@ export interface PipelineRuntimeOptions {
   onRepoFilesChanged?: (repoPath: string, paths: readonly string[]) => void;
   /** Script for a mock session started without input.mockScript (the Electron workspace smoke). */
   mockScriptFor?: (input: SessionStartOptions) => MockAgentScript;
+  /**
+   * Called once per completed sync pass with the session's units and decisions (console-explainer
+   * spec §6.1 triggers), never after a pass that a stop ended or that threw; index.ts routes it to the
+   * repo's explainer stage. Errors are logged, never thrown.
+   */
+  onPipelineSync?: (repoPath: string, sync: PipelineSyncSnapshot) => void;
 }
 
 export interface SessionStartOptions {
@@ -64,6 +70,15 @@ export interface SessionStartOptions {
 }
 
 import type { PlaybackLabels } from "./playback.js";
+
+/** What the runtime hands the explainer stage after each finished sync (console-explainer spec §6.1). */
+export interface PipelineSyncSnapshot {
+  sessionId: string;
+  /** The session's lastEventSeq when the sync finished. */
+  lastSeq: number;
+  changeUnits: ChangeUnit[];
+  decisions: Decision[];
+}
 
 export type IngestibleRecord =
   | NormalizedAgentEvent
