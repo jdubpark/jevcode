@@ -367,6 +367,23 @@ describe("decisions and Jev", () => {
     ]);
   });
 
+  it("a re-emit of an answered decision does not mark its turn as stopped on a decision (review minor)", () => {
+    const b = new TraceBuilder();
+    const answered = { decisionId: "dec-1", decision: { k: "a" }, evidence: [] };
+    b.agent({ type: "agent_started", prompt: "p" });
+    b.decision({ id: "dec-1" });
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    b.agent({ type: "agent_started", prompt: "continue with A" });
+    // The rebuild re-emits dec-1 inside the second turn, which then ends with no terminal row: a steer, not a resume.
+    b.decision({ id: "dec-1", status: "answered", answer: answered });
+    b.agent({ type: "agent_started", prompt: "Stop and add tests" });
+    expect(fold(b).turns.map((turn) => [turn.trigger, turn.outcome])).toEqual([
+      ["initial", "waiting"],
+      ["resume", "interrupted"],
+      ["steer", "unknown"],
+    ]);
+  });
+
   it("links a decision through affectedChangeUnits", () => {
     const b = new TraceBuilder();
     b.agent({ type: "agent_started", prompt: "p" });
