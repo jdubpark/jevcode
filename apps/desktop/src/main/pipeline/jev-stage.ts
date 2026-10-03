@@ -37,6 +37,11 @@ export interface JevStageDeps {
   resolveSlug?: (files: readonly string[], symbols: readonly string[]) => string | undefined;
   onJevLog?: (log: JevDecisionLog) => void;
   onRedaction?: (count: number) => void;
+  /**
+   * The coordinator snapshot the caller took just before this call, if any; otherwise the stage reads one. Each read
+   * loads every unit, decision, validation and graph row from the database (lane 03 PL-2).
+   */
+  snapshot?: ReturnType<PipelineCoordinator["snapshot"]>;
 }
 
 export interface JevUnitOutcome {
@@ -80,7 +85,7 @@ export async function runJevStage(deps: JevStageDeps): Promise<JevStageResult> {
     db.upsertJevDecision(log);
     deps.onJevLog?.(log);
   };
-  const snapshot = coordinator.snapshot();
+  const snapshot = deps.snapshot ?? coordinator.snapshot();
   const outcomes: JevUnitOutcome[] = [];
   const logs: JevDecisionLog[] = [];
 

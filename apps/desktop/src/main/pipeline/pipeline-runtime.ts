@@ -3,7 +3,6 @@ import type {
   ChangeUnit,
   Decision,
   EvidenceFact,
-  JevDecisionLog,
   NormalizedAgentEvent,
   StructuredDecision,
 } from "@jevcode/contracts";
@@ -953,6 +952,9 @@ export class PipelineRuntime {
    * Errors: a throw ends the pass with the earlier rows committed. Every cache that lets a later pass skip work (the
    * stores' last payloads, unitState, surfaces, completionEmitted) is updated only after the writes it stands for,
    * so the next pass writes what this one did not.
+   *
+   * Per-batch reads (PL-2): the Jev debug channel gets the latest decisions once per pass, not once per decision, and
+   * one coordinator snapshot serves each stretch of the pass in which no store changes.
    */
   private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
@@ -970,8 +972,10 @@ export class PipelineRuntime {
           previous.version !== version
         );
       });
+      let current = snapshot;
       if (changedUnits.length > 0) {
-        const result = await runJevStage({
+        let jevLogged = false;
+        const stage = runJevStage({
           db: this.opts.db,
           coordinator: session.coordinator,
           client: session.client,
@@ -984,16 +988,28 @@ export class PipelineRuntime {
           resolveSlug: session.playbackLabels
             ? (files, symbols) => session.playbackLabels?.match(files, symbols)
             : undefined,
-          onJevLog: (log) => this.emitJevDebug(session, log),
+          snapshot,
+          onJevLog: () => {
+            jevLogged = true;
+          },
           onRedaction: (count) => {
             this.recordTelemetry(session, "redaction", { count });
           },
         });
-        this.syncOutcomes(session, result, ctx);
+        let result: Awaited<typeof stage>;
+        try {
+          result = await stage;
+        } finally {
+          if (jevLogged) this.emitJevDebug(session);
+        }
+        // Read after the stage's label writes. Surfaces, decision surfaces and telemetry change none of the
+        // coordinator's stores, so this read serves the steps below unless a decision interrupts the agent.
+        current = session.coordinator.snapshot();
+        this.syncOutcomes(session, result, ctx, current);
       }
-      this.emitDecisions(session, ctx);
-      this.emitValidations(session);
-      if (completing) this.emitCompletionSurface(session);
+      if (this.emitDecisions(session, ctx, current)) current = session.coordinator.snapshot();
+      this.emitValidations(session, current);
+      if (completing) this.emitCompletionSurface(session, current);
       this.emitSessionState(session.sessionId);
     } catch (error) {
       this.log(`sync failed for ${session.sessionId}: ${String(error)}`);
@@ -1012,8 +1028,8 @@ export class PipelineRuntime {
     session: ActiveSession,
     result: Awaited<ReturnType<typeof runJevStage>>,
     ctx: UiStageContext,
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
   ): void {
-    const snapshot = session.coordinator.snapshot();
     for (const outcome of result.outcomes) {
       const unit = snapshot.units.find(
         (candidate) => candidate.id === outcome.unitId,
@@ -1122,9 +1138,12 @@ export class PipelineRuntime {
     };
   }
 
-  private emitCompletionSurface(session: ActiveSession): void {
+  private emitCompletionSurface(
+    session: ActiveSession,
+    current?: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): void {
     if (session.stopping || session.completionEmitted) return;
-    const snapshot = session.coordinator.snapshot();
+    const snapshot = current ?? session.coordinator.snapshot();
     const ctx = this.buildUiContext(session, snapshot);
     const spec = compileCompletionSurface(ctx);
     const hash = specHash(spec);
@@ -1153,8 +1172,13 @@ export class PipelineRuntime {
     session.completionEmitted = true;
   }
 
-  private emitDecisions(session: ActiveSession, ctx: UiStageContext): void {
-    const snapshot = session.coordinator.snapshot();
+  /** Returns true when it interrupted the agent for a decision: the interrupt may ingest an agent event. */
+  private emitDecisions(
+    session: ActiveSession,
+    ctx: UiStageContext,
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): boolean {
+    let interrupted = false;
     for (const decision of snapshot.decisions) {
       if (decision.status === "open" && session.openDecisions.has(decision.id)) {
         const surfaceId = surfaceIdForDecision(decision.id);
@@ -1188,6 +1212,7 @@ export class PipelineRuntime {
           session.agentState !== "waiting_decision"
         ) {
           void session.adapter?.interrupt();
+          interrupted = true;
           session.agentState = "waiting_decision";
           session.interruptedForDecision = true;
           this.opts.db.setSessionState(session.sessionId, "waiting_decision");
@@ -1195,10 +1220,13 @@ export class PipelineRuntime {
         }
       }
     }
+    return interrupted;
   }
 
-  private emitValidations(session: ActiveSession): void {
-    const snapshot = session.coordinator.snapshot();
+  private emitValidations(
+    session: ActiveSession,
+    snapshot: ReturnType<PipelineCoordinator["snapshot"]>,
+  ): void {
     const fresh = snapshot.validations.filter(
       (validation) => !session.emittedValidationIds.has(validation.id),
     );
@@ -1212,7 +1240,8 @@ export class PipelineRuntime {
     });
   }
 
-  private emitJevDebug(session: ActiveSession, _log: JevDecisionLog): void {
+  /** The latest 50 Jev decisions, read and sent once per pass (lane 03 PL-2): the panel shows the final state. */
+  private emitJevDebug(session: ActiveSession): void {
     this.opts.emit(MainToRendererChannels.jevDebug, {
       sessionId: session.sessionId,
       decisions: this.opts.db.latestJevDecisions(session.sessionId, 50),
