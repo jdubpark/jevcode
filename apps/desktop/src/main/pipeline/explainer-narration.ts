@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { OTHER_ROOT_PATH, componentIdFor } from "@jevcode/codebase-map";
 import type { Component, ComponentEdge, NarrativeSentence, NarratorState, OverviewSnapshot, Role } from "@jevcode/contracts";
 import {
   NARRATOR_MODEL,
@@ -21,6 +22,7 @@ import type {
 } from "@jevcode/jev-router";
 import type { JevcodeDb } from "@jevcode/storage";
 
+import { NARRATOR_RECORD_TEXT_MAX } from "../../shared/narrator-log.js";
 import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narrator-log.js";
 import { blurbFrom, exportIdentifiers } from "./explainer-narration-sources.js";
 
@@ -144,9 +146,8 @@ type ReadTarget = "component_text_cache" | "overview_state";
 
 const sha1 = (text: string): string => createHash("sha1").update(text).digest("hex");
 
-/** Lane 04's group of the smallest components past the 200 cap (`@jevcode/codebase-map` OTHER_ROOT_PATH). */
-const OTHER_ROOT_PATH = "(other)";
-const OTHER_COMPONENT_ID = `cmp_${sha1(OTHER_ROOT_PATH).slice(0, 12)}`;
+/** Lane 04's group of the smallest components past the 200 cap. */
+const OTHER_COMPONENT_ID = componentIdFor(OTHER_ROOT_PATH);
 
 /** Process-wide, so call record ids stay unique across narration instances (one per repo). */
 let recordSeq = 0;
@@ -532,7 +533,8 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         ts: new Date(deps.now()).toISOString(),
         repoRoot: deps.repoRoot,
         question,
-        model: result?.model ?? NARRATOR_MODEL,
+        // The model name comes from the provider; both fields are capped for Inspect (NarratorCallRecordSchema).
+        model: (result?.model ?? NARRATOR_MODEL).slice(0, NARRATOR_RECORD_TEXT_MAX),
         ms,
         batchSize,
         accepted: outcome.accepted,
@@ -541,7 +543,7 @@ export function createExplainerNarration(deps: ExplainerNarrationDeps): Explaine
         inputTokens: usage?.inputTokens ?? null,
         outputTokens: usage?.outputTokens ?? null,
         costUsd: usage === null ? null : narratorCostUsd(usage),
-        error: outcome.error,
+        error: outcome.error === null ? null : outcome.error.slice(0, NARRATOR_RECORD_TEXT_MAX),
         reasons: outcome.reasons.slice(0, 40),
       });
     } catch {

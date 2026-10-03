@@ -19,6 +19,7 @@ import type {
   ToMainPayload,
 } from "../shared/ipc-registry.js";
 import {
+  DebugNarratorCallsPayloadSchema,
   MainToRendererLocalChannels,
   RendererToMainLocalChannels,
 } from "../shared/local-channels.js";
@@ -479,12 +480,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return { decisions };
   });
 
-  handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) => {
-    return {
+  // The answer is parsed too: only the schema's fields, with its string caps, cross to the renderer.
+  handle(RendererToMainLocalChannels.debugListNarratorCalls, ({ limit }) =>
+    DebugNarratorCallsPayloadSchema.parse({
       availability: deps.narrator?.availability() ?? "off_setting",
       calls: deps.narratorCalls?.list(limit ?? 50) ?? [],
-    };
-  });
+    }),
+  );
 
   registerTraceHandlers(handle, deps.trace);
   registerTraceWindowHandlers(handle, deps.traceWindows);

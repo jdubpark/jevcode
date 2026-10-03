@@ -25,7 +25,7 @@ import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NarratorCallRecordSchema } from "../../shared/narrator-log.js";
+import { NARRATOR_RECORD_TEXT_MAX, NarratorCallRecordSchema } from "../../shared/narrator-log.js";
 import type { NarratorAvailability, NarratorCallRecord } from "../../shared/narrator-log.js";
 import {
   applyNarration,
@@ -722,6 +722,21 @@ describe("logging (spec §6.3)", () => {
       { kind: "narrator", question: "describeComponents", ms: expect.any(Number), accepted: 2, dropped: 0, discarded: false },
       { kind: "narrator", question: "overviewNarrative", ms: expect.any(Number), accepted: 1, dropped: 0, discarded: false },
     ]);
+  });
+
+  it("clips the provider's model name to the call record cap, so every record fits Inspect's schema", async () => {
+    const longModel = `claude-${"x".repeat(200)}`;
+    const client = createNarratorClient({
+      complete: async () => ({ json: { components: [] }, model: longModel, stopReason: "end_turn", usage: null }),
+    });
+    const h = harness({ narrator: client });
+    h.feed(snapshot(1));
+    await h.narration.idle();
+    expect(h.records.length).toBeGreaterThan(0);
+    for (const record of h.records) {
+      expect(record.model).toBe(longModel.slice(0, NARRATOR_RECORD_TEXT_MAX));
+      expect(NarratorCallRecordSchema.safeParse(record).success).toBe(true);
+    }
   });
 
   it("gives every call record an id unique across narration instances started in the same millisecond", async () => {

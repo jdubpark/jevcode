@@ -1,7 +1,11 @@
+import { useEffect, useState } from "react";
+
 import {
   AGENT_MODEL_OPTIONS,
   REASONING_EFFORT_OPTIONS,
 } from "../../shared/prefs.js";
+import type { NarratorAvailability } from "../../shared/narrator-log.js";
+import { getBridge } from "../bridge.js";
 import { narratorSettingNote } from "./narrator-format.js";
 import type {
   AgentModelOption,
@@ -17,6 +21,22 @@ interface AgentSettingsProps {
 
 export function AgentSettings(props: AgentSettingsProps) {
   const { prefs } = props;
+  // The note says what leaves the machine, so it follows main's availability (setting, key and
+  // JEVCODE_NARRATOR), not the checkbox alone; it is empty until main answers.
+  const [availability, setAvailability] = useState<NarratorAvailability | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setAvailability(null);
+    void getBridge()
+      .debug.listNarratorCalls(1)
+      .then((payload) => {
+        if (!cancelled) setAvailability(payload.availability);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [prefs.explainWithModel]);
   const budgetUnknown = prefs.usageBudgetFraction === null;
   const budgetPercent = budgetUnknown
     ? null
@@ -99,7 +119,7 @@ export function AgentSettings(props: AgentSettingsProps) {
         />
       </label>
       <p id="narrator-setting-note" className="narrator-note">
-        {narratorSettingNote(prefs.explainWithModel)}
+        {availability === null ? null : narratorSettingNote(availability)}
       </p>
     </section>
   );
