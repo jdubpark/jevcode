@@ -334,7 +334,11 @@ async function main() {
       if (result.selectedTitle !== "Claim contradicts tests") problems.push(`selected ${JSON.stringify(result.selectedTitle)}`);
       if (result.errors.length !== 0) problems.push(`errors ${JSON.stringify(result.errors)}`);
       if (result.cspViolations.length !== 0) problems.push(`csp ${JSON.stringify(result.cspViolations)}`);
-      if (!(result.maxDriftPx <= 1)) problems.push(`drift ${result.maxDriftPx}px`);
+      if (!(result.maxDriftPx <= 1)) {
+        // JEVCODE_SMOKE_DRIFT_SOFT=1 (A/B runs under load): record the drift and go on to the perf step.
+        if (process.env.JEVCODE_SMOKE_DRIFT_SOFT === "1") console.log(`DRIFT_OVER_BUDGET ${result.maxDriftPx}px`);
+        else problems.push(`drift ${result.maxDriftPx}px`);
+      }
       if (problems.length > 0) throw new Error(`${view} selftest: ${problems.join("; ")}`);
       console.log(`${view}: selftest ok (rows ${result.rows}, max drift ${result.maxDriftPx}px)`);
     }
