@@ -513,7 +513,10 @@ export function MapView({ active }: ViewProps): React.JSX.Element {
   return (
     <section className={styles.root} aria-label="Codebase map">
       <MapHeader
-        overview={overview} onSelectComponent={onSelectCard} selectedId={selection} onHoverComponent={setHoverId}
+        overview={overview}
+        onSelectComponent={onSelectCard}
+        selectedId={selection}
+        onHoverComponent={setHoverId}
         onRetry={onRetry}
         session={sessionCounts === null ? null : { counts: sessionCounts, on: sessionOn, onToggle: onToggleSession }}
       />
