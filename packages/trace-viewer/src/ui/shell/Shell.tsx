@@ -39,6 +39,7 @@ import { LiveRegion } from "./LiveRegion.js";
 import { Outline } from "./Outline/Outline.js";
 import { INITIAL_SELECTION_PAINTED, markAfterPaint, markNextFrame, measureAfterPaint, PERF } from "./perf.js";
 import { DiagnosticsContext, SessionContext, type DiagnosticsSink, type SessionView } from "./session-context.js";
+import { DecisionAnnouncer } from "./DecisionAnnouncer.js";
 import { KeyboardLayer } from "./KeyboardLayer.js";
 import styles from "./Shell.module.css";
 import { TitleBar } from "./TitleBar.js";
@@ -335,6 +336,7 @@ export function Shell({
                     </aside>
                   </div>
                   <KeyboardLayer root={root} />
+                  <DecisionAnnouncer />
                 </LiveRegion>
               </ViewDefinitionsContext.Provider>
             </ViewPortRegistryContext.Provider>
