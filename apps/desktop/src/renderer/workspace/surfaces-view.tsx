@@ -2,7 +2,7 @@ import type { Spec } from "@json-render/core";
 import { JSONUIProvider, Renderer } from "@json-render/react";
 import type { NormalizedAgentEvent } from "@jevcode/contracts";
 import type { ViewDefinition, ViewProps } from "@jevcode/trace-viewer";
-import { agentEventLabel, formatClock } from "@jevcode/trace-viewer/model";
+import { agentEventLabel, displayUntrusted, formatClock } from "@jevcode/trace-viewer/model";
 import { registry } from "@jevcode/ui-catalog";
 import { useEffect, useMemo, useState } from "react";
 
@@ -37,9 +37,12 @@ function MessageText({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const collapsible = text.length > 760;
   const visible = collapsible && !expanded ? `${text.slice(0, 720).trimEnd()}…` : text;
+  const full = displayUntrusted(text, { multiline: true });
   return (
     <>
-      <p>{visible}</p>
+      <p title={full} aria-label={full}>
+        {displayUntrusted(visible, { multiline: true })}
+      </p>
       {collapsible ? (
         <button
           type="button"
@@ -54,7 +57,7 @@ function MessageText({ text }: { text: string }) {
   );
 }
 
-function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
+export function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
   if (event.type === "agent_started") {
     return (
       <article className="activity-message activity-message-user">
@@ -112,7 +115,9 @@ function ActivityEvent({ event }: { event: NormalizedAgentEvent }) {
         {detail.length > 0 ? (
           <details>
             <summary>Show details</summary>
-            <pre>{detail.slice(0, 5000)}</pre>
+            <pre title={displayUntrusted(detail, { multiline: true })}>
+              {displayUntrusted(detail.slice(0, 5000), { multiline: true })}
+            </pre>
           </details>
         ) : null}
       </div>
@@ -294,7 +299,13 @@ export function SurfacesView({ active }: ViewProps) {
                 <div className="surface-chrome">
                   <div className="surface-heading">
                     <span className={`surface-kind surface-kind-${meta.group}`}>{meta.label}</span>
-                    <span className="surface-title">{meta.title}</span>
+                    <span
+                      className="surface-title"
+                      title={displayUntrusted(meta.title)}
+                      aria-label={displayUntrusted(meta.title)}
+                    >
+                      {displayUntrusted(meta.title)}
+                    </span>
                   </div>
                   <span className="surface-actions">
                     <button

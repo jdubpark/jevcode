@@ -168,3 +168,23 @@ describe("WorkspaceHost embeds the trace viewer (spec §9, E2)", () => {
     expect(viewerLog.mounts).toEqual([]);
   });
 });
+
+describe("WorkspaceHost after the dock move (spec §9)", () => {
+  it("has no context rail: Now and Changes live in the Brief", async () => {
+    render(host("s1"));
+    await waitFor(() => expect(bridge.rowsCalls("s1")).toBeGreaterThan(0));
+    expect(screen.queryByLabelText("Live session context")).toBeNull();
+    expect(screen.getByRole("region", { name: "Prompt" })).toBeTruthy();
+  });
+
+  it("shows this session's queued instructions in the dock", async () => {
+    render(host("s1"));
+    act(() =>
+      bridge.emitInstructionState({
+        sessionId: "s1",
+        pending: [{ id: "i1", mode: "queue", text: "then update the docs" }],
+      } as Parameters<FakeBridge["emitInstructionState"]>[0]),
+    );
+    expect((await screen.findByRole("list", { name: "Queued instructions" })).textContent).toContain("then update the docs");
+  });
+});
