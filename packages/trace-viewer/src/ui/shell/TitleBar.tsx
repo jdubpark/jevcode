@@ -74,8 +74,10 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   const hasSelection = useView((state) => state.selection !== null);
   const briefPinned = useView((state) => state.brief);
   const lastSeenSeq = useView((state) => state.lastSeenSeq);
-  const newCount = useView((state) => selectNewCount(state, index));
+  const stepCount = useView((state) => selectNewCount(state, index));
   const port = useActiveViewPort();
+  // The active view's own count when it has one (the Console counts rows), so both pills agree.
+  const newCount = port?.newCount?.() ?? stepCount;
   const [gapsOpen, setGapsOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [approxOpen, setApproxOpen] = useState(false);
@@ -112,6 +114,7 @@ function TitleBarBody({ onRetry, chrome = "full", showSwitch = true }: TitleBarP
   };
 
   const goLive = (): void => {
+    if (port?.goToTail?.() === true) return;
     dispatch({ type: "nav/last" });
     if (running) dispatch({ type: "follow/set", follow: true });
   };

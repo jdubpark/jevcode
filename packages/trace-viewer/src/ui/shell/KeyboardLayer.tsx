@@ -175,6 +175,8 @@ export function KeyboardLayer({ root }: KeyboardLayerProps) {
           revealSelection();
           return;
         case "last":
+          // The Console goes Live at its tail without selecting (lane ruling I-1); Hybrid and Canvas select the tail.
+          if (port?.goToTail?.() === true) return;
           store.dispatch({ type: "nav/last" });
           if (view.summary !== null && !view.terminal) store.dispatch({ type: "follow/set", follow: true });
           revealSelection();
