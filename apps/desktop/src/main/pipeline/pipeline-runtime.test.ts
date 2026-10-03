@@ -1811,6 +1811,46 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
     expect(debug.at(-1)).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
   }, 60_000);
 
+  it("reads the change units and the graph again only after one of their rows was written (lane 07 PL-3)", async () => {
+    // A turn end read the change units seven times (the rebuild twice, each pass's snapshot and session state) and
+    // the graph once per snapshot, each an O(session) read and parse.
+    const trail: string[] = [];
+    let recording = true;
+    const rows = await runTurnEnd("pass-projection-reads", {
+      arm: (db) => {
+        const append = db.appendEvent.bind(db);
+        db.appendEvent = (sessionId, type, payload) => {
+          const stored = append(sessionId, type, payload);
+          if (recording && (type === "change_unit" || type === "graph_node" || type === "graph_edge")) trail.push(`write ${type}`);
+          return stored;
+        };
+        const reads: [keyof JevcodeDb & ("listChangeUnits" | "listGraphNodes" | "listGraphEdges"), string][] = [
+          ["listChangeUnits", "change_unit"],
+          ["listGraphNodes", "graph_node"],
+          ["listGraphEdges", "graph_edge"],
+        ];
+        for (const [method, type] of reads) {
+          const read = db[method].bind(db) as (sessionId: string) => unknown[];
+          (db as unknown as Record<string, (sessionId: string) => unknown[]>)[method] = (sessionId) => {
+            if (recording) trail.push(`read ${type}`);
+            return read(sessionId);
+          };
+        }
+      },
+      inspect: () => {
+        recording = false;
+      },
+    });
+    expect(rows.completionSnapshots).toBe(1);
+    for (const type of ["change_unit", "graph_node", "graph_edge"]) {
+      const own = trail.filter((entry) => entry.endsWith(` ${type}`));
+      expect(own.filter((entry) => entry.startsWith("read")).length).toBeGreaterThan(0);
+      // Every read after the first follows a write of its kind.
+      const repeated = own.filter((entry, index) => entry.startsWith("read") && index > 0 && own[index - 1]?.startsWith("read") === true);
+      expect({ type, repeated: repeated.length }).toEqual({ type, repeated: 0 });
+    }
+  }, 60_000);
+
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
     const order: string[] = [];
     let debug: Array<{ decisions: unknown[] }> = [];

@@ -5,7 +5,7 @@ import type {
   SemanticEvent,
   ValidationResult,
 } from "@jevcode/contracts";
-import type { JevcodeDb } from "@jevcode/storage";
+import type { EventStoreType, JevcodeDb } from "@jevcode/storage";
 import type {
   ChangeUnitStore,
   DecisionStore,
@@ -44,13 +44,42 @@ export function createStorageStores(
   };
 }
 
-class StorageChangeUnitStore implements ChangeUnitStore {
-  private readonly lastJson = new Map<string, string>();
+/**
+ * A projection list read from the database and reused while the database applies no row of its type (lane 07 PL-3).
+ * One sync pass read the session's change units seven times at a turn end (the rebuild, the snapshots, the session
+ * state), 15 ms each at 1,459 units. The list is the database's own read, so it holds what a new read would, in the
+ * same order; each caller gets its own array. The objects are shared: no reader changes them.
+ */
+class ProjectionCache<T> {
+  private version = -1;
+  private items: readonly T[] = [];
 
   constructor(
     private readonly db: JevcodeDb,
-    private readonly sessionId: string,
+    private readonly type: EventStoreType,
+    private readonly read: () => T[],
   ) {}
+
+  list(): T[] {
+    const version = this.db.projectionVersion(this.type);
+    if (version !== this.version) {
+      this.items = this.read();
+      this.version = version;
+    }
+    return [...this.items];
+  }
+}
+
+class StorageChangeUnitStore implements ChangeUnitStore {
+  private readonly lastJson = new Map<string, string>();
+  private readonly units: ProjectionCache<ChangeUnit>;
+
+  constructor(
+    private readonly db: JevcodeDb,
+    sessionId: string,
+  ) {
+    this.units = new ProjectionCache(db, "change_unit", () => db.listChangeUnits(sessionId));
+  }
 
   upsert(unit: ChangeUnit): void {
     // Key order ignored: a label write rebuilds the unit from its database row, whose keys come in column order,
@@ -66,7 +95,7 @@ class StorageChangeUnitStore implements ChangeUnitStore {
   }
 
   all(): ChangeUnit[] {
-    return this.db.listChangeUnits(this.sessionId);
+    return this.units.list();
   }
 
   remove(id: string): void {
@@ -75,7 +104,7 @@ class StorageChangeUnitStore implements ChangeUnitStore {
   }
 
   clear(): void {
-    for (const unit of this.db.listChangeUnits(this.sessionId)) this.supersede(unit);
+    for (const unit of this.all()) this.supersede(unit);
   }
 
   // Every rebuild, the coordinator removes each stored unit its projection no longer has, and a
@@ -93,11 +122,32 @@ class StorageChangeUnitStore implements ChangeUnitStore {
 class StorageGraphStore implements GraphStore {
   private readonly lastNodes = new Map<string, string>();
   private readonly lastEdges = new Map<string, string>();
+  private readonly nodeList: ProjectionCache<GraphNode>;
+  private readonly edgeList: ProjectionCache<GraphEdge>;
 
   constructor(
     private readonly db: JevcodeDb,
     private readonly sessionId: string,
-  ) {}
+  ) {
+    this.nodeList = new ProjectionCache(db, "graph_node", () =>
+      db.listGraphNodes(sessionId).map((record) => ({
+        id: record.id,
+        sessionId: record.sessionId,
+        type: record.nodeType as GraphNode["type"],
+        label: String(record.payload["label"] ?? record.id),
+        data: record.payload,
+      })),
+    );
+    this.edgeList = new ProjectionCache(db, "graph_edge", () =>
+      db.listGraphEdges(sessionId).map((record) => ({
+        id: record.id,
+        sessionId: record.sessionId,
+        from: record.fromId,
+        to: record.toId,
+        type: record.edgeType as GraphEdge["type"],
+      })),
+    );
+  }
 
   upsertNodes(nodes: readonly GraphNode[]): void {
     for (const node of nodes) {
@@ -128,23 +178,11 @@ class StorageGraphStore implements GraphStore {
   }
 
   nodes(): GraphNode[] {
-    return this.db.listGraphNodes(this.sessionId).map((record) => ({
-      id: record.id,
-      sessionId: record.sessionId,
-      type: record.nodeType as GraphNode["type"],
-      label: String(record.payload["label"] ?? record.id),
-      data: record.payload,
-    }));
+    return this.nodeList.list();
   }
 
   edges(): GraphEdge[] {
-    return this.db.listGraphEdges(this.sessionId).map((record) => ({
-      id: record.id,
-      sessionId: record.sessionId,
-      from: record.fromId,
-      to: record.toId,
-      type: record.edgeType as GraphEdge["type"],
-    }));
+    return this.edgeList.list();
   }
 
   clear(): void {
