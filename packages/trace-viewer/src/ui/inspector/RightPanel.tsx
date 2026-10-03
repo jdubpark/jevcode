@@ -28,7 +28,7 @@ export function RightPanel({ host }: { host: ViewerHost }): JSX.Element {
   const store = useViewStore();
   const registry = useContext(ViewPortRegistryContext);
   const wrapper = useRef<HTMLDivElement>(null);
-  /** Focus was last inside the panel. Focus that drops when its element is removed fires no event, so this stays set. */
+  /** Focus was last inside the panel. Focus that drops because its element was removed leaves this set (see below). */
   const focusInside = useRef(false);
 
   useEffect(() => {
@@ -39,8 +39,23 @@ export function RightPanel({ host }: { host: ViewerHost }): JSX.Element {
     const onFocusIn = (event: FocusEvent): void => {
       focusInside.current = event.target instanceof Node && node.contains(event.target);
     };
+    // Focus that leaves for nowhere (a click on empty space) fires no focusin. It is forgotten when the blurred node is
+    // still in the document a moment later; a node the panel switch removed (Chrome may fire focusout for it) is gone by
+    // then, and that loss is the one the switch effect repairs.
+    const onFocusOut = (event: FocusEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Node) || !node.contains(target)) return;
+      if (event.relatedTarget instanceof Node && node.contains(event.relatedTarget)) return;
+      queueMicrotask(() => {
+        if (target.isConnected) focusInside.current = false;
+      });
+    };
     doc.addEventListener("focusin", onFocusIn);
-    return () => doc.removeEventListener("focusin", onFocusIn);
+    doc.addEventListener("focusout", onFocusOut);
+    return () => {
+      doc.removeEventListener("focusin", onFocusIn);
+      doc.removeEventListener("focusout", onFocusOut);
+    };
   }, []);
 
   const shown = useRef(showBrief);
