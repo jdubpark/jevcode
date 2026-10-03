@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type React from "react";
+import { createPortal } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { foldRows } from "../../../model/index.js";
@@ -167,6 +168,38 @@ describe("Map session overlay (spec §3.4)", () => {
     const heading = screen.getByRole("heading", { name: "This session · 1 component" });
     expect(heading.getAttribute("tabindex")).toBe("-1");
     expect(document.activeElement).toBe(heading);
+  });
+
+  it("repairs focus in the Brief's own document, not the global one (a popout window, lane review minor 1)", () => {
+    const frame = document.createElement("iframe");
+    document.body.append(frame);
+    const popout = frame.contentDocument as Document;
+    // The main window keeps a focus of its own while the popout's row has the popout's focus.
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    const harness = renderWithViewer(createPortal(<Brief />, popout.body), {
+      session: foldRows(testMeta(), buildRows(false).rows, { live: true }),
+      state: { view: "map" },
+    });
+    const row = popout.querySelector<HTMLElement>(`[data-brief-session-row="${componentId("src/redis")}"]`);
+    row?.focus();
+    outside.focus();
+    expect(popout.activeElement).toBe(row);
+    expect(document.activeElement).toBe(outside);
+    const b = buildRows(false);
+    b.explainer({
+      kind: "highlights",
+      basisSeq: 3,
+      components: [{ id: componentId("src/server"), state: "changed", unitIds: ["u1"] }],
+    });
+    act(() => harness.setSession(foldRows(testMeta(), b.rows, { live: true })));
+    expect(popout.querySelector(`[data-brief-session-row="${componentId("src/redis")}"]`)).toBeNull();
+    const heading = popout.querySelector<HTMLElement>("h3[tabindex='-1']");
+    expect(heading?.textContent).toContain("This session · 1 component");
+    expect(popout.activeElement).toBe(heading);
+    expect(document.activeElement).toBe(outside);
+    frame.remove();
+    outside.remove();
   });
 
   it("outside the Map the Brief keeps its Architecture part", () => {

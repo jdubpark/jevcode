@@ -64,13 +64,17 @@ export function BriefArchitectureSection({
   const list = mapSession === undefined ? NO_ROWS : rowsOfSession;
   const headingRef = useRef<HTMLHeadingElement>(null);
   const heldRef = useRef<{ id: string; element: HTMLElement } | null>(null);
-  // A focused row whose component leaves the list is removed; focus goes to the section heading, not to body.
+  // A focused row whose component leaves the list is removed; focus goes to the section heading, not to body. The
+  // heading's own document is read, not the global one: the viewer can sit in a popout window.
   useLayoutEffect(() => {
     const held = heldRef.current;
     if (held === null || held.element.isConnected) return;
     heldRef.current = null;
-    const active = document.activeElement;
-    if (active === null || active === document.body) headingRef.current?.focus({ preventScroll: true });
+    const heading = headingRef.current;
+    if (heading === null) return;
+    const doc = heading.ownerDocument;
+    const active = doc.activeElement;
+    if (active === null || active === doc.body) heading.focus({ preventScroll: true });
   }, [list]);
   const onMap = mapSession !== undefined && list.length > 0;
   return (
