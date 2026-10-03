@@ -15,6 +15,7 @@ import {
   parseWorkspaceLocation,
   parseWorkspaceReady,
   percentile,
+  slowestAppend,
   pressKeyScript,
   runWorkspaceSmoke,
   startSessionScript,
@@ -27,6 +28,8 @@ interface FakeOptions {
   /** Latency in ms between each stored row and its paint. */
   paintDelayMs?: number;
   rows?: number;
+  /** Row type main reports for each stored row. */
+  rowType?: string;
   /** The embedded viewer never logs WORKSPACE_READY. */
   noReady?: boolean;
 }
@@ -54,7 +57,7 @@ function fake(options: FakeOptions = {}) {
           const count = options.rows ?? 5;
           for (let seq = 3; seq < 3 + count; seq += 1) {
             wall += 300;
-            appends.record("s1", seq);
+            appends.record("s1", seq, options.rowType);
             emit(`CONSOLE_PAINT s1 ${seq} ${wall + (options.paintDelayMs ?? 40)}`);
           }
           wall += 10_000;
@@ -80,6 +83,7 @@ function fake(options: FakeOptions = {}) {
       files.set(file, data);
     },
     appends,
+    loopDelay: { reset: () => undefined, snapshot: () => ({ p99Ms: 12.4, maxMs: 31.6 }) },
     wallNow: () => wall,
     setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 1)),
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -128,6 +132,24 @@ describe("append latency (spec §11)", () => {
     expect(unpainted).toEqual([7]);
   });
 
+  it("names the slowest append with its seq, row type, stored time and painted time", () => {
+    const slowest = slowestAppend(
+      [
+        { seq: 4, atMs: 1_000, type: "agent_event" },
+        { seq: 5, atMs: 1_010, type: "decision" },
+        { seq: 6, atMs: 1_500 },
+        { seq: 7, atMs: 2_000, type: "agent_event" },
+      ],
+      [
+        { sessionId: "s1", throughSeq: 4, atMs: 1_040 },
+        { sessionId: "s1", throughSeq: 6, atMs: 1_730 },
+      ],
+    );
+    // Seq 5 and 6 share the second paint; seq 5 waited 720 ms of it (the 716 ms spike shape), and seq 7 was never painted.
+    expect(slowest).toEqual({ seq: 5, type: "decision", storedAtMs: 1_010, paintedAtMs: 1_730, latencyMs: 720 });
+    expect(slowestAppend([{ seq: 7, atMs: 2_000 }], [])).toBeNull();
+  });
+
   it("takes the nearest-rank percentile", () => {
     const values = Array.from({ length: 100 }, (_, index) => index + 1);
     expect(percentile(values, 0.95)).toBe(95);
@@ -147,6 +169,9 @@ describe("runWorkspaceSmoke", () => {
     expect(run.lines.filter((line) => line.startsWith("SMOKE_"))).toEqual([
       "SMOKE_WORKSPACE session=s1 ready_rows=2",
       "SMOKE_CONSOLE appends=5 p50_ms=40 p95_ms=40 max_ms=40",
+      // 10_000 + 5 x 300 ms; seq 3 is the first row stored, and every paint lands 40 ms after its row.
+      "SMOKE_CONSOLE_SLOWEST seq=3 type=unknown stored_at_ms=10300 painted_at_ms=10340 latency_ms=40",
+      "SMOKE_LOOP_DELAY p99_ms=12 max_ms=32 resolution_ms=10",
       ...shots.map((file) => `SMOKE_SHOT ${file}`),
       "SMOKE_VIEWS selected=step:3 views=canvas,hybrid,map,surfaces,console",
     ]);

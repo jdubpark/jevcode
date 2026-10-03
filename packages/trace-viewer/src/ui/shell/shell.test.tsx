@@ -15,6 +15,8 @@ import {
   type LayoutStub,
 } from "../../test-support/ui-harness.js";
 import type { ViewerLocation } from "../state/location.js";
+import { ConsoleView } from "../views/console/ConsoleView.js";
+import { VIEWS } from "../views/registry.js";
 import type { ViewDefinition } from "../views/view-port.js";
 import { ViewStoreContext } from "../state/store.js";
 import { DecisionAnnouncer } from "./DecisionAnnouncer.js";
@@ -183,6 +185,9 @@ describe("Shell", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Trace viewer failed to render");
     expect(onDiagnostics.mock.calls.some(([d]) => d.errors.some((e: string) => e.includes("shell exploded")))).toBe(true);
+    // The fallback is the viewer's root, so a host's guarded rules (`:where(:not([data-trace-viewer] *))`) skip its buttons.
+    expect(alert.hasAttribute("data-trace-viewer")).toBe(true);
+    expect(alert.contains(screen.getByRole("button", { name: "Retry" }))).toBe(true);
     armed = false;
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.getByRole("banner")).toBeTruthy());
@@ -201,6 +206,20 @@ describe("Shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Switch to Canvas" }));
     expect(h.store.get().view).toBe("canvas");
     expect(screen.getByText("canvas body")).toBeTruthy();
+  });
+
+  it("a crashed built-in view offers a switch to the real Console, which then mounts", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const views = VIEWS.map((definition) => (definition.kind === "hybrid" ? { ...definition, Component: Broken } : definition));
+    const h = renderHarness(<ViewSlot views={views} keepHiddenMounted={false} />, foldFixture("oauth"), {
+      state: { view: "hybrid" },
+    });
+    expect(screen.getByRole("alert").textContent).toContain("Hybrid failed to render");
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Console" }));
+    expect(h.store.get().view).toBe("console");
+    expect(VIEWS[0]?.Component).toBe(ConsoleView);
+    expect(document.querySelector('[data-view="console"]')).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("announces through one polite live region and throttles by key", () => {

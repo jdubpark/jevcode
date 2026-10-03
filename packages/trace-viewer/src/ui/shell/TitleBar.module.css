@@ -244,6 +244,7 @@ button.chip {
 
 .bar[data-chrome="embedded"] {
   height: 36px;
+  gap: 6px;
   container: tv-embedded-bar / inline-size;
 }
 
@@ -264,7 +265,13 @@ button.chip {
   }
 
   .follow .segment,
-  .toggle {
+  .toggle,
+  .zoom {
+    padding: 3px 6px;
+  }
+
+  /* The five-view switch (the main window's Surfaces host view) with both chips and a zoom menu needs the room. */
+  .bar > [role="radiogroup"] .segment {
     padding: 3px 6px;
   }
 }

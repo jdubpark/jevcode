@@ -89,6 +89,7 @@ export function TraceViewer({
         }
         fallbackClassName={base.root}
         fallbackStyle={tokenStyle() as CSSProperties}
+        fallbackIsViewerRoot
       >
         <MapLayoutCacheContext.Provider value={mapLayouts}>
           <Shell
