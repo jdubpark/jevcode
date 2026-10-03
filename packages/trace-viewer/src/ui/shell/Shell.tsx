@@ -139,7 +139,8 @@ export function Shell({
 }: ShellProps) {
   const store = useViewStore();
   // One answer store per session: the Console's decision blocks and the Brief's cards share it (lane 07 S-4 fix I-1).
-  const answers = useMemo(createDecisionAnswerStore, [sessionId]);
+  // The viewer remounts the Shell per session, so a state initializer (never discarded, unlike useMemo) holds it.
+  const [answers] = useState(createDecisionAnswerStore);
   // The right panel is named after what it shows (lane fix m3).
   const showBrief = useView(showsBrief);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
