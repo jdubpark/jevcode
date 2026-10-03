@@ -301,3 +301,64 @@ describe("storage stores: a change unit that leaves the projection", () => {
     expect(stores.units.get(unit.id)?.status).toBe("detected");
   });
 });
+
+// PL-2 (D-6 review I-1): a store remembers a payload only once its row is written, so a write
+// that throws is tried again by the next rebuild instead of being skipped as already written.
+describe("storage stores: a write that throws", () => {
+  const unit: ChangeUnit = {
+    id: "cu_retry",
+    sessionId: SESSION,
+    title: "Changed 1 file: src/a.ts",
+    category: "implementation",
+    status: "detected",
+    files: ["src/a.ts"],
+    symbols: [],
+    interfacesChanged: [],
+    schemaChanges: [],
+    dependencyChanges: [],
+    relatedDecisions: [],
+    validationResults: [],
+    evidence: ["fact_1"],
+    createdAt: TS,
+    updatedAt: TS,
+  };
+  const cases = [
+    {
+      name: "change unit",
+      type: "change_unit",
+      method: "upsertChangeUnit",
+      write: (stores: PipelineStores) => stores.units.upsert(unit),
+    },
+    {
+      name: "validation",
+      type: "validation",
+      method: "upsertValidation",
+      write: (stores: PipelineStores) => stores.validations.upsertValidation(validation()),
+    },
+    {
+      name: "graph node",
+      type: "graph_node",
+      method: "upsertGraphNode",
+      write: (stores: PipelineStores) =>
+        stores.graph.upsertNodes([{ id: "node_1", sessionId: SESSION, type: "File", label: "src/a.ts" }]),
+    },
+  ] as const;
+
+  it.each(cases)("is written by the next upsert of the same payload: $name", ({ type, method, write }) => {
+    const { db, stores } = open();
+    const original = db[method].bind(db) as (...args: unknown[]) => unknown;
+    let calls = 0;
+    (db as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      return original(...args);
+    };
+    expect(() => write(stores)).toThrow("disk full");
+    expect(rowsOf(db, type)).toBe(0);
+
+    write(stores);
+    expect(rowsOf(db, type)).toBe(1);
+    write(stores);
+    expect(rowsOf(db, type)).toBe(1);
+  });
+});

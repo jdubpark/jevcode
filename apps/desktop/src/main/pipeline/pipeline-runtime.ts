@@ -928,7 +928,7 @@ export class PipelineRuntime {
     }, SYNC_DEBOUNCE_MS);
   }
 
-  /** completing: the turn ended; the completion surface joins the sync's write batch (lane 03 D-6). */
+  /** completing: the turn ended; the pass ends with the completion surface (lane 03 D-6). */
   private syncSession(session: ActiveSession, options: { completing?: boolean } = {}): Promise<void> {
     // Serialize syncs per session: the 600ms debounce, answerDecision, and
     // completion paths can all request a sync nearly simultaneously, and a
@@ -943,24 +943,21 @@ export class PipelineRuntime {
   }
 
   /**
-   * One sync pass. Its writes run in two transactions, split at the Jev client's awaits (better-sqlite3 transactions
-   * are synchronous): the coordinator flush before them, then, after the last await, the deferred Jev decision and
-   * label writes (trace rows), the surfaces' ui_intent/ui_snapshot rows and telemetry, and on completion the
-   * completion surface. Each commit reports its trace rows once, so one push hint carries the batch's last seq
-   * (observeTraceAppends). Before lane 03 D-6 every write committed alone, about 490 commits at a turn end.
+   * One sync pass. Each write commits on its own as it happens, and each committed trace row is hinted at once
+   * (observeTraceAppends): the Jev stage stores a unit's decisions and labels as its answers arrive, before the next
+   * unit's client call. Lane 03 D-6 ran the pass in two transactions and deferred the Jev writes past the client's
+   * last await; PL-2 dropped both (D-6 review I-1, I-2). A rollback undid rows that the stores' and this runtime's
+   * caches still counted as written, so later passes skipped them for good, and a networked client held every live
+   * decision back until its last call. The transactions saved about 20 ms of commits at a turn end.
    *
-   * Errors: no write in the batch had its own handler; any throw escaped to the catch below and ended the pass with
-   * the earlier rows already committed. Inside the transaction such an escaping error now rolls the batch back
-   * (allowed by the D-6 ruling). Rows deferred before an escaping client error are still written, as before.
+   * Errors: a throw ends the pass with the earlier rows committed. Every cache that lets a later pass skip work (the
+   * stores' last payloads, unitState, surfaces, completionEmitted) is updated only after the writes it stands for,
+   * so the next pass writes what this one did not.
    */
   private async runSync(session: ActiveSession, completing = false): Promise<void> {
     if (session.stopping) return;
-    const deferred: Array<() => void> = [];
-    const runDeferred = (): void => {
-      for (const write of deferred.splice(0)) write();
-    };
     try {
-      this.opts.db.transaction(() => session.coordinator.flush());
+      session.coordinator.flush();
       const snapshot = session.coordinator.snapshot();
       const ctx = this.buildUiContext(session, snapshot);
       const changedUnits = snapshot.units.filter((unit) => {
@@ -973,9 +970,8 @@ export class PipelineRuntime {
           previous.version !== version
         );
       });
-      let result: Awaited<ReturnType<typeof runJevStage>> | null = null;
       if (changedUnits.length > 0) {
-        const stage = runJevStage({
+        const result = await runJevStage({
           db: this.opts.db,
           coordinator: session.coordinator,
           client: session.client,
@@ -992,24 +988,12 @@ export class PipelineRuntime {
           onRedaction: (count) => {
             this.recordTelemetry(session, "redaction", { count });
           },
-          defer: (write) => deferred.push(write),
         });
-        try {
-          result = await stage;
-        } catch (error) {
-          // Units answered before the client failed were written before the deferral; keep them.
-          this.opts.db.transaction(runDeferred);
-          throw error;
-        }
+        this.syncOutcomes(session, result, ctx);
       }
-      const outcomes = result;
-      this.opts.db.transaction(() => {
-        runDeferred();
-        if (outcomes !== null) this.syncOutcomes(session, outcomes, ctx);
-        this.emitDecisions(session, ctx);
-        this.emitValidations(session);
-        if (completing) this.emitCompletionSurface(session);
-      });
+      this.emitDecisions(session, ctx);
+      this.emitValidations(session);
+      if (completing) this.emitCompletionSurface(session);
       this.emitSessionState(session.sessionId);
     } catch (error) {
       this.log(`sync failed for ${session.sessionId}: ${String(error)}`);
@@ -1035,16 +1019,19 @@ export class PipelineRuntime {
         (candidate) => candidate.id === outcome.unitId,
       );
       if (unit === undefined) continue;
-      const core = coreSignature(unit);
-      session.unitState.set(outcome.unitId, {
-        ...outcome.state,
-        coreSignature: core,
-      });
+      // Recorded once the unit's rows are written: a throw before then leaves the unit to the next pass.
+      const settle = (): void => {
+        session.unitState.set(outcome.unitId, {
+          ...outcome.state,
+          coreSignature: coreSignature(unit),
+        });
+      };
       this.opts.emit(MainToRendererChannels.changeUnitUpsert, {
         sessionId: session.sessionId,
         changeUnit: unit,
       });
       if (!outcome.state.shouldSurface || outcome.intent === undefined) {
+        settle();
         continue;
       }
       const linkedDecision = outcome.intent.representation === "decision"
@@ -1056,20 +1043,24 @@ export class PipelineRuntime {
           ctx.decisions[0]
         : undefined;
       if (outcome.intent.representation === "decision" && linkedDecision === undefined) {
+        settle();
         continue;
       }
       const surfaceId =
         linkedDecision !== undefined
           ? surfaceIdForDecision(linkedDecision.id)
           : surfaceIdForUnit(unit.id);
-      if (session.dismissed.has(surfaceId)) continue;
+      if (session.dismissed.has(surfaceId)) {
+        settle();
+        continue;
+      }
       const spec =
         linkedDecision !== undefined
           ? compileDecisionSurface(linkedDecision, ctx)
           : compileChangeUnitSurface(unit, outcome.intent, ctx);
       const hash = specHash(spec);
       const previous = session.surfaces.get(surfaceId);
-      session.surfaces.set(surfaceId, {
+      const surface: SurfaceRecord = {
         surfaceId,
         spec,
         specHash: hash,
@@ -1077,7 +1068,7 @@ export class PipelineRuntime {
         intent: outcome.intent,
         renderedAt: this.nowIso(),
         replaySlug: outcome.replaySlug,
-      });
+      };
       this.opts.db.upsertUiIntent(session.sessionId, {
         changeUnitId: unit.id,
         intent: outcome.intent,
@@ -1107,6 +1098,9 @@ export class PipelineRuntime {
           renderMode: outcome.intent.renderMode,
         });
       }
+      // After the surface's rows: a surface the runtime holds is patched next time, without a surface_shown row.
+      session.surfaces.set(surfaceId, surface);
+      settle();
     }
   }
 
@@ -1130,17 +1124,16 @@ export class PipelineRuntime {
 
   private emitCompletionSurface(session: ActiveSession): void {
     if (session.stopping || session.completionEmitted) return;
-    session.completionEmitted = true;
     const snapshot = session.coordinator.snapshot();
     const ctx = this.buildUiContext(session, snapshot);
     const spec = compileCompletionSurface(ctx);
     const hash = specHash(spec);
-    session.surfaces.set(COMPLETION_SURFACE_ID, {
+    const surface: SurfaceRecord = {
       surfaceId: COMPLETION_SURFACE_ID,
       spec,
       specHash: hash,
       renderedAt: this.nowIso(),
-    });
+    };
     this.opts.db.upsertUiSnapshot(session.sessionId, {
       surfaceId: COMPLETION_SURFACE_ID,
       spec,
@@ -1155,6 +1148,9 @@ export class PipelineRuntime {
       confidence: 1,
       renderMode: "generic",
     });
+    // Marked after its rows: a throw above lets the turn end's catch, or a later call, write them.
+    session.surfaces.set(COMPLETION_SURFACE_ID, surface);
+    session.completionEmitted = true;
   }
 
   private emitDecisions(session: ActiveSession, ctx: UiStageContext): void {
@@ -1165,13 +1161,13 @@ export class PipelineRuntime {
         const already = session.surfaces.has(surfaceId);
         if (!session.dismissed.has(surfaceId) && !already) {
           const spec = compileDecisionSurface(decision, ctx);
-          session.surfaces.set(surfaceId, {
+          const surface: SurfaceRecord = {
             surfaceId,
             spec,
             specHash: specHash(spec),
             changeUnitId: decision.affectedChangeUnits[0],
             renderedAt: this.nowIso(),
-          });
+          };
           this.opts.db.upsertUiSnapshot(session.sessionId, {
             surfaceId,
             changeUnitId: decision.affectedChangeUnits[0],
@@ -1182,6 +1178,8 @@ export class PipelineRuntime {
             surfaceId,
             spec,
           });
+          // After its row: a decision surface the runtime holds is not written again.
+          session.surfaces.set(surfaceId, surface);
         }
         if (
           this.opts.interruptAgentOnDecision !== false &&

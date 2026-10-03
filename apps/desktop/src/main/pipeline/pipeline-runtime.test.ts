@@ -1530,8 +1530,8 @@ describe("PipelineRuntime repo file hook (console-explainer M-6)", () => {
   });
 });
 
-describe("PipelineRuntime turn-end batch (lane 03 D-6)", () => {
-  it("writes the turn-end sync in one transaction and hints its last seq once, after commit", async () => {
+describe("PipelineRuntime turn-end batch (lane 03 D-6, PL-2)", () => {
+  it("hints each turn-end row once it is committed, the last hint carrying the last row's seq", async () => {
     const dir = path.join(repoRoot, "apps/desktop/.test-tmp/turn-end-batch");
     rmSync(dir, { recursive: true, force: true });
     const db = createTempDb(dir);
@@ -1539,38 +1539,19 @@ describe("PipelineRuntime turn-end batch (lane 03 D-6)", () => {
     db.upsertRepository({ id: "repo-te", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
     db.createSession({ id: sessionId, repoId: "repo-te", prompt: "demo" });
 
-    // What index.ts wires: committed trace rows → one hint per batch.
+    // What index.ts wires: committed trace rows → hints.
     const batches: Array<{ events: readonly ObservedAppend[]; inTransaction: boolean }> = [];
     const hints: Array<{ seq: number; inTransaction: boolean }> = [];
     observeTraceAppends(db, (events) => {
       batches.push({ events, inTransaction: db.inTransaction });
       notifyCommitted({ notify: (_sessionId, seq) => hints.push({ seq, inTransaction: db.inTransaction }) }, events);
     });
-    // Which transaction each write ran in (0 = none).
-    let nextTx = 0;
-    let currentTx = 0;
-    const transaction = db.transaction.bind(db);
-    db.transaction = (<T>(fn: () => T): T => {
-      const outer = currentTx;
-      nextTx += 1;
-      currentTx = outer === 0 ? nextTx : outer;
-      try {
-        return transaction(fn);
-      } finally {
-        currentTx = outer;
-      }
-    }) as typeof db.transaction;
-    const jevTx: number[] = [];
-    const completionTx: number[] = [];
-    const upsertJevDecision = db.upsertJevDecision.bind(db);
-    db.upsertJevDecision = ((log) => {
-      jevTx.push(currentTx);
-      return upsertJevDecision(log);
-    }) as typeof db.upsertJevDecision;
+    let completionWritten = false;
     const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
     db.upsertUiSnapshot = ((id, snapshot) => {
-      if (snapshot.surfaceId === "completion") completionTx.push(currentTx);
-      return upsertUiSnapshot(id, snapshot);
+      const stored = upsertUiSnapshot(id, snapshot);
+      if (snapshot.surfaceId === "completion") completionWritten = true;
+      return stored;
     }) as typeof db.upsertUiSnapshot;
 
     const { emit } = collectEmit();
@@ -1584,26 +1565,177 @@ describe("PipelineRuntime turn-end batch (lane 03 D-6)", () => {
     });
     try {
       await runtime.startSession({ sessionId, repoId: "repo-te", repoPath: dir, prompt: "demo", agentMode: "mock" });
-      await waitFor(() => completionTx.length > 0, 15_000, "completion surface written");
+      await waitFor(() => completionWritten, 15_000, "completion surface written");
       await runtime.syncAll();
 
-      // The Jev decisions and the completion surface were written inside one transaction.
-      expect(jevTx.length).toBeGreaterThan(0);
-      expect(new Set(jevTx).size).toBe(1);
-      expect(jevTx[0]).not.toBe(0);
-      expect(completionTx).toEqual([jevTx[0]]);
-
-      // That transaction's trace rows arrived as one batch after commit, with one hint carrying its last seq.
+      // Every Jev decision row was reported once, after its own commit: no transaction holds a turn end's rows back.
       const jevSeqs = db.listEvents(sessionId).filter((event) => event.type === "jev_decision").map((event) => event.seq);
-      const batch = batches.find((candidate) => candidate.events.some((event) => event.seq === jevSeqs[0]));
-      expect(batch).toBeDefined();
-      expect(jevSeqs.every((seq) => batch?.events.some((event) => event.seq === seq))).toBe(true);
-      expect(batch?.inTransaction).toBe(false);
-      const lastSeq = Math.max(...(batch?.events.map((event) => event.seq) ?? []));
+      const reported = batches.flatMap((batch) => batch.events.map((event) => event.seq));
+      expect(jevSeqs.length).toBeGreaterThan(0);
+      expect(jevSeqs.every((seq) => reported.filter((candidate) => candidate === seq).length === 1)).toBe(true);
+      expect(batches.every((batch) => !batch.inTransaction)).toBe(true);
+      // The hint for the last trace row carries its seq.
+      const lastSeq = Math.max(...reported);
       expect(hints.filter((hint) => hint.seq === lastSeq)).toEqual([{ seq: lastSeq, inTransaction: false }]);
       await runtime.stopSession(sessionId);
     } finally {
       db.close();
     }
   }, 30_000);
+});
+
+describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review I-1, I-2)", () => {
+  /**
+   * The smoke script played without its waits. Its records stay 1 s apart, wider than the coordinator's 500 ms batch
+   * window, so each step lands in its own unit however the mock's real-time agent_started falls.
+   */
+  function quickSmokeScript(input: Parameters<typeof smokeMockScript>[0]): ReturnType<typeof smokeMockScript> {
+    const script = smokeMockScript(input, { steps: 3, spacingMs: 1_000 });
+    return { ...script, entries: script.entries.map((entry) => ({ ...entry, delayMs: 1 })) };
+  }
+
+  /** What a session's rows say, keyed by file so two runs of the same script compare. */
+  function rowSummary(db: JevcodeDb, sessionId: string): {
+    jevDecisions: string[];
+    labeledUnits: string[];
+    unitSurfaces: string[];
+    completionSnapshots: number;
+  } {
+    const units = db.listChangeUnits(sessionId);
+    const fileOf = new Map(units.map((unit) => [unit.id, unit.files.join(",")]));
+    const jevDecisions = new Set<string>();
+    const unitSurfaces = new Set<string>();
+    let completionSnapshots = 0;
+    for (const event of db.listEvents(sessionId, { limit: 10_000 })) {
+      const payload = JSON.parse(event.payloadJson) as { changeUnitId?: string; pass?: string; surfaceId?: string };
+      if (event.type === "jev_decision") jevDecisions.add(`${fileOf.get(payload.changeUnitId ?? "") ?? "?"} ${payload.pass ?? "?"}`);
+      if (event.type === "ui_snapshot" && payload.surfaceId === "completion") completionSnapshots += 1;
+      else if (event.type === "ui_snapshot") unitSurfaces.add(fileOf.get(payload.changeUnitId ?? "") ?? "?");
+    }
+    const labeledUnits = units
+      .filter((unit) => unit.status !== "superseded")
+      .map((unit) => `${unit.files.join(",")} ${unit.category} ${String(unit.importance)} ${String(unit.relevance)}`);
+    return {
+      jevDecisions: [...jevDecisions].sort(),
+      labeledUnits: labeledUnits.sort(),
+      unitSurfaces: [...unitSurfaces].sort(),
+      completionSnapshots,
+    };
+  }
+
+  async function runTurnEnd(
+    name: string,
+    arm: (db: JevcodeDb) => void = () => {},
+  ): Promise<ReturnType<typeof rowSummary>> {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp", name);
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-pass-rows";
+    db.upsertRepository({ id: "repo-pr", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-pr", prompt: "demo" });
+    arm(db);
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DegradeClient(),
+      log: () => {},
+      mockScriptFor: quickSmokeScript,
+    });
+    try {
+      await runtime.startSession({ sessionId, repoId: "repo-pr", repoPath: dir, prompt: "demo", agentMode: "mock" });
+      await waitFor(() => db.getSession(sessionId)?.state === "completed", 15_000, "turn end");
+      await waitFor(
+        () => db.listEvents(sessionId, { limit: 10_000 }).some((event) => event.type === "ui_snapshot" && event.payloadJson.includes('"surfaceId":"completion"')),
+        15_000,
+        "completion surface",
+      );
+      // The pass after the turn end, as the next debounce or answer would run it.
+      await runtime.syncAll();
+      return rowSummary(db, sessionId);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }
+
+  it("loses no row when a write throws once in a turn-end pass: the next pass writes what it did not", async () => {
+    const clean = await runTurnEnd("pass-rows-clean");
+    let thrown = 0;
+    const failing = await runTurnEnd("pass-rows-throw", (db) => {
+      const upsertUiSnapshot = db.upsertUiSnapshot.bind(db);
+      db.upsertUiSnapshot = ((id, snapshot) => {
+        if (thrown === 0) {
+          thrown += 1;
+          throw new Error("disk full");
+        }
+        return upsertUiSnapshot(id, snapshot);
+      }) as typeof db.upsertUiSnapshot;
+    });
+
+    expect(thrown).toBe(1);
+    // Three steps, three units, each answered in pass A and pass B and shown on its own surface.
+    expect(clean.jevDecisions).toHaveLength(6);
+    expect(clean.unitSurfaces).toHaveLength(3);
+    expect(failing.jevDecisions).toEqual(clean.jevDecisions);
+    expect(failing.labeledUnits).toEqual(clean.labeledUnits);
+    expect(failing.unitSurfaces).toEqual(clean.unitSurfaces);
+    expect(clean.completionSnapshots).toBe(1);
+    expect(failing.completionSnapshots).toBe(1);
+  }, 60_000);
+
+  it("stores each unit's Jev decisions as its answers arrive on a pass that does not end the turn", async () => {
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/pass-live-rows");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    const sessionId = "sess-live-rows";
+    db.upsertRepository({ id: "repo-lr", path: dir, gitRoot: dir, branch: "test", baseCommit: "test" });
+    db.createSession({ id: sessionId, repoId: "repo-lr", prompt: "demo" });
+    // A networked client: each projection answers 20 ms later. At each call, count the first unit's stored rows.
+    const calls: Array<{ unitId: string; firstUnitRows: number }> = [];
+    class DelayedProjectClient extends DegradeClient {
+      override async project(input: ProjectionInput): ReturnType<DegradeClient["project"]> {
+        const firstUnitId = calls[0]?.unitId ?? input.changeUnitId;
+        calls.push({
+          unitId: input.changeUnitId,
+          firstUnitRows: db.listJevDecisions(sessionId).filter((log) => log.changeUnitId === firstUnitId).length,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return super.project(input);
+      }
+    }
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({
+      db,
+      emit,
+      evidence: false,
+      jevClient: new DelayedProjectClient(),
+      log: () => {},
+    });
+    // The smoke script without its agent_completed: the session stays running, so no pass ends the turn.
+    const script = quickSmokeScript({ sessionId, repoId: "repo-lr", repoPath: dir, prompt: "demo" });
+    try {
+      await runtime.startSession({
+        sessionId,
+        repoId: "repo-lr",
+        repoPath: dir,
+        prompt: "demo",
+        agentMode: "mock",
+        mockScript: { ...script, entries: script.entries.slice(0, -1) },
+      });
+      await waitFor(() => db.listEvents(sessionId, { limit: 10_000 }).filter((event) => event.type === "evidence_fact").length === 6, 15_000, "records");
+      await runtime.syncAll();
+
+      expect(db.getSession(sessionId)?.state).not.toBe("completed");
+      expect(calls).toHaveLength(3);
+      const last = calls.at(-1);
+      expect(last?.unitId).not.toBe(calls[0]?.unitId);
+      // The first unit's pass A and pass B rows were stored before the last unit's call was even made.
+      expect(last?.firstUnitRows).toBe(2);
+    } finally {
+      await runtime.stopSession(sessionId);
+      db.close();
+    }
+  }, 60_000);
 });

@@ -55,8 +55,8 @@ class StorageChangeUnitStore implements ChangeUnitStore {
   upsert(unit: ChangeUnit): void {
     const json = JSON.stringify(unit);
     if (this.lastJson.get(unit.id) === json) return;
-    this.lastJson.set(unit.id, json);
     this.db.upsertChangeUnit(unit);
+    this.lastJson.set(unit.id, json);
   }
 
   get(id: string): ChangeUnit | undefined {
@@ -101,12 +101,12 @@ class StorageGraphStore implements GraphStore {
     for (const node of nodes) {
       const json = JSON.stringify(node);
       if (this.lastNodes.get(node.id) === json) continue;
-      this.lastNodes.set(node.id, json);
       this.db.upsertGraphNode(this.sessionId, {
         id: node.id,
         nodeType: node.type,
         payload: { label: node.label, ...(node.data ?? {}) },
       });
+      this.lastNodes.set(node.id, json);
     }
   }
 
@@ -114,7 +114,6 @@ class StorageGraphStore implements GraphStore {
     for (const edge of edges) {
       const json = JSON.stringify(edge);
       if (this.lastEdges.get(edge.id) === json) continue;
-      this.lastEdges.set(edge.id, json);
       this.db.upsertGraphEdge(this.sessionId, {
         id: edge.id,
         fromId: edge.from,
@@ -122,6 +121,7 @@ class StorageGraphStore implements GraphStore {
         edgeType: edge.type,
         payload: {},
       });
+      this.lastEdges.set(edge.id, json);
     }
   }
 
@@ -190,7 +190,8 @@ class StorageSemanticEventSink implements SemanticEventSink {
 // validation, failure and decision on each rebuild. Like the change-unit store,
 // these stores write only when the payload differs from the last one written for
 // that id. Only this store writes validation and failure rows, so a private map
-// of the last payload is the database's current row.
+// of the last payload is the database's current row. Each map is set after its
+// write succeeds, so a write that throws is tried again on the next rebuild.
 class StorageValidationStore implements ValidationStore {
   private readonly lastValidationJson = new Map<string, string>();
   private readonly lastFailureJson = new Map<string, string>();
@@ -203,14 +204,13 @@ class StorageValidationStore implements ValidationStore {
   upsertValidation(validation: ValidationResult): void {
     const json = JSON.stringify(validation);
     if (this.lastValidationJson.get(validation.id) === json) return;
-    this.lastValidationJson.set(validation.id, json);
     this.db.upsertValidation(this.sessionId, validation);
+    this.lastValidationJson.set(validation.id, json);
   }
 
   upsertFailure(failure: FailureRecord): void {
     const json = JSON.stringify(failure);
     if (this.lastFailureJson.get(failure.id) === json) return;
-    this.lastFailureJson.set(failure.id, json);
     this.db.upsertFailure(this.sessionId, {
       validationId: failure.validationId,
       file: failure.file,
@@ -218,6 +218,7 @@ class StorageValidationStore implements ValidationStore {
       message: failure.message,
       ts: failure.ts,
     });
+    this.lastFailureJson.set(failure.id, json);
   }
 
   validations(): ValidationResult[] {
