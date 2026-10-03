@@ -10,7 +10,9 @@ export const TRACE_WINDOW_BACKGROUND = "#FFFFFF";
 export const MAIN_WINDOW_BACKGROUND = "#F4F5F7";
 /**
  * The main window's minimum width. Below about 870 px the embedded viewer bar (switcher, Review/Live, Brief) no longer
- * fits beside the 200 px sidebar (lane 03 D-6, measured in Electron). styles.css `.app` holds the page to the same width.
+ * fits beside the sidebar, which styles.css narrows from 220 to 200 px below a 1120 px window: at 880 px the bar is
+ * 680 px wide (lane 03 D-6; re-measured in Electron in the fix wave, and the dev-host smoke checks the bar at 680 px).
+ * styles.css `.app` holds the page to the same width.
  */
 export const MAIN_WINDOW_MIN_WIDTH = 880;
 

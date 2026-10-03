@@ -319,6 +319,24 @@ describe("TitleBar", () => {
     expect(full.getAttribute("aria-label")).toBeNull();
   });
 
+  it("the embedded bar shows the approximate-joins chip as an icon and a short word, with the full text as name and tooltip (lane 03 fix wave minor 1)", () => {
+    const base = foldFixture("oauth");
+    const session: TraceSession = { ...base, coverage: { ...base.coverage, approximateJoins: true } };
+    renderHarness(<TitleBar onRetry={noop} chrome="embedded" />, session, { views: [canvas, hybrid] });
+    const chip = screen.getByRole("button", { name: "Approximate joins" });
+    expect(chip.textContent).toBe("Approx.");
+    expect(chip.getAttribute("title")).toBe("Approximate joins");
+    expect(chip.querySelector("svg")).not.toBeNull();
+    fireEvent.click(chip);
+    expect(screen.getByRole("dialog", { name: "Approximate joins" }).textContent).toContain("time window");
+    cleanup();
+
+    // The trace window's full chrome keeps the worded chip.
+    renderHarness(<TitleBar onRetry={noop} />, session);
+    const full = screen.getByRole("button", { name: "≈ Approximate joins" });
+    expect(full.getAttribute("aria-label")).toBeNull();
+  });
+
   it("the embedded bar keeps the Follow and Brief words as names and tooltips for its narrow, icon-only layout (lane 03 D-6)", () => {
     const base = foldFixture("oauth");
     const session: TraceSession = { ...base, gaps: [{ kind: "missing_evidence", atSeq: 3, message: "x" }] };
