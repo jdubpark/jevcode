@@ -724,6 +724,7 @@ describe("createExplainerRegistry", () => {
           onSessionStarted: () => {},
           onFilesChanged: () => {},
           onPipelineSync: () => {},
+          onSessionSwitched: () => {},
           rescan: () => {},
           setNarrator: () => {},
           status: () => ({ phase: "idle", done: 0, total: 0, error: null }),
@@ -762,6 +763,7 @@ describe("createExplainerRegistry", () => {
         onSessionStarted: (sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
         onFilesChanged: (paths) => void calls.push(`files ${repoRoot} ${paths.join(",")}`),
         onPipelineSync: () => {},
+        onSessionSwitched: () => void calls.push(`switch ${repoRoot}`),
         rescan: () => void calls.push(`rescan ${repoRoot}`),
         setNarrator: () => {},
         status: () => ({ phase: "idle", done: 0, total: 0, error: null }),
@@ -773,7 +775,9 @@ describe("createExplainerRegistry", () => {
     registry.sessionStarted("/a", "s1");
     registry.filesChanged("/b", ["x.ts"]);
     registry.rescan("/b");
+    registry.sessionSwitched("/b");
     registry.filesChanged("/a", ["x.ts"]);
+    registry.sessionSwitched("/a");
     registry.repoOpened("/b");
     registry.rescan("/b");
     registry.repoClosed("/a");
@@ -783,6 +787,7 @@ describe("createExplainerRegistry", () => {
       "open /a",
       "session /a s1",
       "files /a x.ts",
+      "switch /a",
       "dispose /a",
       "open /b",
       "rescan /b",
@@ -1337,5 +1342,24 @@ describe("ExplainerStage session explainer (lane 07 S-2)", () => {
     expect(explainerRows()[1]).toMatchObject({ kind: "story", provenance: "model" });
     expect(narrator.calls.map((call) => call.method)).toEqual(["sessionStory"]);
     expect(h.hints.at(-1)?.[0]).toBe(SESSION);
+  });
+
+  it("runs the sync of a session that was not open once a session switch opens it (lane fix I-2)", async () => {
+    let open = "sess_other";
+    const h = harness({ initialNarrator: null, sessionId: () => open });
+    const ts = "2026-10-02T10:00:00.000Z";
+    h.db.appendAgentEvent(SESSION, { type: "agent_started", sessionId: SESSION, prompt: "p", ts });
+    h.db.appendAgentEvent(SESSION, { type: "agent_completed", sessionId: SESSION, ts });
+    const stage = start(h);
+    const explainerRows = (): ExplainerRecord[] =>
+      h.db.listEvents(SESSION).filter((event) => event.type === "explainer").map((event) => JSON.parse(event.payloadJson) as ExplainerRecord);
+    stage.onPipelineSync({ sessionId: SESSION, lastSeq: h.db.getSession(SESSION)?.lastEventSeq ?? 0, changeUnits: [], decisions: [] });
+    await flush();
+    expect(explainerRows()).toEqual([]);
+
+    open = SESSION;
+    stage.onSessionSwitched();
+    await vi.waitFor(() => expect(explainerRows().map((row) => row.kind)).toEqual(["story"]));
+    expect(explainerRows()[0]).toMatchObject({ kind: "story", provenance: "rule" });
   });
 });

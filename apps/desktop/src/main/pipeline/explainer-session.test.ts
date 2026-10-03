@@ -1037,6 +1037,98 @@ describe("session explainer: sessions and restarts", () => {
     expect(w.rows(undefined, OTHER)).toEqual([]);
   });
 
+  it("writes the final story of a session that finished while another session was open, once it is open again", async () => {
+    // Lane fix I-2, the review's probe: run a session, switch away, let the agent complete, switch back, advance past
+    // the interval. The sync that carried the completion arrived while the session was not open.
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    w.agent({ type: "agent_message", role: "assistant", text: "Adding the limiter middleware." });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    w.tests(0);
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+
+    w.sessionId = OTHER;
+    explainer.onSessionSwitched();
+    w.agent({ type: "agent_completed" });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(1);
+
+    w.sessionId = SESSION;
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    await w.advance(STORY_MIN_INTERVAL_MS, explainer);
+    expect(narrator.storyCalls).toHaveLength(2);
+    const last = narrator.storyCalls[1]?.input;
+    expect(last?.recentSteps.at(-1)?.headline).toBe("Turn ended");
+    expect(w.rows("story")).toHaveLength(2);
+    expect(w.rows(undefined, OTHER)).toEqual([]);
+    // The kept sync ran once: switching again finds nothing left to run.
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    await w.advance(STORY_MIN_INTERVAL_MS, explainer);
+    expect(narrator.storyCalls).toHaveLength(2);
+  });
+
+  it("writes that final story too when the other session's syncs ran meanwhile, one interval after the last story", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    w.tests(0);
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    const first = narrator.storyCalls[0]?.at;
+
+    // The other session is open and live: its syncs make it the session the explainer follows.
+    w.sessionId = OTHER;
+    explainer.onSessionSwitched();
+    w.agent({ type: "agent_started", prompt: PROMPT }, OTHER);
+    explainer.onPipelineSync(w.sync([], [], OTHER));
+    w.agent({ type: "agent_completed" });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+
+    w.sessionId = SESSION;
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    // Its story (seeded from the rows again) is still spaced by the interval from the last one.
+    expect(narrator.storyCalls).toHaveLength(1);
+    await w.advance(STORY_MIN_INTERVAL_MS, explainer);
+    expect(narrator.storyCalls.map((call) => call.at)).toEqual([first, (first ?? 0) + STORY_MIN_INTERVAL_MS]);
+    expect(narrator.storyCalls[1]?.input.recentSteps.at(-1)?.headline).toBe("Turn ended");
+    expect(w.rows("story")).toHaveLength(2);
+    expect(w.rows("story", OTHER)).toEqual([]);
+  });
+
+  it("writes a trailing story that came due while the session was not open, once it is open again", async () => {
+    const w = new World();
+    const narrator = new ScriptedNarrator(w);
+    w.agent({ type: "agent_started", prompt: PROMPT });
+    const explainer = createSessionExplainer(w.deps(narrator));
+    w.tests(0);
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    await w.advance(5_000, explainer);
+    // The completion lands within the interval: its story waits for the trailing call.
+    w.agent({ type: "agent_completed" });
+    explainer.onPipelineSync(w.sync([], []));
+    await explainer.idle();
+    w.sessionId = OTHER;
+    explainer.onSessionSwitched();
+    await w.advance(STORY_MIN_INTERVAL_MS, explainer);
+    expect(narrator.storyCalls).toHaveLength(1);
+
+    w.sessionId = SESSION;
+    explainer.onSessionSwitched();
+    await explainer.idle();
+    expect(narrator.storyCalls).toHaveLength(2);
+    expect(w.rows("story")).toHaveLength(2);
+  });
+
   it("drops a narration that finishes after a session switch", async () => {
     const w = new World();
     const narrator = new ScriptedNarrator(w);

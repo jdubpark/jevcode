@@ -172,6 +172,11 @@ export interface ExplainerStage {
   onFilesChanged(paths: readonly string[]): void;
   /** Lane 07 (S-2): hands the sync to the session explainer (story, decision why and highlight rows). Returns at once. */
   onPipelineSync(sync: PipelineSyncSnapshot): void;
+  /**
+   * Lane 07 fix I-2: the open session changed (session:switch); `deps.sessionId()` already names it. The session
+   * explainer runs the sync it kept for that session. Returns at once.
+   */
+  onSessionSwitched(): void;
   /** overview:rescan (spec §6.6 Retry): aborts a running scan and starts a new one. */
   rescan(): void;
   /** R4: forwards to the narration seam and to the session explainer. */
@@ -762,6 +767,14 @@ export function createExplainerStage(deps: ExplainerStageDeps): ExplainerStage {
         deps.log({ kind: "error", where: "session", message: messageOf(error) });
       }
     },
+    onSessionSwitched() {
+      if (disposed) return;
+      try {
+        sessionExplainer.onSessionSwitched();
+      } catch (error) {
+        deps.log({ kind: "error", where: "session", message: messageOf(error) });
+      }
+    },
     rescan() {
       startScan();
     },
@@ -819,6 +832,8 @@ export interface ExplainerRegistry {
   repoOpened(repoRoot: string): void;
   repoClosed(repoRoot: string): void;
   sessionStarted(repoRoot: string, sessionId: string): void;
+  /** Lane 07 fix I-2: session:switch opened another session of `repoRoot`. Ignored unless it is the open repo. */
+  sessionSwitched(repoRoot: string): void;
   filesChanged(repoRoot: string, paths: readonly string[]): void;
   /** Ignored unless `repoRoot` is the open repo, so a renderer cannot start a scan elsewhere. */
   rescan(repoRoot: string): void;
@@ -863,6 +878,7 @@ export function createExplainerRegistry(
       if (active !== null && active.repoRoot === repoRoot) release();
     },
     sessionStarted: (repoRoot, sessionId) => ensure(repoRoot).onSessionStarted(sessionId),
+    sessionSwitched: (repoRoot) => existing(repoRoot)?.onSessionSwitched(),
     filesChanged: (repoRoot, paths) => existing(repoRoot)?.onFilesChanged(paths),
     rescan: (repoRoot) => existing(repoRoot)?.rescan(),
     setNarrator: (narrator) => active?.stage.setNarrator(narrator),
