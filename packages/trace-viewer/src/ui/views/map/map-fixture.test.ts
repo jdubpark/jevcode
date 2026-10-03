@@ -7,6 +7,7 @@ import { buildOverviewModel } from "../../../model/index.js";
 import { expectNoCardCrossings, expectNoOverlaps } from "../../../test-support/map-checks.js";
 import { loadOverviewFixture } from "../../../test-support/overview-fixture.js";
 import { MAP_ICON_ONLY_K, planMapFit } from "./map-camera.js";
+import { linkSentence } from "./map-text.js";
 
 // Spec §12 "a fixture table test on this repo's own snapshot". Bands follow each component's role (spec E12); the
 // viewports are the Shell's main column at 1440 px (216 + 280 px side panels) and 1000 px (200 + 248 px), less the
@@ -36,8 +37,7 @@ const EXPECTED_BAND: Readonly<Record<string, MapBand>> = {
   scripts: "side",
   config: "side",
 };
-/** Present on every branch of this plan; codebase-map arrives with lane 04. */
-const REQUIRED = Object.keys(EXPECTED_BAND).filter((name) => name !== "codebase-map");
+const REQUIRED = Object.keys(EXPECTED_BAND);
 
 const snapshot = loadOverviewFixture("jevcode");
 const overview = buildOverviewModel(snapshot, 1);
@@ -47,6 +47,7 @@ describe("Map layout of this repository (fixture overview-jevcode.json)", () => 
   it("places every component in its role band", () => {
     const layout = layoutMap(overview, { level: "card" });
     const names = layout.cards.map((card) => nameOf(card.id));
+    expect(names).toHaveLength(REQUIRED.length);
     expect(names).toEqual(expect.arrayContaining(REQUIRED));
     for (const card of layout.cards) expect(card.band, nameOf(card.id)).toBe(EXPECTED_BAND[nameOf(card.id)]);
   });
@@ -80,6 +81,16 @@ describe("Map layout of this repository (fixture overview-jevcode.json)", () => 
     expect(narrow?.level).toBe("chip");
     expect(narrow?.camera.k).toBeGreaterThanOrEqual(MAP_ICON_ONLY_K);
     expect(narrow?.camera.k).toBeLessThan(0.7);
+  });
+
+  it("has a narrative whose sentences spell out every component they cite", () => {
+    const sentences = snapshot.narrative?.sentences ?? [];
+    expect(sentences.length).toBeGreaterThan(0);
+    for (const sentence of sentences) {
+      const parts = linkSentence(sentence, overview);
+      expect(parts.some((part) => "marker" in part), sentence.text).toBe(false);
+      expect(parts.filter((part) => "componentId" in part)).toHaveLength(sentence.citations.length);
+    }
   });
 
   it("has a rule-based twin with the same components, no purposes, no narrative and the narrator off", () => {

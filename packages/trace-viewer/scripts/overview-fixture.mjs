@@ -2,7 +2,7 @@
 // Writes fixtures/overview-jevcode.json (with narrator text) and fixtures/overview-jevcode-rule.json (rule-based,
 // narrative null): a snapshot of this repository for the dev host and the Map fixture test (lane 06, P-5).
 // Components come from the curated table below rather than lane 04's cut rules, so the fixture is stable and shows
-// every band; files, blob hashes, import edges and external packages come from `git ls-files -s` and the files.
+// every band; run with --check to verify the committed fixtures; files, blob hashes, import edges and external packages come from `git ls-files -s` and the files.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -14,6 +14,8 @@ const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = path.resolve(PKG, "../..");
 const OUT = path.join(PKG, "fixtures");
 const MAX_BYTES = 512 * 1024;
+/** A constant, so regenerating on the same tree is byte-identical across commits, machines and time zones. */
+const GENERATED_AT = "2026-10-02T00:00:00.000Z";
 const sha1 = (text) => createHash("sha1").update(text).digest("hex");
 const idOf = (rootPath) => `cmp_${sha1(rootPath).slice(0, 12)}`;
 
@@ -44,12 +46,12 @@ const COMPONENTS = [
 ];
 /** [sentence (≤ 220 chars), cited rootPaths]. */
 const NARRATIVE = [
-  ["jevcode is an Electron app that supervises a coding agent and explains its work.", ["apps/desktop/src/main", "apps/desktop/src/renderer"]],
-  ["The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core.", ["apps/desktop/src/main", "packages/agent-codex", "packages/semantic-core"]],
-  ["Every event lands in the SQLite store, and the trace viewer reads it back as rows.", ["packages/storage", "packages/trace-viewer/src/model"]],
-  ["Jev's questions go through jev-router with schema-checked answers.", ["packages/jev-router"]],
+  ["jevcode is an Electron app: desktop main and desktop renderer supervise a coding agent and explain its work.", ["apps/desktop/src/main", "apps/desktop/src/renderer"]],
+  ["desktop main runs Codex through agent-codex and feeds its events to evidence-engine and semantic-core.", ["apps/desktop/src/main", "packages/agent-codex", "packages/evidence-engine", "packages/semantic-core"]],
+  ["Every event lands in storage, and trace-viewer model reads it back as rows.", ["packages/storage", "packages/trace-viewer/src/model"]],
+  ["jev-router sends Jev's questions to the model and checks the answers against a schema.", ["packages/jev-router"]],
   ["contracts holds the shared schemas that every package imports.", ["packages/contracts"]],
-  ["The stack is TypeScript with React 19, Vite and better-sqlite3 in a pnpm workspace.", ["."]],
+  ["config holds the TypeScript, ESLint and pnpm workspace setup.", ["."]],
 ];
 const SKIP = /^(docs|fixtures|\.superpowers)\/|^packages\/trace-viewer\/fixtures\/|(^|\/)(node_modules|dist|build|out|\.next|coverage|vendor)\//;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|wasm|db|sqlite|pdf|zip|gz|woff2?|ttf)$/i;
@@ -214,7 +216,7 @@ function build(narrated) {
   const snapshot = {
     sessionId: "fixture",
     repoRoot: "/fixture/jevcode",
-    scanId: `fixture-${git("rev-parse", "--short", "HEAD").trim()}`,
+    scanId: "fixture",
     partial: false,
     counts: {
       files: components.reduce((sum, component) => sum + component.fileCount, 0),
@@ -240,18 +242,38 @@ function build(narrated) {
       scan: { state: "done", scanned: components.reduce((sum, c) => sum + c.fileCount, 0), total: components.reduce((sum, c) => sum + c.fileCount, 0) },
       narrator: narrated ? "ready" : "off",
     },
-    generatedAt: git("log", "-1", "--format=%cI").trim(),
+    generatedAt: GENERATED_AT,
   };
   return { snapshot, unowned };
 }
 
-mkdirSync(OUT, { recursive: true });
+const CHECK = process.argv.includes("--check");
+if (!CHECK) mkdirSync(OUT, { recursive: true });
+let stale = 0;
 for (const [file, narrated] of [["overview-jevcode.json", true], ["overview-jevcode-rule.json", false]]) {
   const { snapshot, unowned } = build(narrated);
   const bytes = Buffer.byteLength(JSON.stringify(snapshot));
   if (bytes > MAX_BYTES) throw new Error(`${file}: ${bytes} bytes exceeds the 512 KB snapshot cap`);
-  writeFileSync(path.join(OUT, file), `${JSON.stringify(snapshot, null, 2)}\n`);
+  const text = `${JSON.stringify(snapshot, null, 2)}\n`;
+  if (CHECK) {
+    let committed = null;
+    try {
+      committed = readFileSync(path.join(OUT, file), "utf8");
+    } catch {
+      // missing counts as stale
+    }
+    if (committed !== text) {
+      stale += 1;
+      console.error(`${file}: differs from regenerated output; run node packages/trace-viewer/scripts/overview-fixture.mjs`);
+    }
+    continue;
+  }
+  writeFileSync(path.join(OUT, file), text);
   console.log(
     `${file}: ${snapshot.counts.components} components, ${snapshot.counts.edges} edges, ${snapshot.externals.length} externals, ${bytes} bytes, ${unowned} files without a component`,
   );
+}
+if (CHECK) {
+  if (stale > 0) process.exit(1);
+  console.log("overview fixtures are up to date");
 }

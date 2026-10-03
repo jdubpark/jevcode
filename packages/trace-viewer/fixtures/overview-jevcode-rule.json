@@ -1,7 +1,7 @@
 {
   "sessionId": "fixture",
   "repoRoot": "/fixture/jevcode",
-  "scanId": "fixture-9f2ba74",
+  "scanId": "fixture",
   "partial": false,
   "counts": {
     "files": 721,
@@ -320,7 +320,7 @@
       "role": "ui",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "e1cf03bd98d123771dbd82d28b09322b04469a2c",
+      "contentHash": "c795dd38488ea9354eb3ad22f937b39f07d80dc3",
       "externalDeps": [
         {
           "name": "react",
@@ -1295,7 +1295,7 @@
       "role": "domain",
       "purpose": null,
       "provenance": "rule",
-      "contentHash": "4f6e1faca17b29afdd51aad27e80498df738b895",
+      "contentHash": "8bcd735eb6fa87fbbf2458cf722960a951b3bb50",
       "externalDeps": [
         {
           "name": "vitest",
@@ -2604,5 +2604,5 @@
     },
     "narrator": "off"
   },
-  "generatedAt": "2026-10-03T11:52:15+09:00"
+  "generatedAt": "2026-10-02T00:00:00.000Z"
 }

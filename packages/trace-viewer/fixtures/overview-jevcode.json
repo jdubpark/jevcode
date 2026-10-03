@@ -1,7 +1,7 @@
 {
   "sessionId": "fixture",
   "repoRoot": "/fixture/jevcode",
-  "scanId": "fixture-9f2ba74",
+  "scanId": "fixture",
   "partial": false,
   "counts": {
     "files": 721,
@@ -320,7 +320,7 @@
       "role": "ui",
       "purpose": "Trace viewer views, Inspector, shell and keyboard layer.",
       "provenance": "model",
-      "contentHash": "e1cf03bd98d123771dbd82d28b09322b04469a2c",
+      "contentHash": "c795dd38488ea9354eb3ad22f937b39f07d80dc3",
       "externalDeps": [
         {
           "name": "react",
@@ -1295,7 +1295,7 @@
       "role": "domain",
       "purpose": "Package entry, sources and test support for the trace viewer.",
       "provenance": "model",
-      "contentHash": "4f6e1faca17b29afdd51aad27e80498df738b895",
+      "contentHash": "8bcd735eb6fa87fbbf2458cf722960a951b3bb50",
       "externalDeps": [
         {
           "name": "vitest",
@@ -2599,7 +2599,7 @@
     "provenance": "model",
     "sentences": [
       {
-        "text": "jevcode is an Electron app that supervises a coding agent and explains its work.",
+        "text": "jevcode is an Electron app: desktop main and desktop renderer supervise a coding agent and explain its work.",
         "citations": [
           {
             "kind": "component",
@@ -2612,7 +2612,7 @@
         ]
       },
       {
-        "text": "The main process runs Codex through agent-codex and feeds its events through evidence-engine and semantic-core.",
+        "text": "desktop main runs Codex through agent-codex and feeds its events to evidence-engine and semantic-core.",
         "citations": [
           {
             "kind": "component",
@@ -2624,12 +2624,16 @@
           },
           {
             "kind": "component",
+            "id": "cmp_7773132844d4"
+          },
+          {
+            "kind": "component",
             "id": "cmp_44240dbada3f"
           }
         ]
       },
       {
-        "text": "Every event lands in the SQLite store, and the trace viewer reads it back as rows.",
+        "text": "Every event lands in storage, and trace-viewer model reads it back as rows.",
         "citations": [
           {
             "kind": "component",
@@ -2642,7 +2646,7 @@
         ]
       },
       {
-        "text": "Jev's questions go through jev-router with schema-checked answers.",
+        "text": "jev-router sends Jev's questions to the model and checks the answers against a schema.",
         "citations": [
           {
             "kind": "component",
@@ -2660,7 +2664,7 @@
         ]
       },
       {
-        "text": "The stack is TypeScript with React 19, Vite and better-sqlite3 in a pnpm workspace.",
+        "text": "config holds the TypeScript, ESLint and pnpm workspace setup.",
         "citations": [
           {
             "kind": "component",
@@ -2678,5 +2682,5 @@
     },
     "narrator": "ready"
   },
-  "generatedAt": "2026-10-03T11:52:15+09:00"
+  "generatedAt": "2026-10-02T00:00:00.000Z"
 }
