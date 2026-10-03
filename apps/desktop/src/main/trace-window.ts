@@ -8,6 +8,11 @@ export const TRACE_WINDOW_MIN_WIDTH = 1000;
 export const TRACE_WINDOW_BACKGROUND = "#FFFFFF";
 /** The main window's native background: LIGHT_TOKENS.canvas, so no dark flash before the page paints (spec E6). */
 export const MAIN_WINDOW_BACKGROUND = "#F4F5F7";
+/**
+ * The main window's minimum width. Below about 870 px the embedded viewer bar (switcher, Review/Live, Brief) no longer
+ * fits beside the 200 px sidebar (lane 03 D-6, measured in Electron). styles.css `.app` holds the page to the same width.
+ */
+export const MAIN_WINDOW_MIN_WIDTH = 880;
 
 /**
  * Renderer isolation shared by the main window and every trace window

@@ -119,7 +119,8 @@ button[aria-pressed="true"] {
   display: flex;
   flex-direction: column;
   height: 100%;
-  min-width: 760px;
+  /* MAIN_WINDOW_MIN_WIDTH (main/trace-window.ts): the embedded viewer bar fits from about 870 px. */
+  min-width: 880px;
 }
 
 .header {
