@@ -245,8 +245,11 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     return tracked;
   }
 
-  /** Folds the rows after the cursor, 2,000 per page with a yield between pages (spec §6.1). */
-  async function advance(t: Tracked): Promise<TraceSession> {
+  /**
+   * Folds the rows after the cursor, 2,000 per page with a yield between pages (spec §6.1). Null when the
+   * explainer was disposed (the app quit closes the database next) or the session switched between pages.
+   */
+  async function advance(t: Tracked): Promise<TraceSession | null> {
     for (;;) {
       const events = deps.db.listEvents(t.sessionId, { fromSeq: t.cursor, limit: FOLD_PAGE });
       for (const event of events) {
@@ -258,6 +261,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       }
       if (events.length < FOLD_PAGE) break;
       await yieldToEventLoop();
+      if (!current(t)) return null;
     }
     const state = deps.db.getSession(t.sessionId)?.state;
     t.session = finalize(t.fold, { live: true, throughSeq: t.cursor, ...(state !== undefined ? { state } : {}) });
@@ -403,7 +407,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     const t = track(sync.sessionId);
     if (t === null) return;
     const session = await advance(t);
-    if (!current(t)) return;
+    if (session === null || !current(t)) return;
     t.sync = sync;
     if (!t.seeded) seed(t, session, sync);
     const highlights = computeHighlights({
