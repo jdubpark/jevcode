@@ -1805,8 +1805,10 @@ describe("PipelineRuntime sync passes write as they go (lane 03 PL-2; D-6 review
 
     // One pass ran the Jev stage (the pass after it found no changed unit) and wrote six decisions.
     expect(rows.jevDecisions).toHaveLength(6);
-    expect(debug).toHaveLength(1);
-    expect(debug[0]).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
+    // A slow pass may also send at a slice that yields (PL-2), but never once per decision; the last send is final.
+    expect(debug.length).toBeGreaterThanOrEqual(1);
+    expect(debug.length).toBeLessThan(rows.jevDecisions.length);
+    expect(debug.at(-1)).toEqual({ sessionId: "sess-pass-rows", decisions: latest });
   }, 60_000);
 
   it("yields to the event loop during a long pass, so a waiting task runs before the pass ends", async () => {
