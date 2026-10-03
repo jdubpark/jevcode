@@ -260,7 +260,7 @@ export class PipelineRuntime {
       prompt: input.prompt,
       adapter,
       adapterKind,
-      coordinator: new PipelineCoordinator({ stores }),
+      coordinator: new PipelineCoordinator({ stores, onRebuildError: (error) => this.log(`pipeline rebuild failed (retried on the next sync): ${String(error)}`) }),
       client: this.opts.jevClient ?? createJevClient(),
       facts: [],
       unitState: new Map(),
