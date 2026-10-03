@@ -353,6 +353,23 @@ async function main() {
       console.log(`view switch: ${switchResult.switches} switches, 0 misses`);
     }
     if (options.embedded) {
+      // Real layout of the embedded title bar at the main window's 880 px minimum with a gaps chip (lane 03 D-6): the
+      // bar must not overflow horizontally and the Brief toggle must stay inside it.
+      const bar = readSelftest(
+        await chrome(profile, [
+          "--window-size=880,900",
+          "--dump-dom",
+          "--virtual-time-budget=4000",
+          `${ORIGIN}/?bundle=oauth&chrome=embedded&selftest=bar&gaps=3${locationHash(sessionId, "console")}`,
+        ]),
+      );
+      const barMisses = [];
+      if (bar.barWidth !== 880) barMisses.push(`the bar is ${bar.barWidth} px wide, not 880`);
+      if (bar.gapsChip !== true) barMisses.push("no gaps chip");
+      if (bar.fits !== true) barMisses.push(`horizontal overflow (scrollWidth ${bar.barScrollWidth} > ${bar.barWidth})`);
+      if (bar.briefVisible !== true) barMisses.push("the Brief toggle is not visible inside the bar");
+      if (barMisses.length > 0) throw new Error(`embedded bar at 880 px: ${barMisses.join("; ")}`);
+      console.log(`embedded bar at 880 px: fits (scrollWidth ${bar.barScrollWidth}), gaps chip and Brief toggle visible`);
       // The main-window frame (spec §9) around the embedded viewer on the Console; a drip opens it in Live, so the
       // right panel shows the Brief (V-6 compares these with console-main-*.png).
       for (const width of WIDTHS) {
