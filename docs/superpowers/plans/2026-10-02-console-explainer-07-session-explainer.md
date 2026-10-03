@@ -26,6 +26,14 @@ Lanes 01–06 are not in code when this file is written. Their plans are, and th
 10. **Lane-internal order S-0, S-1, S-3, S-2, S-4, S-5, S-6.** Index §3 lists S-2 as depending on M-6 and N-5 only. S-2 also uses S-3's `TraceSession.explainer` (to seed after a restart), so S-3 runs first. Both are in this lane, so no other lane waits.
 11. **The session explainer folds the session's trace rows in main** with `@jevcode/trace-viewer/model` (already a desktop dependency; pure). Step ids in narrator inputs and citations are therefore `step:<firstSeq>` exactly as the viewer computes them.
 12. **Narrator wiring (ruling R4).** There is no `ExplainerStageDeps.narrator`. The session explainer starts from N-5's `ExplainerStageDeps.initialNarrator ?? null` and follows N-5's `ExplainerStage.setNarrator(narrator)`, to which S-2 adds the forward `sessionExplainer.setNarrator(narrator)` after N-5's `narration.setNarrator?.(narrator)`. Calls are recorded through N-5's `ExplainerStageDeps.recordNarratorCall?`. `index.ts` routes the runtime hook with lane 04's `explainerRegistry.get(repoPath)?.onPipelineSync(sync)`.
+13. **S-1 input fields** (S-1 fix round 1). `SessionStoryInput.decisions[]` carries `status: SessionDecisionStatus` and `answer` (the chosen option's label, or null while open); `SessionStoryInput.tests` carries `stepId` (the latest settled run, cited as `t1`); `DecisionWhyInput` carries `chosenBy: "developer" | "agent"` ("agent" when delegated). Interfaces §4 records them.
+14. **Combined highlight marks** (S-5 fix round 1). The highlights entry gains `states?` (contract K-2: 1 to 4 of the enum, written only when more than the strongest state applies; `state` stays the strongest). The fold's `HighlightEntryModel.states` is always set (absent reads as `[state]`); `MapOverlay.cardState` values are arrays in drawing order; `MapCardProps.states` replaces `state`; `overlayCounts` counts each state.
+15. **Map and Brief additions** (S-4, S-5). `MapHeaderProps.session?` (the Session toggle and legend); `BriefViewProps.answers?` and `BriefViewProps.mapSession?` (`BriefMapSession`, `src/ui/inspector/BriefMapSession.tsx`: on the Map the Brief's last part lists "This session" instead of Architecture); the model export `truncateEnd`; the shell's shared decision answer store (`createDecisionAnswerStore`, `useDecisionAnswers`, `DecisionAnswersContext`, with `AnswerState` in `src/ui/shell/decision-answers.ts`).
+16. **Main-process slices** (PL-3). `createMainSlicer`, `MainSlicer` and `MAIN_SLICE_MS` (20 ms) in `apps/desktop/src/main/pipeline/main-slicer.ts`, passed as `slicer?` to `PipelineRuntimeOptions`, `ExplainerStageDeps` and `SessionExplainerDeps` (which also takes `foldSliceMs?`); index.ts gives all three one instance. The session fold settles and yields per slice instead of every 2,000 rows. Storage reads: `JevcodeDb.projectionVersion(type)`, `listChangeUnitVersions(sessionId)`, graph node and edge lists in rowid order, and migration v6 (`idx_jev_decisions_session_seq`); `buildSessionState` takes an optional `changeUnitCount`.
+17. **Quit path** (PL-3 review, fix wave). `PipelineRuntime.shutdown()` stops every session synchronously; `quitSteps(services)` in `apps/desktop/src/main/shutdown.ts` orders will-quit: pipeline sessions, rows-available emitter, explainer, import extractor, terminals, trace reader, then the database. `PipelineCoordinator.dispose()` (semantic-core) cancels a debounced rebuild, and `shutdown()` calls it for every session.
+18. **Redacted narrator inputs** (fix wave I-1). `sessionStoryInput` and `decisionWhyInput` run the Jev stage's `redactText` (`redactor.ts`) over every free-text field (prompt, step headlines, decision titles, option labels and answers, component names, nearby agent messages) before the input is frozen; ids are never redacted. A headline whose step's full command, path, text or decision title holds a secret is rebuilt with `stepHeadline` from the redacted text, since the viewer's cut can split a secret. The Agent settings note lists session text.
+19. **Session switch** (fix wave I-2). The explainer keeps the latest unprocessed sync of each session (one entry per session) and processes the open session's entry. `SessionExplainer.onSessionSwitched()`, `ExplainerStage.onSessionSwitched()` and `ExplainerRegistry.sessionSwitched(repoRoot)` carry the `session:switch` handler's notice (ipc.ts `toExplainer`), so a session that finished while another one was open gets its final story, whys and highlights. The restart seed counts test runs and turn ends only up to the latest story's `basisSeq`, and a session tracked again keeps its story interval.
+20. **Landmarks** (fix wave minor 3). `SummaryBlock` and `DecisionCard` render as `role="group"` with their names ("Session summary", "Decision card: …"), not as region landmarks.
 
 ## Spec alignment notes
 
@@ -84,7 +92,7 @@ bash ~/Projects/jevcode/.superpowers/orchestration/setup-worktree.sh ~/Projects/
 The index's Global Constraints apply in full. Lane additions:
 
 - **Narrator text is untrusted.** Story sentences, why sentences, component names and option tradeoffs render through `displayUntrusted` with the full text in `title` and the accessible name. No narrator or agent string ever lands in a chip label without `truncateMiddle` (which calls `displayUntrusted`), and none can trigger an action: a citation chip only selects an object or switches to the Map.
-- **The stage never blocks ingestion.** `onPipelineSync` returns at once; all work runs on promise chains, folds yield to the event loop every 2,000 rows, and narrator calls run one at a time on their own chain. An error is logged as `{ kind: "error", where: "session" }` and never reaches the runtime.
+- **The stage never blocks ingestion.** `onPipelineSync` returns at once; all work runs on promise chains, folds read 2,000 rows per page and yield through the main slicer whenever a slice's time is spent (PL-3), and narrator calls run one at a time on their own chain. An error is logged as `{ kind: "error", where: "session" }` and never reaches the runtime.
 - **Rows only through `JevcodeDb.appendEvent(sessionId, "explainer", record)`**, followed by `emitRowsAvailable(sessionId, stored.seq)`. Nothing writes to another session's id after a session switch.
 - **Model cost:** at most one `sessionStory` call per `storyIntervalMs` (20 s in production) per session, one `decisionWhy` per answered decision, no call while a backoff (30 s, 2 min, 10 min) runs, and no call when `narrator` is `null`.
 - **Viewer purity:** `src/model` and `src/layout` additions import no React, no `src/ui` and no clocks; `src/ui` additions read DOM globals only through elements (lessons-w2).
@@ -4818,7 +4826,7 @@ git commit -m "feat(trace-viewer): Map session overlay from explainer highlights
 - Create: `apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts`
 - Create: `packages/trace-viewer/src/layout/console-summary.bench.ts`
 - Modify: `scripts/soak.mjs` (M-8's ingest soak: its `PipelineRuntime` options pass `onPipelineSync` to the explainer stage)
-- Modify: `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6's 10k-step bundle: with `JEVCODE_CONSOLE_STORIES=1` it interleaves `story` rows, so the Console perf run measures summary rows)
+- Not modified: `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6's 10k-step bundle). S-4 already gave it `CONSOLE_STORY_EVERY=n`, which interleaves a `story` row after every n-th unit, so the Console perf run measures summary rows.
 - Modify: `docs/perf.md` (a "Phase C (session explainer)" section)
 
 **Interfaces:**
@@ -4868,7 +4876,7 @@ import { PipelineRuntime } from "./pipeline-runtime.js";
 // Spec §13 phase C exit: during a live mock session (the PRD §58 rate-limit demo through the real
 // PipelineRuntime and the real explainer stage), story and highlights rows land within one debounce
 // window of their triggers, and each answered decision gets a why whose citations resolve in the
-// viewer's fold. The story interval is shortened to 1.5 s so the window is measured in real time.
+// viewer's fold. The story interval is shortened to 2.5 s so the window is measured in real time.
 
 // The stage runs with the injected EchoNarrator. Keep a shell's key and the kill switch from ever reaching a
 // real client: no billed calls, no nondeterministic rows during the timing windows.
@@ -4877,7 +4885,7 @@ process.env["JEVCODE_NARRATOR"] = "off";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../../");
 const fixturePath = path.join(repoRoot, "fixtures", "rate-limit");
-const STORY_INTERVAL_MS = 1_500;
+const STORY_INTERVAL_MS = 2_500;
 const SYNC_DEBOUNCE_MS = 600; // pipeline-runtime.ts SYNC_DEBOUNCE_MS
 const SLACK_MS = 1_000;
 const REPO_FILES = [
@@ -5127,40 +5135,13 @@ Expected: a mean under 2 ms on the reference machine (Apple M3 Max). Record the 
 
 - [ ] **Step 5: Console append and ingest budgets with the explainer on**
 
-1. Console append p95 (spec §11, ≤ 150 ms) on `console-10k` with story rows. In `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6), add `const STORIES = process.env.JEVCODE_CONSOLE_STORIES === "1";` after `PROMPT`, and in the unit loop capture the message row's seq and add a story row every fifth unit:
-
-```js
-for (let unit = 0; unit < UNITS; unit += 1) {
-  const messageSeq = rows.length + 1; // the step the story cites
-```
-
-   (keep the loop's existing first line and add `messageSeq` as its first statement), then after the loop's `agent({ type: "agent_message", … })` call add:
-
-```js
-  if (STORIES && unit % 5 === 0) {
-    const seq = rows.length + 1;
-    rows.push({
-      seq,
-      type: "explainer",
-      ts: iso(seq),
-      payload: {
-        sessionId: SESSION_ID,
-        kind: "story",
-        sentences: [{ text: `Unit ${unit} is in progress.`, citations: [{ kind: "step", id: `step:${messageSeq}` }] }],
-        basisSeq: seq - 1,
-        provenance: "model",
-      },
-    });
-  }
-```
-
-   The bundle then holds about 420 stories, one per five units, and the drip window (the last 600 rows) crosses about 23 of them, so every append sample covers a summary merge. Run it in the background and poll:
+1. Console append p95 (spec §11, ≤ 150 ms) on `console-10k` with story rows. `apps/trace-viewer-dev/scripts/console-bundle.mjs` (V-6) already reads `CONSOLE_STORY_EVERY=n` (S-4): it adds an explainer story row, with new sentences, after every n-th unit. With `CONSOLE_STORY_EVERY=5` the bundle holds about 420 stories, and the drip window (the last 600 rows) crosses about 13 of them, so the append samples cover summary merges. Run it in the background and poll:
 
 ```bash
-(JEVCODE_CONSOLE_STORIES=1 perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console --console-perf --port 4186 > .superpowers/smoke-s6-console.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-s6-console.log) &
+(CONSOLE_STORY_EVERY=5 perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf --port 4186 > .superpowers/smoke-s6-console.log 2>&1; echo "EXIT=$?" >> .superpowers/smoke-s6-console.log) &
 ```
 
-   Poll `tail -3 .superpowers/smoke-s6-console.log` every 15 s until an `EXIT=` line appears. Expected: `CONSOLE_PERF steps=… append_n=<≥300> append_p95=<≤150> …` and `SMOKE_OK`. The harness itself fails on fewer than 300 samples or p95 above 150 ms. Record the p95 and `append_n`. (Unset `JEVCODE_CONSOLE_STORIES` afterwards; V-6's own runs stay story-free.)
+   Poll `tail -3 .superpowers/smoke-s6-console.log` every 15 s until an `EXIT=` line appears. Expected: `CONSOLE_PERF steps=… append_n=<≥300> append_p95=<≤150> …` and `SMOKE_OK`. The harness itself fails on fewer than 300 samples or p95 above 150 ms. Record the p95 and `append_n`. (Unset `CONSOLE_STORY_EVERY` afterwards; V-6's own runs stay story-free.)
 2. Ingest soak ratio (spec §11, ≤ 1.10 with the narrator stubbed): in `scripts/soak.mjs` find M-8's line `onRepoFilesChanged: EXPLAINER ? (_repoPath, paths) => explainer?.onFilesChanged(paths) : undefined,` in the `new PipelineRuntime({ … })` options and add right after it:
 
 ```js
@@ -5180,7 +5161,7 @@ Append to `docs/perf.md`:
 
 | Measure (spec §11, §13) | Budget | Measured | Status |
 |---|---|---|---|
-| Story row after a trigger, live mock session (interval shortened to 1.5 s) | ≤ interval + 600 ms sync debounce + 1 s | <answer gap> ms, <completion gap> ms | <PASS/FAIL> |
+| Story row after a trigger, live mock session (interval shortened to 2.5 s) | ≤ interval + 600 ms sync debounce + 1 s | <answer gap> ms, <completion gap> ms | <PASS/FAIL> |
 | Highlights row after the first change unit | ≤ 600 ms + 1 s | <gap> ms | <PASS/FAIL> |
 | Story calls per interval | ≤ 1 | min gap <gap> ms | <PASS/FAIL> |
 | Decision why with resolvable citations | every answered decision | 1 of 1 | <PASS/FAIL> |
@@ -5189,7 +5170,7 @@ Append to `docs/perf.md`:
 | Ingest soak ratio, stage on, narrator stubbed (M-8 guard) | ≤ 1.10 | <ratio> (medians <base> / <head> ms) | <PASS/FAIL> |
 
 Reproduce: `pnpm --filter jevcode-desktop exec vitest run src/main/pipeline/explainer-live.e2e.test.ts`,
-`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`, `JEVCODE_CONSOLE_STORIES=1 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --console-perf`, and the M-8 guard command.
+`pnpm --filter @jevcode/trace-viewer exec vitest bench --run src/layout/console-summary.bench.ts`, `CONSOLE_STORY_EVERY=5 node apps/trace-viewer-dev/scripts/smoke.mjs --views console --embedded --console-perf`, and the M-8 guard command.
 ```
 
 Fill every `<…>` with the measured value from Steps 3–5 before committing.
@@ -5197,7 +5178,7 @@ Fill every `<…>` with the measured value from Steps 3–5 before committing.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts packages/trace-viewer/src/layout/console-summary.bench.ts docs/perf.md scripts/soak.mjs apps/trace-viewer-dev/scripts/console-bundle.mjs
+git add apps/desktop/src/main/pipeline/explainer-live.e2e.test.ts packages/trace-viewer/src/layout/console-summary.bench.ts docs/perf.md scripts/soak.mjs
 git commit -m "test(desktop): live mock-session smoke and phase C budgets for the session explainer"
 ```
 
@@ -5210,4 +5191,4 @@ git commit -m "test(desktop): live mock-session smoke and phase C budgets for th
 2. **Done (index §9, lane 07):** the S-6 smoke shows story and highlights within one debounce window in a mock live session; every answered decision has a `decision_why` whose citations resolve; the `smoke.mjs --explainer` screenshots (`apps/trace-viewer-dev/.smoke/explainer-{console,decision,pending,map}-{1440,1000}.png`) match the approved H3 mockups at 1440 and 1000 px.
 3. **Wave check:** after the merge, `wave-verify.sh` (index §7 step 7) on a detached main worktree with the views the W1 lanes added to the dev-host smoke, plus `perl -e 'alarm 590; exec @ARGV' node apps/trace-viewer-dev/scripts/smoke.mjs --views map --explainer --port <free port>` on that worktree (it builds, replays `fixtures/rate-limit`, writes the explainer bundles with `explainer-bundle.mjs`, shoots the 8 explainer screenshots and prints `SMOKE_OK`).
 4. **HUMAN H6 (phase C exit, index §8):** the person reviews the story, decision cards and overlay on a mock live session (`JEVC_AGENT=mock pnpm --filter jevcode-desktop start`, open `fixtures/rate-limit/repo`, enter the demo prompt). Record the outcome under the spec's §13 table as `H6 (phase C exit): <approved | changes requested> <date>`, or `PENDING — deferred by the person on <date>; revisit before the phase C exit` under the deferral ruling.
-5. **Hand-off notes** for the merge: the interface deviations above (new exports `repoRelative`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs` (a later decision row without the field keeps them, an explicit `[]` drops them), `BriefModel.decisions`, `BRIEF_DECIDED_MAX`, `BriefViewProps.onAnswer` and `answers`, the model export `truncateEnd`, and the shell's shared answer store `createDecisionAnswerStore` / `useDecisionAnswers` with `AnswerState` moved to `src/ui/shell/decision-answers.ts`); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.
+5. **Hand-off notes** for the merge: the interface deviations above (new exports `repoRelative`, `resolveCitation`, `buildBriefDecisions`, `mergeSummaryRows`, `overlayCounts`, `PipelineRuntimeOptions.onPipelineSync`, `ExplainerStageDeps.storyIntervalMs`, `"session"` in the error log's `where`, `ExplainerModel.stories` and `seq`, `DecisionDetail.options[].tradeoffs` (a later decision row without the field keeps them, an explicit `[]` drops them), `BriefModel.decisions`, `BRIEF_DECIDED_MAX`, `BriefViewProps.onAnswer` and `answers`, the model export `truncateEnd`, and the shell's shared answer store `createDecisionAnswerStore` / `useDecisionAnswers` with `AnswerState` moved to `src/ui/shell/decision-answers.ts`); deviations 13 to 20 (the S-1 input fields `decisions[].status` and `answer`, `tests.stepId` and `chosenBy`; the highlights entry's `states?`, `HighlightEntryModel.states`, `MapOverlay.cardState` as arrays and `MapCardProps.states`; `MapHeaderProps.session`, `BriefViewProps.mapSession` and `BriefMapSession`; PL-3's `MainSlicer` and the `slicer` options, `projectionVersion`, `listChangeUnitVersions`, graph lists in rowid order and migration v6; `PipelineRuntime.shutdown`, `quitSteps` and `PipelineCoordinator.dispose`; the redacted narrator inputs and the settings note that lists session text; the kept syncs and the `session:switch` route `ExplainerRegistry.sessionSwitched` → `ExplainerStage.onSessionSwitched` → `SessionExplainer.onSessionSwitched`; summary blocks and decision cards as named groups); that lane 06's `componentForPath` now delegates to the model rule; the spec alignment notes (story provenance, summary placement); and the measured phase C budgets in `docs/perf.md`.

@@ -127,6 +127,12 @@ getOverviewState(repoRoot: string): { snapshot: OverviewSnapshot; narrativeInput
 putOverviewState(repoRoot: string, state: { snapshot: OverviewSnapshot; narrativeInputsHash: string | null; narrative: OverviewSnapshot["narrative"] }): void;
 ```
 
+- Migration **version 6** (lane 07 PL-3) is the latest. It indexes the Jev debug panel's read of a session's newest decisions (`latestJevDecisions`, `WHERE sessionId = ? ORDER BY seq DESC LIMIT n`); a database without `jev_decisions` skips it:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_jev_decisions_session_seq ON jev_decisions (sessionId, seq);
+```
+
 - `TraceReader` returns the new row types through `trace:rows` and `trace:payloads` (it filters on `TRACE_ROW_TYPES`, so this follows from §1.1). Export redaction covers them.
 
 ## 3. `packages/codebase-map` (new package `@jevcode/codebase-map`, lane 04)
@@ -181,9 +187,14 @@ export interface ResolveContext { files: ReadonlySet<string>; tsPaths: Record<st
 export interface ComponentBrief { id: string; name: string; rootPath: string; roleGuess: Role; files: string[]; exports: string[];
   externalDeps: string[]; edgesIn: { name: string; count: number }[]; edgesOut: { name: string; count: number }[]; blurb: string | null; }
 export interface DescribedComponent { id: string; purpose: string; role: Role; citations: Citation[]; }
-export interface SessionStoryInput { prompt: string; recentSteps: { id: string; headline: string }[]; decisions: { id: string; title: string; status: string }[];
-  tests: { passed: number; failed: number } | null; touchedComponents: { id: string; name: string }[]; }
-export interface DecisionWhyInput { decisionId: string; title: string; options: { id: string; label: string }[]; answer: string; nearby: { id: string; kind: "message" | "step"; text: string }[]; }
+export type SessionDecisionStatus = "open" | "answered" | "delegated" | "expired";
+// Lane 07: `answer` is the chosen option's label (null while open); `tests.stepId` is the latest settled run (key t1).
+export interface SessionStoryInput { prompt: string; recentSteps: { id: string; headline: string }[];
+  decisions: { id: string; title: string; status: SessionDecisionStatus; answer: string | null }[];
+  tests: { passed: number; failed: number; stepId: string } | null; touchedComponents: { id: string; name: string }[]; }
+// Lane 07: `chosenBy` is "agent" for a delegated decision.
+export interface DecisionWhyInput { decisionId: string; title: string; options: { id: string; label: string }[]; answer: string;
+  chosenBy: "developer" | "agent"; nearby: { id: string; kind: "message" | "step"; text: string }[]; }
 export interface NarratorClient {
   describeComponents(batch: ComponentBrief[]): Promise<JevResult<DescribedComponent[]>>;     // batch ≤ 20
   overviewNarrative(input: { components: { id: string; name: string; role: Role; purpose: string | null }[]; edges: { from: string; to: string; count: number }[] }): Promise<JevResult<NarrativeSentence[]>>;
@@ -206,6 +217,8 @@ export function createFakeNarratorClient(script: Partial<Record<keyof NarratorCl
 ```
 
 `JevResult<T>` and `TypeSafeTransport` are the existing types (`packages/contracts`, `packages/jev-router/src/typesafe-client.ts`).
+
+Lane 07 (fix wave I-1): the desktop builds both inputs with every free-text field (prompt, headlines, titles, labels, answers, component names, nearby text) already passed through the Jev stage's `redactText`; ids are never redacted, so the guards check the ids the session holds.
 
 ## 5. Explainer stage (`apps/desktop/src/main/pipeline/explainer-stage.ts`, lanes 04, 05 and 07)
 
@@ -363,6 +376,7 @@ The lane files were drafted against the real code, and some names above had to c
 
   A row without `status` reads as scan done, with narrator `pending` if any purpose is null and `ready` otherwise.
 - Snapshot size is counted in UTF-8 bytes of the JSON (`TextEncoder`).
+- Lane 07 (S-5 fix round 1): a `highlights` entry is `{ id; state; states?; unitIds }`. `states?` lists 1 to 4 of `new | changed | decision | failing` and is written only when more than one applies; `state` stays the strongest. A row without `states` reads as `[state]`.
 - K-2 string caps (`overview.ts`): paths (`rootPath`, `files[]`, `entryPoints[]`, `repoRoot`) 1–1,024; snapshot `sessionId` 0–256 (empty allowed); explainer `sessionId`, `scanId`, `decisionId`, `unitIds[]` 1–128; `languages[]` ≤ 40; `generatedAt` ≤ 64; `externalDeps[].name` 1–214; component ids, edge `from`/`to`, `usedBy[].componentId` and highlight ids match `cmp_` + 12 lowercase hex.
 
 ### 8.2 Narrator (lane 05)
@@ -386,6 +400,7 @@ The lane files were drafted against the real code, and some names above had to c
 - The explainer registry is `createExplainerRegistry`; `IpcDeps.explainer`; `PipelineRuntimeOptions.onRepoFilesChanged`. Lane 07 adds `onPipelineSync(repoPath, sync)` routed through the registry.
 - `extractImports` also returns `exports`. `ScanResult` gains `totalFiles` and `tsconfig`. `ComponentDraft.importsAnalyzed` is added.
 - The `overview:rescan` handler (lane 04) rejects any repo root other than the open repo.
+- Lane 07 fix wave I-2: the `session:switch` handler calls `ExplainerRegistry.sessionSwitched(repoRoot)` through `toExplainer`; the registry forwards it to the open repo's `ExplainerStage.onSessionSwitched()`, which forwards it to `SessionExplainer.onSessionSwitched()`. The session explainer keeps the latest unprocessed sync of each session (one entry per session) and processes the open session's entry, so a session that finished while another one was open gets its final story, whys and highlights.
 
 ### 8.4 Viewer (lanes 02, 06, 07)
 
@@ -413,7 +428,15 @@ The lane files were drafted against the real code, and some names above had to c
   - `ViewPort.goToTail?(): boolean`: in the Console, `G`, the "N new" pills and the title bar's Live go Live at the tail without selecting (the Brief stays; a selection is kept). Hybrid and Canvas keep `nav/last`.
   - `displayUntrusted` tokenizes `[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]` except a tab and, with `{ multiline: true }`, `\n`; emoji clusters and keycaps render as themselves.
   - `showsBrief(state)` (`src/ui/inspector/RightPanel.tsx`); the right panel's aside is labelled after its content; `HarnessOptions.host?: ViewerHost` in the test harness.
-- **Lane 07 additions.** `ExplainerModel.stories` and the story and highlight `seq` fields; `BriefModel.decisions`; `BriefViewProps.onAnswer`; `ConsoleRowsState.base?` and `stories?`; `resolveCitation`.
+- **Lane 07 additions.**
+  - Model and layout: `ExplainerModel.stories` and the story and highlight `seq` fields; `HighlightEntryModel.states` (always set, in `HIGHLIGHT_STATES` order); `BriefModel.decisions`; `ConsoleRowsState.base?` and `stories?`; `resolveCitation`; `truncateEnd(text, maxGraphemes)` (`src/model/format.ts`, cuts the end and calls `displayUntrusted`).
+  - Map: `MapOverlay.cardState` is `ReadonlyMap<string, readonly MapCardState[]>` (every state of a card, in drawing order); `MapCardProps.states` (an array or null) replaces `state`; `MapHeaderProps.session?` (`{ counts, on, onToggle }`, the Session toggle and legend).
+  - Brief: `BriefViewProps.onAnswer`, `answers?` (each decision's `AnswerState`) and `mapSession?` (`BriefMapSession`, `src/ui/inspector/BriefMapSession.tsx`: on the Map the last part lists "This session" and a row selects the component).
+  - Answers: the shell's shared decision answer store in `src/ui/shell/decision-answers.ts`: `AnswerState`, `createDecisionAnswerStore()`, `DecisionAnswersContext` and `useDecisionAnswers()`. The Console's decision block and the Brief's cards share one store per viewer.
+  - Summary blocks and decision cards are named groups (`role="group"`), not region landmarks (fix wave minor 3).
+  - Desktop (PL-3): `createMainSlicer`, `MainSlicer` and `MAIN_SLICE_MS` (`apps/desktop/src/main/pipeline/main-slicer.ts`), passed as `slicer?` to `PipelineRuntimeOptions`, `ExplainerStageDeps` and `SessionExplainerDeps` (with `foldSliceMs?`); index.ts gives the three one instance.
+  - Storage (PL-3): `JevcodeDb.projectionVersion(type)`, `listChangeUnitVersions(sessionId)`, and `listGraphNodes` / `listGraphEdges` in rowid order (`ORDER BY rowid`); `buildSessionState` takes an optional `changeUnitCount`.
+  - Quit path: `PipelineRuntime.shutdown()` and `quitSteps(services)` (`apps/desktop/src/main/shutdown.ts`), which runs pipeline sessions, rows available, explainer, import extractor, terminals, trace reader and then the database; `PipelineCoordinator.dispose()` (semantic-core) cancels a debounced rebuild, and `shutdown()` calls it for every session (fix wave).
 - **Fixtures** for the viewer live in `packages/trace-viewer/fixtures/`.
 
 ### 8.5 Desktop renderer (lane 03)
