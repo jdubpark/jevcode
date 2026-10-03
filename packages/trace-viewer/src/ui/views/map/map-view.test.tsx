@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { useState } from "react";
+import { Activity, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OverviewSnapshot } from "@jevcode/contracts";
@@ -230,18 +230,30 @@ describe("MapView (spec §3.4, E13)", () => {
     });
     act(() => harness.setSession(sessionWith(withoutDb)));
     expect(quiet()).toBe(true);
-    // A hover when the Map is hidden.
+    // A hover when the Map is hidden the way the view switcher hides it (<Activity mode="hidden"> runs no effect bodies).
+    harness.setUi(
+      <>
+        <Activity mode="visible">
+          <MapView active />
+        </Activity>
+        <Inspector host={{}} />
+      </>,
+    );
     await user.hover(cardOf("packages/api"));
     expect(quiet()).toBe(false);
     harness.setUi(
       <>
-        <MapView active={false} />
+        <Activity mode="hidden">
+          <MapView active={false} />
+        </Activity>
         <Inspector host={{}} />
       </>,
     );
     harness.setUi(
       <>
-        <MapView active />
+        <Activity mode="visible">
+          <MapView active />
+        </Activity>
         <Inspector host={{}} />
       </>,
     );
