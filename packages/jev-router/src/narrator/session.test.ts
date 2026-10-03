@@ -87,7 +87,7 @@ describe("sessionStory", () => {
     expect(state.steps.map((step) => step.key)).toEqual(Array.from({ length: 12 }, (_, i) => `s${i + 1}`));
     expect(Math.max(...state.steps.map((step) => step.headline.length))).toBe(SESSION_LIMITS.headlineChars);
     expect(state.decisions.map((decision) => decision.key)).toEqual(["d1"]);
-    expect((state.decisions[0] as { answer: string }).answer).toHaveLength(SESSION_LIMITS.titleChars);
+    expect((state.decisions[0] as unknown as { answer: string }).answer).toHaveLength(SESSION_LIMITS.titleChars);
     expect(state.components.map((component) => component.key)).toEqual(["c1"]);
     expect(buildSessionStoryState(long).cite.get("s1")).toEqual({ kind: "step", id: "step:9" });
   });
