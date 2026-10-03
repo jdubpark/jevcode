@@ -8,7 +8,9 @@ import path from "node:path";
  *    renderer's CONSOLE_PAINT lines (p95 ≤ 150 ms over ≥ minSamples rows)
  * 3. capture the window at 1440 and 1000 px while nothing is selected, so the
  *    right panel shows the Brief (the approved main-window mockup)
- * 4. select a step and walk every view by key, checking the selection survives
+ * 4. select a step and walk every view by key, checking the selection survives;
+ *    in Surfaces, dismiss the visible surface, require the completion surface's
+ *    action buttons, click show_exact_diff and wait for a diff: surface
  * Electron is reached only through WorkspaceSmokeDeps.
  */
 
@@ -24,6 +26,8 @@ export const DEFAULT_MIN_SAMPLES = 300;
 export const APPEND_QUIET_MS = 3_000;
 export const APPEND_PHASE_TIMEOUT_MS = 180_000;
 export const VIEW_STEP_TIMEOUT_MS = 5_000;
+/** Bound on each wait inside the Surfaces step (renderer-side polling). */
+export const SURFACE_STEP_TIMEOUT_MS = 8_000;
 /** Spec §3.7 and §8.6 keys, ending back on Console. */
 export const VIEW_KEYS = [
   { code: "Digit1", key: "1", view: "canvas" },
@@ -194,6 +198,89 @@ export function pressKeyScript(code: string, key: string): string {
   })()`;
 }
 
+/**
+ * Renderer-side Surfaces probes. Each polls the DOM for up to SURFACE_STEP_TIMEOUT_MS
+ * and resolves to the visible surface ids, with the data-action names in `actions`.
+ * `data-surface-id` and `data-action` are the Surfaces view's and the catalog's own hooks.
+ */
+const SURFACE_SNAPSHOT = `(() => ({
+    ids: [...document.querySelectorAll("[data-surface-id]")].map((el) => el.getAttribute("data-surface-id")),
+    actions: [...document.querySelectorAll("[data-surface-id] [data-action]")].map((el) => el.getAttribute("data-action")),
+  }))()`;
+
+function pollSurfaces(done: string): string {
+  return `(async () => {
+    const snapshot = () => ${SURFACE_SNAPSHOT};
+    const until = Date.now() + ${SURFACE_STEP_TIMEOUT_MS};
+    while (Date.now() < until) {
+      const state = snapshot();
+      if (${done}) return state;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return { ...snapshot(), timedOut: true };
+  })()`;
+}
+
+/** Waits for a visible surface; if it has no action buttons, clicks its Dismiss so the pending one takes the slot. */
+export const SURFACES_DISMISS_SCRIPT = `(async () => {
+  const until = Date.now() + ${SURFACE_STEP_TIMEOUT_MS};
+  while (Date.now() < until && document.querySelector("[data-surface-id]") === null) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const first = document.querySelector("[data-surface-id]");
+  if (first === null) return { ids: [], actions: [], timedOut: true };
+  if (first.querySelector("[data-action]") === null) {
+    const dismiss = [...first.querySelectorAll("button")].find((button) => button.textContent.trim() === "Dismiss");
+    if (dismiss === undefined) return { ids: [first.getAttribute("data-surface-id")], actions: [], noDismiss: true };
+    dismiss.click();
+  }
+  return ${pollSurfaces('state.actions.includes("show_exact_diff")')};
+})()`;
+
+/** Clicks show_exact_diff, then waits for main to push back a diff: surface. */
+export const SURFACES_CLICK_DIFF_SCRIPT = `(async () => {
+  const button = document.querySelector('[data-surface-id] [data-action="show_exact_diff"]');
+  if (button === null) return { ids: [], actions: [], noButton: true };
+  button.click();
+  return ${pollSurfaces('state.ids.some((id) => typeof id === "string" && id.startsWith("diff:"))')};
+})()`;
+
+export interface SurfaceProbe {
+  ids: string[];
+  actions: string[];
+  timedOut?: boolean;
+  noDismiss?: boolean;
+  noButton?: boolean;
+}
+
+function readSurfaceProbe(value: unknown, step: string): SurfaceProbe {
+  const probe = value as Partial<SurfaceProbe> | null;
+  if (typeof probe !== "object" || probe === null || !Array.isArray(probe.ids) || !Array.isArray(probe.actions)) {
+    throw new Error(`Surfaces step ${step}: unreadable DOM probe result`);
+  }
+  return probe as SurfaceProbe;
+}
+
+/** The Surfaces step: the catalog's action buttons must render and a click must come back from main as a diff: surface. */
+export async function exerciseSurfaces(deps: Pick<WorkspaceSmokeDeps, "exec" | "log">): Promise<void> {
+  const dismissed = readSurfaceProbe(await deps.exec(SURFACES_DISMISS_SCRIPT), "dismiss");
+  if (dismissed.noDismiss === true) throw new Error(`Surfaces step: ${dismissed.ids.join(",")} has no Dismiss button`);
+  if (dismissed.timedOut === true && dismissed.ids.length === 0) throw new Error("Surfaces step: no surface rendered");
+  if (!dismissed.actions.includes("show_exact_diff")) {
+    throw new Error(
+      `Surfaces step: completion surface action buttons did not render (surfaces=[${dismissed.ids.join(",")}] actions=[${dismissed.actions.join(",")}], expected show_exact_diff)`,
+    );
+  }
+  const clicked = readSurfaceProbe(await deps.exec(SURFACES_CLICK_DIFF_SCRIPT), "click");
+  if (clicked.noButton === true) throw new Error("Surfaces step: show_exact_diff button vanished before the click");
+  if (!clicked.ids.some((id) => id.startsWith("diff:"))) {
+    throw new Error(
+      `Surfaces step: no diff: surface appeared within ${SURFACE_STEP_TIMEOUT_MS / 1000}s after clicking show_exact_diff (surfaces=[${clicked.ids.join(",")}])`,
+    );
+  }
+  deps.log(`SMOKE_SURFACES actions=${dismissed.actions.join(",")} diff=${clicked.ids.filter((id) => id.startsWith("diff:")).join(",")}`);
+}
+
 export function waitForLine<T>(
   deps: Pick<WorkspaceSmokeDeps, "onConsole" | "setTimeout" | "clearTimeout">,
   parse: (message: string) => T | null,
@@ -321,6 +408,7 @@ async function walkViews(deps: WorkspaceSmokeDeps): Promise<void> {
     if (location.selected !== selected) {
       throw new Error(`selection changed on ${step.view}: ${selected} → ${location.selected}`);
     }
+    if (step.view === "surfaces") await exerciseSurfaces(deps);
   }
   deps.log(`SMOKE_VIEWS selected=${selected} views=${VIEW_KEYS.map((step) => step.view).join(",")}`);
 }
