@@ -70,7 +70,11 @@ function decision(overrides: Partial<Decision> = {}): Decision {
     title: "Fail open or closed?",
     context: "rate limit",
     severity: "required",
-    options: [{ id: "opt_a", label: "Fail open", description: "serve anyway" }],
+    // Listed out of id order: the decisions projection reads options back by id.
+    options: [
+      { id: "opt_b", label: "Fail closed", description: "reject" },
+      { id: "opt_a", label: "Fail open", description: "serve anyway" },
+    ],
     affectedChangeUnits: ["cu_1"],
     evidence: ["fact_1"],
     status: "open",
@@ -119,11 +123,33 @@ describe("storage stores: unchanged re-upserts append no rows", () => {
     stores.decisions.upsert(decision({ affectedChangeUnits: ["cu_1", "cu_2"] }));
     expect(rowsOf(db, "decision")).toBe(2);
 
-    const answered = decision({ affectedChangeUnits: ["cu_1", "cu_2"], status: "answered" });
+    // An answer carries ts, which the decisions projection does not keep.
+    const answered = decision({
+      affectedChangeUnits: ["cu_1", "cu_2"],
+      status: "answered",
+      answer: { decisionId: "dec_1", decision: { choice: "opt_a" }, evidence: ["fact_1"] },
+      ts: "2026-10-03T00:01:00.000Z",
+    });
     stores.decisions.upsert(answered);
     stores.decisions.upsert(answered);
     expect(rowsOf(db, "decision")).toBe(3);
     expect(stores.decisions.get("dec_1")?.status).toBe("answered");
+  });
+
+  // The runtime writes each incoming decision record straight to the database
+  // (pipeline-runtime.ts), then the rebuild upserts the linked version through the store.
+  it("rewrites the linked decision after a raw write of the same record replaced it", () => {
+    const { db, stores } = open();
+    const raw = decision({ affectedChangeUnits: ["cu_raw"] });
+    const linked = decision({ affectedChangeUnits: [] });
+    for (let arrival = 0; arrival < 2; arrival += 1) {
+      db.upsertDecision(raw);
+      stores.decisions.upsert(linked);
+    }
+    const rows = db.listEvents(SESSION, { limit: 10_000 }).filter((event) => event.type === "decision");
+    expect(rows).toHaveLength(4);
+    expect((JSON.parse(rows.at(-1)?.payloadJson ?? "{}") as Decision).affectedChangeUnits).toEqual([]);
+    expect(db.getDecision("dec_1")?.affectedChangeUnits).toEqual([]);
   });
 });
 
