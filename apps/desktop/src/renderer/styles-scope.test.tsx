@@ -169,6 +169,18 @@ describe("the main window's stylesheet never reaches the embedded viewer (lane 0
     expect(leaks).toEqual([]);
   });
 
+  it("scopes every selector: each carries the viewer guard, names a class or id, or is :root, html or body", () => {
+    // The probes above cover 52 tags; this covers selectors they cannot enumerate (`[aria-checked]`, `[role]`,
+    // `[data-tone]`, `details[open]`, `input[type]`, `:checked`) that would reach the viewer if written bare.
+    const GUARD = ":where(:not([data-trace-viewer]";
+    const hasClassOrId = (selector: string): boolean => /[.#][_a-zA-Z-]/.test(selector.replace(/\[[^\]]*\]/g, ""));
+    const isRoot = (selector: string): boolean => /^(?::root|html|body)(?::{1,2}[\w-]+)*$/.test(selector);
+    const unscoped = selectors(CSS).filter(
+      (selector) => !selector.includes(GUARD) && !hasClassOrId(selector) && !isRoot(selector),
+    );
+    expect(unscoped).toEqual([]);
+  });
+
   it("still styles host chrome and the Surfaces host view with the same element rules", () => {
     const elementRules = (element: Element): string[] =>
       matching(element).filter((selector) => /^(button|:where)/.test(selector));
