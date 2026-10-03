@@ -377,23 +377,29 @@ async function main() {
       // inside it.
       // Real time over DevTools: under --virtual-time-budget the probe found no bar about one run in six on a loaded
       // machine (the bundle fetch outlasted the budget), with or without this wave's frame and chip.
-      const bar = await chromeSelftest(
-        path.join(tmp, "chrome-bar"),
-        `${ORIGIN}/?bundle=oauth&chrome=embedded&frame=${MAIN_COLUMN_AT_MIN}&selftest=bar&gaps=3&approx=1${locationHash(sessionId, "console")}`,
-        60_000,
-        "pre#selftest",
-        "880,900",
-      );
-      const barMisses = [];
-      if (bar.barWidth !== MAIN_COLUMN_AT_MIN) barMisses.push(`the bar is ${bar.barWidth} px wide, not ${MAIN_COLUMN_AT_MIN}`);
-      if (bar.gapsChip !== true) barMisses.push("no gaps chip");
-      if (bar.approxChip !== true) barMisses.push("no approximate-joins chip");
-      if (bar.fits !== true) barMisses.push(`horizontal overflow (scrollWidth ${bar.barScrollWidth} > ${bar.barWidth})`);
-      if (bar.briefVisible !== true) barMisses.push("the Brief toggle is not visible inside the bar");
-      if (barMisses.length > 0) throw new Error(`embedded bar at ${MAIN_COLUMN_AT_MIN} px: ${barMisses.join("; ")}`);
-      console.log(
-        `embedded bar at ${MAIN_COLUMN_AT_MIN} px: fits (scrollWidth ${bar.barScrollWidth}), gaps and approximate-joins chips and Brief toggle visible`,
-      );
+      // Every view with a zoom menu (Canvas, Hybrid, Map) adds a button to the bar, so the probe runs on all four built-in
+      // views; the dev host registers a stub Surfaces host view in embedded mode, so the bar has the main window's five
+      // segments.
+      for (const barView of ["console", "canvas", "hybrid", "map"]) {
+        const bar = await chromeSelftest(
+          path.join(tmp, `chrome-bar-${barView}`),
+          `${ORIGIN}/?bundle=oauth${barView === "map" ? `&overview=${MAP_OVERVIEW}` : ""}&chrome=embedded&frame=${MAIN_COLUMN_AT_MIN}&selftest=bar&gaps=3&approx=1${locationHash(sessionId, barView)}`,
+          60_000,
+          "pre#selftest",
+          "880,900",
+        );
+        const barMisses = [];
+        if (bar.barWidth !== MAIN_COLUMN_AT_MIN) barMisses.push(`the bar is ${bar.barWidth} px wide, not ${MAIN_COLUMN_AT_MIN}`);
+        if (bar.segments !== 5) barMisses.push(`the bar has ${bar.segments} view segments, not 5`);
+        if (bar.gapsChip !== true) barMisses.push("no gaps chip");
+        if (bar.approxChip !== true) barMisses.push("no approximate-joins chip");
+        if (bar.fits !== true) barMisses.push(`horizontal overflow (scrollWidth ${bar.barScrollWidth} > ${bar.barWidth})`);
+        if (bar.briefVisible !== true) barMisses.push("the Brief toggle is not visible inside the bar");
+        if (barMisses.length > 0) throw new Error(`embedded bar on ${barView} at ${MAIN_COLUMN_AT_MIN} px: ${barMisses.join("; ")}`);
+        console.log(
+          `embedded bar on ${barView} at ${MAIN_COLUMN_AT_MIN} px: fits (scrollWidth ${bar.barScrollWidth}), 5 segments, gaps and approximate-joins chips and Brief toggle visible`,
+        );
+      }
       // The Map header in the same column: its Map pane is the column less the 264 px Brief (fix wave minor 2). With
       // three long language names, as a real repository can give (Electron showed "TypeScript · HTML · Java…"), the
       // nowrap row cuts the languages and keeps its Overview toggle whole.
