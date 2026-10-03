@@ -302,6 +302,8 @@ describe("ExplainerStage scan and rows (spec §6.1, §6.5)", () => {
     const latest = snapshotRows(h.db, SESSION_2).at(-1)?.snapshot as OverviewSnapshot;
     // The rebuild wrote only the session that was open.
     expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
+    // The first session kept running in the background: its pipeline synced while another session was open.
+    stage.onPipelineSync({ sessionId: SESSION, lastSeq: h.db.getSession(SESSION)?.lastEventSeq ?? 0, changeUnits: [], decisions: [] });
 
     current = SESSION;
     stage.onSessionSwitched();
@@ -317,6 +319,27 @@ describe("ExplainerStage scan and rows (spec §6.1, §6.5)", () => {
     stage.onSessionSwitched();
     await stage.whenIdle();
     expect(snapshotRows(h.db, SESSION)).toHaveLength(2);
+  });
+
+  it("leaves a session that did not run while away as it was: browsing history appends no snapshot row", async () => {
+    let current = SESSION;
+    const h = harness({ sessionId: () => current });
+    const stage = start(h);
+    stage.onRepoOpened();
+    await stage.whenIdle();
+    current = SESSION_2;
+    stage.onSessionStarted(SESSION_2);
+    h.sources["packages/core/src/index.ts"] = "export const user = 3;\n";
+    stage.onFilesChanged(["packages/core/src/index.ts"]);
+    h.clock.advance(FILES_SETTLE_MS);
+    await stage.whenIdle();
+    h.clock.advance(SNAPSHOT_WRITE_INTERVAL_MS);
+    await stage.whenIdle();
+
+    current = SESSION;
+    stage.onSessionSwitched();
+    await stage.whenIdle();
+    expect(snapshotRows(h.db, SESSION)).toHaveLength(1);
   });
 
   it("scans on the first session start when the repo-open scan never ran", async () => {
