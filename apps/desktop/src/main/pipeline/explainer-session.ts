@@ -119,6 +119,9 @@ interface Tracked {
   readonly answered: Set<string>;
   /** Redacted label text of lifecycle, dependency and revert steps, by their first row's seq (stepSourceText). */
   readonly sources: Map<number, string>;
+  /** The seq of the row where each unit first closed and each decision was first answered or delegated (the seed's basis). */
+  readonly closedAt: Map<string, number>;
+  readonly answeredAt: Map<string, number>;
   testRuns: number;
   terminalTurn: number;
   unitsAtStory: number;
@@ -286,11 +289,27 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
     tracked = {
       sessionId, fold: createTraceState(meta), cursor: 0, session: null, sync: null, seeded: false,
       initialComponentIds: null, highlights: [], highlightsKey: null, seenUnits: new Set(), closedUnits: new Set(),
-      answered: new Set(), sources: new Map(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
+      answered: new Set(), sources: new Map(), closedAt: new Map(), answeredAt: new Map(), testRuns: 0, terminalTurn: -1, unitsAtStory: 0, storyKey: null, storyAsked: false,
       storyText: null, storyPending: false, storyRunning: false, lastStoryAt: storyTimes.get(sessionId) ?? null, storyTimer: null, whyQueue: [],
       whyDone: new Set(), whyRunning: false, whyTimer: null,
     };
     return tracked;
+  }
+
+  /**
+   * Notes the row where a unit first closed or a decision was first answered or delegated, so a seed counts as told
+   * only what came by the latest story's basisSeq (re-review minor).
+   */
+  function noteTold(t: Tracked, type: string, seq: number, payload: unknown): void {
+    if (type !== "change_unit" && type !== "decision") return;
+    if (payload === null || typeof payload !== "object") return;
+    const row = payload as { id?: unknown; status?: unknown };
+    if (typeof row.id !== "string") return;
+    if (type === "change_unit" && CLOSED_UNIT.has(row.status as ChangeUnit["status"])) {
+      if (!t.closedAt.has(row.id)) t.closedAt.set(row.id, seq);
+    } else if (type === "decision" && (row.status === "answered" || row.status === "delegated")) {
+      if (!t.answeredAt.has(row.id)) t.answeredAt.set(row.id, seq);
+    }
   }
 
   /**
@@ -345,6 +364,7 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
           // The full text a cut headline came from, kept before the fold cuts it (leftover 1 of the fix wave).
           const source = stepSourceText(event.type, payload);
           if (source !== null) t.sources.set(event.seq, source);
+          noteTold(t, event.type, event.seq, payload);
           accumulate(t.fold, { seq: event.seq, type: event.type, ts: event.ts, payload });
           unsettled = true;
         }
@@ -457,18 +477,21 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       t.highlightsKey = JSON.stringify(entries);
     }
     if (explainer.story === null) return;
-    // Narrated before (an app restart, or a session open again after another one was followed): the units, decisions
-    // and answers up to now count as told. Test runs and turn ends count only up to the story's basisSeq, so a run or
-    // an agent completion that came after it (a session that finished while another one was open, lane fix I-2) still
-    // triggers its story.
+    // Narrated before (an app restart, or a session open again after another one was followed). Unit closures,
+    // answers, test runs and turn ends count as told only up to the story's basisSeq, so one that came after it (a
+    // session that finished while another one was open, lane fix I-2; or just before the app quit, re-review minor)
+    // still triggers its story. A closure or answer whose row the fold has not reached counts as after the story.
     const basis = explainer.story.basisSeq;
+    const told = (at: number | undefined): boolean => at !== undefined && at <= basis;
     t.storyText = storyTextOf(explainer.story.sentences, explainer.story.provenance);
     for (const unit of sync.changeUnits) {
       t.seenUnits.add(unit.id);
-      if (CLOSED_UNIT.has(unit.status)) t.closedUnits.add(unit.id);
+      if (CLOSED_UNIT.has(unit.status) && told(t.closedAt.get(unit.id))) t.closedUnits.add(unit.id);
     }
     for (const decision of sync.decisions) {
       if (decision.status !== "answered" && decision.status !== "delegated") continue;
+      // Answered after the story: detect() triggers it and queues its why.
+      if (!told(t.answeredAt.get(decision.id))) continue;
       t.answered.add(decision.id);
       if (!t.whyDone.has(decision.id)) t.whyQueue.push(decision.id);
     }
@@ -542,10 +565,10 @@ export function createSessionExplainer(deps: SessionExplainerDeps): SessionExpla
       append(t, { sessionId: t.sessionId, kind: "highlights", basisSeq: session.loadedThroughSeq, components: highlights });
       t.highlightsKey = key;
     }
-    if (detect(t, session, sync)) {
-      t.storyPending = true;
-      kick(t);
-    }
+    if (detect(t, session, sync)) t.storyPending = true;
+    // Also a story that came due while the session was not open (its timer found it not current): kick does nothing
+    // unless one is pending (re-review of lane fix I-2).
+    kick(t);
     pumpWhy(t);
   }
 
