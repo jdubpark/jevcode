@@ -5,8 +5,10 @@ import { ipcMain } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
+import { deserializeIpcError } from "../shared/api.js";
 import { registerIpcHandlers } from "./ipc.js";
 import type { IpcDeps } from "./ipc.js";
+import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
@@ -218,6 +220,105 @@ describe("explainWithModel preference (spec E15)", () => {
       model: "gpt-5.6-sol",
       explainWithModel: false,
     });
+    db.close();
+  });
+});
+
+describe("explainer wiring (console-explainer M-6)", () => {
+  function explainerSpy(): { registry: ExplainerRegistry; calls: string[] } {
+    const calls: string[] = [];
+    const registry: ExplainerRegistry = {
+      repoOpened: (repoRoot) => void calls.push(`open ${repoRoot}`),
+      repoClosed: (repoRoot) => void calls.push(`close ${repoRoot}`),
+      sessionStarted: (repoRoot, sessionId) => void calls.push(`session ${repoRoot} ${sessionId}`),
+      filesChanged: () => {},
+      rescan: (repoRoot) => void calls.push(`rescan ${repoRoot}`),
+      get: () => undefined,
+      dispose: () => {},
+    };
+    return { registry, calls };
+  }
+
+  /** A handler-body IpcError crosses IPC as a message; the renderer's api turns it back into a code. */
+  const asRenderer = (call: unknown): Promise<unknown> =>
+    Promise.resolve(call).catch((error: unknown) => {
+      throw deserializeIpcError(error);
+    });
+
+  it("repo:close closes the open repo's explainer stage", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { registry, calls } = explainerSpy();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
+    await handlers.get(RendererToMainChannels.repoClose)!(TRUSTED_EVENT, { repoId: "repo_a" });
+    expect(calls).toEqual(["close /a"]);
+    db.close();
+  });
+
+  it("session:start tells the explainer which session started in which repo", async () => {
+    const { db, state } = seedRepoAndSession();
+    state.info = { gitRoot: "/a", branch: "main", baseCommit: "abc" };
+    const { runtime } = stubRuntime();
+    const { registry, calls } = explainerSpy();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
+    await handlers.get(RendererToMainChannels.sessionStart)!(TRUSTED_EVENT, { repoId: "repo_a", prompt: "go" });
+    expect(calls).toEqual(["session /a sess_a"]);
+    db.close();
+  });
+
+  it("overview:rescan forwards the root from the main window and is denied to trace windows", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const main = explainerSpy();
+    const mainHandlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: main.registry });
+    await mainHandlers.get(RendererToMainChannels.overviewRescan)!(TRUSTED_EVENT, { repoRoot: "/a" });
+    expect(main.calls).toEqual(["rescan /a"]);
+
+    const trace = explainerSpy();
+    const traceHandlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), explainer: trace.registry });
+    await expect(
+      traceHandlers.get(RendererToMainChannels.overviewRescan)!(TRUSTED_EVENT, { repoRoot: "/a" }),
+    ).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    expect(trace.calls).toEqual([]);
+    db.close();
+  });
+
+  it("overview:rescan rejects a root that is not the open repo, a closed repo and an invalid payload", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { registry, calls } = explainerSpy();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), explainer: registry });
+    const rescan = handlers.get(RendererToMainChannels.overviewRescan)!;
+    await expect(asRenderer(rescan(TRUSTED_EVENT, { repoRoot: "/elsewhere" }))).rejects.toMatchObject({ code: "NO_ACTIVE_SESSION" });
+    await expect(rescan(TRUSTED_EVENT, { repoRoot: "" })).rejects.toMatchObject({ code: "INVALID_PAYLOAD" });
+    await expect(rescan(TRUSTED_EVENT, { repoRoot: "/a", extra: true })).resolves.toBeNull();
+    state.repo = null;
+    await expect(asRenderer(rescan(TRUSTED_EVENT, { repoRoot: "/a" }))).rejects.toMatchObject({ code: "NO_ACTIVE_SESSION" });
+    expect(calls).toEqual(["rescan /a"]);
+    db.close();
+  });
+
+  it("logs a throwing explainer and still starts the session and closes the repo (spec §6.6)", async () => {
+    const { db, state } = seedRepoAndSession();
+    state.info = { gitRoot: "/a", branch: "main", baseCommit: "abc" };
+    const { runtime, calls } = stubRuntime();
+    const log = vi.fn();
+    const boom = (): never => {
+      throw new Error("stage exploded");
+    };
+    const registry: ExplainerRegistry = { ...explainerSpy().registry, sessionStarted: boom, repoClosed: boom };
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), log, explainer: registry });
+
+    await expect(
+      handlers.get(RendererToMainChannels.sessionStart)!(TRUSTED_EVENT, { repoId: "repo_a", prompt: "go" }),
+    ).resolves.toBeNull();
+    expect(calls.map((call) => call.method)).toContain("startSession");
+    expect(state.session?.id).toBe("sess_a");
+    expect(log).toHaveBeenCalledWith("explainer sessionStarted failed: stage exploded");
+
+    await expect(handlers.get(RendererToMainChannels.repoClose)!(TRUSTED_EVENT, { repoId: "repo_a" })).resolves.toBeNull();
+    expect(state.repo).toBeNull();
+    expect(log).toHaveBeenCalledWith("explainer repoClosed failed: stage exploded");
     db.close();
   });
 });

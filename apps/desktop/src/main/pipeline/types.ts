@@ -39,6 +39,11 @@ export interface PipelineRuntimeOptions {
   nowIso?: () => string;
   log?: (message: string) => void;
   modelSelector?: ModelSelector;
+  /**
+   * Repo files the watcher saw change (file_changed facts), for the explainer stage's
+   * incremental rebuild (console-explainer spec §5.1). Errors are logged, never thrown.
+   */
+  onRepoFilesChanged?: (repoPath: string, paths: readonly string[]) => void;
 }
 
 export interface SessionStartOptions {

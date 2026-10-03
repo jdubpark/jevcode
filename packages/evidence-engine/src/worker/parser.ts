@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { SymbolInfo } from "@jevcode/contracts";
 
-import { extractSymbols, type ParseNode } from "./tree-sitter.js";
+import { extractImportSpecifiers, extractSymbols, type ImportScan, type ParseNode } from "./tree-sitter.js";
 
 export type ParserLanguage = "typescript" | "tsx" | "javascript" | "json";
 
@@ -33,7 +33,15 @@ const GRAMMAR_FILES: Readonly<Record<ParserLanguage, string>> = {
 
 export interface TreeSitterBackend {
   parse(source: string, language: ParserLanguage): SymbolInfo[];
+  /** Import specifiers and exported names; JSON has none and is not parsed. */
+  imports(source: string, language: ParserLanguage): ImportScan;
   dispose(): Promise<void>;
+}
+
+interface ReusableParser {
+  setLanguage(language: unknown): void;
+  parse(source: string): { rootNode: ParseNode; delete?(): void };
+  delete?(): void;
 }
 
 interface WebTreeSitterModule {
@@ -94,7 +102,28 @@ async function createWebTreeSitterBackend(): Promise<TreeSitterBackend> {
   for (const language of Object.keys(GRAMMAR_FILES) as ParserLanguage[]) {
     languages.set(language, await Language.load(resolveGrammarPath(language)));
   }
+  // One parser per language for import scans: a scan parses thousands of files in a row.
+  const importParsers = new Map<ParserLanguage, ReusableParser>();
   return {
+    imports(source: string, language: ParserLanguage): ImportScan {
+      if (language === "json") return { specifiers: [], exports: [] };
+      let parser = importParsers.get(language);
+      if (parser === undefined) {
+        const grammarLanguage = languages.get(language);
+        if (!grammarLanguage) {
+          throw new Error(`grammar not loaded for language: ${language}`);
+        }
+        parser = new Parser() as unknown as ReusableParser;
+        parser.setLanguage(grammarLanguage);
+        importParsers.set(language, parser);
+      }
+      const tree = parser.parse(source);
+      try {
+        return extractImportSpecifiers(tree.rootNode, source);
+      } finally {
+        tree.delete?.();
+      }
+    },
     parse(source: string, language: ParserLanguage): SymbolInfo[] {
       const grammarLanguage = languages.get(language);
       if (!grammarLanguage) {
@@ -114,6 +143,8 @@ async function createWebTreeSitterBackend(): Promise<TreeSitterBackend> {
       }
     },
     async dispose(): Promise<void> {
+      for (const parser of importParsers.values()) parser.delete?.();
+      importParsers.clear();
       languages.clear();
     },
   };
@@ -135,6 +166,15 @@ function createNativeTreeSitterBackend(module: unknown): TreeSitterBackend {
       };
       parser.setLanguage(grammarLanguage);
       return extractSymbols(parser.parse(source).rootNode, source);
+    },
+    imports(source: string, language: ParserLanguage): ImportScan {
+      if (language === "json") return { specifiers: [], exports: [] };
+      const require = createRequire(import.meta.url);
+      const grammarPackage =
+        language === "tsx" ? "tree-sitter-tsx" : `tree-sitter-${language}`;
+      const parser = new Parser() as unknown as ReusableParser;
+      parser.setLanguage(Language.load(require.resolve(grammarPackage)));
+      return extractImportSpecifiers(parser.parse(source).rootNode, source);
     },
     async dispose(): Promise<void> {},
   };

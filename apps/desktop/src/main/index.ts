@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
 import { app, BrowserWindow } from "electron";
+import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
+import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
 import { openDb, openTraceReader } from "@jevcode/storage";
 import type { JevcodeDb, TraceReader } from "@jevcode/storage";
 
@@ -14,11 +16,14 @@ import {
   sendToRenderer,
   setMainWindow,
 } from "./ipc.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel } from "../shared/prefs.js";
+import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import type { TerminalSink } from "./pipeline/types.js";
 import { sweepStaleSessions } from "./session-recovery.js";
+import { runShutdown } from "./shutdown.js";
 import { createAppState } from "./state.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
@@ -59,6 +64,8 @@ let db: JevcodeDb | null = null;
 let traceReader: TraceReader | null = null;
 let traceWindows: TraceWindowRegistry | null = null;
 let runtime: PipelineRuntime | null = null;
+let explainer: ExplainerRegistry | null = null;
+let importExtractor: ImportExtractor | null = null;
 const state = createAppState();
 
 function createWindow(): BrowserWindow {
@@ -120,11 +127,42 @@ app.whenReady().then(() => {
     },
   };
 
+  // Console-explainer spec §6: one explainer stage for the open repo. Import extraction runs in
+  // its own worker pool, which stops after 30 s idle, so scans never queue behind evidence parses.
+  const eventsDb = db;
+  const extractor = createImportExtractor();
+  importExtractor = extractor;
+  const explainerRegistry = createExplainerRegistry((repoRoot) =>
+    createExplainerStage({
+      db: eventsDb,
+      repoRoot,
+      sessionId: () => (state.repo?.gitRoot === repoRoot ? (state.session?.id ?? null) : null),
+      scan: scanRepo,
+      scanPaths,
+      extract: extractor.extract,
+      // Lane 03 D-6 Step 1 replaces this direct send with a no-op: D-1's observeTraceAppends already
+      // hints every committed trace row through the coalesced emitter, which also reaches trace windows.
+      emitRowsAvailable: (sessionId, lastSeq) =>
+        sendToRenderer(MainToRendererChannels.traceRowsAvailable, { sessionId, lastSeq }),
+      now: () => Date.now(),
+      schedule: {
+        setTimeout: (fn, ms) => setTimeout(fn, ms),
+        clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      },
+      log: (event) => console.log(`[explainer] ${JSON.stringify(event)}`),
+      // Ruling R3: narrator status "off" when the setting is off. Lane 05 N-5 adds `narration`.
+      explainWithModel: () => normalizeExplainWithModel(eventsDb.getPreference(EXPLAIN_WITH_MODEL_PREF_KEY)),
+    }),
+    (message) => console.error(`[explainer] ${message}`),
+  );
+  explainer = explainerRegistry;
+
   runtime = new PipelineRuntime({
     db,
     emit: sendToRenderer,
     terminal: terminalSink,
     log: (message) => console.log(`[pipeline] ${message}`),
+    onRepoFilesChanged: (repoPath, paths) => explainerRegistry.filesChanged(repoPath, paths),
   });
 
   const instructionRouter = new InstructionRouter({
@@ -185,6 +223,7 @@ app.whenReady().then(() => {
       sendToRenderer,
     },
     requestRepoPath: () => openDirectoryDialog(mainWindow),
+    explainer: explainerRegistry,
     log: (message) => console.log(`[ipc] ${message}`),
   });
 
@@ -219,11 +258,23 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  terminals?.disposeAll();
+  const stopping = { explainer, importExtractor, terminals, traceReader, db };
+  explainer = null;
+  importExtractor = null;
   terminals = null;
-  traceReader?.close();
   traceReader = null;
-  db?.close();
   db = null;
   runtime = null;
+  // The stage writes rows and overview_state, so it stops before the database closes. A step
+  // that throws is logged and the rest still run.
+  runShutdown(
+    [
+      { name: "explainer", run: () => stopping.explainer?.dispose() },
+      { name: "import extractor", run: () => stopping.importExtractor?.dispose() },
+      { name: "terminals", run: () => stopping.terminals?.disposeAll() },
+      { name: "trace reader", run: () => stopping.traceReader?.close() },
+      { name: "database", run: () => stopping.db?.close() },
+    ],
+    (message) => console.error(`[quit] ${message}`),
+  );
 });

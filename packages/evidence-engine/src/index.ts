@@ -12,3 +12,4 @@ export * from "./collectors/dependencies.js";
 export * from "./collectors/tests.js";
 export * from "./collectors/commands.js";
 export * from "./collectors/revert.js";
+export * from "./imports.js";
