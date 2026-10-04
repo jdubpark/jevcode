@@ -146,7 +146,13 @@ export function createSecretsStore(options: SecretsStoreOptions): SecretsStore {
     if (value === null) plain.delete(name);
     else plain.set(name, value);
     unreadable.delete(name);
-    for (const listener of listeners) listener(name);
+    for (const listener of listeners) {
+      try {
+        listener(name);
+      } catch {
+        log(`a ${name} change listener failed`);
+      }
+    }
   };
 
   const requireName = (name: unknown): ApiKeyName => {
