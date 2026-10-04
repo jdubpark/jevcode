@@ -6,5 +6,15 @@ coverage/
 *.log
 .DS_Store
 .env*
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+credentials.json
 apps/desktop/.test-tmp/
 .superpowers/
