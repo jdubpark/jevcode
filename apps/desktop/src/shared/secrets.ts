@@ -48,7 +48,7 @@ export function isApiKeyName(value: unknown): value is ApiKeyName {
 }
 
 // eslint-disable-next-line no-control-regex -- control characters are exactly what is rejected
-const FORBIDDEN = /[\s\u0000-\u001f\u007f]/u;
+const FORBIDDEN = /[\s\u0000-\u001f\u007f-\u009f]/u;
 
 /** Trimmed value, or null when it is empty, too long, or holds whitespace or control characters. */
 export function normalizeKeyValue(raw: string): string | null {

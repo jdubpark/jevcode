@@ -84,7 +84,7 @@ describe("secrets store", () => {
     expect(store.active("ANTHROPIC_API_KEY")).toBe("sk-env-key-9999");
   });
 
-  it.each(["", "   ", "sk ant", "x".repeat(513), "sk-\u0007-bell"])("refuses %j without repeating it", (value) => {
+  it.each(["", "   ", "sk ant", "x".repeat(513), "sk-\u0007-bell", "sk-\u0090-dcs"])("refuses %j without repeating it", (value) => {
     const store = createSecretsStore({ filePath, crypto: fakeCrypto(), env: {} });
     let error: unknown;
     try {
@@ -172,5 +172,21 @@ describe("secrets store", () => {
     store.set("ANTHROPIC_API_KEY", SECRET);
     store.remove("ANTHROPIC_API_KEY");
     expect(seen).toEqual([SECRET, "sk-env-key-9999"]);
+  });
+
+  it("commits a save even when a subscriber throws, and still notifies later subscribers", () => {
+    const logs: string[] = [];
+    const store = createSecretsStore({ filePath, crypto: fakeCrypto(), env: {}, log: (m) => logs.push(m) });
+    const later: string[] = [];
+    store.subscribe(() => {
+      throw new Error(`boom ${SECRET}`);
+    });
+    store.subscribe((name) => later.push(name));
+    const view = store.set("ANTHROPIC_API_KEY", SECRET);
+    expect(view.keys[0]).toMatchObject({ source: "app", last4: "1234" });
+    expect(later).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(store.active("ANTHROPIC_API_KEY")).toBe(SECRET);
+    expect(logs.some((line) => line.includes("change listener failed"))).toBe(true);
+    expect(logs.join("\n")).not.toContain(SECRET);
   });
 });
