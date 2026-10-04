@@ -66,6 +66,8 @@ describe("KeysSection", () => {
     await within(row).findByText("Key works");
     fireEvent.click(within(row).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(keys.remove).toHaveBeenCalledWith("ANTHROPIC_API_KEY"));
+    // The check was about the removed key; it must not sit under whatever key is active next.
+    await waitFor(() => expect(within(row).queryByText("Key works")).toBeNull());
     expect(within(screen.getByRole("group", { name: /TypeSafe/ })).queryByRole("button", { name: "Test" })).toBeNull();
   });
 

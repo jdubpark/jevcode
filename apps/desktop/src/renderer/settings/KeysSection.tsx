@@ -86,7 +86,13 @@ function KeyRow({ status, canSave, api }: { status: KeyStatus; canSave: boolean;
             <button
               type="button"
               className="settings-button"
-              onClick={() => void api.remove(status.name).catch((error: unknown) => setMessage(errorText(error)))}
+              onClick={() =>
+                void api
+                  .remove(status.name)
+                  // A test result described the removed key, not the one active next.
+                  .then(() => setMessage(null))
+                  .catch((error: unknown) => setMessage(errorText(error)))
+              }
             >
               Remove
             </button>
