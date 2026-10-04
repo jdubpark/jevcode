@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_AGENT_PREFERENCES } from "../../shared/prefs.js";
@@ -61,5 +61,17 @@ describe("FeaturesSection", () => {
     expect(onSet).toHaveBeenCalledWith({ model: "gpt-5.6-sol" });
     expect(onSet).toHaveBeenCalledWith({ reasoningEffort: "high" });
     expect(onSet).toHaveBeenCalledWith({ usageBudgetFraction: "0.40" });
+  });
+
+  it("marks the Codex model, reasoning effort and usage budget once as applying to new sessions, and not the narrator", () => {
+    render(<FeaturesSection prefs={prefs({ narratorAvailability: "on" })} onSet={vi.fn()} />);
+    const codex = screen.getByRole("group", { name: "Codex · applies to new sessions" });
+    expect(within(codex).getByLabelText("Model")).toBeTruthy();
+    expect(within(codex).getByLabelText("Reasoning")).toBeTruthy();
+    expect(within(codex).getByRole("slider", { name: "Usage budget" })).toBeTruthy();
+    expect(within(codex).queryByText("Applies to new sessions")).toBeNull();
+    expect(within(codex).queryByRole("checkbox", { name: "Explain with a model" })).toBeNull();
+    // Agent backend, Jev decisions and the Codex group; the narrator applies at once.
+    expect(screen.getAllByText(/applies to new sessions/i)).toHaveLength(3);
   });
 });

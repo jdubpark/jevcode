@@ -3,7 +3,7 @@ import { useId, useRef, useState } from "react";
 import { CANNOT_ENCRYPT_MESSAGE } from "../../shared/secrets.js";
 import type { ApiKeyName, KeyStatus, KeyTestResult, SecretsView } from "../../shared/secrets.js";
 import { Glyph } from "../components/glyph.js";
-import { keyPurpose, keyStatusLine, keyTestLine, keyTitle } from "./settings-format.js";
+import { keyAppliesNote, keyPurpose, keyStatusLine, keyTestLine, keyTitle } from "./settings-format.js";
 
 export interface KeysApi {
   set(name: ApiKeyName, value: string): Promise<SecretsView>;
@@ -25,6 +25,7 @@ function KeyRow({ status, canSave, api }: { status: KeyStatus; canSave: boolean;
   const [message, setMessage] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const title = keyTitle(status.name);
+  const appliesNote = keyAppliesNote(status.name);
 
   // Closing the form unmounts the field, which drops what was typed.
   const closeForm = () => {
@@ -52,8 +53,9 @@ function KeyRow({ status, canSave, api }: { status: KeyStatus; canSave: boolean;
         <span className="settings-key-purpose">{keyPurpose(status.name)}</span>
       </div>
       <p className="settings-key-status" aria-live="polite">
-        {keyStatusLine(status)}
+        {keyStatusLine(status, canSave)}
       </p>
+      {appliesNote !== null ? <p className="settings-key-note">{appliesNote}</p> : null}
       {editing ? (
         <form
           className="settings-key-form"
@@ -82,7 +84,8 @@ function KeyRow({ status, canSave, api }: { status: KeyStatus; canSave: boolean;
           <button type="button" className="settings-button" disabled={!canSave} onClick={() => setEditing(true)}>
             {status.set ? "Replace" : "Add"}
           </button>
-          {status.source === "app" ? (
+          {/* An unreadable saved key gets Remove too: where saving is refused, removing it is the only way out. */}
+          {status.source === "app" || status.unreadable ? (
             <button
               type="button"
               className="settings-button"
@@ -116,7 +119,10 @@ function KeyRow({ status, canSave, api }: { status: KeyStatus; canSave: boolean;
           ) : null}
         </div>
       )}
-      {message !== null ? <p className="settings-key-message" role="status">{message}</p> : null}
+      {/* Mounted while empty: a screen reader announces a live region's changes, not a region that mounts with text. */}
+      <p className="settings-key-message" role="status">
+        {message}
+      </p>
     </div>
   );
 }
@@ -126,7 +132,9 @@ export function KeysSection({ view, api }: { view: SecretsView; api: KeysApi }) 
     <section className="settings-section" aria-labelledby="settings-keys-title">
       <h2 id="settings-keys-title">API keys</h2>
       {!view.canSave ? <p className="settings-note">{CANNOT_ENCRYPT_MESSAGE}</p> : null}
-      {view.fileUnreadable ? <p className="settings-note">Saved keys could not be read; save them again.</p> : null}
+      {view.fileUnreadable ? (
+        <p className="settings-note">{view.canSave ? "Saved keys could not be read; save them again." : "Saved keys could not be read."}</p>
+      ) : null}
       {view.keys.map((status) => (
         <KeyRow key={status.name} status={status} canSave={view.canSave} api={api} />
       ))}

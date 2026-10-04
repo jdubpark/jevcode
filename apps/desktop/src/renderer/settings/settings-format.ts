@@ -8,11 +8,16 @@ export function keyPurpose(name: ApiKeyName): string {
   return name === "ANTHROPIC_API_KEY" ? "Narrator descriptions and stories" : "Jev decisions";
 }
 
-export function keyStatusLine(status: KeyStatus): string {
+/** The TypeSafe key is read when a session starts; the Anthropic key applies at once (the narrator re-keys). */
+export function keyAppliesNote(name: ApiKeyName): string | null {
+  return name === "TYPESAFE_API_KEY" ? "Applies to new sessions" : null;
+}
+
+/** canSave: the OS can encrypt, so "save it again" is possible; otherwise the row offers only Remove. */
+export function keyStatusLine(status: KeyStatus, canSave: boolean): string {
   if (status.unreadable && status.source !== "app") {
-    return status.source === "env"
-      ? `A saved key could not be read; save it again · using the environment key …${status.last4 ?? ""}`
-      : "A saved key could not be read; save it again";
+    const unreadable = canSave ? "A saved key could not be read; save it again" : "A saved key could not be read; remove it";
+    return status.source === "env" ? `${unreadable} · using the environment key …${status.last4 ?? ""}` : unreadable;
   }
   switch (status.source) {
     case "app":
