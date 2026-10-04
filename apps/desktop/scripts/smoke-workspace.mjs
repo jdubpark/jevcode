@@ -45,6 +45,7 @@ const child = spawn(electron, ["."], {
     // 80 steps = 321 agent events and 160 evidence facts, 150 ms apart: enough append samples for a p95 (docs/perf.md, >= 300).
     JEVCODE_SMOKE_STEPS: process.env.JEVCODE_SMOKE_STEPS ?? "80",
     JEVCODE_DB: path.join(tmp, "smoke.db"),
+    JEVCODE_SECRETS_FILE: path.join(tmp, "secrets.json"),
     JEVC_AGENT: "mock",
     JEVC_JEV_CLIENT: "degrade",
     // The narrator stays off: no billed model calls, no nondeterministic snapshot rows during the latency sample.

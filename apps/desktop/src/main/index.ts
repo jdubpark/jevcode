@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import os from "node:os";
 import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -189,8 +190,12 @@ app.whenReady().then(() => {
     decryptString: (cipher) => safeStorage.decryptString(cipher),
   };
   const secrets = createSecretsStore({
-    // Smokes point this at a temp file (Task 7); otherwise the app's data folder.
-    filePath: process.env["JEVCODE_SECRETS_FILE"] ?? path.join(app.getPath("userData"), "secrets.json"),
+    // A smoke run without JEVCODE_SECRETS_FILE gets a per-process temp file, never the person's saved keys.
+    filePath:
+      process.env["JEVCODE_SECRETS_FILE"] ??
+      (SMOKE
+        ? path.join(os.tmpdir(), `jevcode-smoke-secrets-${process.pid}.json`)
+        : path.join(app.getPath("userData"), "secrets.json")),
     // A smoke never touches the keychain: a prompt there would block the main thread until someone answers it.
     crypto: SMOKE ? SMOKE_SECRET_CRYPTO : KEYCHAIN_CRYPTO,
     env: process.env,
