@@ -5,15 +5,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AGENT_PREFERENCES } from "../../shared/prefs.js";
 import { App } from "../App.js";
 import { installFakeBridge } from "../test-support/fake-bridge.js";
+import type { FakeBridge } from "../test-support/fake-bridge.js";
 
+let bridge: FakeBridge;
 beforeEach(() => {
-  const bridge = installFakeBridge();
+  bridge = installFakeBridge();
   vi.mocked(bridge.api.prefs.get).mockResolvedValue({ ...DEFAULT_AGENT_PREFERENCES });
 });
 afterEach(cleanup);
 
 async function openSettings(): Promise<{ row: HTMLElement; heading: HTMLElement; workspace: HTMLElement }> {
+  return openSettingsWith(() => undefined);
+}
+
+/** Renders App, runs `before` (main's pushes, say), then opens Settings from the sidebar row. */
+async function openSettingsWith(before: () => void): Promise<{ row: HTMLElement; heading: HTMLElement; workspace: HTMLElement }> {
   render(<App />);
+  act(before);
   const row = screen.getByRole("button", { name: "Settings" });
   const workspace = document.querySelector(".workspace-column [data-workspace-slot]") as HTMLElement;
   fireEvent.click(row);
@@ -91,6 +99,39 @@ describe("Settings route", () => {
     } finally {
       window.removeEventListener("keydown", viewerKeys);
     }
+  });
+
+  it("closes when the sidebar opens another session or repo, but not on the open session's own updates", async () => {
+    const repoA = { repoId: "repo_a", path: "/a", gitRoot: "/a", branch: "main", baseCommit: "abc123" };
+    const sessionState = (sessionId: string, changeUnitCount: number) => ({
+      sessionId,
+      state: "running",
+      changeUnitCount,
+      decisionCount: 0,
+      ts: "2026-10-05T00:00:00.000Z",
+    });
+    const { row, workspace } = await openSettingsWith(() => {
+      bridge.emit("repo:opened", repoA);
+      bridge.emit("session:state", sessionState("sess_a", 0));
+    });
+    const settingsHeading = () => screen.queryByRole("heading", { level: 1, name: "Settings" });
+
+    // A live session updates continually; Settings stays where the person put it.
+    act(() => bridge.emit("session:state", sessionState("sess_a", 3)));
+    expect(settingsHeading()).toBeTruthy();
+    expect(workspace.hidden).toBe(true);
+
+    act(() => bridge.emit("session:state", sessionState("sess_b", 0)));
+    await waitFor(() => expect(settingsHeading()).toBeNull());
+    expect(workspace.hidden).toBe(false);
+    // The person clicked in the sidebar; focus does not jump to the Settings row.
+    expect(document.activeElement).not.toBe(row);
+
+    fireEvent.click(row);
+    await screen.findByRole("heading", { level: 1, name: "Settings" });
+    act(() => bridge.emit("repo:opened", { ...repoA, repoId: "repo_b", path: "/b", gitRoot: "/b" }));
+    await waitFor(() => expect(settingsHeading()).toBeNull());
+    expect(workspace.hidden).toBe(false);
   });
 
   it("keeps App's shortcuts working while Settings is open", async () => {
