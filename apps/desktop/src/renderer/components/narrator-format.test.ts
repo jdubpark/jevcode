@@ -27,7 +27,7 @@ describe("narrator-format", () => {
     // and decision options (decisionWhy) leave too. Paths, names and edges sent for component descriptions are repo metadata and are not redacted (the session story redacts its component names).
     ["on", "Sends to Claude Haiku: file paths, component and symbol names, dependency names, import edges and counts, package descriptions, the first README paragraph, earlier component descriptions, and session text (the task prompt, step headlines, decision titles, options and answers, and short agent messages). Package descriptions, README and session text are sent after secrets are redacted. File contents are never sent."],
     ["off_setting", "Rule-based labels only. Nothing leaves this machine."],
-    ["off_no_key", "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine."],
+    ["off_no_key", "No Anthropic key is set (add one under Settings → API keys), so labels stay rule-based. Nothing leaves this machine."],
     ["off_env", "JEVCODE_NARRATOR=off, so labels stay rule-based. Nothing leaves this machine."],
   ] as const)("says what leaves the machine only when the narrator is on (availability %s)", (availability, note) => {
     expect(narratorSettingNote(availability)).toBe(note);
@@ -35,8 +35,8 @@ describe("narrator-format", () => {
 
   it.each([
     ["on", "Narrator on · claude-haiku-4-5"],
-    ["off_setting", "Off in Agent settings"],
-    ["off_no_key", "Off · ANTHROPIC_API_KEY is not set"],
+    ["off_setting", "Off in Settings"],
+    ["off_no_key", "Off · no Anthropic key"],
     ["off_env", "Off · JEVCODE_NARRATOR=off"],
   ] as const)("labels availability %s", (availability, label) => {
     expect(narratorAvailabilityLabel(availability)).toBe(label);

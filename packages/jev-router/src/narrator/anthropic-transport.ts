@@ -40,12 +40,8 @@ function suppressedEnvHeaders(): Record<string, null> {
   return suppressed;
 }
 
-/** Messages API with a JSON-schema output format; retries are owned by the explainer's backoff. */
-export function createAnthropicNarratorTransport(options: AnthropicNarratorTransportOptions): NarratorTransport {
-  if (options.apiKey.trim() === "") {
-    throw new NarratorUnavailableError("auth", "narrator needs an API key");
-  }
-  const client = new Anthropic({
+function createHardenedClient(options: { apiKey: string; baseURL?: string; fetch?: typeof fetch }): Anthropic {
+  return new Anthropic({
     apiKey: options.apiKey,
     authToken: null,
     baseURL: options.baseURL ?? ANTHROPIC_BASE_URL,
@@ -53,6 +49,43 @@ export function createAnthropicNarratorTransport(options: AnthropicNarratorTrans
     maxRetries: 0,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   });
+}
+
+export type AnthropicKeyCheck =
+  | { result: "ok" }
+  | { result: "unauthorized" }
+  | { result: "unreachable" }
+  | { result: "error"; status?: number };
+
+/** Settings page "Test": lists models (no tokens, no project data). Button-triggered only. */
+export async function checkAnthropicKey(options: {
+  apiKey: string;
+  baseURL?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): Promise<AnthropicKeyCheck> {
+  if (options.apiKey.trim() === "") return { result: "unauthorized" };
+  const client = createHardenedClient({ ...options, apiKey: options.apiKey.trim() });
+  try {
+    await client.models.list({ limit: 1 }, { timeout: options.timeoutMs ?? 10_000 });
+    return { result: "ok" };
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
+      return { result: "unauthorized" };
+    }
+    // APIConnectionTimeoutError extends APIConnectionError.
+    if (error instanceof Anthropic.APIConnectionError) return { result: "unreachable" };
+    if (error instanceof Anthropic.APIError && typeof error.status === "number") return { result: "error", status: error.status };
+    return { result: "error" };
+  }
+}
+
+/** Messages API with a JSON-schema output format; retries are owned by the explainer's backoff. */
+export function createAnthropicNarratorTransport(options: AnthropicNarratorTransportOptions): NarratorTransport {
+  if (options.apiKey.trim() === "") {
+    throw new NarratorUnavailableError("auth", "narrator needs an API key");
+  }
+  const client = createHardenedClient(options);
   return {
     async complete(request) {
       const message = await client.messages

@@ -1,11 +1,13 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import os from "node:os";
 import path from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
-import { app, BrowserWindow, webContents } from "electron";
+import { checkAnthropicKey, createJevClient } from "@jevcode/jev-router";
+import { app, BrowserWindow, safeStorage, webContents } from "electron";
 import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
 import { openDb, openTraceReader } from "@jevcode/storage";
@@ -18,9 +20,11 @@ import {
   setMainWindow,
 } from "./ipc.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
+import { jevEnv } from "./jev-env.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { createMainSlicer } from "./pipeline/main-slicer.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
+import { createModelSelector } from "./pipeline/model-selection.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import { SMOKE_SCRIPT_DEFAULTS, smokeMockScript } from "./pipeline/smoke-script.js";
@@ -33,6 +37,8 @@ import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
 import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
+import { createSecretsStore } from "./secrets/secrets-store.js";
+import type { SecretCrypto } from "./secrets/secrets-store.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
@@ -71,6 +77,17 @@ function loadEnvFileFromRepo(): void {
 loadEnvFileFromRepo();
 
 const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
+
+/** Smoke runs: the page shows saving as possible, but nothing is ever encrypted or decrypted. */
+const SMOKE_SECRET_CRYPTO: SecretCrypto = {
+  isEncryptionAvailable: () => true,
+  encryptString: () => {
+    throw new Error("saved keys are disabled in smoke runs");
+  },
+  decryptString: () => {
+    throw new Error("saved keys are disabled in smoke runs");
+  },
+};
 /** Prints trace windows' TRACE_PERF lines (docs/perf.md live-tick samples). */
 const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
 
@@ -166,9 +183,33 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   db = openDb();
   const openedDb = db;
+  /** safeStorage, except Linux's `basic_text` backend (a fixed password) counts as no encryption: the spec forbids plaintext. */
+  const KEYCHAIN_CRYPTO: SecretCrypto = {
+    isEncryptionAvailable: () =>
+      safeStorage.isEncryptionAvailable() &&
+      !(process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text"),
+    encryptString: (plain) => safeStorage.encryptString(plain),
+    decryptString: (cipher) => safeStorage.decryptString(cipher),
+  };
+  const secrets = createSecretsStore({
+    // A smoke run without JEVCODE_SECRETS_FILE gets a per-process temp file, never the person's saved keys.
+    filePath:
+      process.env["JEVCODE_SECRETS_FILE"] ??
+      (SMOKE
+        ? path.join(os.tmpdir(), `jevcode-smoke-secrets-${process.pid}.json`)
+        : path.join(app.getPath("userData"), "secrets.json")),
+    // A smoke never touches the keychain: a prompt there would block the main thread until someone answers it.
+    crypto: SMOKE ? SMOKE_SECRET_CRYPTO : KEYCHAIN_CRYPTO,
+    env: process.env,
+    log: (message) => console.error(`[secrets] ${message}`),
+  });
   const narratorSwitch = createNarratorSwitch({
     enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
     env: process.env,
+    apiKey: () => secrets.active("ANTHROPIC_API_KEY"),
+  });
+  secrets.subscribe((name) => {
+    if (name === "ANTHROPIC_API_KEY") narratorSwitch.refresh();
   });
   const narratorCalls = createNarratorCallLog(NARRATOR_CALL_LOG_CAPACITY, {
     log: (message) => console.error(`[narrator] ${message}`),
@@ -271,6 +312,17 @@ app.whenReady().then(() => {
   explainer = explainerRegistry;
   connectNarratorSwitch(narratorSwitch, explainerRegistry);
 
+  // One reader for each session's Jev client and its model auto-selection: the saved-or-environment TypeSafe key and
+  // the Jev client choice (JEVC_JEV_CLIENT when it is typesafe or degrade, else the stored choice), read when a
+  // session starts, so a change applies to the next session.
+  const readJevEnv = () =>
+    jevEnv({
+      typesafeKey: secrets.active("TYPESAFE_API_KEY"),
+      jevClientPreference: readAgentPreferences((key) => openedDb.getPreference(key)).jevClient,
+      env: process.env,
+    });
+  const sessionJevClient = () => createJevClient({ env: readJevEnv });
+
   runtime = new PipelineRuntime({
     db,
     emit: sendToRenderer,
@@ -283,6 +335,9 @@ app.whenReady().then(() => {
     // Lane 07 (S-2): story, decision why and highlight triggers for the open repo's stage.
     onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
     slicer: mainSlicer,
+    agentModeFor: () => readAgentPreferences((key) => openedDb.getPreference(key)).agentBackend,
+    createJevClient: sessionJevClient,
+    modelSelector: createModelSelector(sessionJevClient),
   });
 
   const instructionRouter = new InstructionRouter({
@@ -318,6 +373,9 @@ app.whenReady().then(() => {
 
   registerIpcHandlers({
     db,
+    secrets,
+    env: process.env,
+    checkKey: (apiKey) => checkAnthropicKey({ apiKey }),
     state,
     terminals,
     runtime,

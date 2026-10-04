@@ -7,7 +7,7 @@ import {
   SAMPLE_BRIEFS,
   universeFor,
 } from "../testing/narrator-recorded.js";
-import { anthropicErrorToNarrator, createAnthropicNarratorTransport } from "./anthropic-transport.js";
+import { anthropicErrorToNarrator, checkAnthropicKey, createAnthropicNarratorTransport } from "./anthropic-transport.js";
 import { createNarratorClient } from "./client.js";
 import { NarratorUnavailableError } from "./errors.js";
 import { guardComponents, guardSentences } from "./guardrails.js";
@@ -159,5 +159,51 @@ describe("ambient environment cannot redirect or re-authenticate the call", () =
       expect(() => createAnthropicNarratorTransport({ apiKey, fetch: fetchImpl })).toThrow(NarratorUnavailableError);
     }
     expect(calls).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkAnthropicKey", () => {
+  const ok = () => new Response(JSON.stringify({ data: [], has_more: false, first_id: null, last_id: null }), { status: 200, headers: { "content-type": "application/json" } });
+  const status = (code: number) =>
+    new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: code, headers: { "content-type": "application/json" } });
+
+  it("lists models once against the pinned base URL with the key and no bearer token", async () => {
+    const calls: Request[] = [];
+    const fetchSpy = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push(new Request(input, init));
+      return ok();
+    });
+    await expect(checkAnthropicKey({ apiKey: "sk-test", fetch: fetchSpy as unknown as typeof fetch })).resolves.toEqual({ result: "ok" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(calls[0]!.url.startsWith("https://api.anthropic.com/v1/models")).toBe(true);
+    expect(calls[0]!.headers.get("x-api-key")).toBe("sk-test");
+    expect(calls[0]!.headers.get("authorization")).toBeNull();
+  });
+
+  it.each([
+    [401, { result: "unauthorized" }],
+    [403, { result: "unauthorized" }],
+    [500, { result: "error", status: 500 }],
+  ] as const)("maps HTTP %i without retrying", async (code, expected) => {
+    const fetchSpy = vi.fn(async () => status(code));
+    await expect(checkAnthropicKey({ apiKey: "sk-test", fetch: fetchSpy as unknown as typeof fetch })).resolves.toEqual(expected);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a network failure or timeout as unreachable", async () => {
+    const offline = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(checkAnthropicKey({ apiKey: "sk-test", fetch: offline as unknown as typeof fetch })).resolves.toEqual({ result: "unreachable" });
+    const hang = vi.fn((_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    await expect(checkAnthropicKey({ apiKey: "sk-test", fetch: hang as unknown as typeof fetch, timeoutMs: 50 })).resolves.toEqual({ result: "unreachable" });
+  });
+
+  it("treats a blank key as unauthorized without a request", async () => {
+    const fetchSpy = vi.fn(async () => ok());
+    await expect(checkAnthropicKey({ apiKey: "  ", fetch: fetchSpy as unknown as typeof fetch })).resolves.toEqual({ result: "unauthorized" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RepoOpenedPayload, SessionStatePayload } from "./payload-types.js";
 
@@ -9,14 +9,15 @@ import {
 import type { PreferencesView } from "../shared/prefs.js";
 import { getBridge } from "./bridge.js";
 import { traceOpenErrorMessage } from "./trace-open-error.js";
-import { AgentSettings } from "./components/AgentSettings.js";
 import { DebugPanel } from "./components/DebugPanel.js";
+import { Glyph } from "./components/glyph.js";
 import { Header } from "./components/Header.js";
 import { RecentRepos } from "./components/RecentRepos.js";
 import { SessionSwitcher } from "./components/SessionSwitcher.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { WorkspaceHost } from "./components/WorkspaceHost.js";
+import { SettingsPage } from "./settings/SettingsPage.js";
 
 export function App() {
   const bridge = getBridge();
@@ -32,6 +33,20 @@ export function App() {
   const [prefs, setPrefs] = useState<PreferencesView>(
     DEFAULT_AGENT_PREFERENCES,
   );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRow = useRef<HTMLButtonElement>(null);
+  // Back and Esc return focus to the Settings row; a close caused by sidebar navigation leaves focus where it is.
+  const focusRowOnClose = useRef(true);
+  const closeSettings = useCallback(() => {
+    focusRowOnClose.current = true;
+    setSettingsOpen(false);
+  }, []);
+  // Focus goes back to the Settings row once the page has closed (spec: accessibility).
+  const settingsWasOpen = useRef(false);
+  useEffect(() => {
+    if (settingsWasOpen.current && !settingsOpen && focusRowOnClose.current) settingsRow.current?.focus();
+    settingsWasOpen.current = settingsOpen;
+  }, [settingsOpen]);
 
   useEffect(() => {
     const offRepo = bridge.on("repo:opened", setRepo);
@@ -80,16 +95,32 @@ export function App() {
     setTraceError(null);
   }, [sessionState?.sessionId]);
 
+  // Opening another repo or session from the sidebar shows that workspace instead of leaving Settings on top of it.
+  // Keyed by id: a live session's continual session:state updates leave Settings open.
+  const openRepoId = repo?.repoId ?? null;
+  const activeSessionId = sessionState?.sessionId ?? null;
+  useEffect(() => {
+    focusRowOnClose.current = false;
+    setSettingsOpen(false);
+  }, [openRepoId, activeSessionId]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "J") {
         event.preventDefault();
         setDebugOpen((open) => !open);
       }
+      // Cmd+, (macOS) or Ctrl+, (elsewhere) opens Settings.
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+      }
     };
-    window.addEventListener("keydown", onKey);
+    // Capture phase: while Settings is open, its window capture listener stops keys aimed at <body> so the hidden
+    // viewer never sees them; stopPropagation spares other listeners on the same target and phase, so these still run.
+    window.addEventListener("keydown", onKey, true);
     return () => {
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, []);
 
@@ -135,33 +166,47 @@ export function App() {
         <aside className="sidebar">
           <RecentRepos selectedRepoId={repo?.repoId ?? null} onSelect={(path) => void bridge.repo.open(path)} />
           <SessionSwitcher repo={repo} sessionState={sessionState} />
-          <AgentSettings
-            prefs={prefs}
-            narratorAvailability={prefs.narratorAvailability}
-            onSet={(patch) => void bridge.prefs.set(patch)}
-          />
+          <section className="agent-settings">
+            <button
+              ref={settingsRow}
+              type="button"
+              className={`side-row${settingsOpen ? " on" : ""}`}
+              data-settings-open=""
+              aria-pressed={settingsOpen}
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Glyph name="settings" />
+              <span className="side-label">Settings</span>
+            </button>
+          </section>
         </aside>
         <main className="workspace-column">
-          {traceError !== null ? (
-            <p className="form-error" role="alert">{traceError}</p>
-          ) : null}
-          <WorkspaceHost
-            repo={repo}
-            sessionState={sessionState}
-            activePrompt={activePrompt}
-            agentLine={agentSummaryLabel(prefs)}
-            onStart={async (prompt) => {
-              if (!repo) return;
-              await bridge.session.start(repo.repoId, prompt);
-              setActivePrompt(prompt);
-            }}
-          />
-          {terminalOpen && (
-            <TerminalPanel
-              sessionId={sessionState?.sessionId ?? null}
-              repoPath={repo?.gitRoot ?? null}
+          {/* Settings covers the workspace without unmounting it, so Back finds the session view as it was. */}
+          <div className="workspace-slot" data-workspace-slot="" hidden={settingsOpen}>
+            {traceError !== null ? (
+              <p className="form-error" role="alert">{traceError}</p>
+            ) : null}
+            <WorkspaceHost
+              repo={repo}
+              sessionState={sessionState}
+              activePrompt={activePrompt}
+              agentLine={agentSummaryLabel(prefs)}
+              onStart={async (prompt) => {
+                if (!repo) return;
+                await bridge.session.start(repo.repoId, prompt);
+                setActivePrompt(prompt);
+              }}
             />
-          )}
+            {terminalOpen && (
+              <TerminalPanel
+                sessionId={sessionState?.sessionId ?? null}
+                repoPath={repo?.gitRoot ?? null}
+              />
+            )}
+          </div>
+          {settingsOpen ? (
+            <SettingsPage prefs={prefs} onSetPrefs={(patch) => void bridge.prefs.set(patch)} onClose={closeSettings} />
+          ) : null}
         </main>
       </div>
       <StatusBar repo={repo} sessionState={sessionState} />

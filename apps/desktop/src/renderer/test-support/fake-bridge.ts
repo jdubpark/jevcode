@@ -3,6 +3,16 @@ import { vi } from "vitest";
 
 import type { AgentInstructionStatePayload, JevcodeApi } from "../../shared/api.js";
 import type { ComposerPrefillPayload } from "../../shared/local-channels.js";
+import type { SecretsView } from "../../shared/secrets.js";
+
+const EMPTY_SECRETS: SecretsView = {
+  canSave: true,
+  fileUnreadable: false,
+  keys: [
+    { name: "ANTHROPIC_API_KEY", set: false, source: "none", last4: null, envAlsoSet: false, unreadable: false },
+    { name: "TYPESAFE_API_KEY", set: false, source: "none", last4: null, envAlsoSet: false, unreadable: false },
+  ],
+};
 
 type Listener<T> = (payload: T) => void;
 type RowsHint = { sessionId: string; lastSeq: number };
@@ -104,6 +114,13 @@ export function installFakeBridge() {
     overview: { rescan: calls.rescan },
     on: (name: string, listener: Listener<unknown>) => subscribe(channelSet(name), listener),
     onInstructionState: (listener: Listener<AgentInstructionStatePayload>) => subscribe(instructions, listener),
+    secrets: {
+      view: vi.fn(async () => EMPTY_SECRETS),
+      set: vi.fn(async () => EMPTY_SECRETS),
+      remove: vi.fn(async () => EMPTY_SECRETS),
+      test: vi.fn(async () => ({ result: "ok" })),
+    },
+    onSecretsUpdated: () => () => undefined,
     onPrefsUpdated: () => () => undefined,
     onComposerPrefill: (listener: Listener<ComposerPrefillPayload>) => subscribe(prefills, listener),
   };

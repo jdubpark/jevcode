@@ -24,11 +24,15 @@ import {
   RendererToMainLocalChannels,
 } from "../shared/local-channels.js";
 import {
+  AGENT_BACKEND_PREF_KEY,
   AGENT_MODEL_PREF_KEY,
   EXPLAIN_WITH_MODEL_PREF_KEY,
+  JEV_CLIENT_PREF_KEY,
   REASONING_EFFORT_PREF_KEY,
   USAGE_BUDGET_PREF_KEY,
+  agentBackendOverride,
   applyPreferencesPatch,
+  jevClientOverride,
   readAgentPreferences,
 } from "../shared/prefs.js";
 import { NarratorCallRecordSchema } from "../shared/narrator-log.js";
@@ -39,6 +43,9 @@ import { droppedRecordMessage } from "./pipeline/narrator-call-log.js";
 import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
+import type { KeyTestResult, SecretsView } from "../shared/secrets.js";
+import { SecretsError } from "./secrets/secrets-store.js";
+import type { SecretsStore } from "./secrets/secrets-store.js";
 import { openRepoByPath } from "./repo-service.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import {
@@ -71,6 +78,12 @@ export interface IpcDeps {
   terminals: TerminalManager;
   runtime: PipelineRuntime;
   instructionRouter: InstructionRouter;
+  /** Settings page keys (main window only; trace windows are refused by the allowlist). */
+  secrets?: SecretsStore;
+  /** Environment read for the Settings page's override notes; absent means no overrides. */
+  env?: Readonly<Record<string, string | undefined>>;
+  /** Anthropic key check (jev-router checkAnthropicKey); the active value never leaves main. */
+  checkKey?: (apiKey: string) => Promise<KeyTestResult>;
   requestRepoPath: () => Promise<string | null>;
   log: (message: string) => void;
   /** Read-only trace access over a query_only reader (trace-ipc.ts). */
@@ -272,11 +285,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   /** Spec §10 disclosure: the settings note reads what leaves the machine from main's switch. */
-  const withNarratorAvailability = (prefs: AgentPreferences): PreferencesView =>
-    deps.narrator === undefined ? prefs : { ...prefs, narratorAvailability: deps.narrator.availability() };
+  const preferencesView = (prefs: AgentPreferences): PreferencesView => {
+    const env = deps.env ?? {};
+    const backend = agentBackendOverride(env);
+    const jev = jevClientOverride(env);
+    return {
+      ...prefs,
+      ...(deps.narrator === undefined ? {} : { narratorAvailability: deps.narrator.availability() }),
+      ...(backend === undefined ? {} : { agentBackendOverride: backend }),
+      ...(jev === undefined ? {} : { jevClientOverride: jev }),
+    };
+  };
 
   handle(RendererToMainLocalChannels.preferencesGet, () => {
-    return withNarratorAvailability(readAgentPreferences((key) => deps.db.getPreference(key)));
+    return preferencesView(readAgentPreferences((key) => deps.db.getPreference(key)));
   });
 
   handle(RendererToMainLocalChannels.preferencesSet, (patch) => {
@@ -287,10 +309,44 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // null marks the "unknown" state; storage has no deletePreference.
     deps.db.setPreference(USAGE_BUDGET_PREF_KEY, next.usageBudgetFraction);
     deps.db.setPreference(EXPLAIN_WITH_MODEL_PREF_KEY, next.explainWithModel);
+    deps.db.setPreference(AGENT_BACKEND_PREF_KEY, next.agentBackend);
+    deps.db.setPreference(JEV_CLIENT_PREF_KEY, next.jevClient);
     deps.narrator?.setEnabled(next.explainWithModel);
-    const view = withNarratorAvailability(next);
+    const view = preferencesView(next);
     sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, view);
     return view;
+  });
+
+  const requireSecrets = (): SecretsStore => {
+    if (deps.secrets === undefined) throw new IpcError("SECRETS_UNAVAILABLE", "Saved keys are not available in this window.");
+    return deps.secrets;
+  };
+  const secretsCall = (fn: () => SecretsView): SecretsView => {
+    let view: SecretsView;
+    try {
+      view = fn();
+    } catch (error) {
+      if (error instanceof SecretsError) {
+        throw new IpcError(error.code === "CANNOT_ENCRYPT" ? "SECRETS_UNAVAILABLE" : "INVALID_PAYLOAD", error.message);
+      }
+      throw error;
+    }
+    sendToRenderer(MainToRendererLocalChannels.secretsUpdated, view);
+    // The narrator note and availability depend on the active Anthropic key (Task 4 wires the switch to the store).
+    sendToRenderer(
+      MainToRendererLocalChannels.preferencesUpdated,
+      preferencesView(readAgentPreferences((key) => deps.db.getPreference(key))),
+    );
+    return view;
+  };
+
+  handle(RendererToMainLocalChannels.secretsStatus, () => requireSecrets().view());
+  handle(RendererToMainLocalChannels.secretsSet, ({ name, value }) => secretsCall(() => requireSecrets().set(name, value)));
+  handle(RendererToMainLocalChannels.secretsRemove, ({ name }) => secretsCall(() => requireSecrets().remove(name)));
+  handle(RendererToMainLocalChannels.secretsTest, async ({ name }): Promise<KeyTestResult> => {
+    const apiKey = requireSecrets().active(name);
+    if (apiKey === null || deps.checkKey === undefined) return { result: "error" };
+    return deps.checkKey(apiKey);
   });
 
   handle(RendererToMainChannels.sessionStart, async ({ repoId, prompt, model, reasoningEffort, approvalMode }) => {

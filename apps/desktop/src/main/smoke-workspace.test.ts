@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   CONSOLE_APPEND_P95_BUDGET_MS,
@@ -21,6 +21,10 @@ import {
   startSessionScript,
   SURFACES_CLICK_DIFF_SCRIPT,
   SURFACES_DISMISS_SCRIPT,
+  SETTINGS_CLOSE_SCRIPT,
+  SETTINGS_OPEN_SCRIPT,
+  exerciseSettings,
+  verifyWorkspaceBack,
 } from "./smoke-workspace.js";
 import type { WorkspaceSmokeDeps } from "./smoke-workspace.js";
 
@@ -69,6 +73,8 @@ function fake(options: FakeOptions = {}) {
         }, 5);
         return "repo_1";
       }
+      if (script === SETTINGS_OPEN_SCRIPT) return { open: true };
+      if (script === SETTINGS_CLOSE_SCRIPT) return { open: false };
       if (script === SURFACES_DISMISS_SCRIPT) {
         return options.dismissResult ?? { ids: ["completion"], actions: ["accept_changes", "request_changes", "show_exact_diff"] };
       }
@@ -176,6 +182,7 @@ describe("runWorkspaceSmoke", () => {
     await runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: "/tmp/shots", minSamples: 5 });
     expect(run.execs.slice(0, 2)).toEqual([openRepoScript("/tmp/repo"), startSessionScript(SMOKE_PROMPT)]);
     const shots = SHOT_WIDTHS.map((width) => path.join("/tmp/shots", `main-console-${width}.png`));
+    const settingsShot = path.join("/tmp/shots", "main-settings-1440.png");
     // The shots come before the first key press, so the Brief (not a step's Inspector) is on the right.
     expect(run.lines.filter((line) => line.startsWith("SMOKE_"))).toEqual([
       "SMOKE_WORKSPACE session=s1 ready_rows=2",
@@ -186,8 +193,10 @@ describe("runWorkspaceSmoke", () => {
       ...shots.map((file) => `SMOKE_SHOT ${file}`),
       "SMOKE_SURFACES actions=accept_changes,request_changes,show_exact_diff diff=diff:abc",
       "SMOKE_VIEWS selected=step:3 views=canvas,hybrid,map,surfaces,console",
+      `SMOKE_SHOT ${settingsShot}`,
+      `SMOKE_SETTINGS open=true closed=true view_after=${VIEW_KEYS[0]?.view} selected=step:3`,
     ]);
-    expect([...run.files.keys()]).toEqual(shots);
+    expect([...run.files.keys()]).toEqual([...shots, settingsShot]);
     expect(SHOT_HEIGHT).toBe(900);
   });
 
@@ -237,6 +246,54 @@ describe("runWorkspaceSmoke", () => {
     const run = fake({ clickResult: { ids: ["completion"], actions: ["show_exact_diff"], timedOut: true } });
     await expect(runWorkspaceSmoke(run.deps, { repoPath: "/tmp/repo", shotsDir: null, minSamples: 5 })).rejects.toThrow(
       /Surfaces step: no diff: surface appeared within 8s after clicking show_exact_diff/,
+    );
+  });
+});
+
+describe("Settings step", () => {
+  it("opens Settings, captures it at 1440 px and closes it", async () => {
+    const exec = vi.fn(async (script: string) => {
+      if (script === SETTINGS_OPEN_SCRIPT) return { open: true };
+      if (script === SETTINGS_CLOSE_SCRIPT) return { open: false };
+      return true;
+    });
+    const capture = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const writeFile = vi.fn();
+    const log = vi.fn();
+    await exerciseSettings({ exec, capture, writeFile, log }, "/tmp/shots");
+    expect(capture).toHaveBeenCalledWith(1440, SHOT_HEIGHT);
+    expect(writeFile).toHaveBeenCalledWith(path.join("/tmp/shots", "main-settings-1440.png"), new Uint8Array([1, 2, 3]));
+    expect(log).toHaveBeenLastCalledWith(`SMOKE_SHOT ${path.join("/tmp/shots", "main-settings-1440.png")}`);
+    expect(exec.mock.calls.map(([script]) => script)).toEqual([SETTINGS_OPEN_SCRIPT, SETTINGS_CLOSE_SCRIPT]);
+  });
+
+  it("fails clearly when the Settings page does not open", async () => {
+    const exec = vi.fn(async () => ({ open: false, timedOut: true }));
+    await expect(
+      exerciseSettings({ exec, capture: vi.fn(), writeFile: vi.fn(), log: vi.fn() }, null),
+    ).rejects.toThrow("Settings step: the page did not open");
+  });
+
+  it("fails clearly when the Settings page does not close", async () => {
+    const exec = vi.fn(async (script: string) => (script === SETTINGS_OPEN_SCRIPT ? { open: true } : { open: true, timedOut: true }));
+    await expect(
+      exerciseSettings({ exec, capture: vi.fn(), writeFile: vi.fn(), log: vi.fn() }, null),
+    ).rejects.toThrow("Settings step: the page did not close");
+  });
+
+  it("requires the workspace to come back on the pressed view with the same selection", async () => {
+    const first = VIEW_KEYS[0]!;
+    const run = fake();
+    await verifyWorkspaceBack(run.deps, "step:3");
+    expect(run.lines).toEqual([`SMOKE_SETTINGS open=true closed=true view_after=${first.view} selected=step:3`]);
+    const changed = fake({ selectedFor: () => "step:9" });
+    await expect(verifyWorkspaceBack(changed.deps, "step:3")).rejects.toThrow(
+      "Settings step: the workspace did not come back as it was",
+    );
+    const silent = fake();
+    silent.deps.exec = async () => true;
+    await expect(verifyWorkspaceBack(silent.deps, "step:3")).rejects.toThrow(
+      "Settings step: the workspace did not come back as it was",
     );
   });
 });

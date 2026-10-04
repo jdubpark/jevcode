@@ -10,7 +10,8 @@ export type IpcErrorCode =
   | "UNKNOWN_DECISION"
   | "NO_AGENT_AVAILABLE"
   | "SESSION_NOT_RUNNING"
-  | "UNKNOWN_SESSION";
+  | "UNKNOWN_SESSION"
+  | "SECRETS_UNAVAILABLE";
 
 export class IpcError extends Error {
   readonly code: IpcErrorCode;

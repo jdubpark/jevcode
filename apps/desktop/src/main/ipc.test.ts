@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { createFakeNarratorClient } from "@jevcode/jev-router";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { RendererToMainChannels } from "@jevcode/contracts";
@@ -17,6 +22,7 @@ import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { RendererToMainLocalChannels } from "../shared/local-channels.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
+import { createSecretsStore } from "./secrets/secrets-store.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
 
@@ -386,6 +392,7 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
       current: () => null,
       availability: () => availability,
       setEnabled,
+      refresh: () => undefined,
       subscribe: () => () => undefined,
     };
     return { narrator, setEnabled };
@@ -511,4 +518,167 @@ describe("main-window host actions are checked in main (spec §4.3, §10)", () =
     expect(calls).toEqual([]);
     db.close();
   });
+});
+
+function memoryStore(env: Record<string, string | undefined> = {}, canEncrypt = true) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "jevcode-ipc-secrets-"));
+  const store = createSecretsStore({
+    filePath: path.join(dir, "secrets.json"),
+    crypto: {
+      isEncryptionAvailable: () => canEncrypt,
+      encryptString: (plain) => Buffer.from(`enc:${plain}`),
+      decryptString: (cipher) => cipher.toString().slice(4),
+    },
+    env,
+  });
+  return { store, dir };
+}
+
+describe("secrets IPC (settings page)", () => {
+  it("returns statuses only and saves, removes and tests keys", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const checkKey = vi.fn(async (_apiKey: string) => ({ result: "ok" as const }));
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, checkKey });
+    const set = handlers.get("secrets:set")!;
+    const view = (await set(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" })) as { keys: { source: string; last4: string }[] };
+    expect(view.keys[0]).toMatchObject({ source: "app", last4: "7777" });
+    expect(JSON.stringify(view)).not.toContain("sk-ant-abcdef-7777");
+    await expect(handlers.get("secrets:test")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toEqual({ result: "ok" });
+    expect(checkKey).toHaveBeenCalledWith("sk-ant-abcdef-7777");
+    await expect(handlers.get("secrets:remove")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toMatchObject({ keys: [{ source: "none" }, { source: "none" }] });
+    await expect(handlers.get("secrets:test")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toEqual({ result: "error" });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("maps refusals to typed errors that do not repeat the value", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore({}, false);
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store });
+    await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" })).rejects.toMatchObject({
+      message: expect.not.stringContaining("sk-ant-abcdef-7777"),
+    });
+    await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "has space" })).rejects.toMatchObject({
+      message: expect.not.stringContaining("has space"),
+    });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects every secrets channel from a trace window (Review Focus 5)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), secrets: store });
+    for (const [channel, payload] of [
+      ["secrets:status", {}],
+      ["secrets:set", { name: "ANTHROPIC_API_KEY", value: "sk-x" }],
+      ["secrets:remove", { name: "ANTHROPIC_API_KEY" }],
+      ["secrets:test", { name: "ANTHROPIC_API_KEY" }],
+    ] as const) {
+      await expect(handlers.get(channel)!(TRUSTED_EVENT, payload)).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    }
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports through preferences:get the narrator availability that follows a saved key", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => store.active("ANTHROPIC_API_KEY"), createClient: () => createFakeNarratorClient({}) });
+    store.subscribe(() => narrator.refresh());
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, narrator });
+    await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({ narratorAvailability: "off_no_key" });
+    await handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" });
+    await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({ narratorAvailability: "on" });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Records what main pushes to the window (sendToRenderer). */
+  function captureWindow(): ReturnType<typeof vi.fn> {
+    const send = vi.fn();
+    setMainWindow({ isDestroyed: () => false, webContents: { send } } as unknown as Parameters<typeof setMainWindow>[0]);
+    return send;
+  }
+  const pushed = (send: ReturnType<typeof vi.fn>, channel: string): unknown[] =>
+    send.mock.calls.filter(([name]) => name === channel).map(([, payload]) => payload as unknown);
+
+  it("pushes secrets:updated and preferences:updated after a save and a removal, never with the key (secrets:updated fan-out)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => store.active("ANTHROPIC_API_KEY"), createClient: () => createFakeNarratorClient({}) });
+    store.subscribe(() => narrator.refresh());
+    const send = captureWindow();
+    try {
+      const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, narrator });
+      const reply = await handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" });
+      expect(send.mock.calls.map(([name]) => name as string).sort()).toEqual(["preferences:updated", "secrets:updated"]);
+      expect(pushed(send, "secrets:updated")).toEqual([reply]);
+      expect(pushed(send, "secrets:updated")[0]).toMatchObject({ keys: [{ name: "ANTHROPIC_API_KEY", source: "app", last4: "7777" }, { source: "none" }] });
+      expect(pushed(send, "preferences:updated")).toEqual([expect.objectContaining({ narratorAvailability: "on" })]);
+      expect(JSON.stringify(send.mock.calls)).not.toContain("sk-ant-abcdef-7777");
+
+      send.mockClear();
+      await handlers.get("secrets:remove")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" });
+      expect(send.mock.calls.map(([name]) => name as string).sort()).toEqual(["preferences:updated", "secrets:updated"]);
+      expect(pushed(send, "secrets:updated")[0]).toMatchObject({ keys: [{ name: "ANTHROPIC_API_KEY", set: false, source: "none" }, { source: "none" }] });
+      expect(pushed(send, "preferences:updated")).toEqual([expect.objectContaining({ narratorAvailability: "off_no_key" })]);
+    } finally {
+      setMainWindow(null);
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pushes nothing after a refused save", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const cannotEncrypt = memoryStore({}, false);
+    const canEncrypt = memoryStore();
+    const send = captureWindow();
+    try {
+      for (const store of [cannotEncrypt.store, canEncrypt.store]) {
+        const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store });
+        const value = store === cannotEncrypt.store ? "sk-ant-abcdef-7777" : "has space";
+        await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value })).rejects.toBeTruthy();
+      }
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      setMainWindow(null);
+      db.close();
+      rmSync(cannotEncrypt.dir, { recursive: true, force: true });
+      rmSync(canEncrypt.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses secrets:status with SECRETS_UNAVAILABLE when main has no secrets store", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const handlers = registerAndCapture(makeDeps(db, runtime, state));
+    const status = Promise.resolve(handlers.get("secrets:status")!(TRUSTED_EVENT, {})).catch((error: unknown) => {
+      throw deserializeIpcError(error);
+    });
+    await expect(status).rejects.toMatchObject({ code: "SECRETS_UNAVAILABLE" });
+    db.close();
+  });
+});
+
+it("stores the backend and Jev client and reports environment overrides", async () => {
+  const { db, state } = seedRepoAndSession();
+  const { runtime } = stubRuntime();
+  const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), env: { JEVC_AGENT: "mock" } });
+  await expect(handlers.get("preferences:set")!(TRUSTED_EVENT, { agentBackend: "codex", jevClient: "offline" })).resolves.toMatchObject({
+    agentBackend: "codex",
+    jevClient: "offline",
+    agentBackendOverride: "mock",
+  });
+  expect(db.getPreference("agent.backend")).toBe("codex");
+  expect(db.getPreference("jev.client")).toBe("offline");
+  db.close();
 });
