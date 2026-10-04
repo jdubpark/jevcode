@@ -5,7 +5,10 @@ import {
   REASONING_EFFORT_OPTIONS,
   DEFAULT_AGENT_PREFERENCES,
   agentSummaryLabel,
+  agentBackendOverride,
   applyPreferencesPatch,
+  jevClientEnvValue,
+  jevClientOverride,
   budgetFractionNumber,
   normalizeBudgetFraction,
   normalizeExplainWithModel,
@@ -41,6 +44,8 @@ describe("agent preference helpers", () => {
       reasoningEffort: "auto",
       usageBudgetFraction: null,
       explainWithModel: true,
+      agentBackend: "auto",
+      jevClient: "auto",
     });
   });
 
@@ -56,6 +61,8 @@ describe("agent preference helpers", () => {
       reasoningEffort: "xhigh",
       usageBudgetFraction: "0.25",
       explainWithModel: false,
+      agentBackend: "auto",
+      jevClient: "auto",
     });
 
     const invalid = new Map<string, unknown>([
@@ -114,12 +121,16 @@ describe("agent preference helpers", () => {
       reasoningEffort: "medium" as const,
       usageBudgetFraction: "0.50",
       explainWithModel: true,
+      agentBackend: "auto" as const,
+      jevClient: "auto" as const,
     };
     expect(applyPreferencesPatch(current, { model: "gpt-5.6-sol" })).toEqual({
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       usageBudgetFraction: "0.50",
       explainWithModel: true,
+      agentBackend: "auto",
+      jevClient: "auto",
     });
     expect(
       applyPreferencesPatch(current, { usageBudgetFraction: null }),
@@ -128,6 +139,8 @@ describe("agent preference helpers", () => {
       reasoningEffort: "medium",
       usageBudgetFraction: null,
       explainWithModel: true,
+      agentBackend: "auto",
+      jevClient: "auto",
     });
     expect(applyPreferencesPatch(current, { explainWithModel: false })).toEqual({
       ...current,
@@ -146,5 +159,24 @@ describe("agent preference helpers", () => {
     expect(
       agentSummaryLabel({ model: "gpt-5.6-mini", reasoningEffort: "auto" }),
     ).toBe("gpt-5.6-mini · auto");
+  });
+});
+
+describe("agent backend and Jev client preferences", () => {
+  it("default to auto and ignore unknown stored values", () => {
+    const prefs = readAgentPreferences((key) => ({ "agent.backend": "bogus", "jev.client": 7 })[key]);
+    expect(prefs).toMatchObject({ agentBackend: "auto", jevClient: "auto" });
+    expect(applyPreferencesPatch(prefs, { agentBackend: "mock", jevClient: "offline" })).toMatchObject({ agentBackend: "mock", jevClient: "offline" });
+  });
+
+  it("read environment overrides and map offline to degrade", () => {
+    expect(agentBackendOverride({ JEVC_AGENT: "mock" })).toBe("mock");
+    expect(agentBackendOverride({ JEVC_AGENT: "replay" })).toBe("replay");
+    expect(agentBackendOverride({ JEVC_AGENT: "x" })).toBeUndefined();
+    expect(jevClientOverride({ JEVC_JEV_CLIENT: "degrade" })).toBe("degrade");
+    expect(jevClientOverride({})).toBeUndefined();
+    expect(jevClientEnvValue("offline")).toBe("degrade");
+    expect(jevClientEnvValue("typesafe")).toBe("typesafe");
+    expect(jevClientEnvValue("auto")).toBeUndefined();
   });
 });

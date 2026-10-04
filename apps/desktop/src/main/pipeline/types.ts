@@ -34,6 +34,10 @@ export interface PipelineRuntimeOptions {
   emit: EmitFn;
   agentMode?: AgentMode;
   jevClient?: JevClient;
+  /** The Settings page's agent backend; JEVC_AGENT and an explicit agentMode still win (agent-mode.ts). */
+  agentModeFor?: () => AgentMode | undefined;
+  /** Builds each session's Jev client (index.ts reads the saved TypeSafe key and the Jev client preference). */
+  createJevClient?: () => JevClient;
   evidence?: boolean;
   interruptAgentOnDecision?: boolean;
   terminal?: TerminalSink;

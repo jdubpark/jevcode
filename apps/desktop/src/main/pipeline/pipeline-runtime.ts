@@ -38,6 +38,7 @@ import {
   gitDiffFiles,
   type EvidenceSession,
 } from "./evidence-runtime.js";
+import { chooseAgentMode } from "./agent-mode.js";
 import { runJevStage } from "./jev-stage.js";
 import type { JevStageUnitState } from "./types.js";
 import { MockAgentAdapter } from "./mock-agent-adapter.js";
@@ -262,7 +263,7 @@ export class PipelineRuntime {
       adapterKind,
       coordinator: new PipelineCoordinator({ stores, onRebuildError: (error) => this.log(`pipeline rebuild failed (retried on the next sync): ${String(error)}`) }),
       stores,
-      client: this.opts.jevClient ?? createJevClient(),
+      client: this.opts.jevClient ?? this.opts.createJevClient?.() ?? createJevClient(),
       facts: [],
       unitState: new Map(),
       surfaces: new Map(),
@@ -853,17 +854,7 @@ export class PipelineRuntime {
   }
 
   private resolveAgentMode(mode: AgentMode | undefined): AgentMode {
-    const envMode = process.env["JEVC_AGENT"];
-    if (mode !== undefined) return mode;
-    if (
-      envMode === "mock" ||
-      envMode === "codex" ||
-      envMode === "auto" ||
-      envMode === "replay"
-    ) {
-      return envMode;
-    }
-    return "auto";
+    return chooseAgentMode(mode, process.env["JEVC_AGENT"], this.opts.agentModeFor?.());
   }
 
   private buildStores(sessionId: string): PipelineStores {

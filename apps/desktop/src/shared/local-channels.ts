@@ -9,7 +9,9 @@ import {
 } from "@jevcode/contracts";
 
 import {
+  AGENT_BACKEND_OPTIONS,
   AGENT_MODEL_OPTIONS,
+  JEV_CLIENT_OPTIONS,
   REASONING_EFFORT_OPTIONS,
 } from "./prefs.js";
 import { API_KEY_MAX_LENGTH, API_KEY_NAMES } from "./secrets.js";
@@ -208,6 +210,8 @@ export const AgentPreferencesSchema = z.object({
   reasoningEffort: REASONING_EFFORT_ENUM,
   usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]),
   explainWithModel: z.boolean(),
+  agentBackend: z.enum(AGENT_BACKEND_OPTIONS),
+  jevClient: z.enum(JEV_CLIENT_OPTIONS),
 });
 
 export type AgentPreferencesPayload = z.infer<typeof AgentPreferencesSchema>;
@@ -220,13 +224,17 @@ export const PreferencesSetPayloadSchema = z
     reasoningEffort: REASONING_EFFORT_ENUM.optional(),
     usageBudgetFraction: z.union([BUDGET_FRACTION, z.null()]).optional(),
     explainWithModel: z.boolean().optional(),
+    agentBackend: z.enum(AGENT_BACKEND_OPTIONS).optional(),
+    jevClient: z.enum(JEV_CLIENT_OPTIONS).optional(),
   })
   .refine(
     (patch) =>
       patch.model !== undefined ||
       patch.reasoningEffort !== undefined ||
       patch.usageBudgetFraction !== undefined ||
-      patch.explainWithModel !== undefined,
+      patch.explainWithModel !== undefined ||
+      patch.agentBackend !== undefined ||
+      patch.jevClient !== undefined,
     { message: "at least one preference must be set" },
   );
 
@@ -235,6 +243,8 @@ export type PreferencesSetPayload = z.infer<typeof PreferencesSetPayloadSchema>;
 /** PreferencesView: the stored preferences plus main's read-only narrator availability. */
 export const PreferencesUpdatedPayloadSchema = AgentPreferencesSchema.extend({
   narratorAvailability: z.enum(NARRATOR_AVAILABILITY).optional(),
+  agentBackendOverride: z.string().max(32).optional(),
+  jevClientOverride: z.string().max(32).optional(),
 });
 
 export type PreferencesUpdatedPayload = z.infer<
