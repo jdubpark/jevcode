@@ -19,10 +19,12 @@ import {
   sendToRenderer,
   setMainWindow,
 } from "./ipc.js";
-import { EXPLAIN_WITH_MODEL_PREF_KEY, jevClientEnvValue, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
+import { jevEnv } from "./jev-env.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { createMainSlicer } from "./pipeline/main-slicer.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
+import { createModelSelector } from "./pipeline/model-selection.js";
 import { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import { RuntimeInstructionDeliverer } from "./pipeline/runtime-instruction-deliverer.js";
 import { SMOKE_SCRIPT_DEFAULTS, smokeMockScript } from "./pipeline/smoke-script.js";
@@ -310,6 +312,17 @@ app.whenReady().then(() => {
   explainer = explainerRegistry;
   connectNarratorSwitch(narratorSwitch, explainerRegistry);
 
+  // One reader for each session's Jev client and its model auto-selection: the saved-or-environment TypeSafe key and
+  // the Jev client choice (JEVC_JEV_CLIENT when it is typesafe or degrade, else the stored choice), read when a
+  // session starts, so a change applies to the next session.
+  const readJevEnv = () =>
+    jevEnv({
+      typesafeKey: secrets.active("TYPESAFE_API_KEY"),
+      jevClientPreference: readAgentPreferences((key) => openedDb.getPreference(key)).jevClient,
+      env: process.env,
+    });
+  const sessionJevClient = () => createJevClient({ env: readJevEnv });
+
   runtime = new PipelineRuntime({
     db,
     emit: sendToRenderer,
@@ -323,16 +336,8 @@ app.whenReady().then(() => {
     onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
     slicer: mainSlicer,
     agentModeFor: () => readAgentPreferences((key) => openedDb.getPreference(key)).agentBackend,
-    createJevClient: () =>
-      createJevClient({
-        env: () => ({
-          TYPESAFE_API_KEY: secrets.active("TYPESAFE_API_KEY") ?? undefined,
-          JEVC_JEV_CLIENT:
-            process.env["JEVC_JEV_CLIENT"] ?? jevClientEnvValue(readAgentPreferences((key) => openedDb.getPreference(key)).jevClient),
-          TYPESAFE_BASE_URL: process.env["TYPESAFE_BASE_URL"],
-          TYPESAFE_DEFAULT_MODEL: process.env["TYPESAFE_DEFAULT_MODEL"],
-        }),
-      }),
+    createJevClient: sessionJevClient,
+    modelSelector: createModelSelector(sessionJevClient),
   });
 
   const instructionRouter = new InstructionRouter({
