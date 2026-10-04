@@ -12,6 +12,7 @@ import {
   AGENT_MODEL_OPTIONS,
   REASONING_EFFORT_OPTIONS,
 } from "./prefs.js";
+import { API_KEY_MAX_LENGTH, API_KEY_NAMES } from "./secrets.js";
 import { NARRATOR_AVAILABILITY, NarratorCallRecordSchema } from "./narrator-log.js";
 
 export const RendererToMainLocalChannels = {
@@ -31,6 +32,10 @@ export const RendererToMainLocalChannels = {
   tracePayloads: "trace:payloads",
   traceOpen: "trace:open",
   traceRequestChanges: "trace:requestChanges",
+  secretsStatus: "secrets:status",
+  secretsSet: "secrets:set",
+  secretsRemove: "secrets:remove",
+  secretsTest: "secrets:test",
 } as const;
 
 export const MainToRendererLocalChannels = {
@@ -39,6 +44,7 @@ export const MainToRendererLocalChannels = {
   debugTelemetry: "debug:telemetry",
   preferencesUpdated: "preferences:updated",
   composerPrefill: "composer:prefill",
+  secretsUpdated: "secrets:updated",
 } as const;
 
 export type RendererToMainLocalChannelName =
@@ -280,6 +286,24 @@ export const ComposerPrefillPayloadSchema = z.object({
 
 export type ComposerPrefillPayload = z.infer<typeof ComposerPrefillPayloadSchema>;
 
+const API_KEY_NAME_ENUM = z.enum(API_KEY_NAMES);
+export const SecretsStatusPayloadSchema = z.object({}).strict();
+/** Shape only; main trims and validates the value (no echo, Task 1's normalizeKeyValue). */
+export const SecretsSetPayloadSchema = z.object({ name: API_KEY_NAME_ENUM, value: z.string().max(API_KEY_MAX_LENGTH * 4) }).strict();
+export const SecretsRemovePayloadSchema = z.object({ name: API_KEY_NAME_ENUM }).strict();
+export const SecretsTestPayloadSchema = z.object({ name: z.literal("ANTHROPIC_API_KEY") }).strict();
+export const KeyStatusSchema = z
+  .object({
+    name: API_KEY_NAME_ENUM,
+    set: z.boolean(),
+    source: z.enum(["app", "env", "none"]),
+    last4: z.string().max(4).nullable(),
+    envAlsoSet: z.boolean(),
+    unreadable: z.boolean(),
+  })
+  .strict();
+export const SecretsViewSchema = z.object({ canSave: z.boolean(), fileUnreadable: z.boolean(), keys: z.array(KeyStatusSchema) }).strict();
+
 export const localToMain = {
   [RendererToMainChannels.sessionStart]: SessionStartPayloadSchema,
   [RendererToMainLocalChannels.repoBrowse]: RepoBrowsePayloadSchema,
@@ -302,6 +326,10 @@ export const localToMain = {
   [RendererToMainLocalChannels.tracePayloads]: TracePayloadsPayloadSchema,
   [RendererToMainLocalChannels.traceOpen]: TraceOpenPayloadSchema,
   [RendererToMainLocalChannels.traceRequestChanges]: TraceRequestChangesPayloadSchema,
+  [RendererToMainLocalChannels.secretsStatus]: SecretsStatusPayloadSchema,
+  [RendererToMainLocalChannels.secretsSet]: SecretsSetPayloadSchema,
+  [RendererToMainLocalChannels.secretsRemove]: SecretsRemovePayloadSchema,
+  [RendererToMainLocalChannels.secretsTest]: SecretsTestPayloadSchema,
 } as const;
 
 export const localFromMain = {
@@ -311,4 +339,5 @@ export const localFromMain = {
   [MainToRendererLocalChannels.preferencesUpdated]:
     PreferencesUpdatedPayloadSchema,
   [MainToRendererLocalChannels.composerPrefill]: ComposerPrefillPayloadSchema,
+  [MainToRendererLocalChannels.secretsUpdated]: SecretsViewSchema,
 } as const;

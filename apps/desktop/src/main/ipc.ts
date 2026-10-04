@@ -39,6 +39,9 @@ import { droppedRecordMessage } from "./pipeline/narrator-call-log.js";
 import type { NarratorCallLog } from "./pipeline/narrator-call-log.js";
 import type { NarratorSwitch } from "./pipeline/narrator-switch.js";
 import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
+import type { KeyTestResult, SecretsView } from "../shared/secrets.js";
+import { SecretsError } from "./secrets/secrets-store.js";
+import type { SecretsStore } from "./secrets/secrets-store.js";
 import { openRepoByPath } from "./repo-service.js";
 import type { ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import {
@@ -71,6 +74,10 @@ export interface IpcDeps {
   terminals: TerminalManager;
   runtime: PipelineRuntime;
   instructionRouter: InstructionRouter;
+  /** Settings page keys (main window only; trace windows are refused by the allowlist). */
+  secrets?: SecretsStore;
+  /** Anthropic key check (jev-router checkAnthropicKey); the active value never leaves main. */
+  checkKey?: (apiKey: string) => Promise<KeyTestResult>;
   requestRepoPath: () => Promise<string | null>;
   log: (message: string) => void;
   /** Read-only trace access over a query_only reader (trace-ipc.ts). */
@@ -291,6 +298,38 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const view = withNarratorAvailability(next);
     sendToRenderer(MainToRendererLocalChannels.preferencesUpdated, view);
     return view;
+  });
+
+  const requireSecrets = (): SecretsStore => {
+    if (deps.secrets === undefined) throw new IpcError("SECRETS_UNAVAILABLE", "Saved keys are not available in this window.");
+    return deps.secrets;
+  };
+  const secretsCall = (fn: () => SecretsView): SecretsView => {
+    let view: SecretsView;
+    try {
+      view = fn();
+    } catch (error) {
+      if (error instanceof SecretsError) {
+        throw new IpcError(error.code === "CANNOT_ENCRYPT" ? "SECRETS_UNAVAILABLE" : "INVALID_PAYLOAD", error.message);
+      }
+      throw error;
+    }
+    sendToRenderer(MainToRendererLocalChannels.secretsUpdated, view);
+    // The narrator note and availability depend on the active Anthropic key (Task 4 wires the switch to the store).
+    sendToRenderer(
+      MainToRendererLocalChannels.preferencesUpdated,
+      withNarratorAvailability(readAgentPreferences((key) => deps.db.getPreference(key))),
+    );
+    return view;
+  };
+
+  handle(RendererToMainLocalChannels.secretsStatus, () => requireSecrets().view());
+  handle(RendererToMainLocalChannels.secretsSet, ({ name, value }) => secretsCall(() => requireSecrets().set(name, value)));
+  handle(RendererToMainLocalChannels.secretsRemove, ({ name }) => secretsCall(() => requireSecrets().remove(name)));
+  handle(RendererToMainLocalChannels.secretsTest, async ({ name }): Promise<KeyTestResult> => {
+    const apiKey = requireSecrets().active(name);
+    if (apiKey === null || deps.checkKey === undefined) return { result: "error" };
+    return deps.checkKey(apiKey);
   });
 
   handle(RendererToMainChannels.sessionStart, async ({ repoId, prompt, model, reasoningEffort, approvalMode }) => {

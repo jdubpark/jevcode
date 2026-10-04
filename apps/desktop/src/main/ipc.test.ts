@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { RendererToMainChannels } from "@jevcode/contracts";
@@ -17,6 +21,7 @@ import type { PipelineRuntime } from "./pipeline/pipeline-runtime.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { RendererToMainLocalChannels } from "../shared/local-channels.js";
 import { EXPLAIN_WITH_MODEL_PREF_KEY } from "../shared/prefs.js";
+import { createSecretsStore } from "./secrets/secrets-store.js";
 import { createAppState } from "./state.js";
 import type { AppState } from "./state.js";
 
@@ -510,5 +515,71 @@ describe("main-window host actions are checked in main (spec §4.3, §10)", () =
     ).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
     expect(calls).toEqual([]);
     db.close();
+  });
+});
+
+function memoryStore(env: Record<string, string | undefined> = {}, canEncrypt = true) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "jevcode-ipc-secrets-"));
+  const store = createSecretsStore({
+    filePath: path.join(dir, "secrets.json"),
+    crypto: {
+      isEncryptionAvailable: () => canEncrypt,
+      encryptString: (plain) => Buffer.from(`enc:${plain}`),
+      decryptString: (cipher) => cipher.toString().slice(4),
+    },
+    env,
+  });
+  return { store, dir };
+}
+
+describe("secrets IPC (settings page)", () => {
+  it("returns statuses only and saves, removes and tests keys", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const checkKey = vi.fn(async (_apiKey: string) => ({ result: "ok" as const }));
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, checkKey });
+    const set = handlers.get("secrets:set")!;
+    const view = (await set(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" })) as { keys: { source: string; last4: string }[] };
+    expect(view.keys[0]).toMatchObject({ source: "app", last4: "7777" });
+    expect(JSON.stringify(view)).not.toContain("sk-ant-abcdef-7777");
+    await expect(handlers.get("secrets:test")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toEqual({ result: "ok" });
+    expect(checkKey).toHaveBeenCalledWith("sk-ant-abcdef-7777");
+    await expect(handlers.get("secrets:remove")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toMatchObject({ keys: [{ source: "none" }, { source: "none" }] });
+    await expect(handlers.get("secrets:test")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" })).resolves.toEqual({ result: "error" });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("maps refusals to typed errors that do not repeat the value", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore({}, false);
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store });
+    await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" })).rejects.toMatchObject({
+      message: expect.not.stringContaining("sk-ant-abcdef-7777"),
+    });
+    await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "has space" })).rejects.toMatchObject({
+      message: expect.not.stringContaining("has space"),
+    });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects every secrets channel from a trace window (Review Focus 5)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state, () => "trace"), secrets: store });
+    for (const [channel, payload] of [
+      ["secrets:status", {}],
+      ["secrets:set", { name: "ANTHROPIC_API_KEY", value: "sk-x" }],
+      ["secrets:remove", { name: "ANTHROPIC_API_KEY" }],
+      ["secrets:test", { name: "ANTHROPIC_API_KEY" }],
+    ] as const) {
+      await expect(handlers.get(channel)!(TRUSTED_EVENT, payload)).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
+    }
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

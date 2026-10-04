@@ -59,4 +59,12 @@ describe("main → renderer pushes (spec §4.3, §7)", () => {
     expect(isPushAllowed("agent:event", "main")).toBe(true);
     expect(isPushAllowed("trace:rowsAvailable", "other")).toBe(false);
   });
+
+  it("keeps every secrets channel and push away from trace windows", () => {
+    for (const channel of ["secrets:status", "secrets:set", "secrets:remove", "secrets:test"]) {
+      expect(isChannelAllowed(channel, "trace")).toBe(false);
+      expect(isChannelAllowed(channel, "main")).toBe(true);
+    }
+    expect(isPushAllowed("secrets:updated", "trace")).toBe(false);
+  });
 });
