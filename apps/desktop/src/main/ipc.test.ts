@@ -585,7 +585,7 @@ describe("secrets IPC (settings page)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("pushes the narrator availability that follows a saved key", async () => {
+  it("reports through preferences:get the narrator availability that follows a saved key", async () => {
     const { db, state } = seedRepoAndSession();
     const { runtime } = stubRuntime();
     const { store, dir } = memoryStore();
@@ -597,6 +597,75 @@ describe("secrets IPC (settings page)", () => {
     await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({ narratorAvailability: "on" });
     db.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Records what main pushes to the window (sendToRenderer). */
+  function captureWindow(): ReturnType<typeof vi.fn> {
+    const send = vi.fn();
+    setMainWindow({ isDestroyed: () => false, webContents: { send } } as unknown as Parameters<typeof setMainWindow>[0]);
+    return send;
+  }
+  const pushed = (send: ReturnType<typeof vi.fn>, channel: string): unknown[] =>
+    send.mock.calls.filter(([name]) => name === channel).map(([, payload]) => payload as unknown);
+
+  it("pushes secrets:updated and preferences:updated after a save and a removal, never with the key (secrets:updated fan-out)", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => store.active("ANTHROPIC_API_KEY"), createClient: () => createFakeNarratorClient({}) });
+    store.subscribe(() => narrator.refresh());
+    const send = captureWindow();
+    try {
+      const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, narrator });
+      const reply = await handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" });
+      expect(send.mock.calls.map(([name]) => name as string).sort()).toEqual(["preferences:updated", "secrets:updated"]);
+      expect(pushed(send, "secrets:updated")).toEqual([reply]);
+      expect(pushed(send, "secrets:updated")[0]).toMatchObject({ keys: [{ name: "ANTHROPIC_API_KEY", source: "app", last4: "7777" }, { source: "none" }] });
+      expect(pushed(send, "preferences:updated")).toEqual([expect.objectContaining({ narratorAvailability: "on" })]);
+      expect(JSON.stringify(send.mock.calls)).not.toContain("sk-ant-abcdef-7777");
+
+      send.mockClear();
+      await handlers.get("secrets:remove")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY" });
+      expect(send.mock.calls.map(([name]) => name as string).sort()).toEqual(["preferences:updated", "secrets:updated"]);
+      expect(pushed(send, "secrets:updated")[0]).toMatchObject({ keys: [{ name: "ANTHROPIC_API_KEY", set: false, source: "none" }, { source: "none" }] });
+      expect(pushed(send, "preferences:updated")).toEqual([expect.objectContaining({ narratorAvailability: "off_no_key" })]);
+    } finally {
+      setMainWindow(null);
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pushes nothing after a refused save", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const cannotEncrypt = memoryStore({}, false);
+    const canEncrypt = memoryStore();
+    const send = captureWindow();
+    try {
+      for (const store of [cannotEncrypt.store, canEncrypt.store]) {
+        const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store });
+        const value = store === cannotEncrypt.store ? "sk-ant-abcdef-7777" : "has space";
+        await expect(handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value })).rejects.toBeTruthy();
+      }
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      setMainWindow(null);
+      db.close();
+      rmSync(cannotEncrypt.dir, { recursive: true, force: true });
+      rmSync(canEncrypt.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses secrets:status with SECRETS_UNAVAILABLE when main has no secrets store", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const handlers = registerAndCapture(makeDeps(db, runtime, state));
+    const status = Promise.resolve(handlers.get("secrets:status")!(TRUSTED_EVENT, {})).catch((error: unknown) => {
+      throw deserializeIpcError(error);
+    });
+    await expect(status).rejects.toMatchObject({ code: "SECRETS_UNAVAILABLE" });
+    db.close();
   });
 });
 
