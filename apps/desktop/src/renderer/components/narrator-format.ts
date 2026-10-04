@@ -10,7 +10,7 @@ export function narratorSettingNote(availability: NarratorAvailability): string 
     case "off_setting":
       return "Rule-based labels only. Nothing leaves this machine.";
     case "off_no_key":
-      return "ANTHROPIC_API_KEY is not set, so labels stay rule-based. Nothing leaves this machine.";
+      return "No Anthropic key is set (add one under Settings → API keys), so labels stay rule-based. Nothing leaves this machine.";
     case "off_env":
       return "JEVCODE_NARRATOR=off, so labels stay rule-based. Nothing leaves this machine.";
   }
@@ -21,9 +21,9 @@ export function narratorAvailabilityLabel(availability: NarratorAvailability): s
     case "on":
       return "Narrator on · claude-haiku-4-5";
     case "off_setting":
-      return "Off in Agent settings";
+      return "Off in Settings";
     case "off_no_key":
-      return "Off · ANTHROPIC_API_KEY is not set";
+      return "Off · no Anthropic key";
     case "off_env":
       return "Off · JEVCODE_NARRATOR=off";
   }
