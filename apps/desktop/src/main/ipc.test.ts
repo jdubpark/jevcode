@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createFakeNarratorClient } from "@jevcode/jev-router";
 import { openDb } from "@jevcode/storage";
 import type { JevcodeDb } from "@jevcode/storage";
 import { RendererToMainChannels } from "@jevcode/contracts";
@@ -391,6 +392,7 @@ describe("narrator setting and Inspect log (N-4, spec E15 and §6.3)", () => {
       current: () => null,
       availability: () => availability,
       setEnabled,
+      refresh: () => undefined,
       subscribe: () => () => undefined,
     };
     return { narrator, setEnabled };
@@ -579,6 +581,20 @@ describe("secrets IPC (settings page)", () => {
     ] as const) {
       await expect(handlers.get(channel)!(TRUSTED_EVENT, payload)).rejects.toMatchObject({ code: "UNTRUSTED_SENDER" });
     }
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("pushes the narrator availability that follows a saved key", async () => {
+    const { db, state } = seedRepoAndSession();
+    const { runtime } = stubRuntime();
+    const { store, dir } = memoryStore();
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => store.active("ANTHROPIC_API_KEY"), createClient: () => createFakeNarratorClient({}) });
+    store.subscribe(() => narrator.refresh());
+    const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), secrets: store, narrator });
+    await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({ narratorAvailability: "off_no_key" });
+    await handlers.get("secrets:set")!(TRUSTED_EVENT, { name: "ANTHROPIC_API_KEY", value: "sk-ant-abcdef-7777" });
+    await expect(handlers.get("preferences:get")!(TRUSTED_EVENT, {})).resolves.toMatchObject({ narratorAvailability: "on" });
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
