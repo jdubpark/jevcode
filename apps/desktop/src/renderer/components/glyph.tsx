@@ -16,6 +16,10 @@ const PATHS = {
   chev: "M4.75 6.5 8 9.75l3.25-3.25",
   /** Two slider tracks with knobs: settings, distinct from the list rows above it. */
   settings: "M2.5 5h4.25M9.75 5h3.75M2.5 11h1.25M6.75 11h6.75M6.75 5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0M3.75 11a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0",
+  /** A key: the Settings page's API key rows. */
+  key: "M10.5 2.5a3 3 0 1 1 0 6a3 3 0 0 1 0-6M8.4 7.6L2.5 13.5M4.5 11.5l1.5 1.5M6 10l1.5 1.5",
+  /** A left chevron: the Settings page's Back button. */
+  back: "M10 3.5L5.5 8l4.5 4.5",
 } as const;
 
 export type GlyphName = keyof typeof PATHS;
