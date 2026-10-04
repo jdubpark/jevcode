@@ -10,6 +10,7 @@ import type {
 import type { z } from "zod";
 
 import { IpcError } from "./errors.js";
+import type { ApiKeyName, KeyTestResult, SecretsView } from "./secrets.js";
 import {
   fromMainRegistry,
   parseFromMain,
@@ -170,6 +171,13 @@ export interface JevcodeApi {
   onInstructionState(
     listener: (payload: AgentInstructionStatePayload) => void,
   ): () => void;
+  secrets: {
+    view(): Promise<SecretsView>;
+    set(name: ApiKeyName, value: string): Promise<SecretsView>;
+    remove(name: ApiKeyName): Promise<SecretsView>;
+    test(name: "ANTHROPIC_API_KEY"): Promise<KeyTestResult>;
+  };
+  onSecretsUpdated(listener: (view: SecretsView) => void): () => void;
   onPrefsUpdated(listener: (payload: PreferencesView) => void): () => void;
   /** A trace window's "Request changes" note for the composer (spec §8.5). */
   onComposerPrefill(listener: (payload: ComposerPrefillPayload) => void): () => void;
@@ -360,6 +368,13 @@ export function createJevcodeApi(deps: ApiDeps): JevcodeApi {
         await invoke("overview:rescan", { repoRoot });
       },
     },
+    secrets: {
+      view: async () => (await invoke("secrets:status", {})) as SecretsView,
+      set: async (name, value) => (await invoke("secrets:set", { name, value })) as SecretsView,
+      remove: async (name) => (await invoke("secrets:remove", { name })) as SecretsView,
+      test: async (name) => (await invoke("secrets:test", { name })) as KeyTestResult,
+    },
+    onSecretsUpdated: (listener) => on(MainToRendererLocalChannels.secretsUpdated, listener),
     on,
     onInstructionState: (listener) =>
       on(MainToRendererChannels.agentInstructionState, listener),
