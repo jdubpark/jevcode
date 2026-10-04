@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { createFakeNarratorClient } from "@jevcode/jev-router";
 import { describe, expect, it, vi } from "vitest";
 
+import { createSecretsStore } from "../secrets/secrets-store.js";
 import { createNarratorSwitch, narratorAvailability } from "./narrator-switch.js";
 
 describe("narratorAvailability", () => {
@@ -69,5 +74,55 @@ describe("createNarratorSwitch (spec E15)", () => {
   it("builds the Anthropic-backed client by default without touching the network", () => {
     const narrator = createNarratorSwitch({ enabled: true, env: { ANTHROPIC_API_KEY: "sk-test" } });
     expect(typeof narrator.current()?.describeComponents).toBe("function");
+  });
+});
+
+describe("narrator switch with saved keys (settings page)", () => {
+  it("rebuilds the client when the active key changes, and only then", () => {
+    let key: string | null = "sk-first";
+    // Each call returns a fresh fake, so a rebuilt client is a different object.
+    const createClient = vi.fn((_apiKey: string) => createFakeNarratorClient({}));
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => key, createClient });
+    expect(createClient).not.toHaveBeenCalled();
+    const seen: unknown[] = [];
+    narrator.subscribe((client) => seen.push(client));
+    const first = narrator.current();
+    expect(createClient).toHaveBeenLastCalledWith("sk-first");
+    narrator.refresh();
+    expect(seen).toHaveLength(0);
+    key = "sk-second";
+    narrator.refresh();
+    expect(createClient).toHaveBeenLastCalledWith("sk-second");
+    expect(narrator.current()).not.toBe(first);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("goes off_no_key when the key is removed, and the kill switch still wins", () => {
+    let key: string | null = "sk-first";
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => key, createClient: () => createFakeNarratorClient({}) });
+    key = null;
+    narrator.refresh();
+    expect(narrator.availability()).toBe("off_no_key");
+    expect(narrator.current()).toBeNull();
+    const killed = createNarratorSwitch({ enabled: true, env: { JEVCODE_NARRATOR: "off" }, apiKey: () => "sk-x", createClient: () => createFakeNarratorClient({}) });
+    expect(killed.availability()).toBe("off_env");
+  });
+
+  it("stays on with the environment key after the saved key is removed (Review Focus 4)", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jevcode-switch-"));
+    const store = createSecretsStore({
+      filePath: path.join(dir, "secrets.json"),
+      crypto: { isEncryptionAvailable: () => true, encryptString: (p) => Buffer.from(`enc:${p}`), decryptString: (c) => c.toString().slice(4) },
+      env: { ANTHROPIC_API_KEY: "sk-env-key" },
+    });
+    const createClient = vi.fn(() => createFakeNarratorClient({}));
+    const narrator = createNarratorSwitch({ enabled: true, env: {}, apiKey: () => store.active("ANTHROPIC_API_KEY"), createClient });
+    store.subscribe(() => narrator.refresh());
+    store.set("ANTHROPIC_API_KEY", "sk-saved-key");
+    expect(createClient).toHaveBeenLastCalledWith("sk-saved-key");
+    store.remove("ANTHROPIC_API_KEY");
+    expect(narrator.availability()).toBe("on");
+    expect(createClient).toHaveBeenLastCalledWith("sk-env-key");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

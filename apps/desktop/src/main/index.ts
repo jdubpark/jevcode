@@ -5,7 +5,8 @@ import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
-import { app, BrowserWindow, webContents } from "electron";
+import { checkAnthropicKey } from "@jevcode/jev-router";
+import { app, BrowserWindow, safeStorage, webContents } from "electron";
 import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
 import { openDb, openTraceReader } from "@jevcode/storage";
@@ -33,6 +34,8 @@ import { createAppState } from "./state.js";
 import { connectNarratorSwitch, createNarrationSeamFactory } from "./pipeline/explainer-narration-seam.js";
 import { NARRATOR_CALL_LOG_CAPACITY, createNarratorCallLog } from "./pipeline/narrator-call-log.js";
 import { createNarratorSwitch } from "./pipeline/narrator-switch.js";
+import { createSecretsStore } from "./secrets/secrets-store.js";
+import type { SecretCrypto } from "./secrets/secrets-store.js";
 import type { NarratorCallRecord } from "../shared/narrator-log.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { createTraceService } from "./trace-service.js";
@@ -71,6 +74,17 @@ function loadEnvFileFromRepo(): void {
 loadEnvFileFromRepo();
 
 const SMOKE = process.env["JEVCODE_SMOKE"] === "1";
+
+/** Smoke runs: the page shows saving as possible, but nothing is ever encrypted or decrypted. */
+const SMOKE_SECRET_CRYPTO: SecretCrypto = {
+  isEncryptionAvailable: () => true,
+  encryptString: () => {
+    throw new Error("saved keys are disabled in smoke runs");
+  },
+  decryptString: () => {
+    throw new Error("saved keys are disabled in smoke runs");
+  },
+};
 /** Prints trace windows' TRACE_PERF lines (docs/perf.md live-tick samples). */
 const TRACE_PERF = process.env["JEVCODE_TRACE_PERF"] === "1";
 
@@ -166,9 +180,29 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   db = openDb();
   const openedDb = db;
+  /** safeStorage, except Linux's `basic_text` backend (a fixed password) counts as no encryption: the spec forbids plaintext. */
+  const KEYCHAIN_CRYPTO: SecretCrypto = {
+    isEncryptionAvailable: () =>
+      safeStorage.isEncryptionAvailable() &&
+      !(process.platform === "linux" && safeStorage.getSelectedStorageBackend() === "basic_text"),
+    encryptString: (plain) => safeStorage.encryptString(plain),
+    decryptString: (cipher) => safeStorage.decryptString(cipher),
+  };
+  const secrets = createSecretsStore({
+    // Smokes point this at a temp file (Task 7); otherwise the app's data folder.
+    filePath: process.env["JEVCODE_SECRETS_FILE"] ?? path.join(app.getPath("userData"), "secrets.json"),
+    // A smoke never touches the keychain: a prompt there would block the main thread until someone answers it.
+    crypto: SMOKE ? SMOKE_SECRET_CRYPTO : KEYCHAIN_CRYPTO,
+    env: process.env,
+    log: (message) => console.error(`[secrets] ${message}`),
+  });
   const narratorSwitch = createNarratorSwitch({
     enabled: readAgentPreferences((key) => openedDb.getPreference(key)).explainWithModel,
     env: process.env,
+    apiKey: () => secrets.active("ANTHROPIC_API_KEY"),
+  });
+  secrets.subscribe((name) => {
+    if (name === "ANTHROPIC_API_KEY") narratorSwitch.refresh();
   });
   const narratorCalls = createNarratorCallLog(NARRATOR_CALL_LOG_CAPACITY, {
     log: (message) => console.error(`[narrator] ${message}`),
@@ -318,6 +352,8 @@ app.whenReady().then(() => {
 
   registerIpcHandlers({
     db,
+    secrets,
+    checkKey: (apiKey) => checkAnthropicKey({ apiKey }),
     state,
     terminals,
     runtime,
