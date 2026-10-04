@@ -599,3 +599,17 @@ describe("secrets IPC (settings page)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+it("stores the backend and Jev client and reports environment overrides", async () => {
+  const { db, state } = seedRepoAndSession();
+  const { runtime } = stubRuntime();
+  const handlers = registerAndCapture({ ...makeDeps(db, runtime, state), env: { JEVC_AGENT: "mock" } });
+  await expect(handlers.get("preferences:set")!(TRUSTED_EVENT, { agentBackend: "codex", jevClient: "offline" })).resolves.toMatchObject({
+    agentBackend: "codex",
+    jevClient: "offline",
+    agentBackendOverride: "mock",
+  });
+  expect(db.getPreference("agent.backend")).toBe("codex");
+  expect(db.getPreference("jev.client")).toBe("offline");
+  db.close();
+});

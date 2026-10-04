@@ -2267,3 +2267,28 @@ describe("PipelineRuntime onPipelineSync", () => {
     db.close();
   });
 });
+
+describe("PipelineRuntime with Settings page choices", () => {
+  it("builds each session's Jev client from the factory and asks the preference for the backend", async () => {
+    vi.stubEnv("JEVC_AGENT", "");
+    const dir = path.join(repoRoot, "apps/desktop/.test-tmp/settings-factory");
+    rmSync(dir, { recursive: true, force: true });
+    const db = createTempDb(dir);
+    db.upsertRepository({ id: "repo-test", path: fixtureDir("rate-limit"), gitRoot: fixtureDir("rate-limit"), branch: "test", baseCommit: "test" });
+    db.createSession({ id: "sess-settings", repoId: "repo-test", prompt: "settings" });
+    const createJevClient = vi.fn(() => new DegradeClient());
+    const agentModeFor = vi.fn(() => "replay" as const);
+    const { emit } = collectEmit();
+    const runtime = new PipelineRuntime({ db, emit, evidence: false, log: () => {}, createJevClient, agentModeFor });
+    try {
+      // No agentMode on the input or the runtime: JEVC_AGENT is blank, so the preference decides.
+      await runtime.startSession({ sessionId: "sess-settings", repoId: "repo-test", repoPath: fixtureDir("rate-limit"), prompt: "settings" });
+      expect(createJevClient).toHaveBeenCalledTimes(1);
+      expect(agentModeFor).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.stopSession("sess-settings");
+      db.close();
+      vi.unstubAllEnvs();
+    }
+  }, 30_000);
+});

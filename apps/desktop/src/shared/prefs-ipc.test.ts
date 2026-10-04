@@ -8,6 +8,8 @@ const SAMPLE_PREFS = {
   reasoningEffort: "xhigh",
   usageBudgetFraction: "0.25",
   explainWithModel: true,
+  agentBackend: "auto",
+  jevClient: "auto",
 };
 
 describe("preference IPC channels", () => {

@@ -5,7 +5,7 @@ import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { MainToRendererChannels } from "@jevcode/contracts";
-import { checkAnthropicKey } from "@jevcode/jev-router";
+import { checkAnthropicKey, createJevClient } from "@jevcode/jev-router";
 import { app, BrowserWindow, safeStorage, webContents } from "electron";
 import { scanPaths, scanRepo } from "@jevcode/codebase-map/node";
 import { createImportExtractor, type ImportExtractor } from "@jevcode/evidence-engine";
@@ -18,7 +18,7 @@ import {
   sendToRenderer,
   setMainWindow,
 } from "./ipc.js";
-import { EXPLAIN_WITH_MODEL_PREF_KEY, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
+import { EXPLAIN_WITH_MODEL_PREF_KEY, jevClientEnvValue, normalizeExplainWithModel, readAgentPreferences } from "../shared/prefs.js";
 import { createExplainerRegistry, createExplainerStage, type ExplainerRegistry } from "./pipeline/explainer-stage.js";
 import { createMainSlicer } from "./pipeline/main-slicer.js";
 import { InstructionRouter } from "./pipeline/instruction-router.js";
@@ -317,6 +317,17 @@ app.whenReady().then(() => {
     // Lane 07 (S-2): story, decision why and highlight triggers for the open repo's stage.
     onPipelineSync: (repoPath, sync) => explainerRegistry.get(repoPath)?.onPipelineSync(sync),
     slicer: mainSlicer,
+    agentModeFor: () => readAgentPreferences((key) => openedDb.getPreference(key)).agentBackend,
+    createJevClient: () =>
+      createJevClient({
+        env: () => ({
+          TYPESAFE_API_KEY: secrets.active("TYPESAFE_API_KEY") ?? undefined,
+          JEVC_JEV_CLIENT:
+            process.env["JEVC_JEV_CLIENT"] ?? jevClientEnvValue(readAgentPreferences((key) => openedDb.getPreference(key)).jevClient),
+          TYPESAFE_BASE_URL: process.env["TYPESAFE_BASE_URL"],
+          TYPESAFE_DEFAULT_MODEL: process.env["TYPESAFE_DEFAULT_MODEL"],
+        }),
+      }),
   });
 
   const instructionRouter = new InstructionRouter({
@@ -353,6 +364,7 @@ app.whenReady().then(() => {
   registerIpcHandlers({
     db,
     secrets,
+    env: process.env,
     checkKey: (apiKey) => checkAnthropicKey({ apiKey }),
     state,
     terminals,

@@ -19,6 +19,13 @@ export const REASONING_EFFORT_OPTIONS = [
 
 export type ReasoningEffortOption = (typeof REASONING_EFFORT_OPTIONS)[number];
 
+export const AGENT_BACKEND_OPTIONS = ["auto", "codex", "mock"] as const;
+export type AgentBackendOption = (typeof AGENT_BACKEND_OPTIONS)[number];
+export const JEV_CLIENT_OPTIONS = ["auto", "typesafe", "offline"] as const;
+export type JevClientOption = (typeof JEV_CLIENT_OPTIONS)[number];
+
+export const AGENT_BACKEND_PREF_KEY = "agent.backend";
+export const JEV_CLIENT_PREF_KEY = "jev.client";
 export const AGENT_MODEL_PREF_KEY = "agent.model";
 export const REASONING_EFFORT_PREF_KEY = "agent.reasoningEffort";
 export const USAGE_BUDGET_PREF_KEY = "agent.usageBudgetFraction";
@@ -32,6 +39,10 @@ export interface AgentPreferences {
   usageBudgetFraction: string | null;
   /** On by default (spec E15). False: rule-based explainer data only, no model calls. */
   explainWithModel: boolean;
+  /** Applies to new sessions; JEVC_AGENT wins. */
+  agentBackend: AgentBackendOption;
+  /** Applies to new sessions; JEVC_JEV_CLIENT wins. */
+  jevClient: JevClientOption;
 }
 
 /**
@@ -41,6 +52,10 @@ export interface AgentPreferences {
  */
 export interface PreferencesView extends AgentPreferences {
   narratorAvailability?: NarratorAvailability;
+  /** The environment value that overrides the stored choice (JEVC_AGENT), when set. */
+  agentBackendOverride?: string;
+  /** The environment value that overrides the stored choice (JEVC_JEV_CLIENT), when set. */
+  jevClientOverride?: string;
 }
 
 export interface AgentPreferencesPatch {
@@ -48,6 +63,8 @@ export interface AgentPreferencesPatch {
   reasoningEffort?: ReasoningEffortOption;
   usageBudgetFraction?: string | null;
   explainWithModel?: boolean;
+  agentBackend?: AgentBackendOption;
+  jevClient?: JevClientOption;
 }
 
 export const DEFAULT_AGENT_PREFERENCES: AgentPreferences = {
@@ -55,6 +72,8 @@ export const DEFAULT_AGENT_PREFERENCES: AgentPreferences = {
   reasoningEffort: "auto",
   usageBudgetFraction: null,
   explainWithModel: true,
+  agentBackend: "auto",
+  jevClient: "auto",
 };
 
 const BUDGET_RE = /^(0(\.\d+)?|1(\.0+)?)$/;
@@ -77,6 +96,33 @@ export function normalizeReasoningEffort(value: unknown): ReasoningEffortOption 
     return value as ReasoningEffortOption;
   }
   return "auto";
+}
+
+export function normalizeAgentBackend(value: unknown): AgentBackendOption {
+  if (typeof value === "string" && (AGENT_BACKEND_OPTIONS as readonly string[]).includes(value)) {
+    return value as AgentBackendOption;
+  }
+  return "auto";
+}
+
+export function normalizeJevClient(value: unknown): JevClientOption {
+  if (typeof value === "string" && (JEV_CLIENT_OPTIONS as readonly string[]).includes(value)) {
+    return value as JevClientOption;
+  }
+  return "auto";
+}
+
+const AGENT_ENV_VALUES = ["mock", "codex", "auto", "replay"];
+export function agentBackendOverride(env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const value = env["JEVC_AGENT"];
+  return value !== undefined && AGENT_ENV_VALUES.includes(value) ? value : undefined;
+}
+export function jevClientOverride(env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const value = env["JEVC_JEV_CLIENT"];
+  return value === "typesafe" || value === "degrade" ? value : undefined;
+}
+export function jevClientEnvValue(option: JevClientOption): "typesafe" | "degrade" | undefined {
+  return option === "typesafe" ? "typesafe" : option === "offline" ? "degrade" : undefined;
 }
 
 /** Normalizes a stored or incoming budget fraction to a 2-decimal string, or null when unknown/invalid. */
@@ -126,6 +172,8 @@ export function readAgentPreferences(
     reasoningEffort: normalizeReasoningEffort(get(REASONING_EFFORT_PREF_KEY)),
     usageBudgetFraction: normalizeBudgetFraction(get(USAGE_BUDGET_PREF_KEY)),
     explainWithModel: normalizeExplainWithModel(get(EXPLAIN_WITH_MODEL_PREF_KEY)),
+    agentBackend: normalizeAgentBackend(get(AGENT_BACKEND_PREF_KEY)),
+    jevClient: normalizeJevClient(get(JEV_CLIENT_PREF_KEY)),
   };
 }
 
@@ -141,6 +189,8 @@ export function applyPreferencesPatch(
         ? patch.usageBudgetFraction
         : current.usageBudgetFraction,
     explainWithModel: patch.explainWithModel ?? current.explainWithModel,
+    agentBackend: patch.agentBackend ?? current.agentBackend,
+    jevClient: patch.jevClient ?? current.jevClient,
   };
 }
 
