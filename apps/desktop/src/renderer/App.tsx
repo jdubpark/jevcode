@@ -102,9 +102,11 @@ export function App() {
         setSettingsOpen(true);
       }
     };
-    window.addEventListener("keydown", onKey);
+    // Capture phase: while Settings is open, its window capture listener stops keys aimed at <body> so the hidden
+    // viewer never sees them; stopPropagation spares other listeners on the same target and phase, so these still run.
+    window.addEventListener("keydown", onKey, true);
     return () => {
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, []);
 

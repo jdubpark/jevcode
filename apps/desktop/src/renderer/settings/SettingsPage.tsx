@@ -36,14 +36,16 @@ export function SettingsPage({ prefs, onSetPrefs, onClose }: SettingsPageProps) 
         onClose();
         return;
       }
-      // The hidden viewer treats keys aimed at <body> as its own; keep them out so Back finds it as it was. Stopping
-      // here keeps them from its window listener; scrolling keys stay unprevented so the page still scrolls.
+      // The hidden viewer treats every key aimed at <body> as its own (j, Alt+1 changing its level, Cmd/Ctrl+C copying
+      // a review note), so none may reach its window listener: Back must find it as it was. Stopping here keeps native
+      // actions: Tab, scrolling keys and modified keys (Cmd/Ctrl+C copies a real selection) are not prevented. App's
+      // own shortcuts listen on window in the capture phase too, so stopPropagation leaves them running.
       const target = event.target;
       const atBody = target === null || target === document.body || target === document.documentElement || target === window;
-      if (atBody && event.key !== "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.stopPropagation();
-        if (!SCROLL_KEYS.has(event.key)) event.preventDefault();
-      }
+      if (!atBody) return;
+      event.stopPropagation();
+      const modified = event.metaKey || event.ctrlKey || event.altKey;
+      if (!modified && event.key !== "Tab" && !SCROLL_KEYS.has(event.key)) event.preventDefault();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);

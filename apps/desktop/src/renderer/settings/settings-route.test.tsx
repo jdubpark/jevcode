@@ -75,4 +75,33 @@ describe("Settings route", () => {
       window.removeEventListener("keydown", viewerKeys);
     }
   });
+
+  it("keeps modified keys aimed at <body> from the hidden viewer, and leaves their native actions alone", async () => {
+    await openSettings();
+    const viewerKeys = vi.fn();
+    window.addEventListener("keydown", viewerKeys);
+    try {
+      // The viewer maps Alt+1 to a level change and Cmd/Ctrl+C with no text selection to copying a review note.
+      press(document.body, { key: "1", code: "Digit1", altKey: true });
+      // Not prevented: with page text selected, Cmd/Ctrl+C must still copy it natively.
+      expect(press(document.body, { key: "c", code: "KeyC", metaKey: true }).defaultPrevented).toBe(false);
+      expect(press(document.body, { key: "c", code: "KeyC", ctrlKey: true }).defaultPrevented).toBe(false);
+      expect(press(document.body, { key: "Tab", code: "Tab" }).defaultPrevented).toBe(false);
+      expect(viewerKeys).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", viewerKeys);
+    }
+  });
+
+  it("keeps App's shortcuts working while Settings is open", async () => {
+    await openSettings();
+    const inspect = screen.getByRole("button", { name: "Inspect" });
+    expect(inspect.getAttribute("aria-pressed")).toBe("false");
+    press(document.body, { key: "J", code: "KeyJ", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(inspect.getAttribute("aria-pressed")).toBe("true"));
+    press(document.body, { key: "J", code: "KeyJ", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(inspect.getAttribute("aria-pressed")).toBe("false"));
+    expect(press(document.body, { key: ",", code: "Comma", metaKey: true }).defaultPrevented).toBe(true);
+    expect(screen.getByRole("heading", { level: 1, name: "Settings" })).toBeTruthy();
+  });
 });
