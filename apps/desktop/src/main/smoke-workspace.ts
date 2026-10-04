@@ -11,6 +11,8 @@ import path from "node:path";
  * 4. select a step and walk every view by key, checking the selection survives;
  *    in Surfaces, dismiss the visible surface, require the completion surface's
  *    action buttons, click show_exact_diff and wait for a diff: surface
+ * 5. open Settings from the sidebar, capture it at 1440 px, close it, then press
+ *    one view key and require the same selection (Back restores the workspace)
  * Electron is reached only through WorkspaceSmokeDeps.
  */
 
@@ -379,7 +381,7 @@ async function measureAppends(
   }
 }
 
-async function walkViews(deps: WorkspaceSmokeDeps): Promise<void> {
+async function walkViews(deps: WorkspaceSmokeDeps): Promise<string | null> {
   const firstSelection = waitForLine(
     deps,
     (message) => {
@@ -411,6 +413,79 @@ async function walkViews(deps: WorkspaceSmokeDeps): Promise<void> {
     if (step.view === "surfaces") await exerciseSurfaces(deps);
   }
   deps.log(`SMOKE_VIEWS selected=${selected} views=${VIEW_KEYS.map((step) => step.view).join(",")}`);
+  return selected;
+}
+
+const SETTINGS_WAIT_MS = 5_000;
+
+function pollSettings(wantOpen: boolean): string {
+  return `(async () => {
+    const until = Date.now() + ${SETTINGS_WAIT_MS};
+    const isOpen = () => document.querySelector("[data-settings-page]") !== null;
+    while (Date.now() < until) {
+      if (isOpen() === ${wantOpen}) return { open: isOpen() };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return { open: isOpen(), timedOut: true };
+  })()`;
+}
+
+export const SETTINGS_OPEN_SCRIPT = `(async () => {
+  const row = document.querySelector("[data-settings-open]");
+  if (row === null) return { open: false, noRow: true };
+  row.click();
+  return ${pollSettings(true)};
+})()`;
+
+export const SETTINGS_CLOSE_SCRIPT = `(async () => {
+  const back = document.querySelector("[data-settings-back]");
+  if (back !== null) back.click();
+  return ${pollSettings(false)};
+})()`;
+
+/** Opens Settings from the sidebar, captures it at 1440 px, and closes it. */
+export async function exerciseSettings(
+  deps: Pick<WorkspaceSmokeDeps, "exec" | "capture" | "writeFile" | "log">,
+  shotsDir: string | null,
+): Promise<void> {
+  const opened = (await deps.exec(SETTINGS_OPEN_SCRIPT)) as { open?: boolean } | null;
+  if (opened?.open !== true) throw new Error("Settings step: the page did not open");
+  if (shotsDir !== null) {
+    const file = path.join(shotsDir, "main-settings-1440.png");
+    deps.writeFile(file, await deps.capture(1440, SHOT_HEIGHT));
+    deps.log(`SMOKE_SHOT ${file}`);
+  }
+  const closed = (await deps.exec(SETTINGS_CLOSE_SCRIPT)) as { open?: boolean } | null;
+  if (closed?.open !== false) throw new Error("Settings step: the page did not close");
+}
+
+/** After Settings closes, one view key must report that view with the selection the views walk ended on. */
+export async function verifyWorkspaceBack(deps: WorkspaceSmokeDeps, selected: string | null): Promise<void> {
+  const step = VIEW_KEYS[0];
+  if (step === undefined) throw new Error("Settings step: no view key to press");
+  const seen = waitForLine(
+    deps,
+    (message) => {
+      const location = parseWorkspaceLocation(message);
+      return location !== null && location.view === step.view ? location : null;
+    },
+    VIEW_STEP_TIMEOUT_MS,
+    `view ${step.view} after Settings closed`,
+  );
+  seen.catch(() => undefined);
+  await deps.exec(pressKeyScript(step.code, step.key));
+  let location: WorkspaceLocation;
+  try {
+    location = await seen;
+  } catch (error) {
+    throw new Error(`Settings step: the workspace did not come back as it was (${(error as Error).message})`);
+  }
+  if (location.selected !== selected) {
+    throw new Error(
+      `Settings step: the workspace did not come back as it was (selection ${selected} → ${location.selected} on ${location.view})`,
+    );
+  }
+  deps.log(`SMOKE_SETTINGS open=true closed=true view_after=${location.view} selected=${location.selected}`);
 }
 
 export async function captureShots(
@@ -444,7 +519,9 @@ export async function runWorkspaceSmoke(deps: WorkspaceSmokeDeps, options: Works
     deps.log(`SMOKE_WORKSPACE session=${sessionId} ready_rows=${rows}`);
     await measureAppends(deps, options, sessionId, readyAt, paints);
     await captureShots(deps, options.shotsDir);
-    await walkViews(deps);
+    const selected = await walkViews(deps);
+    await exerciseSettings(deps, options.shotsDir);
+    await verifyWorkspaceBack(deps, selected);
   } finally {
     offPaints();
   }
