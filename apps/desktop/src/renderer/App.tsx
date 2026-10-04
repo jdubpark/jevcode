@@ -35,11 +35,16 @@ export function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsRow = useRef<HTMLButtonElement>(null);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // Back and Esc return focus to the Settings row; a close caused by sidebar navigation leaves focus where it is.
+  const focusRowOnClose = useRef(true);
+  const closeSettings = useCallback(() => {
+    focusRowOnClose.current = true;
+    setSettingsOpen(false);
+  }, []);
   // Focus goes back to the Settings row once the page has closed (spec: accessibility).
   const settingsWasOpen = useRef(false);
   useEffect(() => {
-    if (settingsWasOpen.current && !settingsOpen) settingsRow.current?.focus();
+    if (settingsWasOpen.current && !settingsOpen && focusRowOnClose.current) settingsRow.current?.focus();
     settingsWasOpen.current = settingsOpen;
   }, [settingsOpen]);
 
@@ -89,6 +94,15 @@ export function App() {
   useEffect(() => {
     setTraceError(null);
   }, [sessionState?.sessionId]);
+
+  // Opening another repo or session from the sidebar shows that workspace instead of leaving Settings on top of it.
+  // Keyed by id: a live session's continual session:state updates leave Settings open.
+  const openRepoId = repo?.repoId ?? null;
+  const activeSessionId = sessionState?.sessionId ?? null;
+  useEffect(() => {
+    focusRowOnClose.current = false;
+    setSettingsOpen(false);
+  }, [openRepoId, activeSessionId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
