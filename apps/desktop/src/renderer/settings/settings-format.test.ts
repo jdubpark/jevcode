@@ -6,11 +6,20 @@ const base = { name: "ANTHROPIC_API_KEY", set: true, last4: "a1b2", envAlsoSet: 
 
 describe("settings format", () => {
   it("describes each key source", () => {
-    expect(keyStatusLine({ ...base, source: "app" })).toBe("Saved in app · …a1b2");
-    expect(keyStatusLine({ ...base, source: "app", envAlsoSet: true })).toBe("Saved in app · …a1b2 — overrides the environment key");
-    expect(keyStatusLine({ ...base, source: "env" })).toBe("From environment · …a1b2");
-    expect(keyStatusLine({ ...base, set: false, source: "none", last4: null })).toBe("Not set");
-    expect(keyStatusLine({ ...base, set: false, source: "none", last4: null, unreadable: true })).toBe("A saved key could not be read; save it again");
+    expect(keyStatusLine({ ...base, source: "app" }, true)).toBe("Saved in app · …a1b2");
+    expect(keyStatusLine({ ...base, source: "app", envAlsoSet: true }, true)).toBe("Saved in app · …a1b2 — overrides the environment key");
+    expect(keyStatusLine({ ...base, source: "env" }, true)).toBe("From environment · …a1b2");
+    expect(keyStatusLine({ ...base, set: false, source: "none", last4: null }, true)).toBe("Not set");
+    expect(keyStatusLine({ ...base, set: false, source: "none", last4: null, unreadable: true }, true)).toBe("A saved key could not be read; save it again");
+  });
+
+  it("asks to save an unreadable key again only where saving is possible", () => {
+    const unreadable = { ...base, set: false, source: "none", last4: null, unreadable: true } as const;
+    expect(keyStatusLine(unreadable, false)).toBe("A saved key could not be read; remove it");
+    expect(keyStatusLine({ ...base, source: "env", unreadable: true }, true)).toBe(
+      "A saved key could not be read; save it again · using the environment key …a1b2",
+    );
+    expect(keyStatusLine({ ...base, source: "env", unreadable: true }, false)).toBe("A saved key could not be read; remove it · using the environment key …a1b2");
   });
 
   it("words test results and overrides", () => {

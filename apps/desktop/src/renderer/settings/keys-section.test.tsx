@@ -91,4 +91,45 @@ describe("KeysSection", () => {
     const anthropic = screen.getByRole("group", { name: /Anthropic/ });
     expect((within(anthropic).getByRole("button", { name: "Test" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("keeps an empty status region mounted, so a result is announced by a change of its text", async () => {
+    render(<KeysSection view={saved} api={api()} />);
+    const row = screen.getByRole("group", { name: /Anthropic/ });
+    const region = within(row).getByRole("status");
+    expect(region.textContent).toBe("");
+    fireEvent.click(within(row).getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(region.textContent).toBe("Key works"));
+    expect(within(row).getByRole("status")).toBe(region);
+  });
+
+  it("says the TypeSafe key applies to new sessions, and the Anthropic key does not", () => {
+    render(<KeysSection view={none()} api={api()} />);
+    expect(within(screen.getByRole("group", { name: /TypeSafe/ })).getByText("Applies to new sessions")).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: /Anthropic/ })).queryByText(/applies to new sessions/i)).toBeNull();
+  });
+
+  it("offers Remove for a saved key that cannot be read, and asks to save it again only where saving works", async () => {
+    const unreadable = (canSave: boolean): SecretsView => ({
+      ...none(canSave),
+      keys: [{ ...none().keys[0]!, set: true, source: "env", last4: "c3d4", unreadable: true }, none().keys[1]!],
+    });
+    const keys = api();
+    const { rerender } = render(<KeysSection view={unreadable(false)} api={keys} />);
+    let row = screen.getByRole("group", { name: /Anthropic/ });
+    expect(within(row).getByText("A saved key could not be read; remove it · using the environment key …c3d4")).toBeTruthy();
+    expect((within(row).getByRole("button", { name: "Replace" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(row).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(keys.remove).toHaveBeenCalledWith("ANTHROPIC_API_KEY"));
+
+    rerender(<KeysSection view={unreadable(true)} api={keys} />);
+    row = screen.getByRole("group", { name: /Anthropic/ });
+    expect(within(row).getByText("A saved key could not be read; save it again · using the environment key …c3d4")).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "Remove" })).toBeTruthy();
+  });
+
+  it("does not ask to save an unreadable file again where saving is refused", () => {
+    render(<KeysSection view={{ ...none(false), fileUnreadable: true }} api={api()} />);
+    expect(screen.getByText("Saved keys could not be read.")).toBeTruthy();
+    expect(screen.queryByText(/save them again/)).toBeNull();
+  });
 });

@@ -71,53 +71,59 @@ export function FeaturesSection({ prefs, onSet }: { prefs: PreferencesView; onSe
         </p>
       </div>
 
-      <div className="settings-row">
-        <label htmlFor="settings-model">Model</label>
-        <select id="settings-model" value={prefs.model} onChange={(event) => onSet({ model: event.target.value as AgentModelOption })}>
-          {AGENT_MODEL_OPTIONS.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="settings-row">
-        <label htmlFor="settings-reasoning">Reasoning</label>
-        <select
-          id="settings-reasoning"
-          value={prefs.reasoningEffort}
-          onChange={(event) => onSet({ reasoningEffort: event.target.value as ReasoningEffortOption })}
-        >
-          {REASONING_EFFORT_OPTIONS.map((effort) => (
-            <option key={effort} value={effort}>
-              {effort}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="settings-row">
-        <span>Usage budget</span>
-        <label className="settings-inline">
+      {/* Model, reasoning effort and usage budget are read when a session starts; one label says so for all three. */}
+      <div className="settings-group" role="group" aria-labelledby="settings-codex-title">
+        <p id="settings-codex-title" className="settings-group-label">
+          Codex · applies to new sessions
+        </p>
+        <div className="settings-row">
+          <label htmlFor="settings-model">Model</label>
+          <select id="settings-model" value={prefs.model} onChange={(event) => onSet({ model: event.target.value as AgentModelOption })}>
+            {AGENT_MODEL_OPTIONS.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="settings-row">
+          <label htmlFor="settings-reasoning">Reasoning</label>
+          <select
+            id="settings-reasoning"
+            value={prefs.reasoningEffort}
+            onChange={(event) => onSet({ reasoningEffort: event.target.value as ReasoningEffortOption })}
+          >
+            {REASONING_EFFORT_OPTIONS.map((effort) => (
+              <option key={effort} value={effort}>
+                {effort}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="settings-row">
+          <span>Usage budget</span>
+          <label className="settings-inline">
+            <input
+              type="checkbox"
+              aria-label="Usage budget unknown"
+              checked={budgetUnknown}
+              onChange={(event) => onSet({ usageBudgetFraction: event.target.checked ? null : "0.40" })}
+            />
+            unknown
+          </label>
           <input
-            type="checkbox"
-            aria-label="Usage budget unknown"
-            checked={budgetUnknown}
-            onChange={(event) => onSet({ usageBudgetFraction: event.target.checked ? null : "0.40" })}
+            className="settings-slider"
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            aria-label="Usage budget"
+            value={budgetPercent ?? 40}
+            disabled={budgetUnknown}
+            onChange={(event) => onSet({ usageBudgetFraction: (Number(event.target.value) / 100).toFixed(2) })}
           />
-          unknown
-        </label>
-        <input
-          className="settings-slider"
-          type="range"
-          min={0}
-          max={100}
-          step={5}
-          aria-label="Usage budget"
-          value={budgetPercent ?? 40}
-          disabled={budgetUnknown}
-          onChange={(event) => onSet({ usageBudgetFraction: (Number(event.target.value) / 100).toFixed(2) })}
-        />
-        <span className="settings-note">{budgetUnknown ? "unknown (assumes 40%)" : `${budgetPercent}%`}</span>
+          <span className="settings-note">{budgetUnknown ? "unknown (assumes 40%)" : `${budgetPercent}%`}</span>
+        </div>
       </div>
     </section>
   );

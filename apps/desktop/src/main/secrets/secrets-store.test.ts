@@ -118,6 +118,20 @@ describe("secrets store", () => {
     expect(logs.some((line) => line.includes("could not be decrypted"))).toBe(true);
   });
 
+  it("removes a key it cannot decrypt even where saving is refused, keeping the other saved key", () => {
+    const typesafeCipher = Buffer.from("enc:" + [..."ts-key-5678"].reverse().join("")).toString("base64");
+    writeFileSync(
+      filePath,
+      JSON.stringify({ version: 1, keys: { ANTHROPIC_API_KEY: Buffer.from("garbage").toString("base64"), TYPESAFE_API_KEY: typesafeCipher } }),
+    );
+    const store = createSecretsStore({ filePath, crypto: fakeCrypto({ isEncryptionAvailable: () => false }), env: {} });
+    expect(store.view()).toMatchObject({ canSave: false, keys: [{ unreadable: true, source: "none" }, { source: "app", last4: "5678" }] });
+    const view = store.remove("ANTHROPIC_API_KEY");
+    expect(view.keys[0]).toMatchObject({ unreadable: false, set: false, source: "none" });
+    expect(view.keys[1]).toMatchObject({ source: "app", last4: "5678" });
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual({ version: 1, keys: { TYPESAFE_API_KEY: typesafeCipher } });
+  });
+
   it("leaves the previous file and state unchanged when a save fails (Review Focus 3)", () => {
     const crypto = fakeCrypto();
     const store = createSecretsStore({ filePath, crypto, env: {} });
