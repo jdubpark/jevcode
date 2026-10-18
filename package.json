@@ -8,6 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "repo-agent": "node packages/repo-agent/dist/cli.js",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

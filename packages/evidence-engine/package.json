@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": ["dist"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./redactor": {
+      "types": "./dist/redactor.d.ts",
+      "import": "./dist/redactor.js"
     }
   },
   "scripts": {

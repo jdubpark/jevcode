@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -87,6 +87,20 @@ describe("scanRepo (spec §5.1, §10)", () => {
       ["packages/db", "@fx/db"],
       ["scripts", "scripts"],
     ]);
+  });
+
+  it("does not read tracked source through a replaced parent-directory symlink", async () => {
+    const fixture = repo({ "src/private.ts": "original", "keep.ts": "export const keep = true;" });
+    const outside = repo({ "private.ts": "outside-repository-content" });
+    execFileSync("git", ["add", "src/private.ts"], { cwd: fixture.root });
+    rmSync(path.join(fixture.root, "src"), { recursive: true });
+    symlinkSync(outside.root, path.join(fixture.root, "src"));
+    const visited: string[] = [];
+    const scan = await scanRepo(fixture.root, { visit: (_file, source) => { visited.push(source); } });
+    expect(scan.files.map((file) => file.path)).toEqual(["keep.ts"]);
+    expect(visited).toEqual(["export const keep = true;"]);
+    const incremental = await scanPaths(fixture.root, ["src/private.ts"]);
+    expect(incremental).toEqual({ files: [], gone: ["src/private.ts"] });
   });
 
   it("hands every kept file's text to visit and reports progress up to the total", async () => {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -83,7 +83,8 @@ export function isLfsPointer(buffer: Buffer): boolean {
 async function readCandidate(repoRoot: string, rel: string, maxBytes: number): Promise<ReadResult | null> {
   const abs = path.join(repoRoot, rel);
   try {
-    // lstat: a symlink is never followed, so a link out of the repo is never read.
+    // The root is canonical. Reject aliases in any parent before reading candidate bytes.
+    if (await realpath(abs) !== abs) return null;
     const info = await lstat(abs);
     if (!info.isFile() || info.size > maxBytes) return null;
     const buffer = await readFile(abs);
@@ -135,6 +136,7 @@ async function readAll(
   options: Pick<ScanOptions, "maxFileBytes" | "signal" | "onProgress">,
   onFile: (result: ReadResult | null, rel: string) => Promise<void>,
 ): Promise<void> {
+  const canonicalRoot = await realpath(repoRoot);
   const maxBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   let next = 0;
   let done = 0;
@@ -148,7 +150,7 @@ async function readAll(
       if (index >= rels.length) return;
       const rel = rels[index] as string;
       try {
-        await onFile(await readCandidate(repoRoot, rel, maxBytes), rel);
+        await onFile(await readCandidate(canonicalRoot, rel, maxBytes), rel);
       } catch (error) {
         failed = true;
         throw error;

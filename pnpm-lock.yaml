@@ -303,6 +303,28 @@ importers:
         specifier: ^3.0.5
         version: 3.2.7(@types/node@22.20.4)(jsdom@30.1.0)
 
+  packages/repo-agent:
+    dependencies:
+      '@jevcode/codebase-map':
+        specifier: workspace:*
+        version: link:../codebase-map
+      '@jevcode/evidence-engine':
+        specifier: workspace:*
+        version: link:../evidence-engine
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.20.4
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.4)(jsdom@30.1.0)
+
   packages/semantic-core:
     dependencies:
       '@jevcode/contracts':
