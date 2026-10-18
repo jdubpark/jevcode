@@ -8,6 +8,7 @@ import { lineChanges, runAuto, type AutoOptions } from "./auto.js";
 import { carryForward, generateBrief, unstableSections, type Writer } from "./brief.js";
 import { collectRepository } from "./collect.js";
 import { AutoConfigSchema, repoEnabled, setOptIn } from "./config.js";
+import { hash } from "./io.js";
 import { parseHookPayload } from "./hook.js";
 import { heuristicGate, jevGate, type GateSignals, type JevQuestion, type JevTransport } from "./jev.js";
 import { calibrate, churn, DEFAULT_TUNING, readLedger, readTuning, type LedgerEntry } from "./learning.js";
@@ -386,7 +387,7 @@ describe("automatic refresh", () => {
     try { expect(await auto(root, state, {})).toMatchObject({ action: "skip", reason: "inside a briefing run" }); }
     finally { delete process.env.JEVCODE_BRIEFING; }
 
-    const lock = path.join(state, (await import("./io.js")).hash(root) + ".auto.lock");
+    const lock = path.join(state, hash(root) + ".auto.lock");
     await writeFile(lock, JSON.stringify({ pid: process.pid, token: "live", expiresAt: Date.now() + 60_000 }));
     expect(await auto(root, state, {})).toMatchObject({ action: "coalesced" });
     await rm(lock);
@@ -456,15 +457,11 @@ describe("automatic refresh", () => {
     const root = await fixture();
     const state = await scratch("jevcode-auto-state-");
     await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
-    const pending = path.join(state, (await import("./io.js")).hash(root) + ".pending");
-    const author = writer("muse", [(prompt) => {
-      if (!prompt.includes("second")) { void 0; }
-      return brief();
-    }]);
+    const pending = path.join(state, hash(root) + ".pending");
     let call = 0;
     const moving: Writer = {
       id: "muse", model: "m",
-      async run(prompt, options) {
+      async run() {
         call += 1;
         // A trigger during the last pass leaves its marker for the next run instead of being dropped.
         if (call === 2) await writeFile(pending, "");
@@ -473,7 +470,7 @@ describe("automatic refresh", () => {
           await writeFile(path.join(root, "src/api/index.ts"), 'import { allowed } from "../auth/policy.js";\nexport const handler = () => allowed();\n');
           await writeFile(pending, "");
         }
-        return author.run(prompt, options);
+        return { value: brief(), usage: null };
       },
     };
     const outcome = await auto(root, state, { writers: [moving], now: later(0) });
@@ -516,7 +513,7 @@ describe("automatic refresh", () => {
     const root = await fixture();
     const state = await scratch("jevcode-auto-state-");
     await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
-    const lock = path.join(state, (await import("./io.js")).hash(root) + ".auto.lock");
+    const lock = path.join(state, hash(root) + ".auto.lock");
     // A live PID (reused after a crash) whose owner's own expiry has passed.
     await writeFile(lock, JSON.stringify({ pid: process.pid, token: "old", expiresAt: Date.now() - 1 }));
     expect(await auto(root, state, { now: later(0) })).toMatchObject({ action: "run" });
