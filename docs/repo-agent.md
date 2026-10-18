@@ -124,6 +124,13 @@ without collecting anything:
 node /path/to/jevcode/scripts/jevcode.mjs auto --hook claude   # or --hook codex
 ```
 
+The hook process must see `JEV_API_KEY`. A key exported from zsh startup files
+reaches Codex hooks (run through a login shell) but not necessarily Claude Code
+hooks, which inherit Claude Code's environment; wrap the Claude command as
+`/bin/zsh -c 'node /path/to/jevcode/scripts/jevcode.mjs auto --hook claude'` so
+zsh reads `~/.zshenv` on every run. `jevcode status` reports whether the key is
+visible.
+
 The hook reads the agent's Stop payload from stdin (working directory, session
 id and transcript path), starts a detached run, and exits at once; output goes
 to `auto.log` in the state directory. Each run takes the cheapest exit
