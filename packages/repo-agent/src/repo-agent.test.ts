@@ -318,12 +318,15 @@ process.stdin.on('end', () => {
     const config = await mkdtemp(path.join(tmpdir(), "jevcode-host-config-"));
     temporary.push(state, config);
     const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+    const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
     const call = async () => {
-      const running = exec(process.execPath, [cli, "auto", "--trigger", "host", "--format", "json", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"],
-        { env: { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" } });
+      const running = exec(process.execPath, [cli, "auto", "--trigger", "host", "--format", "json", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"], { env });
       running.child.stdin!.end(JSON.stringify({ role: "user", text: "Open the policy for everyone.", ts: "2026-01-01T00:00:00Z" }) + "\n");
       return JSON.parse((await running).stdout);
     };
+    // Not opted in: a disabled decision and no brief, without collecting or calling a model.
+    expect(await call()).toEqual({ decision: { action: "disabled", reason: expect.stringContaining("not opted in"), judge: null, worthwhile: null, scope: null }, repo: root, brief: null });
+    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
     const first = await call();
     expect(first).toMatchObject({ decision: { action: "run" }, repo: root, brief: { summary: report().summary }, coverage: expect.arrayContaining([expect.stringContaining("JavaScript/TypeScript only")]) });
     expect(first.base).toMatch(/^[0-9a-f]{40}$/);

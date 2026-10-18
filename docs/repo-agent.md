@@ -207,8 +207,10 @@ jevcode auto --trigger host --format json --activity-stdin --session <id> \
   --repo <checkout> --base <session baseline>
 ```
 
-`--trigger host` means an administrator configured the service, so the
-repository needs no opt-in. Stdin carries that session's bounded recorded chat
+Like every automatic trigger, `--trigger host` runs only for opted-in
+repositories; for any other it returns a `disabled` decision with no brief and
+collects nothing. Opt repositories in as the account the host runs Jevcode as.
+Stdin carries that session's bounded recorded chat
 as JSONL; a host usually sends a sliding window, so new activity is measured
 after the last record seen at the previous check and at the previous brief.
 `--base` fixes the comparison commit; a checkpoint built over another base is

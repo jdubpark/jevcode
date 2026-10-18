@@ -19,7 +19,7 @@ export interface AutoOptions {
   repo: string;
   logs: string[];
   session: string | null;
-  /** host: requested by an administrator-configured service, which authorizes the repository itself. */
+  /** host: requested by a session host for one of its sessions; opted-in repositories only, like every trigger. */
   trigger: "hook" | "manual" | "host";
   /** Explicitly scoped activity (bounded JSONL), such as a host's recorded chat for one session. */
   activityText?: string;
@@ -208,7 +208,8 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
   let repo: string;
   try { repo = await repositoryRoot(options.repo); }
   catch { return { action: "disabled", reason: "not a Git checkout" }; }
-  if (options.trigger !== "host" && !(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)", repo };
+  // Opt-in is the owner's per-repository consent to send source to the writer; every trigger honors it.
+  if (!(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)", repo };
   const directory = await resolveStateDirectory(options.stateDir, repo);
   const record = async (entry: Decision | Run) => { if (!options.dryRun) await appendLedger(directory, repo, entry); };
   const decision = (action: Decision["action"], reason: string, judge: Decision["judge"], fields: Partial<Decision> = {}): Decision => ({

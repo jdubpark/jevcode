@@ -539,7 +539,7 @@ describe("automatic refresh", () => {
     await expect(readFile(lock, "utf8")).rejects.toThrow();
   });
 
-  it("serves a host: no opt-in, a sliding activity window measured from the last record seen, and a rebuild for another base", async () => {
+  it("serves a host: opted-in repositories only, a sliding activity window measured from the last record seen, and a rebuild for another base", async () => {
     const root = await fixture();
     const state = await scratch("jevcode-host-state-");
     const parent = (await exec("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
@@ -550,7 +550,9 @@ describe("automatic refresh", () => {
     const sizes = [0, 1000, 1000, 1000, 1000, 1000, 200, 3000];
     const records = sizes.map((size, index) => JSON.stringify({ role: "assistant", text: `turn ${index} ${"z".repeat(size)}`, ts: `2026-01-01T00:00:${String(index).padStart(2, "0")}Z` }));
     const window = (from: number, to: number) => records.slice(from, to + 1).join("\n") + "\n";
-    const host = { trigger: "host" as const, config: AutoConfigSchema.parse({ base: "head" }), session: "s1", base: parent };
+    const host = { trigger: "host" as const, config: AutoConfigSchema.parse({ base: "head", include: [root] }), session: "s1", base: parent };
+    // A host gets nothing for a repository the owner has not opted in.
+    expect(await auto(root, state, { ...host, config: AutoConfigSchema.parse({ base: "head" }), activityText: "x\n" })).toMatchObject({ action: "disabled" });
     const author = writer("muse", [brief()]);
     expect(await auto(root, state, { ...host, activityText: window(1, 5), writers: [author], now: later(0) })).toMatchObject({ action: "run" });
     expect((await readCheckpoint(state, root))?.base).toBe(parent);
@@ -567,7 +569,6 @@ describe("automatic refresh", () => {
     const rebuilt = writer("muse", [brief()]);
     expect(await auto(root, state, { ...host, base: head, activityText: slid, writers: [rebuilt], now: later(41) })).toMatchObject({ action: "run", reason: "full brief written by muse" });
     expect((await readCheckpoint(state, root))?.base).toBe(head);
-    expect(await auto(root, state, { ...host, trigger: "hook", activityText: slid, now: later(60) })).toMatchObject({ action: "disabled" });
   });
 
   it("opts repositories in by root commit so every clone and worktree follows, and opts them out precisely", async () => {

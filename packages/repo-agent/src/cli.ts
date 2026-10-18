@@ -43,7 +43,7 @@ const HELP = `Jevcode repository briefing agent
   --no-state        Do not read or save previous generated brief
   --hook KIND       auto: read a claude or codex Stop hook payload from stdin; run detached
   --dry-run         auto: print the decision without writing a brief or recording it
-  --trigger KIND    auto: hook, manual or host (default: manual); host skips opt-in
+  --trigger KIND    auto: hook, manual or host (default: manual)
   --format json     auto: print the decision and the current brief as one JSON object
   --session ID      auto: agent session identifier for the ledger
   --section NAME    feedback: the brief section the verdict is about
