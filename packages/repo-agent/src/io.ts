@@ -7,6 +7,8 @@ import { isSkippedPath, normalizePath } from "@jevcode/codebase-map";
 import { isSecretPath, redactText } from "@jevcode/evidence-engine/redactor";
 
 const exec = promisify(execFile);
+/** Set in every writer process so a hook fired inside a briefing run cannot start another one. */
+export const NESTED_ENV = "JEVCODE_BRIEFING";
 export const hash = (text: string | Buffer): string => createHash("sha1").update(text).digest("hex");
 // eslint-disable-next-line no-control-regex -- Strip terminal control and bidi characters from untrusted evidence.
 export const clean = (text: string): string => redactText(text).text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "");

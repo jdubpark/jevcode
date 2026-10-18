@@ -52,12 +52,15 @@ function eventText(raw: string): string {
   return "";
 }
 
-export async function readActivity(file: string, source: string): Promise<ActivityLog> {
+/** `tail` keeps the most recent 8 MiB of a long live session; the default keeps the beginning. */
+export async function readActivity(file: string, source: string, tail = false): Promise<ActivityLog> {
   const info = await lstat(file);
   if (!info.isFile()) throw new Error("Activity input must be a regular file.");
   const maxBytes = 8 * 1024 * 1024;
-  const stream = createReadStream(file, { end: maxBytes - 1 });
+  const start = tail ? Math.max(0, info.size - maxBytes) : 0;
+  const stream = createReadStream(file, { start, end: start + maxBytes - 1 });
   const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  // A tail read starts mid-record; the partial first line is dropped as an unsupported record.
   try { return await collectActivity(reader, source, info.size > maxBytes); }
   finally { reader.close(); stream.destroy(); }
 }

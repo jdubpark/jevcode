@@ -13,6 +13,8 @@ export interface CollectOptions {
   logs?: string[];
   activityText?: string;
   focus?: string[];
+  /** Read the end of each log instead of the beginning, for live sessions. */
+  activityTail?: boolean;
 }
 export interface RepoContext {
   version: 1;
@@ -31,9 +33,14 @@ export interface RepoContext {
   limitations: string[];
 }
 
+/** The real top-level path of the checkout containing `repo`; worktrees stay distinct. */
+export async function repositoryRoot(repo: string): Promise<string> {
+  const requested = await realpath(path.resolve(repo));
+  return realpath((await git(requested, ["rev-parse", "--show-toplevel"])).trim());
+}
+
 export async function collectRepository(options: CollectOptions): Promise<RepoContext> {
-  const requested = await realpath(path.resolve(options.repo));
-  const repo = await realpath((await git(requested, ["rev-parse", "--show-toplevel"])).trim());
+  const repo = await repositoryRoot(options.repo);
   const head = await git(repo, ["rev-parse", "--verify", "HEAD"]).then((value) => value.trim(), () => null);
   const base = options.base === undefined ? head : (await git(repo, ["rev-parse", "--verify", "--end-of-options", `${options.base}^{commit}`])).trim();
   const focus = (options.focus ?? []).map((entry) => entry.replace(/\/$/, ""));
@@ -107,7 +114,7 @@ export async function collectRepository(options: CollectOptions): Promise<RepoCo
   if (allChanged.length !== changed.length) limitations.push(`${allChanged.length - changed.length} changed paths were excluded by secret/generated/binary rules.`);
   if (patches.length < changed.length || patches.some((patch) => patch.truncated)) limitations.push("Change excerpts are partial. Inspect relevant source before drawing conclusions; deleted content may require the base revision.");
   if (graph.total > graph.edges.length) limitations.push("The component edge list was capped.");
-  const activity = await Promise.all((options.logs ?? []).map((file, index) => readActivity(path.resolve(file), `activity:${index + 1}`)));
+  const activity = await Promise.all((options.logs ?? []).map((file, index) => readActivity(path.resolve(file), `activity:${index + 1}`, options.activityTail)));
   if (options.activityText !== undefined) activity.push(await readActivityText(options.activityText, `activity:${activity.length + 1}`));
   for (const log of activity) if (log.omitted || log.truncated) limitations.push(`${log.source}: ${log.omitted} unique or unsupported records omitted; byte limit reached: ${log.truncated}.`);
   if (activity.length === 0) limitations.push("No agent activity supplied. Intent, authorship, decisions and test outcomes cannot be recovered from Git alone.");

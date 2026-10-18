@@ -1,5 +1,10 @@
-export { collectRepository, contextFingerprint, type CollectOptions, type RepoContext } from "./collect.js";
+export { collectRepository, contextFingerprint, repositoryRoot, type CollectOptions, type RepoContext } from "./collect.js";
 export { readActivity, readActivityText, type Activity, type ActivityLog } from "./activity.js";
-export { buildPrompt, REVIEWER_INSTRUCTIONS } from "./prompt.js";
+export { buildPrompt, REVIEWER_INSTRUCTIONS, SECTIONS, type Section, type UpdateRequest } from "./prompt.js";
 export { BRIEF_JSON_SCHEMA, BriefSchema, renderBrief, validateBrief, type Brief } from "./report.js";
-export { runCodex, type RunnerOptions } from "./runner.js";
+export { codexWriter, openCodeWriter, runCodex, runOpenCode, writersFor, type RunnerName, type RunnerOptions } from "./runner.js";
+export { carryForward, generateBrief, type GenerateOptions, type GenerateResult, type Writer } from "./brief.js";
+export { heuristicGate, jevFromEnv, jevGate, verifyClaims, type GateJudgment, type GateSignals, type JevTransport } from "./jev.js";
+export { calibrate, churn, outcomeRates, DEFAULT_TUNING, type LedgerEntry, type Tuning } from "./learning.js";
+export { runAuto, type AutoOptions, type AutoOutcome } from "./auto.js";
+export { AutoConfigSchema, loadConfig, repoEnabled, type AutoConfig } from "./config.js";

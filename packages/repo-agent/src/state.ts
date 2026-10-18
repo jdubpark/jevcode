@@ -1,7 +1,7 @@
-import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, rm, stat, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { BriefSchema, referencedEvidence, type Brief } from "./report.js";
+import { BriefSchema, referencedEvidence, REMOVAL_NOTE, type Brief } from "./report.js";
 import { contextFingerprint, type RepoContext } from "./collect.js";
 import { hash } from "./io.js";
 
@@ -12,6 +12,8 @@ const CheckpointSchema = z.object({
 });
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 const statePath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.json`);
+/** The latest rendered brief, for humans and `jevcode show`. */
+export const renderedPath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.md`);
 
 /** Resolve existing parent aliases without creating directories in the inspected checkout. */
 export async function resolveStateDirectory(directory: string, repo: string): Promise<string> {
@@ -51,15 +53,33 @@ export function previousContext(previous: Checkpoint | null, context: RepoContex
     note: "This was generated, not reviewed or approved. File differences compare source hashes, not an exact previous working-tree patch. Current patches still use the explicit base/HEAD.",
     changedSinceBrief: changed.slice(0, 250), removedSinceBrief: removed.slice(0, 250),
     omittedPaths: Math.max(0, changed.length - 250) + Math.max(0, removed.length - 250),
-    summary: previous.brief.summary, review: previous.brief.review, unknowns: previous.brief.unknowns,
+    summary: previous.brief.summary, review: previous.brief.review, unknowns: previous.brief.unknowns.filter((entry) => !REMOVAL_NOTE.test(entry)),
   };
 }
 
+/**
+ * The lock is held only while a checkpoint is written (milliseconds), so one older than two minutes was
+ * left by a crash; unattended runs reclaim it instead of failing forever.
+ */
+async function openLock(file: string): Promise<FileHandle> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try { return await open(file, "wx", 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const info = await stat(file).catch(() => null);
+      if (attempt === 0 && info && Date.now() - info.mtimeMs > 120_000) { await rm(file, { force: true }); continue; }
+      if (attempt === 0 && !info) continue;
+      break;
+    }
+  }
+  throw new Error("Another briefing is saving this repository's checkpoint. The current brief was not checkpointed.");
+}
+
 /** Atomic, per-worktree state; concurrent or older runs cannot overwrite a newer checkpoint. */
-export async function saveCheckpoint(directory: string, context: RepoContext, brief: Brief): Promise<void> {
+export async function saveCheckpoint(directory: string, context: RepoContext, brief: Brief, rendered?: string): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const target = statePath(directory, context.repo);
-  const lock = await open(target + ".lock", "wx", 0o600).catch(() => { throw new Error("Another briefing is saving this repository's checkpoint. The current brief was not checkpointed."); });
+  const lock = await openLock(target + ".lock");
   const temporary = `${target}.${process.pid}.tmp`;
   try {
     const previous = await readCheckpoint(directory, context.repo);
@@ -71,6 +91,11 @@ export async function saveCheckpoint(directory: string, context: RepoContext, br
     const file = await open(temporary, "wx", 0o600);
     try { await file.writeFile(JSON.stringify(checkpoint)); } finally { await file.close(); }
     await rename(temporary, target);
+    if (rendered !== undefined) {
+      const markdown = await open(temporary, "wx", 0o600);
+      try { await markdown.writeFile(rendered); } finally { await markdown.close(); }
+      await rename(temporary, renderedPath(directory, context.repo));
+    }
   } finally {
     await lock.close();
     await rm(target + ".lock", { force: true });

@@ -8,7 +8,8 @@ import { collectRepository } from "./collect.js";
 import { readActivity } from "./activity.js";
 import { renderBrief, validateBrief, type Brief } from "./report.js";
 import { readCheckpoint, saveCheckpoint, previousContext, resolveStateDirectory } from "./state.js";
-import { runCodex } from "./runner.js";
+import { isSecretPath } from "@jevcode/evidence-engine/redactor";
+import { OPENCODE_CONFIG, READ_RULES, runCodex, runOpenCode } from "./runner.js";
 
 const exec = promisify(execFile);
 const temporary: string[] = [];
@@ -37,7 +38,7 @@ function report(): Brief {
     summary: "The API delegates access decisions to a shared policy.",
     architecture: [{ text: "The API imports the authorization policy.", citations: [{ source: "src/api/index.ts", line: 1 }] }],
     review: [{ priority: "high", area: "Authorization", why: "This policy controls access through the API.", question: "Does the policy deny unauthenticated callers?", citations: [{ source: "src/auth/policy.ts", line: 1 }] }],
-    changes: [], checks: [], guidance: [], unknowns: ["Runtime behavior has not been tested."],
+    changes: [], checks: [], guidance: [], unknowns: ["Runtime behavior has not been tested."], diagrams: [],
   };
 }
 
@@ -167,6 +168,9 @@ describe("repository briefing boundary", () => {
     await expect(validateBrief(report(), context)).rejects.toThrow("Source changed");
     const next = await collectRepository({ repo: root });
     expect(previousContext(saved, next)).toMatchObject({ changedSinceBrief: ["src/auth/policy.ts"] });
+    // A previous run's removal disclosure is not handed back as an open question.
+    const noted = { ...saved!, brief: { ...saved!.brief, unknowns: ["Is caching intended?", "2 generated entries were removed from changes because the cited evidence did not support them."] } };
+    expect(previousContext(noted, next)).toMatchObject({ unknowns: ["Is caching intended?"] });
     expect(await readdir(state)).toHaveLength(1);
   });
 
@@ -245,9 +249,95 @@ process.stdin.on('end', () => {
     const state = path.join(tmpdir(), `jevcode-failed-${path.basename(root)}`);
     temporary.push(state);
     const cli = new URL("../dist/cli.js", import.meta.url);
-    await expect(exec(process.execPath, [cli.pathname, "brief", "--repo", root, "--state-dir", state], {
+    await expect(exec(process.execPath, [cli.pathname, "brief", "--runner", "codex", "--repo", root, "--state-dir", state], {
       env: { ...process.env, PATH: `${bin}${path.delimiter}${originalPath ?? ""}` },
     })).rejects.toMatchObject({ stdout: "", stderr: expect.stringContaining("no checkpoint was saved") });
     expect(await readCheckpoint(state, root)).toBeNull();
+  });
+});
+
+describe("OpenCode process boundary", () => {
+  /** A stand-in opencode that records its invocation and answers per model. */
+  async function fakeOpenCode(answers: Record<string, string>): Promise<string> {
+    // Outside the checkout: anything written inside it would correctly fail the freshness check.
+    const outside = await mkdtemp(path.join(tmpdir(), "jevcode-fake-opencode-"));
+    temporary.push(outside);
+    const bin = path.join(outside, "bin");
+    await mkdir(bin, { recursive: true });
+    const record = path.join(outside, "invocations.jsonl");
+    await writeFile(path.join(bin, "opencode"), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+let input = '';
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  const model = args[args.indexOf('--model') + 1];
+  fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args, input, env: {
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, OPENCODE_DB: process.env.OPENCODE_DB, config: JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'),
+    project: process.env.OPENCODE_DISABLE_PROJECT_CONFIG, claude: process.env.OPENCODE_DISABLE_CLAUDE_CODE, skills: process.env.OPENCODE_DISABLE_EXTERNAL_SKILLS, nested: process.env.JEVCODE_BRIEFING,
+  } }) + '\\n');
+  const answer = ${JSON.stringify(answers)}[model];
+  if (answer === undefined) { console.log(JSON.stringify({ type: 'error', error: { name: 'APIError', data: { message: 'echo of submitted secret' } } })); process.exit(1); }
+  const step = (tokens) => console.log(JSON.stringify({ type: 'step_finish', part: { tokens } }));
+  console.log(JSON.stringify({ type: 'text', part: { text: 'I will inspect the repository first.' } }));
+  step({ input: 1000, output: 50, reasoning: 200, cache: { read: 300, write: 0 } });
+  console.log(JSON.stringify({ type: 'text', part: { text: answer } }));
+  step({ input: 400, output: 100, reasoning: 0, cache: { read: 0, write: 0 } });
+});
+`, { mode: 0o700 });
+    process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ""}`;
+    return record;
+  }
+
+  it("runs read-only with only the supplied config and returns the last answer with summed usage", async () => {
+    const root = await fixture();
+    const record = await fakeOpenCode({ "meta/muse-spark-1.3-contributor": "Here is the report:\n```json\n{\"finished\":true}\n```" });
+    const result = await runOpenCode({ repo: root, prompt: "inspect the authorization boundary", model: "meta/muse-spark-1.3-contributor", variant: "high" });
+    expect(result).toEqual({ value: { finished: true }, usage: { input: 1700, output: 350 } });
+    const call = JSON.parse((await readFile(record, "utf8")).trim());
+    expect(call.args).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--agent", "jevcode-brief", "--dir", root, "--variant", "high"]));
+    expect(call.input).toBe("inspect the authorization boundary");
+    expect(call.env).toMatchObject({ project: "1", claude: "1", skills: "1", nested: "1" });
+    expect(call.env.XDG_CONFIG_HOME).toContain("jevcode-opencode-");
+    expect(call.env.OPENCODE_DB).toContain("jevcode-opencode-");
+    const permission = call.env.config.agent["jevcode-brief"].permission;
+    expect(Object.keys(permission)[0]).toBe("*");
+    expect(permission).toMatchObject({ "*": "deny", glob: "allow", read: { "*": "allow", "*/.env*": "deny", "*.pem": "deny" } });
+    expect(permission.bash ?? permission.edit ?? permission.webfetch).toBeUndefined();
+    expect(call.env.config.mcp).toEqual({});
+    // The per-run config home and session database are removed afterwards.
+    await expect(readdir(path.dirname(call.env.XDG_CONFIG_HOME))).rejects.toThrow();
+  });
+
+  it("denies exactly the secret paths Jevcode excludes, and grep entirely", () => {
+    // OpenCode semantics: "*" matches any run of characters including "/", and the last matching rule wins.
+    const decide = (file: string) => Object.entries(READ_RULES).filter(([pattern]) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`).test(file)).at(-1)?.[1];
+    const samples = [".env", "config/.env.local", ".env.example", "deploy/server.pem", "certs/tls.key", "id_rsa", "id_rsa.pub", "home/.ssh/id_ed25519", "home/.ssh/id_ed25519.pub", "keys/store.jks", "a/b.p12", ".npmrc", "a/.netrc", "aws/credentials",
+      "src/index.ts", "README.md", "docs/credentials.md", "src/env.ts", "keys/public.pem.txt"];
+    for (const file of samples) {
+      for (const candidate of [file, `/work/repo/${file}`]) expect([candidate, decide(candidate)]).toEqual([candidate, isSecretPath(file) ? "deny" : "allow"]);
+    }
+    const permission = OPENCODE_CONFIG.agent["jevcode-brief"].permission as Record<string, unknown>;
+    expect(permission.grep).toBeUndefined();
+    expect(permission["*"]).toBe("deny");
+  });
+
+  it("falls back from Muse to DeepSeek through the CLI and records the writer that succeeded", async () => {
+    const root = await fixture();
+    const brief = JSON.stringify({ ...report(), review: [] });
+    const record = await fakeOpenCode({ "deepseek/deepseek-flash": brief });
+    await expect(runOpenCode({ repo: root, prompt: "inspect", model: "meta/muse-spark-1.3-contributor" })).rejects.toThrow(/exited with code 1/);
+    const state = await mkdtemp(path.join(tmpdir(), "jevcode-fallback-state-"));
+    temporary.push(state);
+    const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+    const { stdout, stderr } = await exec(process.execPath, [cli, "brief", "--repo", root, "--state-dir", state, "--no-verify"], { env: { ...process.env, JEV_API_KEY: "", TYPESAFE_API_KEY: "" } });
+    expect(stdout).toContain("System shape");
+    expect(stderr).toContain("muse did not produce a valid brief; trying deepseek");
+    expect(stderr + stdout).not.toContain("echo of submitted secret");
+    const models = (await readFile(record, "utf8")).trim().split("\n").map((line) => JSON.parse(line).args).map((args: string[]) => args[args.indexOf("--model") + 1]);
+    expect(models.slice(-2)).toEqual(["meta/muse-spark-1.3-contributor", "deepseek/deepseek-flash"]);
+    expect((await readCheckpoint(state, root))?.brief.summary).toBe(report().summary);
+    const ledger = (await readFile(path.join(state, (await readdir(state)).find((file) => file.endsWith(".ledger.jsonl"))!), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(ledger.at(-1)).toMatchObject({ kind: "run", trigger: "manual", ok: true, writer: "deepseek", writerUsage: { input: 1700, output: 350 } });
   });
 });
