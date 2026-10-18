@@ -171,7 +171,7 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
   let repo: string;
   try { repo = await repositoryRoot(options.repo); }
   catch { return { action: "disabled", reason: "not a Git checkout" }; }
-  if (!repoEnabled(options.config, repo)) return { action: "disabled", reason: "automatic briefs are disabled for this checkout" };
+  if (!(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)" };
   const directory = await resolveStateDirectory(options.stateDir, repo);
   const record = async (entry: Decision | Run) => { if (!options.dryRun) await appendLedger(directory, repo, entry); };
   const decision = (action: Decision["action"], reason: string, judge: Decision["judge"], fields: Partial<Decision> = {}): Decision => ({

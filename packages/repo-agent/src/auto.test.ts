@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runAuto, type AutoOptions } from "./auto.js";
 import { carryForward, generateBrief, unstableSections, type Writer } from "./brief.js";
 import { collectRepository } from "./collect.js";
-import { AutoConfigSchema, repoEnabled } from "./config.js";
+import { AutoConfigSchema, repoEnabled, setOptIn } from "./config.js";
 import { parseHookPayload } from "./hook.js";
 import { heuristicGate, jevGate, type GateSignals, type JevQuestion, type JevTransport } from "./jev.js";
 import { calibrate, churn, DEFAULT_TUNING, readLedger, readTuning, type LedgerEntry } from "./learning.js";
@@ -303,7 +303,7 @@ describe("brief generation pipeline", () => {
 });
 
 describe("automatic refresh", () => {
-  const config = AutoConfigSchema.parse({ base: "head" });
+  const config = AutoConfigSchema.parse({ base: "head", include: ["*"] });
   // Checkpoints carry the real collection time, so the injected clock moves forward from now.
   const start = Date.now();
   const later = (minutes: number) => () => new Date(start + minutes * 60_000);
@@ -403,8 +403,10 @@ describe("automatic refresh", () => {
     const state = await scratch("jevcode-hook-state-");
     const cli = new URL("../dist/cli.js", import.meta.url).pathname;
     const started = Date.now();
-    // An empty config home: the child must not depend on this machine's automatic-brief settings.
-    const hook = exec(process.execPath, [cli, "auto", "--hook", "claude", "--state-dir", state], { env: { ...process.env, JEVCODE_BRIEFING: "", XDG_CONFIG_HOME: await scratch("jevcode-config-") } });
+    // A private config home: the child must not depend on this machine's automatic-brief settings.
+    const env = { ...process.env, JEVCODE_BRIEFING: "", XDG_CONFIG_HOME: await scratch("jevcode-config-") };
+    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
+    const hook = exec(process.execPath, [cli, "auto", "--hook", "claude", "--state-dir", state], { env });
     hook.child.stdin!.end(JSON.stringify({ hook_event_name: "Stop", session_id: "s1", cwd: root, transcript_path: null }));
     expect(await hook).toMatchObject({ stdout: "" });
     expect(Date.now() - started).toBeLessThan(5000);
@@ -519,14 +521,54 @@ describe("automatic refresh", () => {
     await expect(readFile(lock, "utf8")).rejects.toThrow();
   });
 
-  it("reads hook payloads and scopes enablement by checkout prefix", () => {
+  it("opts repositories in by root commit so every clone and worktree follows, and opts them out precisely", async () => {
+    const root = await fixture();
+    const clone = await scratch("jevcode-clone-");
+    await exec("git", ["clone", "-q", root, clone]);
+    // Unrelated history: a different root commit.
+    const other = await scratch("jevcode-other-");
+    await exec("git", ["init", "-q", other]);
+    await writeFile(path.join(other, "other.txt"), "unrelated\n");
+    await exec("git", ["-C", other, "add", "."]);
+    await exec("git", ["-C", other, "-c", "user.name=Other", "-c", "user.email=other@example.invalid", "commit", "-qm", "other"]);
+    const fresh = AutoConfigSchema.parse({});
+    expect(await repoEnabled(fresh, root)).toBe(false);
+    const opted = await setOptIn(fresh, root, true);
+    expect(opted.include).toEqual([expect.stringMatching(/^root:[0-9a-f]{40}$/)]);
+    expect(await repoEnabled(opted, clone)).toBe(true);
+    // A worktree on a branch with separate (for example rewritten) history is covered once it is a ref.
+    const rewritten = await scratch("jevcode-rewritten-");
+    await exec("git", ["-C", root, "worktree", "add", "-q", "--orphan", "-b", "old-history", rewritten]).catch(async () => {
+      await exec("git", ["-C", root, "worktree", "add", "-q", "--detach", rewritten]);
+      await exec("git", ["-C", rewritten, "checkout", "-q", "--orphan", "old-history"]);
+    });
+    await writeFile(path.join(rewritten, "legacy.txt"), "before the rewrite\n");
+    await exec("git", ["-C", rewritten, "add", "."]);
+    await exec("git", ["-C", rewritten, "-c", "user.name=Legacy", "-c", "user.email=legacy@example.invalid", "commit", "-qm", "legacy root"]);
+    expect(await repoEnabled(opted, rewritten)).toBe(false);
+    const both = await setOptIn(fresh, root, true);
+    expect(both.include).toHaveLength(2);
+    expect(await repoEnabled(both, rewritten)).toBe(true);
+    expect(await repoEnabled(opted, other)).toBe(false);
+    expect(await repoEnabled(await setOptIn(opted, clone, false), root)).toBe(false);
+    // Opting out of one repository under a broad rule keeps the rule and excludes only that repository.
+    const broad = await setOptIn(AutoConfigSchema.parse({ include: [path.dirname(root)] }), root, false);
+    expect(broad.include).toEqual([path.dirname(root)]);
+    expect(await repoEnabled(broad, root)).toBe(false);
+    expect(await repoEnabled(broad, other)).toBe(true);
+    const unborn = await scratch("jevcode-unborn-optin-");
+    await exec("git", ["init", "-q", unborn]);
+    expect((await setOptIn(fresh, unborn, true)).include).toEqual([unborn]);
+  });
+
+  it("reads hook payloads and scopes enablement by checkout prefix", async () => {
     expect(parseHookPayload(JSON.stringify({ cwd: "/work/repo", transcript_path: "/work/.sessions/a.jsonl", session_id: "s1", hook_event_name: "Stop" }), "/fallback")).toEqual({ cwd: "/work/repo", transcript: "/work/.sessions/a.jsonl", session: "s1" });
     expect(parseHookPayload("not json", "/fallback")).toEqual({ cwd: "/fallback", transcript: null, session: null });
     expect(parseHookPayload(JSON.stringify({ cwd: "relative", transcript_path: "also-relative" }), "/fallback")).toEqual({ cwd: "/fallback", transcript: null, session: null });
     const scoped = AutoConfigSchema.parse({ include: ["/work"], exclude: ["/work/private"] });
-    expect(repoEnabled(scoped, "/work/repo")).toBe(true);
-    expect(repoEnabled(scoped, "/work/private/repo")).toBe(false);
-    expect(repoEnabled(scoped, "/workspace")).toBe(false);
-    expect(repoEnabled(AutoConfigSchema.parse({ enabled: false }), "/work/repo")).toBe(false);
+    expect(await repoEnabled(scoped, "/work/repo")).toBe(true);
+    expect(await repoEnabled(scoped, "/work/private/repo")).toBe(false);
+    expect(await repoEnabled(scoped, "/workspace")).toBe(false);
+    expect(await repoEnabled(AutoConfigSchema.parse({ enabled: false, include: ["*"] }), "/work/repo")).toBe(false);
   });
 });

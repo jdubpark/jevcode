@@ -7,4 +7,4 @@ export { carryForward, generateBrief, type GenerateOptions, type GenerateResult,
 export { heuristicGate, jevFromEnv, jevGate, verifyClaims, type GateJudgment, type GateSignals, type JevTransport } from "./jev.js";
 export { calibrate, churn, outcomeRates, DEFAULT_TUNING, type LedgerEntry, type Tuning } from "./learning.js";
 export { runAuto, type AutoOptions, type AutoOutcome } from "./auto.js";
-export { AutoConfigSchema, loadConfig, repoEnabled, type AutoConfig } from "./config.js";
+export { AutoConfigSchema, loadConfig, repoEnabled, repositoryRoots, saveConfig, setOptIn, type AutoConfig } from "./config.js";

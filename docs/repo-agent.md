@@ -101,7 +101,19 @@ brief is kept. The check runs again when a stored brief is rendered.
 ## Automatic briefs
 
 `jevcode auto` decides whether a checkout's brief is due and refreshes it only
-when it is. Claude Code and Codex Stop hooks run it after every agent turn:
+when it is. It runs only in repositories you opt in:
+
+```sh
+node /path/to/jevcode/scripts/jevcode.mjs optin --repo /path/to/project
+node /path/to/jevcode/scripts/jevcode.mjs optout --repo /path/to/project
+```
+
+`optin` records the root commits reachable from the repository's refs, so
+every clone and worktree is covered wherever it lives, including branches whose
+history was rewritten; a checkout with no commits is recorded by path. `optout` removes that repository's own rules and, when a
+broader rule still covers it, adds an exclusion. Claude Code and Codex Stop
+hooks run `auto` after every agent turn; in other repositories it exits
+without collecting anything:
 
 ```sh
 node /path/to/jevcode/scripts/jevcode.mjs auto --hook claude   # or --hook codex
@@ -154,7 +166,7 @@ Settings live in `$XDG_CONFIG_HOME/jevcode/auto.json` (default
 ```json
 {
   "enabled": true,
-  "include": ["*"],
+  "include": ["root:<root commit sha>", "/path/to/checkouts"],
   "exclude": ["/path/to/private/checkouts"],
   "writer": { "model": "meta/muse-spark-1.3-contributor", "variant": "high" },
   "fallback": { "model": "deepseek/deepseek-flash", "variant": "high" },
@@ -163,7 +175,9 @@ Settings live in `$XDG_CONFIG_HOME/jevcode/auto.json` (default
 }
 ```
 
-`include` and `exclude` are checkout path prefixes; exclusions win. `base`
+`include` and `exclude` hold `root:<sha>` repository rules, checkout path
+prefixes, or `"*"` for every checkout; exclusions win, and nothing is included
+by default. `base`
 is `merge-base` (the merge base with the upstream default branch, or HEAD on
 the default branch itself), `head` (uncommitted work only), or a revision.
 `jevcode show` prints the latest brief and `jevcode status` prints settings,
