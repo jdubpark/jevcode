@@ -309,6 +309,27 @@ process.stdin.on('end', () => {
     await expect(readdir(path.dirname(call.env.XDG_CONFIG_HOME))).rejects.toThrow();
   });
 
+  it("answers a host with one JSON envelope: the decision and the current brief", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
+    await fakeOpenCode({ "meta/muse-spark-1.3-contributor": JSON.stringify({ ...report(), review: [] }) });
+    const state = await mkdtemp(path.join(tmpdir(), "jevcode-host-cli-"));
+    const config = await mkdtemp(path.join(tmpdir(), "jevcode-host-config-"));
+    temporary.push(state, config);
+    const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+    const call = async () => {
+      const running = exec(process.execPath, [cli, "auto", "--trigger", "host", "--format", "json", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"],
+        { env: { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" } });
+      running.child.stdin!.end(JSON.stringify({ role: "user", text: "Open the policy for everyone.", ts: "2026-01-01T00:00:00Z" }) + "\n");
+      return JSON.parse((await running).stdout);
+    };
+    const first = await call();
+    expect(first).toMatchObject({ decision: { action: "run" }, repo: root, brief: { summary: report().summary }, coverage: expect.arrayContaining([expect.stringContaining("JavaScript/TypeScript only")]) });
+    expect(first.base).toMatch(/^[0-9a-f]{40}$/);
+    const second = await call();
+    expect(second).toMatchObject({ decision: { action: "skip" }, generatedAt: first.generatedAt, fingerprint: first.fingerprint, brief: first.brief });
+  });
+
   it("denies exactly the secret paths Jevcode excludes, and grep entirely", () => {
     // OpenCode semantics: "*" matches any run of characters including "/", and the last matching rule wins.
     const decide = (file: string) => Object.entries(READ_RULES).filter(([pattern]) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`).test(file)).at(-1)?.[1];

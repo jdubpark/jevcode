@@ -197,6 +197,28 @@ tuning and recent decisions; neither calls a model. Both read the session
 transcript's tail, not its beginning, so a long live session contributes its
 recent activity.
 
+## Host integration
+
+A service that hosts agent sessions can drive the same engine per session
+instead of a hook:
+
+```sh
+jevcode auto --trigger host --format json --activity-stdin --session <id> \
+  --repo <checkout> --base <session baseline>
+```
+
+`--trigger host` means an administrator configured the service, so the
+repository needs no opt-in. Stdin carries that session's bounded recorded chat
+as JSONL; a host usually sends a sliding window, so new activity is measured
+after the last record seen at the previous check and at the previous brief.
+`--base` fixes the comparison commit; a checkpoint built over another base is
+rebuilt rather than returned. The output is one JSON object: `decision`
+(`action`, `reason`, `judge`, `worthwhile`, `scope`) plus the current brief
+envelope (`repo`, `head`, `base`, `generatedAt`, `fingerprint`, `brief`,
+`evidence`, `coverage`), or `brief: null` when none exists yet. A skipped run
+returns the existing brief; `generatedAt` says which snapshot it describes.
+The exit code is non-zero only when a refresh was attempted and failed.
+
 ## Self-correction
 
 Every automatic decision, every run (automatic or manual) and every piece of

@@ -9,6 +9,9 @@ const CheckpointSchema = z.object({
   version: z.literal(1), repo: z.string(), generatedAt: z.string(), fingerprint: z.string(), head: z.string().nullable(),
   fileHashes: z.record(z.string()), brief: BriefSchema,
   evidence: z.array(z.object({ source: z.string(), line: z.number().int().positive(), path: z.string().nullable(), text: z.string() })).default([]),
+  // Absent in checkpoints written before automatic runs could be requested over a fixed base.
+  base: z.string().nullable().optional(),
+  coverage: z.array(z.string()).optional(),
 });
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 const statePath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.json`);
@@ -117,7 +120,7 @@ export async function saveCheckpoint(directory: string, context: RepoContext, br
     const previous = await readCheckpoint(directory, context.repo);
     if (previous && previous.generatedAt > context.generatedAt) return;
     const checkpoint: Checkpoint = {
-      version: 1, repo: context.repo, generatedAt: context.generatedAt, fingerprint: contextFingerprint(context), head: context.head,
+      version: 1, repo: context.repo, generatedAt: context.generatedAt, fingerprint: contextFingerprint(context), head: context.head, base: context.base, coverage: context.limitations,
       fileHashes: Object.fromEntries(Object.entries(context.files).map(([file, info]) => [file, info.hash])), brief, evidence: referencedEvidence(brief, context),
     };
     const file = await open(temporary, "wx", 0o600);

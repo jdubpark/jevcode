@@ -539,6 +539,37 @@ describe("automatic refresh", () => {
     await expect(readFile(lock, "utf8")).rejects.toThrow();
   });
 
+  it("serves a host: no opt-in, a sliding activity window measured from the last record seen, and a rebuild for another base", async () => {
+    const root = await fixture();
+    const state = await scratch("jevcode-host-state-");
+    const parent = (await exec("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+    await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
+    await exec("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qam", "open policy"]);
+    const head = (await exec("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+    // Each recorded turn is fixed once; windows over the journal overlap with identical records.
+    const sizes = [0, 1000, 1000, 1000, 1000, 1000, 200, 3000];
+    const records = sizes.map((size, index) => JSON.stringify({ role: "assistant", text: `turn ${index} ${"z".repeat(size)}`, ts: `2026-01-01T00:00:${String(index).padStart(2, "0")}Z` }));
+    const window = (from: number, to: number) => records.slice(from, to + 1).join("\n") + "\n";
+    const host = { trigger: "host" as const, config: AutoConfigSchema.parse({ base: "head" }), session: "s1", base: parent };
+    const author = writer("muse", [brief()]);
+    expect(await auto(root, state, { ...host, activityText: window(1, 5), writers: [author], now: later(0) })).toMatchObject({ action: "run" });
+    expect((await readCheckpoint(state, root))?.base).toBe(parent);
+    // One small new turn: below the activity floor, so nothing is collected.
+    expect(await auto(root, state, { ...host, activityText: window(1, 6), now: later(20) })).toMatchObject({ reason: "no source or activity change since the last check" });
+    // The window slides; only records after the last one seen count, not the whole window.
+    const slid = window(2, 7);
+    expect(await auto(root, state, { ...host, activityText: slid, now: later(40) })).toMatchObject({ action: "skip", reason: expect.stringContaining("heuristic judged") });
+    const judged = (await readLedger(state, root)).filter((entry): entry is Extract<LedgerEntry, { kind: "decision" }> => entry.kind === "decision").at(-1)!;
+    // Since the brief: turns 6 and 7 only (about 3.3 KB), not the whole 7 KB window.
+    expect(judged.signals.newActivityBytes).toBeGreaterThan(3000);
+    expect(judged.signals.newActivityBytes).toBeLessThan(3500);
+    // A request over another base is rebuilt, whatever the gate would say.
+    const rebuilt = writer("muse", [brief()]);
+    expect(await auto(root, state, { ...host, base: head, activityText: slid, writers: [rebuilt], now: later(41) })).toMatchObject({ action: "run", reason: "full brief written by muse" });
+    expect((await readCheckpoint(state, root))?.base).toBe(head);
+    expect(await auto(root, state, { ...host, trigger: "hook", activityText: slid, now: later(60) })).toMatchObject({ action: "disabled" });
+  });
+
   it("opts repositories in by root commit so every clone and worktree follows, and opts them out precisely", async () => {
     const root = await fixture();
     const clone = await scratch("jevcode-clone-");

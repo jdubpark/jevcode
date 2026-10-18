@@ -19,7 +19,12 @@ export interface AutoOptions {
   repo: string;
   logs: string[];
   session: string | null;
-  trigger: "hook" | "manual";
+  /** host: requested by an administrator-configured service, which authorizes the repository itself. */
+  trigger: "hook" | "manual" | "host";
+  /** Explicitly scoped activity (bounded JSONL), such as a host's recorded chat for one session. */
+  activityText?: string;
+  /** Compare with this revision instead of the configured base. */
+  base?: string;
   dryRun: boolean;
   stateDir: string;
   config: AutoConfig;
@@ -30,16 +35,20 @@ export interface AutoOptions {
   /** How often the checkout is polled for changes while the writer runs (default 15 s). */
   watchMs?: number;
 }
-export interface AutoOutcome { action: "skip" | "run" | "coalesced" | "disabled" | "failed"; reason: string; judgment?: GateJudgment; briefPath?: string }
+export interface AutoOutcome { action: "skip" | "run" | "coalesced" | "disabled" | "failed"; reason: string; judgment?: GateJudgment; briefPath?: string; repo?: string; directory?: string }
 
 /** activity: transcript sizes at the last check; briefActivity: sizes when the last brief was written. */
-const AutoStateSchema = z.object({ quickKey: z.string().nullable(), activity: z.record(z.number()), briefActivity: z.record(z.number()).default({}) });
+/** marks/briefMarks: the last stdin activity record seen at the last check and at the last brief, per session. */
+const AutoStateSchema = z.object({
+  quickKey: z.string().nullable(), activity: z.record(z.number()), briefActivity: z.record(z.number()).default({}),
+  marks: z.record(z.string()).default({}), briefMarks: z.record(z.string()).default({}),
+});
 type AutoState = z.infer<typeof AutoStateSchema>;
 const autoBase = (directory: string, repo: string): string => path.join(directory, hash(repo));
 
 async function readAutoState(directory: string, repo: string): Promise<AutoState> {
   try { return AutoStateSchema.parse(JSON.parse(await readFile(`${autoBase(directory, repo)}.auto.json`, "utf8"))); }
-  catch { return { quickKey: null, activity: {}, briefActivity: {} }; }
+  catch { return { quickKey: null, activity: {}, briefActivity: {}, marks: {}, briefMarks: {} }; }
 }
 async function saveAutoState(directory: string, repo: string, state: AutoState): Promise<void> {
   const target = `${autoBase(directory, repo)}.auto.json`;
@@ -199,7 +208,7 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
   let repo: string;
   try { repo = await repositoryRoot(options.repo); }
   catch { return { action: "disabled", reason: "not a Git checkout" }; }
-  if (!(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)" };
+  if (options.trigger !== "host" && !(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)", repo };
   const directory = await resolveStateDirectory(options.stateDir, repo);
   const record = async (entry: Decision | Run) => { if (!options.dryRun) await appendLedger(directory, repo, entry); };
   const decision = (action: Decision["action"], reason: string, judge: Decision["judge"], fields: Partial<Decision> = {}): Decision => ({
@@ -210,7 +219,7 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
   const lock = options.dryRun ? null : await acquire(directory, repo, options.config.timeoutSeconds * 1000 + 5 * 60_000);
   if (!options.dryRun && lock === null) {
     await record(decision("coalesced", "another automatic brief is running for this checkout; it will re-check", "deterministic"));
-    return { action: "coalesced", reason: "another automatic brief is running for this checkout" };
+    return { action: "coalesced", reason: "another automatic brief is running for this checkout", repo, directory };
   }
   let outcome: AutoOutcome = { action: "skip", reason: "not evaluated" };
   try {
@@ -231,7 +240,7 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
       if (next !== tuning) await saveTuning(directory, repo, next);
     }
   }
-  return outcome;
+  return { ...outcome, repo, directory };
 }
 
 /** recheck: a trigger arrived during the previous pass, so its change must not wait out the debounce. */
@@ -239,12 +248,27 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
   const state = await readAutoState(directory, repo);
   const key = await quickKey(repo);
   const sizes = Object.fromEntries(await Promise.all(options.logs.map(async (file) => [path.resolve(file), (await stat(file).catch(() => null))?.size ?? 0] as const)));
-  const grown = (since: Record<string, number>) => Object.entries(sizes).reduce((total, [file, size]) => total + Math.max(0, size - (since[file] ?? 0)), 0);
+  // A host sends a sliding window, so stdin growth is measured after the last record already seen, per session.
+  const streamKey = `stdin:${options.session ?? "default"}`;
+  const records = options.activityText === undefined ? [] : options.activityText.split("\n").filter((line) => line.trim() !== "");
+  const lastMark = records.length ? hash(records[records.length - 1]!) : undefined;
+  const after = (mark: string | undefined) => {
+    if (!records.length) return 0;
+    const index = mark === undefined ? -1 : records.map((line) => hash(line)).lastIndexOf(mark);
+    return records.slice(index + 1).reduce((total, line) => total + Buffer.byteLength(line) + 1, 0);
+  };
+  const grown = (since: Record<string, number>, marks: Record<string, string>) =>
+    Object.entries(sizes).reduce((total, [file, size]) => total + Math.max(0, size - (since[file] ?? 0)), 0) + after(marks[streamKey]);
   // The cheap skip asks "anything new since the last check?"; the gate weighs everything since the last brief,
   // so activity from skipped turns accumulates the way file changes do.
-  const newActivityBytes = grown(state.activity);
+  const newActivityBytes = grown(state.activity, state.marks);
   const remember = async (briefed = false) => {
-    if (!options.dryRun) await saveAutoState(directory, repo, { quickKey: key, activity: { ...state.activity, ...sizes }, briefActivity: briefed ? { ...state.briefActivity, ...sizes } : state.briefActivity });
+    if (options.dryRun) return;
+    const mark = lastMark ? { [streamKey]: lastMark } : {};
+    await saveAutoState(directory, repo, {
+      quickKey: key, activity: { ...state.activity, ...sizes }, briefActivity: briefed ? { ...state.briefActivity, ...sizes } : state.briefActivity,
+      marks: { ...state.marks, ...mark }, briefMarks: briefed ? { ...state.briefMarks, ...mark } : state.briefMarks,
+    });
   };
   const checkpoint = await readCheckpoint(directory, repo);
   const tuning = await readTuning(directory, repo);
@@ -254,8 +278,11 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
     if (seen) await remember();
     return { action: "skip", reason };
   };
+  // An explicitly requested base that differs from the checkpoint's rules out the cheap skip.
+  const requestedBase = options.base ? await git(repo, ["rev-parse", "--verify", "--end-of-options", `${options.base}^{commit}`]).then((value) => value.trim(), () => undefined) : undefined;
+  const baseMoved = checkpoint !== null && requestedBase !== undefined && checkpoint.base !== undefined && checkpoint.base !== requestedBase;
   // Unseen, so small turns add up across checks instead of each resetting the baseline.
-  if (checkpoint && state.quickKey === key && newActivityBytes < MIN_ACTIVITY_BYTES) return skip("no source or activity change since the last check", "deterministic", {}, false);
+  if (checkpoint && !baseMoved && state.quickKey === key && newActivityBytes < MIN_ACTIVITY_BYTES) return skip("no source or activity change since the last check", "deterministic", {}, false);
   // Back off after a failed run so an unavailable provider is not retried at every agent stop.
   // Provider failures back off. A checkout that moved mid-run is retried on the immediate re-check and
   // once more, then backs off too, so an agent that keeps editing does not pay for a doomed run per stop.
@@ -267,20 +294,25 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
     return skip(`the previous automatic brief failed under ${tuning.debounceMinutes} minutes ago`, "deterministic", {}, false);
   }
 
-  const base = await resolveBase(repo, options.config.base);
-  const context = await collectRepository({ repo, base, logs: options.logs, activityTail: true });
-  const activitySinceBrief = grown(state.briefActivity);
+  const base = options.base ?? await resolveBase(repo, options.config.base);
+  const context = await collectRepository({ repo, base, logs: options.logs, activityText: options.activityText, activityTail: true });
+  const activitySinceBrief = grown(state.briefActivity, state.briefMarks);
+  // A brief over another base answers a different question; it is rebuilt, never handed back.
+  const baseChanged = checkpoint !== null && checkpoint.base !== undefined && checkpoint.base !== context.base;
   const signals = gateSignals(context, checkpoint, activitySinceBrief, now());
   const counts = { changedFiles: signals.changedSinceBrief.length + signals.removedSinceBrief.length, newActivityBytes: activitySinceBrief, minutesSinceBrief: signals.minutesSinceBrief };
   if (!checkpoint && context.changed.length === 0 && activitySinceBrief < MIN_ACTIVITY_BYTES) return skip("no changes or agent activity to brief yet", "deterministic", { signals: counts });
-  if (checkpoint && counts.changedFiles === 0 && activitySinceBrief < MIN_ACTIVITY_BYTES) return skip("source matches the last brief", "deterministic", { signals: counts });
-  if (!recheck && checkpoint && (signals.minutesSinceBrief ?? Infinity) < tuning.debounceMinutes && counts.changedFiles < 5 * tuning.minFiles) {
+  if (checkpoint && !baseChanged && counts.changedFiles === 0 && activitySinceBrief < MIN_ACTIVITY_BYTES) return skip("source matches the last brief", "deterministic", { signals: counts });
+  if (!recheck && !baseChanged && checkpoint && (signals.minutesSinceBrief ?? Infinity) < tuning.debounceMinutes && counts.changedFiles < 5 * tuning.minFiles) {
     return skip(`last brief is under ${tuning.debounceMinutes} minutes old`, "deterministic", { signals: counts }, false);
   }
 
-  if (options.judge && checkpoint) signals.changes = await changesSinceBrief(repo, checkpoint, await readSnapshot(directory, repo), signals.changedSinceBrief, signals.removedSinceBrief);
+  if (options.judge && checkpoint && !baseChanged) signals.changes = await changesSinceBrief(repo, checkpoint, await readSnapshot(directory, repo), signals.changedSinceBrief, signals.removedSinceBrief);
   let judgment: GateJudgment;
-  try { judgment = options.judge ? await jevGate(options.judge, signals) : heuristicGate(signals, tuning.minFiles); }
+  try {
+    judgment = baseChanged ? { worthwhile: 1, scope: "full", stale: [...SECTIONS], judge: "heuristic", usage: null }
+      : options.judge ? await jevGate(options.judge, signals) : heuristicGate(signals, tuning.minFiles);
+  }
   catch (error) { judgment = { ...heuristicGate(signals, tuning.minFiles), error: error instanceof Error ? clean(error.message) : "Jev was unavailable" }; }
   const judged = { worthwhile: judgment.worthwhile, scope: judgment.scope, stale: judgment.stale, jevUsage: judgment.usage, signals: counts };
   if (judgment.scope === "skip" || judgment.worthwhile < tuning.gateThreshold) {

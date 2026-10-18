@@ -30,7 +30,7 @@ const HELP = `Jevcode repository briefing agent
   --repo PATH       Git checkout to inspect (default: current directory)
   --base REF        Compare this commit to the working tree (default: HEAD)
   --log PATH        Explicit agent transcript/JSONL file (repeatable, max 5)
-  --activity-stdin  Read one explicitly scoped activity log from stdin (max 8 MiB)
+  --activity-stdin  Read one explicitly scoped activity log from stdin (max 8 MiB; brief and auto)
   --focus PATH      Critical repo-relative component/path (repeatable)
   --question TEXT   Additional review focus
   --format FORMAT   markdown or json (brief only; default: markdown)
@@ -43,7 +43,8 @@ const HELP = `Jevcode repository briefing agent
   --no-state        Do not read or save previous generated brief
   --hook KIND       auto: read a claude or codex Stop hook payload from stdin; run detached
   --dry-run         auto: print the decision without writing a brief or recording it
-  --trigger KIND    auto: hook or manual (default: manual)
+  --trigger KIND    auto: hook, manual or host (default: manual); host skips opt-in
+  --format json     auto: print the decision and the current brief as one JSON object
   --session ID      auto: agent session identifier for the ledger
   --section NAME    feedback: the brief section the verdict is about
   --note TEXT       feedback: a short note
@@ -102,13 +103,22 @@ async function main(): Promise<void> {
   const log = (message: string) => process.stderr.write(`${message}\n`);
 
   if (command === "auto") {
-    if (values.trigger !== undefined && !["hook", "manual"].includes(values.trigger)) throw new Error("Trigger must be hook or manual.");
+    if (values.trigger !== undefined && !["hook", "manual", "host"].includes(values.trigger)) throw new Error("Trigger must be hook, manual or host.");
+    const activityText = values["activity-stdin"] ? await readStdin(8 * 1024 * 1024, "Activity input") : undefined;
     const outcome = await runAuto({
-      repo: values.repo ?? process.cwd(), logs: values.log ?? [], session: values.session ?? null, trigger: (values.trigger ?? "manual") as "hook" | "manual",
+      repo: values.repo ?? process.cwd(), logs: values.log ?? [], session: values.session ?? null, trigger: (values.trigger ?? "manual") as "hook" | "manual" | "host",
       dryRun: values["dry-run"] ?? false, stateDir: stateOption, config: values.timeout ? { ...config, timeoutSeconds: timeout } : config,
-      judge: values["no-verify"] ? null : jevFromEnv(), writers, log,
+      judge: values["no-verify"] ? null : jevFromEnv(), writers, log, activityText, base: values.base,
     });
-    await write(`${new Date().toISOString()} ${outcome.action}: ${clean(outcome.reason)}${outcome.briefPath ? `\nBrief: ${outcome.briefPath}` : ""}\n`);
+    if (values.format === "json") {
+      // The current brief, refreshed or carried; generatedAt says which snapshot it describes.
+      const checkpoint = outcome.repo && outcome.directory ? await readCheckpoint(outcome.directory, outcome.repo) : null;
+      const decision = { action: outcome.action, reason: clean(outcome.reason), judge: outcome.judgment?.judge ?? null, worthwhile: outcome.judgment?.worthwhile ?? null, scope: outcome.judgment?.scope ?? null };
+      await write(JSON.stringify(checkpoint ? {
+        decision, repo: checkpoint.repo, head: checkpoint.head, base: checkpoint.base ?? null, generatedAt: checkpoint.generatedAt, fingerprint: checkpoint.fingerprint,
+        brief: checkpoint.brief, evidence: checkpoint.evidence, coverage: checkpoint.coverage ?? [],
+      } : { decision, repo: outcome.repo ?? null, brief: null }, null, 2) + "\n");
+    } else await write(`${new Date().toISOString()} ${outcome.action}: ${clean(outcome.reason)}${outcome.briefPath ? `\nBrief: ${outcome.briefPath}` : ""}\n`);
     if (outcome.action === "failed") process.exitCode = 1;
     return;
   }
