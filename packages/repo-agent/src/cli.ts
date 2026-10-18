@@ -35,7 +35,7 @@ const HELP = `Jevcode repository briefing agent
   --question TEXT   Additional review focus
   --format FORMAT   markdown or json (brief only; default: markdown)
   --runner NAME     muse (default, DeepSeek fallback), deepseek, or codex
-  --model MODEL     Writer model override for the selected runner
+  --model MODEL     Writer model override; a model without provider/ implies --runner codex
   --variant NAME    OpenCode reasoning variant (default: high)
   --no-verify       Skip the Jev claim-support check
   --timeout SEC     Model run limit, 10-1800 seconds (default: 600)
@@ -99,7 +99,10 @@ async function main(): Promise<void> {
   const timeout = Number(values.timeout ?? "600");
   if (!Number.isFinite(timeout) || timeout < 10 || timeout > 1800) throw new Error("Timeout must be between 10 and 1800 seconds.");
   const config = await loadConfig();
-  const writers = writersFor((values.runner ?? "muse") as RunnerName, config, values.model, values.variant);
+  // OpenCode models are provider/model; a bare model name (for example a Codex model) selects Codex,
+  // so callers that pass only --model keep working.
+  const runner = (values.runner ?? (values.model && !values.model.includes("/") ? "codex" : "muse")) as RunnerName;
+  const writers = writersFor(runner, config, values.model, values.variant);
   const log = (message: string) => process.stderr.write(`${message}\n`);
 
   if (command === "auto") {

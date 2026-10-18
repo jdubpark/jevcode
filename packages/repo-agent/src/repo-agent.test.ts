@@ -249,9 +249,10 @@ process.stdin.on('end', () => {
     const state = path.join(tmpdir(), `jevcode-failed-${path.basename(root)}`);
     temporary.push(state);
     const cli = new URL("../dist/cli.js", import.meta.url);
-    await expect(exec(process.execPath, [cli.pathname, "brief", "--runner", "codex", "--repo", root, "--state-dir", state], {
+    // A bare model name selects Codex without --runner, as older hosts call it.
+    await expect(exec(process.execPath, [cli.pathname, "brief", "--model", "gpt-6-luna", "--repo", root, "--state-dir", state], {
       env: { ...process.env, PATH: `${bin}${path.delimiter}${originalPath ?? ""}` },
-    })).rejects.toMatchObject({ stdout: "", stderr: expect.stringContaining("no checkpoint was saved") });
+    })).rejects.toMatchObject({ stdout: "", stderr: expect.stringMatching(/codex: Codex exited with code 3[\s\S]*no checkpoint was saved/) });
     expect(await readCheckpoint(state, root)).toBeNull();
   });
 });
