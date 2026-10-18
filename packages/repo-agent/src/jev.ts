@@ -39,6 +39,8 @@ export interface GateSignals {
   recentActivity: string[];
   minutesSinceBrief: number | null;
   previous: Brief | null;
+  /** What changed in each file since the brief: line counts and a few added/removed lines. */
+  changes: { path: string; added: number; removed: number; lines: string[] }[];
 }
 export type Scope = "skip" | "update" | "full";
 export interface GateJudgment { worthwhile: number; scope: Scope; stale: Section[]; judge: "jev" | "heuristic"; usage: JevUsage | null; error?: string }
@@ -78,6 +80,7 @@ function gateState(signals: GateSignals): unknown {
     changedSinceBrief: signals.changedSinceBrief.slice(0, 60), changedCount: signals.changedSinceBrief.length,
     removedSinceBrief: signals.removedSinceBrief.slice(0, 30), componentCount: signals.componentCount,
     touchedComponents: signals.touchedComponents.slice(0, 15),
+    changes: signals.changes.slice(0, 8).map((entry) => ({ ...entry, lines: entry.lines.map((line) => clip(line, 160)) })),
     newActivityKilobytes: Math.round(signals.newActivityBytes / 1024),
     recentActivity: signals.recentActivity.slice(-8).map((text) => clip(text, 300)),
     previousBrief: brief && {
@@ -99,7 +102,7 @@ export async function jevGate(transport: JevTransport, signals: GateSignals): Pr
   const questions: Record<string, JevQuestion> = {
     worthwhile: {
       type: "noul",
-      instructions: "Would a human reading `previousBrief` now hold a materially wrong or incomplete picture of the system or of the agent work, given `changedSinceBrief`, `removedSinceBrief` and `recentActivity`?",
+      instructions: "Would a human reading `previousBrief` now hold a materially wrong or incomplete picture of the system or of the agent work, given `changedSinceBrief`, `removedSinceBrief` and `recentActivity`? Use `changes` (added and removed lines per file since the brief) to tell behavior, contract or structure changes from formatting, comments, renames or test-only churn.",
       criteria: {
         true: "Refreshing now would correct or add something a reviewer needs to know.",
         false: "The changes are routine, cosmetic, already described, or too small to change what a reviewer should know.",

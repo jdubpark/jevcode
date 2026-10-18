@@ -73,7 +73,12 @@ twice:
 - **Refresh gate.** One batched request asks whether a refresh would correct
   what a reader of the previous brief believes (Noul), how much to regenerate
   (Choice: skip, update or full), and whether each section is stale (one Noul
-  per section).
+  per section). Besides changed paths and recent activity, it sees what
+  changed in up to eight files since the brief: added and removed line counts
+  and a few of those lines, so formatting, comments and renames can be told
+  from behavior changes. The "before" side is a redacted snapshot of the files
+  that were dirty when the brief was written, or the file at the brief's
+  commit; nothing is written to the checkout.
 - **Claim support.** After validation, one batched request asks, for every
   cited entry, whether the excerpts around its citations support it. Entries
   below the support threshold that the writer produced in this run go back
@@ -201,6 +206,7 @@ since its last adjustment:
 | noise | an automatic run with churn below 0.15, or `feedback noise` | raise the gate threshold by 0.05, multiply the debounce by 1.5, require one more changed file |
 | late | a judged skip followed within an hour by a manual brief, or by a run with churn of at least 0.5 when the skip already held at least 70% of that run's changed files; at most one skip per run; or `feedback late` | the reverse steps |
 | wrong | a run whose first draft had a claim below the fixed default support of 0.35, or `feedback wrong` | raise the claim-support threshold by 0.05 |
+| harsh | `feedback harsh`: the claim check removed entries that were correct | lower the claim-support threshold by 0.05 |
 
 Explicit feedback counts twice. Nothing moves until five weighted samples
 accumulate, each evaluation moves one step, the evidence window restarts only
@@ -211,7 +217,9 @@ itself upward, and inferred evidence moves it at most one step above its
 default; only `feedback wrong` raises it further. The claim threshold relaxes toward its default when fewer than
 10% of at least ten samples were wrong. These are heuristics, not statistical
 guarantees.
-Record a human verdict with:
+Each run's ledger entry lists what the claim check removed (section, text,
+support), and `jevcode status` shows the latest removals so they can be
+audited. Record a human verdict with:
 
 ```sh
 node /path/to/jevcode/scripts/jevcode.mjs feedback noise --repo /path/to/project
@@ -297,7 +305,8 @@ lists what is available.
 Successful briefs save source hashes, the generated report and cited activity/diff excerpts under
 `~/.local/state/jevcode/repo-agent/`, keyed by the real checkout path. Beside
 each checkpoint are the rendered brief (`.md`), the outcome ledger
-(`.ledger.jsonl`), tuning (`.tuning.json`) and automatic-run state
+(`.ledger.jsonl`), tuning (`.tuning.json`), the redacted snapshot of dirty
+files the refresh gate diffs against (`.snapshot.json`) and automatic-run state
 (`.auto.json`, `.auto.lock`); detached hook runs log to `auto.log`. Worktrees
 remain separate. The next run receives changed/removed paths and unresolved
 questions from that brief. This is a comparison with the last generated brief,

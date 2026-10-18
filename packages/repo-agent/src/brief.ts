@@ -37,7 +37,10 @@ export interface GenerateResult {
   removedClaims: number;
   /** Claims in the first draft below DEFAULT_SUPPORT; independent of the tuned threshold. */
   unsupportedAtDefault: number;
+  /** What the claim check removed, for audit and "harsh" feedback. */
+  removed: RemovedEntry[];
 }
+export interface RemovedEntry { section: Section; text: string; support: number }
 
 const add = (a: JevUsage | null, b: JevUsage | null): JevUsage | null => a === null ? b : b === null ? a : { input: a.input + b.input, output: a.output + b.output };
 const repairable = (error: unknown): boolean => error instanceof Error && (error.name === "ZodError" || error.message.startsWith("Brief cites"));
@@ -131,7 +134,7 @@ async function writeWith(writer: Writer, options: GenerateOptions): Promise<Gene
   }
   if (!brief) throw new Error("No validated brief was produced; no checkpoint was saved.");
   const checked = await verify(writer, brief, options, call);
-  return { brief: checked.brief, writer: writer.id, model: writer.model, attempts, writerUsage, jevUsage: checked.jevUsage, weakClaims: checked.weakClaims, removedClaims: checked.removed, unsupportedAtDefault: checked.unsupportedAtDefault };
+  return { brief: checked.brief, writer: writer.id, model: writer.model, attempts, writerUsage, jevUsage: checked.jevUsage, weakClaims: checked.weakClaims, removedClaims: checked.removed.length, unsupportedAtDefault: checked.unsupportedAtDefault, removed: checked.removed };
 }
 
 /**
@@ -139,11 +142,11 @@ async function writeWith(writer: Writer, options: GenerateOptions): Promise<Gene
  * targeted repair; weak claims in carried sections are removed in place, since rewriting a carried section
  * would contradict the update instructions. Claims still unsupported afterwards are removed and disclosed.
  */
-async function verify(writer: Writer, brief: Brief, options: GenerateOptions, call: (text: string) => Promise<unknown>): Promise<{ brief: Brief; jevUsage: JevUsage | null; weakClaims: number; removed: number; unsupportedAtDefault: number }> {
+async function verify(writer: Writer, brief: Brief, options: GenerateOptions, call: (text: string) => Promise<unknown>): Promise<{ brief: Brief; jevUsage: JevUsage | null; weakClaims: number; removed: RemovedEntry[]; unsupportedAtDefault: number }> {
   const { context, judge } = options;
   if (judge === null) {
     context.limitations.push("Claim support was not checked: no Jev (TypeSafe) key was available.");
-    return { brief, jevUsage: null, weakClaims: 0, removed: 0, unsupportedAtDefault: 0 };
+    return { brief, jevUsage: null, weakClaims: 0, removed: [], unsupportedAtDefault: 0 };
   }
   let jevUsage: JevUsage | null = null;
   const supportOf = async (candidate: Brief): Promise<ClaimSupport[]> => {
@@ -155,7 +158,7 @@ async function verify(writer: Writer, brief: Brief, options: GenerateOptions, ca
   try { support = await supportOf(brief); }
   catch (error) {
     context.limitations.push(`Claim support was not checked: ${error instanceof Error ? clean(error.message) : "Jev was unavailable"}.`);
-    return { brief, jevUsage, weakClaims: 0, removed: 0, unsupportedAtDefault: 0 };
+    return { brief, jevUsage, weakClaims: 0, removed: [], unsupportedAtDefault: 0 };
   }
   const unsupportedAtDefault = support.filter((entry) => entry.support < DEFAULT_SUPPORT).length;
   let weak = support.filter((entry) => entry.support < options.verifyThreshold);
@@ -176,5 +179,7 @@ async function verify(writer: Writer, brief: Brief, options: GenerateOptions, ca
       context.limitations.push(`${writer.id} could not repair weakly supported entries; they were removed instead.`);
     }
   }
-  return { brief: BriefSchema.parse(withoutClaims(brief, weak)), jevUsage, weakClaims, removed: weak.length, unsupportedAtDefault };
+  const claims = claimsOf(brief);
+  const removed = weak.map((entry) => ({ section: entry.section, support: Math.round(entry.support * 100) / 100, text: (claims.find((claim) => claim.section === entry.section && claim.index === entry.index)?.text ?? "").slice(0, 200) }));
+  return { brief: BriefSchema.parse(withoutClaims(brief, weak)), jevUsage, weakClaims, removed, unsupportedAtDefault };
 }

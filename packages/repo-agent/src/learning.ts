@@ -20,10 +20,13 @@ const RunSchema = z.object({
   writerUsage: usage, jevUsage: usage, churn: z.number().nullable(), weakClaims: z.number(), removedClaims: z.number(), elapsedMs: z.number(),
   // Claims below the fixed default support in the first draft; absent in early ledgers.
   unsupportedAtDefault: z.number().default(0),
+  // What the claim check removed (clipped), so a human can audit Jev and answer with feedback.
+  removed: z.array(z.object({ section: z.string(), text: z.string(), support: z.number() })).default([]),
 });
 const FeedbackSchema = z.object({
   kind: z.literal("feedback"), id: z.string(), at: z.string(),
-  verdict: z.enum(["useful", "noise", "late", "wrong"]), section: z.string().nullable(), note: z.string().nullable(),
+  // harsh: the claim check removed entries that were correct.
+  verdict: z.enum(["useful", "noise", "late", "wrong", "harsh"]), section: z.string().nullable(), note: z.string().nullable(),
 });
 export const LedgerEntrySchema = z.discriminatedUnion("kind", [DecisionSchema, RunSchema, FeedbackSchema]);
 export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
@@ -97,7 +100,7 @@ export function churn(previous: Brief | null, next: Brief, sections: readonly Se
   return sections.filter((section) => similarity(text(previous, section), text(next, section)) < 0.8).length / sections.length;
 }
 
-export interface Rates { samples: number; noise: number; late: number; wrongSamples: number; wrong: number; explicitWrong: number }
+export interface Rates { samples: number; noise: number; late: number; wrongSamples: number; wrong: number; explicitWrong: number; harsh: number }
 
 /**
  * Outcome evidence since the last adjustment. Explicit feedback counts twice as much as inferred outcomes.
@@ -105,6 +108,7 @@ export interface Rates { samples: number; noise: number; late: number; wrongSamp
  * - late: a judged skip that already held most of the change a later run (within an hour) described, or
  *   one followed by a manual request; at most one skip per run, so skips that rightly let small changes
  *   accumulate are not blamed. Also "late" feedback.
+ * - harsh: explicit feedback that removed entries were correct; it lowers the claim threshold directly.
  * - wrong: a run whose first draft had claims below the fixed default support, or "wrong" feedback. The
  *   tuned threshold does not feed this signal, so it cannot ratchet itself; inferred evidence alone moves
  *   the threshold at most one step above its default.
@@ -114,7 +118,7 @@ export function outcomeRates(entries: LedgerEntry[], since: string | null): Rate
   const decisions = new Map(entries.filter((entry): entry is Decision => entry.kind === "decision").map((entry) => [entry.id, entry]));
   const runs = recent.filter((entry): entry is Run => entry.kind === "run" && entry.ok).sort((a, b) => a.at.localeCompare(b.at));
   const skips = recent.filter((entry): entry is Decision => entry.kind === "decision" && entry.action === "skip" && entry.judge !== "deterministic");
-  let samples = skips.length, noise = 0, late = 0, wrongSamples = runs.length, wrong = 0, explicitWrong = 0;
+  let samples = skips.length, noise = 0, late = 0, wrongSamples = runs.length, wrong = 0, explicitWrong = 0, harsh = 0;
   const blamed = new Set<string>();
   for (const run of runs) {
     if (run.trigger === "auto") { samples += 1; if ((run.churn ?? 1) < 0.15) noise += 1; }
@@ -129,11 +133,12 @@ export function outcomeRates(entries: LedgerEntry[], since: string | null): Rate
   for (const feedback of recent.filter((entry): entry is Feedback => entry.kind === "feedback")) {
     if (feedback.verdict === "wrong" || feedback.verdict === "useful") wrongSamples += 2;
     if (feedback.verdict === "wrong") { wrong += 2; explicitWrong += 1; continue; }
+    if (feedback.verdict === "harsh") { harsh += 1; continue; }
     samples += 2;
     if (feedback.verdict === "noise") noise += 2;
     if (feedback.verdict === "late") late += 2;
   }
-  return { samples, noise: samples ? noise / samples : 0, late: samples ? late / samples : 0, wrongSamples, wrong: wrongSamples ? wrong / wrongSamples : 0, explicitWrong };
+  return { samples, noise: samples ? noise / samples : 0, late: samples ? late / samples : 0, wrongSamples, wrong: wrongSamples ? wrong / wrongSamples : 0, explicitWrong, harsh };
 }
 
 /**
@@ -165,7 +170,9 @@ export function calibrate(tuning: Tuning, entries: LedgerEntry[], now: Date): Tu
   // Raising the threshold cannot change the inferred signal (it is measured at the default), so inferred
   // evidence moves it at most one step above the default; only explicit "wrong" verdicts go further.
   const cap = rates.explicitWrong > 0 ? BOUNDS.verifyThreshold[1] : DEFAULT_TUNING.verifyThreshold + 0.05;
-  if (rates.wrongSamples >= 5 && rates.wrong >= 0.3 && next.verifyThreshold < cap) set("verifyThreshold", Math.min(cap, next.verifyThreshold + 0.05), `unsupported drafts ${Math.round(rates.wrong * 100)}% of ${rates.wrongSamples} samples`);
+  // A human saying the check removed correct entries outweighs inferred evidence; it lowers the threshold.
+  if (rates.harsh > rates.explicitWrong) set("verifyThreshold", next.verifyThreshold - 0.05, `${rates.harsh} "harsh" verdict${rates.harsh === 1 ? "" : "s"}: removed entries were correct`);
+  else if (rates.wrongSamples >= 5 && rates.wrong >= 0.3 && next.verifyThreshold < cap) set("verifyThreshold", Math.min(cap, next.verifyThreshold + 0.05), `unsupported drafts ${Math.round(rates.wrong * 100)}% of ${rates.wrongSamples} samples`);
   else if (rates.wrongSamples >= 10 && rates.wrong < 0.1 && next.verifyThreshold > DEFAULT_TUNING.verifyThreshold) set("verifyThreshold", next.verifyThreshold - 0.05, `unsupported drafts ${Math.round(rates.wrong * 100)}% of ${rates.wrongSamples} samples`);
   if (next.history.length === tuning.history.length) return tuning;
   next.adjustedAt = now.toISOString();

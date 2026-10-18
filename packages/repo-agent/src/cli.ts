@@ -13,7 +13,7 @@ import { appendLedger, calibrate, churn, newId, readLedger, readTuning, saveTuni
 import { buildPrompt, SECTIONS } from "./prompt.js";
 import { referencedEvidence, renderBrief } from "./report.js";
 import { writersFor, type RunnerName } from "./runner.js";
-import { previousContext, readCheckpoint, renderedPath, resolveStateDirectory, saveCheckpoint } from "./state.js";
+import { previousContext, readCheckpoint, renderedPath, resolveStateDirectory, saveCheckpoint, saveSnapshot } from "./state.js";
 
 const HELP = `Jevcode repository briefing agent
 
@@ -21,7 +21,7 @@ const HELP = `Jevcode repository briefing agent
   jevcode auto     [options]  Refresh the brief only when Jev judges it due
   jevcode show     [options]  Print the latest generated brief; no model call
   jevcode status   [options]  Show automatic-brief settings, tuning and recent decisions
-  jevcode feedback VERDICT    Record useful, noise, late or wrong for the latest brief
+  jevcode feedback VERDICT    Record useful, noise, late, wrong or harsh for the latest brief
   jevcode optin    [--repo]   Brief this repository automatically (all its clones and worktrees)
   jevcode optout   [--repo]   Stop automatic briefs for this repository
   jevcode context  [options]  Print collected evidence as JSON; no model call
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
     }
     if (command === "feedback") {
       const verdict = positionals[1] as Verdict | undefined;
-      if (!verdict || !["useful", "noise", "late", "wrong"].includes(verdict)) throw new Error("Feedback must be useful, noise, late or wrong.");
+      if (!verdict || !["useful", "noise", "late", "wrong", "harsh"].includes(verdict)) throw new Error("Feedback must be useful, noise, late, wrong or harsh.");
       if (values.section !== undefined && !(SECTIONS as readonly string[]).includes(values.section)) throw new Error(`Section must be one of ${SECTIONS.join(", ")}.`);
       await appendLedger(directory, repo, { kind: "feedback", id: newId(), at: new Date().toISOString(), verdict, section: values.section ?? null, note: values.note ? clean(values.note).slice(0, 300) : null });
       const tuning = await readTuning(directory, repo);
@@ -145,6 +145,8 @@ async function main(): Promise<void> {
     }
     const checkpoint = await readCheckpoint(directory, repo);
     const tuning = await readTuning(directory, repo);
+    const ledger = await readLedger(directory, repo);
+    const removedLast = ledger.filter((entry): entry is Extract<LedgerEntry, { kind: "run" }> => entry.kind === "run" && entry.ok).at(-1)?.removed ?? [];
     const describe = (entry: LedgerEntry): string => entry.kind === "decision" ? `${entry.at} ${entry.action} (${entry.judge}): ${entry.reason}`
       : entry.kind === "run" ? `${entry.at} ${entry.ok ? "brief" : "failed"} by ${entry.writer ?? "none"}${entry.writerUsage ? `, ${entry.writerUsage.input + entry.writerUsage.output} writer tokens` : ""}${entry.churn !== null ? `, churn ${entry.churn.toFixed(2)}` : ""}${entry.error ? `: ${entry.error}` : ""}`
         : `${entry.at} feedback ${entry.verdict}${entry.section ? ` on ${entry.section}` : ""}`;
@@ -155,7 +157,8 @@ async function main(): Promise<void> {
       `Latest brief: ${checkpoint ? `${checkpoint.generatedAt} (${renderedPath(directory, repo)})` : "none"}`,
       `Tuning: gate ${tuning.gateThreshold}, debounce ${tuning.debounceMinutes} min, min files ${tuning.minFiles}, verify ${tuning.verifyThreshold}${tuning.adjustedAt ? `, last evaluated ${tuning.adjustedAt}` : ""}`,
       ...tuning.history.slice(-3).map((entry) => `  ${entry.at} ${entry.field} ${entry.from} → ${entry.to}: ${entry.reason}`),
-      "Recent activity:", ...(await readLedger(directory, repo, 10)).map((entry) => `  ${describe(entry)}`),
+      "Recent activity:", ...ledger.slice(-10).map((entry) => `  ${describe(entry)}`),
+      ...(removedLast.length ? ["Removed by the claim check in the latest brief (jevcode feedback harsh if they were correct):", ...removedLast.map((entry) => `  ${entry.support.toFixed(2)} ${entry.section}: ${clean(entry.text)}`)] : []),
     ].join("\n") + "\n");
     return;
   }
@@ -176,7 +179,7 @@ async function main(): Promise<void> {
   const tuning = values["no-state"] ? null : await readTuning(stateDir, context.repo);
   const record = async (fields: Partial<Extract<LedgerEntry, { kind: "run" }>>) => {
     if (values["no-state"]) return;
-    await appendLedger(stateDir, context.repo, { kind: "run", id: newId(), at: new Date().toISOString(), trigger: "manual", decision: null, ok: false, error: null, writer: null, model: null, attempts: 0, writerUsage: null, jevUsage: null, churn: null, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, elapsedMs: Date.now() - started, ...fields });
+    await appendLedger(stateDir, context.repo, { kind: "run", id: newId(), at: new Date().toISOString(), trigger: "manual", decision: null, ok: false, error: null, writer: null, model: null, attempts: 0, writerUsage: null, jevUsage: null, churn: null, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, removed: [], elapsedMs: Date.now() - started, ...fields });
   };
   let result: Awaited<ReturnType<typeof generateBrief>>;
   try {
@@ -195,7 +198,8 @@ async function main(): Promise<void> {
   await write(output);
   if (!values["no-state"]) {
     await saveCheckpoint(stateDir, context, brief, rendered);
-    await record({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: result.jevUsage, churn: churn(previous?.brief ?? null, brief), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault });
+    await saveSnapshot(stateDir, context);
+    await record({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: result.jevUsage, churn: churn(previous?.brief ?? null, brief), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed });
   }
 }
 

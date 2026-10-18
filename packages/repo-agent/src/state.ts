@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { BriefSchema, referencedEvidence, REMOVAL_NOTE, type Brief } from "./report.js";
 import { contextFingerprint, type RepoContext } from "./collect.js";
-import { hash } from "./io.js";
+import { clean, hash, readSource } from "./io.js";
 
 const CheckpointSchema = z.object({
   version: z.literal(1), repo: z.string(), generatedAt: z.string(), fingerprint: z.string(), head: z.string().nullable(),
@@ -12,6 +12,38 @@ const CheckpointSchema = z.object({
 });
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 const statePath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.json`);
+const snapshotPath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.snapshot.json`);
+const SnapshotSchema = z.object({ head: z.string().nullable(), files: z.record(z.string()) });
+export type Snapshot = z.infer<typeof SnapshotSchema>;
+
+/**
+ * Redacted content of the files that differed from the base when the brief was written, so the refresh
+ * gate can show what changed since. Kept in the state directory; nothing is written to the checkout.
+ */
+export async function saveSnapshot(directory: string, context: RepoContext): Promise<void> {
+  const files: Record<string, string> = {};
+  let total = 0;
+  for (const file of context.changed) {
+    const text = await readSource(context.repo, file);
+    if (text === null) continue;
+    const cleaned = clean(text);
+    if (total + cleaned.length > 1_500_000) break;
+    files[file] = cleaned;
+    total += cleaned.length;
+  }
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const target = snapshotPath(directory, context.repo);
+  const temporary = `${target}.${process.pid}.tmp`;
+  const handle = await open(temporary, "w", 0o600);
+  try { await handle.writeFile(JSON.stringify({ head: context.head, files })); } finally { await handle.close(); }
+  await rename(temporary, target).finally(() => rm(temporary, { force: true }));
+}
+
+export async function readSnapshot(directory: string, repo: string): Promise<Snapshot | null> {
+  try { const parsed = SnapshotSchema.safeParse(JSON.parse(await readFile(snapshotPath(directory, repo), "utf8"))); return parsed.success ? parsed.data : null; }
+  catch { return null; }
+}
+
 /** The latest rendered brief, for humans and `jevcode show`. */
 export const renderedPath = (directory: string, repo: string): string => path.join(directory, `${hash(repo)}.md`);
 

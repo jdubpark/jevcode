@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { runAuto, type AutoOptions } from "./auto.js";
+import { lineChanges, runAuto, type AutoOptions } from "./auto.js";
 import { carryForward, generateBrief, unstableSections, type Writer } from "./brief.js";
 import { collectRepository } from "./collect.js";
 import { AutoConfigSchema, repoEnabled, setOptIn } from "./config.js";
@@ -63,12 +63,14 @@ function writer(id: string, answers: (Brief | Error | ((prompt: string) => Brief
 }
 
 /** Answers gate and claim questions from a table of probabilities; records each request. */
-function judge(answers: Record<string, number | string>, fallback = 0.9): JevTransport & { requests: Record<string, JevQuestion>[] } {
+function judge(answers: Record<string, number | string>, fallback = 0.9): JevTransport & { requests: Record<string, JevQuestion>[]; states: unknown[] } {
   const requests: Record<string, JevQuestion>[] = [];
+  const states: unknown[] = [];
   return {
-    requests,
-    async systemOne({ questions }) {
+    requests, states,
+    async systemOne({ state, questions }) {
       requests.push(questions);
+      states.push(state);
       return {
         answers: Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, question.type === "choice" ? { choice: answers[key] ?? "update" } : { noul: answers[key] ?? fallback }])),
         usage: { input_tokens: 50, output_tokens: 5 },
@@ -79,7 +81,7 @@ function judge(answers: Record<string, number | string>, fallback = 0.9): JevTra
 
 const signals = (overrides: Partial<GateSignals> = {}): GateSignals => ({
   hasCheckpoint: true, changedSinceBrief: ["src/auth/policy.ts"], removedSinceBrief: [], touchedComponents: [{ path: "src/auth", changed: 1, incoming: 1 }],
-  componentCount: 10, newActivityBytes: 0, recentActivity: [], minutesSinceBrief: 30, previous: brief(), ...overrides,
+  componentCount: 10, newActivityBytes: 0, recentActivity: [], minutesSinceBrief: 30, previous: brief(), changes: [], ...overrides,
 });
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 0, 1, 0, minutes)).toISOString();
@@ -89,7 +91,7 @@ const decision = (minute: number, action: "skip" | "run", judge: "jev" | "determ
 });
 const run = (minute: number, fields: Partial<Extract<LedgerEntry, { kind: "run" }>> = {}): LedgerEntry => ({
   kind: "run", id: `r${minute}`, at: at(minute), trigger: "auto", decision: null, ok: true, error: null, writer: "muse", model: "m", attempts: 1,
-  writerUsage: null, jevUsage: null, churn: 0.5, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, elapsedMs: 1000, ...fields,
+  writerUsage: null, jevUsage: null, churn: 0.5, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, removed: [], elapsedMs: 1000, ...fields,
 });
 
 describe("outcome-driven tuning", () => {
@@ -153,9 +155,17 @@ describe("outcome-driven tuning", () => {
     expect(weakDrafts.verifyThreshold).toBe(0.4);
     const verdict: LedgerEntry = { kind: "feedback", id: "fw", at: at(200), verdict: "wrong", section: "review", note: null };
     expect(calibrate(weakDrafts, [verdict, ...Array.from({ length: 5 }, (_, index) => run(201 + index, { unsupportedAtDefault: 1 }))], new Date(at(210))).verifyThreshold).toBe(0.45);
+    // A human saying removed entries were correct lowers the threshold directly.
+    const harsh: LedgerEntry = { kind: "feedback", id: "fh", at: at(300), verdict: "harsh", section: "architecture", note: null };
+    expect(calibrate(weakDrafts, [harsh], new Date(at(301))).verifyThreshold).toBe(0.35);
     const strict = { ...DEFAULT_TUNING, verifyThreshold: 0.5 };
     const clean = Array.from({ length: 10 }, (_, index) => run(index));
     expect(calibrate(strict, clean, new Date(at(20))).verifyThreshold).toBe(0.45);
+  });
+
+  it("reports added and removed lines as multisets, ignoring blank lines and moves", () => {
+    expect(lineChanges("a\nb\n\nc\n", "b\na\nc\n// note\n")).toEqual({ added: ["// note"], removed: [] });
+    expect(lineChanges("x = 1\nx = 1\n", "x = 1\n")).toEqual({ added: [], removed: ["x = 1"] });
   });
 
   it("measures churn by section wording, not by regenerated summaries", () => {
@@ -249,7 +259,7 @@ describe("brief generation pipeline", () => {
     expect(author.prompts[1]).toContain("evidence check found entries");
     expect(author.prompts[1]).toContain("caches responses");
     expect(transport.requests).toHaveLength(2);
-    expect(result).toMatchObject({ weakClaims: 1, removedClaims: 1, jevUsage: { input: 100, output: 10 } });
+    expect(result).toMatchObject({ weakClaims: 1, removedClaims: 1, jevUsage: { input: 100, output: 10 }, removed: [{ section: "changes", support: 0.1, text: "The API still caches responses." }] });
     expect(result.brief.changes).toEqual([]);
     expect(result.brief.unknowns.at(-1)).toContain("removed from changes");
     expect(result.brief.architecture).toHaveLength(1);
@@ -349,6 +359,8 @@ describe("automatic refresh", () => {
     expect(saved.unknowns).toEqual(brief().unknowns);
     // One gate request, then one claim check over the merged brief.
     expect(transport.requests.map((questions) => Object.keys(questions).length)).toEqual([9, 4]);
+    // The gate saw what changed in the handler since the brief, not just its path.
+    expect(transport.states[0]).toMatchObject({ changes: [{ path: "src/api/index.ts", added: 1, removed: 1, lines: ["+ export const handler = (user: string) => allowed(user);", "- export const handler = allowed;"] }] });
 
     const ledger = await readLedger(state, root);
     expect(ledger.map((entry) => entry.kind === "decision" ? `${entry.action}:${entry.judge}` : entry.kind)).toEqual([
@@ -416,7 +428,13 @@ describe("automatic refresh", () => {
       ledger = await readLedger(state, root);
     }
     expect(ledger).toMatchObject([{ kind: "decision", action: "skip", reason: "no changes or agent activity to brief yet", session: "s1" }]);
-    expect(await readFile(path.join(state, "auto.log"), "utf8")).toContain("skip: no changes or agent activity to brief yet");
+    // The child appends its outcome line after recording the decision.
+    let log = "";
+    for (let attempt = 0; attempt < 50 && !log.includes("skip:"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      log = await readFile(path.join(state, "auto.log"), "utf8").catch(() => "");
+    }
+    expect(log).toContain("skip: no changes or agent activity to brief yet");
   }, 15000);
 
   it("lets small conversation turns add up past the cheap skip", async () => {

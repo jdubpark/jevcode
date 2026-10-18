@@ -5,12 +5,13 @@ import { z } from "zod";
 import { generateBrief, unstableSections, type Writer } from "./brief.js";
 import { collectRepository, repositoryRoot, type RepoContext } from "./collect.js";
 import { repoEnabled, type AutoConfig } from "./config.js";
-import { clean, git, hash, NESTED_ENV } from "./io.js";
+import { isTestPath } from "@jevcode/codebase-map";
+import { clean, git, hash, NESTED_ENV, readSource } from "./io.js";
 import { heuristicGate, jevGate, type GateJudgment, type GateSignals, type JevTransport } from "./jev.js";
 import { appendLedger, calibrate, churn, newId, readLedger, readTuning, saveTuning, type Decision, type Run } from "./learning.js";
 import { buildPrompt, SECTIONS } from "./prompt.js";
 import { renderBrief } from "./report.js";
-import { previousContext, readCheckpoint, renderedPath, resolveStateDirectory, saveCheckpoint, type Checkpoint } from "./state.js";
+import { previousContext, readCheckpoint, readSnapshot, renderedPath, resolveStateDirectory, saveCheckpoint, saveSnapshot, type Checkpoint, type Snapshot } from "./state.js";
 
 const MIN_ACTIVITY_BYTES = 2048;
 
@@ -140,7 +141,34 @@ async function resolveBase(repo: string, setting: string): Promise<string | unde
   return undefined;
 }
 
-export function gateSignals(context: RepoContext, checkpoint: Checkpoint | null, newActivityBytes: number, now: Date): GateSignals {
+/** Added and removed non-blank lines, compared as multisets: enough to tell a comment from a logic change. */
+export function lineChanges(before: string, after: string): { added: string[]; removed: string[] } {
+  const lines = (text: string) => text.split("\n").map((line) => line.trimEnd()).filter((line) => line.trim() !== "");
+  const minus = (from: string[], other: string[]) => {
+    const counts = new Map<string, number>();
+    for (const line of other) counts.set(line, (counts.get(line) ?? 0) + 1);
+    return from.filter((line) => { const left = counts.get(line) ?? 0; if (left > 0) { counts.set(line, left - 1); return false; } return true; });
+  };
+  const b = lines(before), a = lines(after);
+  return { added: minus(a, b), removed: minus(b, a) };
+}
+
+/** Before: the brief's snapshot of dirty files, else the file at the brief's commit; after: the checkout. */
+async function changesSinceBrief(repo: string, checkpoint: Checkpoint, snapshot: Snapshot | null, changed: string[], removed: string[]): Promise<GateSignals["changes"]> {
+  const out: GateSignals["changes"] = [];
+  const ordered = [...changed.filter((file) => !isTestPath(file)), ...changed.filter((file) => isTestPath(file))];
+  for (const file of ordered.slice(0, 8)) {
+    const before = snapshot?.files[file] ?? (checkpoint.head ? await git(repo, ["show", `${checkpoint.head}:${file}`]).catch(() => "") : "");
+    const after = (await readSource(repo, file)) ?? "";
+    if (before.includes("\0")) continue;
+    const delta = lineChanges(clean(before), clean(after));
+    out.push({ path: file, added: delta.added.length, removed: delta.removed.length, lines: [...delta.added.slice(0, 4).map((line) => `+ ${line.trim()}`), ...delta.removed.slice(0, 4).map((line) => `- ${line.trim()}`)] });
+  }
+  for (const file of removed.slice(0, Math.max(0, 8 - out.length))) out.push({ path: file, added: 0, removed: (snapshot?.files[file] ?? "").split("\n").length, lines: [] });
+  return out;
+}
+
+export function gateSignals(context: RepoContext, checkpoint: Checkpoint | null, newActivityBytes: number, now: Date, changes: GateSignals["changes"] = []): GateSignals {
   const changed = checkpoint ? Object.entries(context.files).filter(([file, info]) => checkpoint.fileHashes[file] !== info.hash).map(([file]) => file) : context.changed;
   const removed = checkpoint ? Object.keys(checkpoint.fileHashes).filter((file) => context.files[file] === undefined) : [];
   const owner = (file: string) => context.components.filter((component) => component.path === "" || component.path === "." || file === component.path || file.startsWith(component.path + "/"))
@@ -158,7 +186,7 @@ export function gateSignals(context: RepoContext, checkpoint: Checkpoint | null,
     touchedComponents: [...touched.values()].sort((a, b) => b.changed - a.changed), componentCount: context.components.length,
     newActivityBytes, recentActivity: context.activity.flatMap((log) => log.records.slice(-8).map((entry) => entry.text)),
     minutesSinceBrief: checkpoint ? (now.getTime() - Date.parse(checkpoint.generatedAt)) / 60_000 : null,
-    previous: checkpoint?.brief ?? null,
+    previous: checkpoint?.brief ?? null, changes,
   };
 }
 
@@ -250,6 +278,7 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
     return skip(`last brief is under ${tuning.debounceMinutes} minutes old`, "deterministic", { signals: counts }, false);
   }
 
+  if (options.judge && checkpoint) signals.changes = await changesSinceBrief(repo, checkpoint, await readSnapshot(directory, repo), signals.changedSinceBrief, signals.removedSinceBrief);
   let judgment: GateJudgment;
   try { judgment = options.judge ? await jevGate(options.judge, signals) : heuristicGate(signals, tuning.minFiles); }
   catch (error) { judgment = { ...heuristicGate(signals, tuning.minFiles), error: error instanceof Error ? clean(error.message) : "Jev was unavailable" }; }
@@ -275,7 +304,7 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
   }, options.watchMs ?? 15_000);
   const run = (fields: Partial<Run>): Run => ({
     kind: "run", id: newId(), at: now().toISOString(), trigger: "auto", decision: chosen.id, ok: false, error: null, writer: null, model: null,
-    attempts: 0, writerUsage: null, jevUsage: judgment.usage, churn: null, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, elapsedMs: Date.now() - started, ...fields,
+    attempts: 0, writerUsage: null, jevUsage: judgment.usage, churn: null, weakClaims: 0, removedClaims: 0, unsupportedAtDefault: 0, removed: [], elapsedMs: Date.now() - started, ...fields,
   });
   try {
     const result = await generateBrief({
@@ -283,8 +312,9 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
       judge: options.judge, verifyThreshold: tuning.verifyThreshold, carry: update ? { previous: checkpoint.brief, stale } : undefined, log: options.log,
     });
     await saveCheckpoint(directory, context, result.brief, renderBrief(result.brief, context));
+    await saveSnapshot(directory, context);
     const total = judgment.usage && result.jevUsage ? { input: judgment.usage.input + result.jevUsage.input, output: judgment.usage.output + result.jevUsage.output } : judgment.usage ?? result.jevUsage;
-    await record(run({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: total, churn: churn(checkpoint?.brief ?? null, result.brief, update ? stale : undefined), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault }));
+    await record(run({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: total, churn: churn(checkpoint?.brief ?? null, result.brief, update ? stale : undefined), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed }));
     await remember(true);
     return { action: "run", reason: `${judgment.scope} brief written by ${result.writer}`, judgment, briefPath: renderedPath(directory, repo) };
   } catch (error) {
