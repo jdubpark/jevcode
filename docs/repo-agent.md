@@ -106,19 +106,15 @@ brief is kept. The check runs again when a stored brief is rendered.
 ## Automatic briefs
 
 `jevcode auto` decides whether a checkout's brief is due and refreshes it only
-when it is. It runs only in repositories you opt in:
+when it is. Automatic briefs are available in every Git checkout; there is no
+per-repository enrollment or exclusion. Claude Code and Codex Stop hooks run
+`auto` after every agent turn, and a host can invoke the same trigger for any
+checkout. A run may still skip when its freshness, debounce or judgment gates
+say no refresh is due.
 
-```sh
-node /path/to/jevcode/scripts/jevcode.mjs optin --repo /path/to/project
-node /path/to/jevcode/scripts/jevcode.mjs optout --repo /path/to/project
-```
-
-`optin` records the root commits reachable from the repository's refs, so
-every clone and worktree is covered wherever it lives, including branches whose
-history was rewritten; a checkout with no commits is recorded by path. `optout` removes that repository's own rules and, when a
-broader rule still covers it, adds an exclusion. Claude Code and Codex Stop
-hooks run `auto` after every agent turn; in other repositories it exits
-without collecting anything:
+`optin` is retained as a legacy no-op for scripts that still call it. `optout`
+has been removed. Neither command changes which repositories receive automatic
+briefs.
 
 ```sh
 node /path/to/jevcode/scripts/jevcode.mjs auto --hook claude   # or --hook codex
@@ -128,8 +124,7 @@ The hook process must see `JEV_API_KEY`. A key exported from zsh startup files
 reaches Codex hooks (run through a login shell) but not necessarily Claude Code
 hooks, which inherit Claude Code's environment; wrap the Claude command as
 `/bin/zsh -c 'node /path/to/jevcode/scripts/jevcode.mjs auto --hook claude'` so
-zsh reads `~/.zshenv` on every run. `jevcode status` reports whether the key is
-visible.
+zsh reads `~/.zshenv` on every run.
 
 The hook reads the agent's Stop payload from stdin (working directory, session
 id and transcript path), starts a detached run, and exits at once; output goes
@@ -173,13 +168,12 @@ with `JEVCODE_BRIEFING=1`; `auto` and the hook do nothing when it is set, so a
 briefing run never starts another.
 
 Settings live in `$XDG_CONFIG_HOME/jevcode/auto.json` (default
-`~/.config/jevcode/auto.json`). Every field is optional:
+`~/.config/jevcode/auto.json`). They apply globally; no repository include or
+exclude rules are used. Every field is optional:
 
 ```json
 {
   "enabled": true,
-  "include": ["root:<root commit sha>", "/path/to/checkouts"],
-  "exclude": ["/path/to/private/checkouts"],
   "writer": { "model": "meta/muse-spark-1.3-contributor", "variant": "high" },
   "fallback": { "model": "deepseek/deepseek-flash", "variant": "high" },
   "base": "merge-base",
@@ -187,13 +181,11 @@ Settings live in `$XDG_CONFIG_HOME/jevcode/auto.json` (default
 }
 ```
 
-`include` and `exclude` hold `root:<sha>` repository rules, checkout path
-prefixes, or `"*"` for every checkout; exclusions win, and nothing is included
-by default. `base`
-is `merge-base` (the merge base with the upstream default branch, or HEAD on
+`base` is `merge-base` (the merge base with the upstream default branch, or HEAD on
 the default branch itself), `head` (uncommitted work only), or a revision.
-`jevcode show` prints the latest brief and `jevcode status` prints settings,
-tuning and recent decisions; neither calls a model. Both read the session
+`jevcode show` prints the latest brief. `jevcode status` prints global settings,
+tuning and recent decisions, plus whether the API key is visible; it does not
+report per-repository state. Neither command calls a model. Both read the session
 transcript's tail, not its beginning, so a long live session contributes its
 recent activity.
 
@@ -207,9 +199,7 @@ jevcode auto --trigger host --format json --activity-stdin --session <id> \
   --repo <checkout> --base <session baseline>
 ```
 
-Like every automatic trigger, `--trigger host` runs only for opted-in
-repositories; for any other it returns a `disabled` decision with no brief and
-collects nothing. Opt repositories in as the account the host runs Jevcode as.
+`--trigger host` runs for every Git checkout, without repository enrollment.
 Stdin carries that session's bounded recorded chat
 as JSONL; a host usually sends a sliding window, so new activity is measured
 after the last record seen at the previous check and at the previous brief.
@@ -269,8 +259,9 @@ checkout whose name Jevcode does not treat as secret (`.env*`, `*.pem`,
 `.pypirc`, `credentials`). Secrets inside other files are not filtered from
 what the writer reads. Jev receives the gate state (changed paths, component
 counts, recent activity excerpts and the previous brief's headlines) and the
-claim excerpts. Redaction is pattern-based. Exclude checkouts whose content
-must not leave the machine under those terms.
+claim excerpts. Redaction is pattern-based. If no checkout content should leave
+the machine under those terms, disable automatic briefs globally with
+`"enabled": false`; do not run a manual brief on content that must stay on-device.
 
 ## Reuse with another agent
 

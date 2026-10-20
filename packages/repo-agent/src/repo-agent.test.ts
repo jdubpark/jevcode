@@ -317,6 +317,8 @@ process.stdin.on('end', () => {
     const state = await mkdtemp(path.join(tmpdir(), "jevcode-host-cli-"));
     const config = await mkdtemp(path.join(tmpdir(), "jevcode-host-config-"));
     temporary.push(state, config);
+    await mkdir(path.join(config, "jevcode"), { recursive: true });
+    await writeFile(path.join(config, "jevcode", "auto.json"), JSON.stringify({ include: [root], exclude: [root] }));
     const cli = new URL("../dist/cli.js", import.meta.url).pathname;
     const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
     const call = async () => {
@@ -324,10 +326,9 @@ process.stdin.on('end', () => {
       running.child.stdin!.end(JSON.stringify({ role: "user", text: "Open the policy for everyone.", ts: "2026-01-01T00:00:00Z" }) + "\n");
       return JSON.parse((await running).stdout);
     };
-    // Not opted in: a disabled decision and no brief, without collecting or calling a model.
-    expect(await call()).toEqual({ decision: { action: "disabled", reason: expect.stringContaining("not opted in"), judge: null, worthwhile: null, scope: null }, repo: root, brief: null });
-    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
     const first = await call();
+    // Legacy include/exclude rules are ignored and the unconfigured repository runs.
+    expect(first.decision.action).toBe("run");
     expect(first).not.toHaveProperty("usage");
     expect(first).toMatchObject({ decision: { action: "run" }, repo: root, brief: { summary: report().summary }, coverage: expect.arrayContaining([expect.stringContaining("JavaScript/TypeScript only")]) });
     expect(first.base).toMatch(/^[0-9a-f]{40}$/);
@@ -335,7 +336,7 @@ process.stdin.on('end', () => {
     expect(second).toMatchObject({ decision: { action: "skip" }, generatedAt: first.generatedAt, fingerprint: first.fingerprint, brief: first.brief });
   });
 
-  it("reports exact single-model writer tokens only when opted in, including a flag before auto", async () => {
+  it("reports exact single-model writer tokens for a host run, including a flag before auto", async () => {
     const root = await fixture();
     await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
     await fakeOpenCode({ "meta/muse-spark-1.3-contributor": JSON.stringify({ ...report(), review: [] }) });
@@ -344,7 +345,6 @@ process.stdin.on('end', () => {
     temporary.push(state, config);
     const cli = new URL("../dist/cli.js", import.meta.url).pathname;
     const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
-    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
     const running = exec(process.execPath, [cli, "--report-usage", "auto", "--trigger", "host", "--format", "json", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"], { env });
     running.child.stdin!.end(JSON.stringify({ role: "user", text: "Review the policy change.", ts: "2026-01-01T00:00:00Z" }) + "\n");
     const envelope = JSON.parse((await running).stdout);
@@ -363,7 +363,6 @@ process.stdin.on('end', () => {
     temporary.push(state, config);
     const cli = new URL("../dist/cli.js", import.meta.url).pathname;
     const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
-    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
     const running = exec(process.execPath, [cli, "auto", "--trigger", "host", "--format", "json", "--report-usage", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"], { env });
     running.child.stdin!.end(JSON.stringify({ role: "user", text: "Review the policy change.", ts: "2026-01-01T00:00:00Z" }) + "\n");
     const envelope = JSON.parse((await running).stdout);

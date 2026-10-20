@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { generateBrief, unstableSections, type Writer } from "./brief.js";
 import { collectRepository, repositoryRoot, type RepoContext } from "./collect.js";
-import { repoEnabled, type AutoConfig } from "./config.js";
+import type { AutoConfig } from "./config.js";
 import { isTestPath } from "@jevcode/codebase-map";
 import { clean, git, hash, NESTED_ENV, readSource } from "./io.js";
 import { heuristicGate, jevGate, type GateJudgment, type GateSignals, type JevTransport } from "./jev.js";
@@ -19,7 +19,7 @@ export interface AutoOptions {
   repo: string;
   logs: string[];
   session: string | null;
-  /** host: requested by a session host for one of its sessions; opted-in repositories only, like every trigger. */
+  /** host: requested by a session host for one of its sessions. */
   trigger: "hook" | "manual" | "host";
   /** Explicitly scoped activity (bounded JSONL), such as a host's recorded chat for one session. */
   activityText?: string;
@@ -208,8 +208,7 @@ export async function runAuto(input: AutoOptions): Promise<AutoOutcome> {
   let repo: string;
   try { repo = await repositoryRoot(options.repo); }
   catch { return { action: "disabled", reason: "not a Git checkout" }; }
-  // Opt-in is the owner's per-repository consent to send source to the writer; every trigger honors it.
-  if (!(await repoEnabled(options.config, repo))) return { action: "disabled", reason: "this checkout is not opted in to automatic briefs (jevcode optin)", repo };
+  if (!options.config.enabled) return { action: "disabled", reason: "automatic briefs are disabled globally", repo };
   const directory = await resolveStateDirectory(options.stateDir, repo);
   const record = async (entry: Decision | Run) => { if (!options.dryRun) await appendLedger(directory, repo, entry); };
   const decision = (action: Decision["action"], reason: string, judge: Decision["judge"], fields: Partial<Decision> = {}): Decision => ({

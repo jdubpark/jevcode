@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { runAuto } from "./auto.js";
 import { generateBrief } from "./brief.js";
 import { collectRepository, contextFingerprint, repositoryRoot } from "./collect.js";
-import { configPath, defaultStateDirectory, loadConfig, repoEnabled, saveConfig, setOptIn } from "./config.js";
+import { configPath, defaultStateDirectory, loadConfig } from "./config.js";
 import { launchFromHook } from "./hook.js";
 import { clean } from "./io.js";
 import { jevFromEnv } from "./jev.js";
@@ -22,8 +22,6 @@ const HELP = `Jevcode repository briefing agent
   jevcode show     [options]  Print the latest generated brief; no model call
   jevcode status   [options]  Show automatic-brief settings, tuning and recent decisions
   jevcode feedback VERDICT    Record useful, noise, late, wrong or harsh for the latest brief
-  jevcode optin    [--repo]   Brief this repository automatically (all its clones and worktrees)
-  jevcode optout   [--repo]   Stop automatic briefs for this repository
   jevcode context  [options]  Print collected evidence as JSON; no model call
   jevcode prompt   [options]  Print the reusable agent prompt and evidence
 
@@ -55,8 +53,8 @@ Source is read-only. No tests/builds are executed. No logs are discovered
 globally. Checkpoints mean generated, never human-reviewed. The muse and
 deepseek runners need an authenticated OpenCode CLI; codex needs Codex.
 Jev (TypeSafe) reads JEV_API_KEY or TYPESAFE_API_KEY; without a key the gate
-uses disclosed heuristics and claims are not checked. Automatic briefs run
-only in opted-in repositories. Settings: ${configPath()}
+uses disclosed heuristics and claims are not checked. Automatic briefs run in
+every Git checkout unless globally disabled. Settings: ${configPath()}
 `;
 
 async function readStdin(limit: number, label: string): Promise<string> {
@@ -84,7 +82,7 @@ async function main(): Promise<void> {
   } });
   if (values.help) { process.stdout.write(HELP); return; }
   const command = positionals[0] ?? "brief";
-  const commands = ["brief", "auto", "show", "status", "feedback", "optin", "optout", "context", "prompt"];
+  const commands = ["brief", "auto", "show", "status", "feedback", "optin", "context", "prompt"];
   if (!commands.includes(command) || positionals.length > (command === "feedback" ? 2 : 1)) throw new Error(`Expected ${commands.join(", ")}. Use --help for usage.`);
   const stateOption = values["state-dir"] ?? defaultStateDirectory();
 
@@ -99,6 +97,7 @@ async function main(): Promise<void> {
   if (values.runner !== undefined && !["muse", "deepseek", "codex"].includes(values.runner)) throw new Error("Runner must be muse, deepseek, or codex.");
   const timeout = Number(values.timeout ?? "600");
   if (!Number.isFinite(timeout) || timeout < 10 || timeout > 1800) throw new Error("Timeout must be between 10 and 1800 seconds.");
+  if (command === "optin") { await write("Automatic briefs are on for every repository\n"); return; }
   const config = await loadConfig();
   // OpenCode models are provider/model; a bare model name (for example a Codex model) selects Codex,
   // so callers that pass only --model keep working.
@@ -125,15 +124,6 @@ async function main(): Promise<void> {
       } : { decision, repo: outcome.repo ?? null, brief: null }, null, 2) + "\n");
     } else await write(`${new Date().toISOString()} ${outcome.action}: ${clean(outcome.reason)}${outcome.briefPath ? `\nBrief: ${outcome.briefPath}` : ""}\n`);
     if (outcome.action === "failed") process.exitCode = 1;
-    return;
-  }
-
-  if (command === "optin" || command === "optout") {
-    const repo = await repositoryRoot(values.repo ?? process.cwd());
-    const next = await setOptIn(config, repo, command === "optin");
-    await saveConfig(next);
-    const on = await repoEnabled(next, repo);
-    await write(`${repo}: automatic briefs ${on ? "on" : "off"}${command === "optin" && !on ? " (still disabled or excluded by another rule in " + configPath() + ")" : ""}.\n`);
     return;
   }
 
@@ -166,7 +156,7 @@ async function main(): Promise<void> {
       : entry.kind === "run" ? `${entry.at} ${entry.ok ? "brief" : "failed"} by ${entry.writer ?? "none"}${entry.writerUsage ? `, ${entry.writerUsage.input + entry.writerUsage.output} writer tokens` : ""}${entry.churn !== null ? `, churn ${entry.churn.toFixed(2)}` : ""}${entry.error ? `: ${entry.error}` : ""}`
         : `${entry.at} feedback ${entry.verdict}${entry.section ? ` on ${entry.section}` : ""}`;
     await write([
-      `Repository: ${repo}`, `Automatic briefs: ${await repoEnabled(config, repo) ? "on for this repository" : config.enabled ? "off (run jevcode optin)" : "disabled"} (${configPath()})`,
+      `Repository: ${repo}`, `Automatic briefs: ${config.enabled ? "enabled globally" : "disabled globally"} (${configPath()})`,
       `Writers: ${writers.map((writer) => `${writer.id} ${writer.model ?? "default"}`).join(" → ")}`,
       `Jev: ${jevFromEnv() ? "TypeSafe key available" : "no key; heuristic gate, claims unchecked"}`,
       `Latest brief: ${checkpoint ? `${checkpoint.generatedAt} (${renderedPath(directory, repo)})` : "none"}`,
