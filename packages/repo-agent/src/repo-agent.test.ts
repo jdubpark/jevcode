@@ -294,7 +294,7 @@ process.stdin.on('end', () => {
     const root = await fixture();
     const record = await fakeOpenCode({ "meta/muse-spark-1.3-contributor": "Here is the report:\n```json\n{\"finished\":true}\n```" });
     const result = await runOpenCode({ repo: root, prompt: "inspect the authorization boundary", model: "meta/muse-spark-1.3-contributor", variant: "high" });
-    expect(result).toEqual({ value: { finished: true }, usage: { input: 1700, output: 350 } });
+    expect(result).toEqual({ value: { finished: true }, usage: { input: 1400, output: 150, reasoning: 200, cacheRead: 300, cacheWrite: 0 } });
     const call = JSON.parse((await readFile(record, "utf8")).trim());
     expect(call.args).toEqual(expect.arrayContaining(["run", "--pure", "--format", "json", "--agent", "jevcode-brief", "--dir", root, "--variant", "high"]));
     expect(call.input).toBe("inspect the authorization boundary");
@@ -328,10 +328,47 @@ process.stdin.on('end', () => {
     expect(await call()).toEqual({ decision: { action: "disabled", reason: expect.stringContaining("not opted in"), judge: null, worthwhile: null, scope: null }, repo: root, brief: null });
     await exec(process.execPath, [cli, "optin", "--repo", root], { env });
     const first = await call();
+    expect(first).not.toHaveProperty("usage");
     expect(first).toMatchObject({ decision: { action: "run" }, repo: root, brief: { summary: report().summary }, coverage: expect.arrayContaining([expect.stringContaining("JavaScript/TypeScript only")]) });
     expect(first.base).toMatch(/^[0-9a-f]{40}$/);
     const second = await call();
     expect(second).toMatchObject({ decision: { action: "skip" }, generatedAt: first.generatedAt, fingerprint: first.fingerprint, brief: first.brief });
+  });
+
+  it("reports exact single-model writer tokens only when opted in, including a flag before auto", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
+    await fakeOpenCode({ "meta/muse-spark-1.3-contributor": JSON.stringify({ ...report(), review: [] }) });
+    const state = await mkdtemp(path.join(tmpdir(), "jevcode-host-usage-"));
+    const config = await mkdtemp(path.join(tmpdir(), "jevcode-host-config-"));
+    temporary.push(state, config);
+    const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+    const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
+    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
+    const running = exec(process.execPath, [cli, "--report-usage", "auto", "--trigger", "host", "--format", "json", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"], { env });
+    running.child.stdin!.end(JSON.stringify({ role: "user", text: "Review the policy change.", ts: "2026-01-01T00:00:00Z" }) + "\n");
+    const envelope = JSON.parse((await running).stdout);
+    expect(envelope.usage).toEqual({ providerId: "meta", modelId: "muse-spark-1.3-contributor", tokens: { input: 1400, output: 150, reasoning: 200, cacheRead: 300, cacheWrite: 0 } });
+    const ledgerFile = (await readdir(state)).find((file) => file.endsWith(".ledger.jsonl"))!;
+    const ledger = (await readFile(path.join(state, ledgerFile), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(ledger.at(-1).writerUsage.input + ledger.at(-1).writerUsage.output).toBe(2050);
+  });
+
+  it("omits usage when the writer falls back across billed models", async () => {
+    const root = await fixture();
+    await writeFile(path.join(root, "src/auth/policy.ts"), "export const allowed = () => true;\n");
+    await fakeOpenCode({ "deepseek/deepseek-flash": JSON.stringify({ ...report(), review: [] }) });
+    const state = await mkdtemp(path.join(tmpdir(), "jevcode-host-usage-"));
+    const config = await mkdtemp(path.join(tmpdir(), "jevcode-host-config-"));
+    temporary.push(state, config);
+    const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+    const env = { ...process.env, XDG_CONFIG_HOME: config, JEV_API_KEY: "", TYPESAFE_API_KEY: "" };
+    await exec(process.execPath, [cli, "optin", "--repo", root], { env });
+    const running = exec(process.execPath, [cli, "auto", "--trigger", "host", "--format", "json", "--report-usage", "--activity-stdin", "--session", "s1", "--repo", root, "--state-dir", state, "--no-verify"], { env });
+    running.child.stdin!.end(JSON.stringify({ role: "user", text: "Review the policy change.", ts: "2026-01-01T00:00:00Z" }) + "\n");
+    const envelope = JSON.parse((await running).stdout);
+    expect(envelope.decision.action).toBe("run");
+    expect(envelope).not.toHaveProperty("usage");
   });
 
   it("denies exactly the secret paths Jevcode excludes, and grep entirely", () => {

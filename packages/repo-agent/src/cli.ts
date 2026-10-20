@@ -9,7 +9,7 @@ import { configPath, defaultStateDirectory, loadConfig, repoEnabled, saveConfig,
 import { launchFromHook } from "./hook.js";
 import { clean } from "./io.js";
 import { jevFromEnv } from "./jev.js";
-import { appendLedger, calibrate, churn, newId, readLedger, readTuning, saveTuning, type LedgerEntry, type Verdict } from "./learning.js";
+import { appendLedger, calibrate, churn, foldWriterUsage, newId, readLedger, readTuning, saveTuning, type LedgerEntry, type Verdict } from "./learning.js";
 import { buildPrompt, SECTIONS } from "./prompt.js";
 import { referencedEvidence, renderBrief } from "./report.js";
 import { writersFor, type RunnerName } from "./runner.js";
@@ -45,6 +45,7 @@ const HELP = `Jevcode repository briefing agent
   --dry-run         auto: print the decision without writing a brief or recording it
   --trigger KIND    auto: hook, manual or host (default: manual)
   --format json     auto: print the decision and the current brief as one JSON object
+  --report-usage    auto: include attributable writer token usage in the JSON envelope
   --session ID      auto: agent session identifier for the ledger
   --section NAME    feedback: the brief section the verdict is about
   --note TEXT       feedback: a short note
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
     runner: { type: "string" }, variant: { type: "string" }, "no-verify": { type: "boolean" },
     "state-dir": { type: "string" }, "no-state": { type: "boolean" }, "activity-stdin": { type: "boolean" }, help: { type: "boolean", short: "h" },
     hook: { type: "string" }, "dry-run": { type: "boolean" }, trigger: { type: "string" }, session: { type: "string" },
-    section: { type: "string" }, note: { type: "string" },
+    section: { type: "string" }, note: { type: "string" }, "report-usage": { type: "boolean" },
   } });
   if (values.help) { process.stdout.write(HELP); return; }
   const command = positionals[0] ?? "brief";
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
       await write(JSON.stringify(checkpoint ? {
         decision, repo: checkpoint.repo, head: checkpoint.head, base: checkpoint.base ?? null, generatedAt: checkpoint.generatedAt, fingerprint: checkpoint.fingerprint,
         brief: checkpoint.brief, evidence: checkpoint.evidence, coverage: checkpoint.coverage ?? [],
+        ...(values["report-usage"] && outcome.action === "run" && outcome.usage ? { usage: outcome.usage } : {}),
       } : { decision, repo: outcome.repo ?? null, brief: null }, null, 2) + "\n");
     } else await write(`${new Date().toISOString()} ${outcome.action}: ${clean(outcome.reason)}${outcome.briefPath ? `\nBrief: ${outcome.briefPath}` : ""}\n`);
     if (outcome.action === "failed") process.exitCode = 1;
@@ -212,7 +214,7 @@ async function main(): Promise<void> {
   if (!values["no-state"]) {
     await saveCheckpoint(stateDir, context, brief, rendered);
     await saveSnapshot(stateDir, context);
-    await record({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: result.jevUsage, churn: churn(previous?.brief ?? null, brief), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed });
+    await record({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: foldWriterUsage(result.writerUsage), jevUsage: result.jevUsage, churn: churn(previous?.brief ?? null, brief), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed });
   }
 }
 

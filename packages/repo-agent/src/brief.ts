@@ -5,11 +5,13 @@ import { claimsOf, DEFAULT_SUPPORT, verifyClaims, withoutClaims, type ClaimSuppo
 import { SECTIONS, type Section } from "./prompt.js";
 import { BriefSchema, citationProblem, REMOVAL_NOTE, validateBrief, type Brief } from "./report.js";
 
+export interface WriterUsage extends JevUsage { reasoning?: number; cacheRead?: number; cacheWrite?: number }
+
 /** A model that returns one structured brief for a prompt. Usage is null when the provider does not report it. */
 export interface Writer {
   id: string;
   model: string | null;
-  run(prompt: string, options: { repo: string; timeoutMs: number; signal: AbortSignal }): Promise<{ value: unknown; usage: JevUsage | null }>;
+  run(prompt: string, options: { repo: string; timeoutMs: number; signal: AbortSignal }): Promise<{ value: unknown; usage: WriterUsage | null }>;
 }
 
 export interface GenerateOptions {
@@ -31,7 +33,8 @@ export interface GenerateResult {
   writer: string;
   model: string | null;
   attempts: number;
-  writerUsage: JevUsage | null;
+  writerUsage: WriterUsage | null;
+  writerUsageComplete: boolean;
   jevUsage: JevUsage | null;
   weakClaims: number;
   removedClaims: number;
@@ -42,7 +45,17 @@ export interface GenerateResult {
 }
 export interface RemovedEntry { section: Section; text: string; support: number }
 
-const add = (a: JevUsage | null, b: JevUsage | null): JevUsage | null => a === null ? b : b === null ? a : { input: a.input + b.input, output: a.output + b.output };
+const add = <T extends JevUsage>(a: T | null, b: T | null): T | null => {
+  if (a === null) return b;
+  if (b === null) return a;
+  const left = a as WriterUsage, right = b as WriterUsage;
+  return {
+    ...a, input: a.input + b.input, output: a.output + b.output,
+    ...(left.reasoning !== undefined || right.reasoning !== undefined ? { reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0) } : {}),
+    ...(left.cacheRead !== undefined || right.cacheRead !== undefined ? { cacheRead: (left.cacheRead ?? 0) + (right.cacheRead ?? 0) } : {}),
+    ...(left.cacheWrite !== undefined || right.cacheWrite !== undefined ? { cacheWrite: (left.cacheWrite ?? 0) + (right.cacheWrite ?? 0) } : {}),
+  } as T;
+};
 const repairable = (error: unknown): boolean => error instanceof Error && (error.name === "ZodError" || error.message.startsWith("Brief cites"));
 // Another writer cannot fix a moving checkout or a cancellation.
 const terminal = (error: unknown): boolean => error instanceof Error && /changed during|cancelled/.test(error.message);
@@ -74,7 +87,10 @@ export async function generateBrief(options: GenerateOptions): Promise<GenerateR
   const failures: string[] = [];
   for (const [position, writer] of options.writers.entries()) {
     if (Date.now() >= options.deadline) break;
-    try { return await writeWith(writer, options); }
+    try {
+      const result = await writeWith(writer, options);
+      return { ...result, writerUsageComplete: position === 0 && result.writerUsageComplete };
+    }
     catch (error) {
       if (options.signal.aborted || terminal(error)) throw error;
       const message = error instanceof Error && error.name !== "ZodError" ? clean(error.message) : "the answer did not satisfy the report contract";
@@ -91,7 +107,8 @@ async function writeWith(writer: Writer, options: GenerateOptions): Promise<Gene
   const { context, prompt, signal } = options;
   let request = prompt;
   let attempts = 0;
-  let writerUsage: JevUsage | null = null;
+  let writerUsage: WriterUsage | null = null;
+  let writerUsageComplete = true;
   let brief: Brief | undefined;
   const call = async (text: string): Promise<unknown> => {
     const remaining = options.deadline - Date.now();
@@ -100,10 +117,12 @@ async function writeWith(writer: Writer, options: GenerateOptions): Promise<Gene
     try {
       const result = await writer.run(text, { repo: context.repo, timeoutMs: remaining, signal });
       writerUsage = add(writerUsage, result.usage);
+      if (result.usage === null) writerUsageComplete = false;
       return result.value;
     } catch (error) {
       // An unparseable answer still consumed a full model run.
       writerUsage = add(writerUsage, (error as { usage?: JevUsage | null }).usage ?? null);
+      if (!(error as { usage?: WriterUsage | null }).usage) writerUsageComplete = false;
       throw error;
     }
   };
@@ -134,7 +153,7 @@ async function writeWith(writer: Writer, options: GenerateOptions): Promise<Gene
   }
   if (!brief) throw new Error("No validated brief was produced; no checkpoint was saved.");
   const checked = await verify(writer, brief, options, call);
-  return { brief: checked.brief, writer: writer.id, model: writer.model, attempts, writerUsage, jevUsage: checked.jevUsage, weakClaims: checked.weakClaims, removedClaims: checked.removed.length, unsupportedAtDefault: checked.unsupportedAtDefault, removed: checked.removed };
+  return { brief: checked.brief, writer: writer.id, model: writer.model, attempts, writerUsage, writerUsageComplete, jevUsage: checked.jevUsage, weakClaims: checked.weakClaims, removedClaims: checked.removed.length, unsupportedAtDefault: checked.unsupportedAtDefault, removed: checked.removed };
 }
 
 /**

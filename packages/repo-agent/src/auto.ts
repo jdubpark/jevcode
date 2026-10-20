@@ -8,7 +8,7 @@ import { repoEnabled, type AutoConfig } from "./config.js";
 import { isTestPath } from "@jevcode/codebase-map";
 import { clean, git, hash, NESTED_ENV, readSource } from "./io.js";
 import { heuristicGate, jevGate, type GateJudgment, type GateSignals, type JevTransport } from "./jev.js";
-import { appendLedger, calibrate, churn, newId, readLedger, readTuning, saveTuning, type Decision, type Run } from "./learning.js";
+import { appendLedger, calibrate, churn, foldWriterUsage, newId, readLedger, readTuning, saveTuning, type Decision, type Run } from "./learning.js";
 import { buildPrompt, SECTIONS } from "./prompt.js";
 import { renderBrief } from "./report.js";
 import { previousContext, readCheckpoint, readSnapshot, renderedPath, resolveStateDirectory, saveCheckpoint, saveSnapshot, type Checkpoint, type Snapshot } from "./state.js";
@@ -35,7 +35,7 @@ export interface AutoOptions {
   /** How often the checkout is polled for changes while the writer runs (default 15 s). */
   watchMs?: number;
 }
-export interface AutoOutcome { action: "skip" | "run" | "coalesced" | "disabled" | "failed"; reason: string; judgment?: GateJudgment; briefPath?: string; repo?: string; directory?: string }
+export interface AutoOutcome { action: "skip" | "run" | "coalesced" | "disabled" | "failed"; reason: string; judgment?: GateJudgment; briefPath?: string; repo?: string; directory?: string; usage?: { providerId: string; modelId: string; tokens: { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number } } }
 
 /** activity: transcript sizes at the last check; briefActivity: sizes when the last brief was written. */
 /** marks/briefMarks: the last stdin activity record seen at the last check and at the last brief, per session. */
@@ -347,9 +347,16 @@ async function evaluate(options: AutoOptions, repo: string, directory: string, n
     await saveCheckpoint(directory, context, result.brief, renderBrief(result.brief, context));
     await saveSnapshot(directory, context);
     const total = judgment.usage && result.jevUsage ? { input: judgment.usage.input + result.jevUsage.input, output: judgment.usage.output + result.jevUsage.output } : judgment.usage ?? result.jevUsage;
-    await record(run({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: result.writerUsage, jevUsage: total, churn: churn(checkpoint?.brief ?? null, result.brief, update ? stale : undefined), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed }));
+    await record(run({ ok: true, writer: result.writer, model: result.model, attempts: result.attempts, writerUsage: foldWriterUsage(result.writerUsage), jevUsage: total, churn: churn(checkpoint?.brief ?? null, result.brief, update ? stale : undefined), weakClaims: result.weakClaims, removedClaims: result.removedClaims, unsupportedAtDefault: result.unsupportedAtDefault, removed: result.removed }));
     await remember(true);
-    return { action: "run", reason: `${judgment.scope} brief written by ${result.writer}`, judgment, briefPath: renderedPath(directory, repo) };
+    const modelParts = result.model?.split("/") ?? [];
+    const usage = result.writerUsageComplete && result.writerUsage && modelParts.length === 2 && modelParts.every(Boolean)
+      ? { providerId: modelParts[0]!, modelId: modelParts[1]!, tokens: {
+        input: result.writerUsage.input, output: result.writerUsage.output, reasoning: result.writerUsage.reasoning ?? 0,
+        cacheRead: result.writerUsage.cacheRead ?? 0, cacheWrite: result.writerUsage.cacheWrite ?? 0,
+      } }
+      : undefined;
+    return { action: "run", reason: `${judgment.scope} brief written by ${result.writer}`, judgment, briefPath: renderedPath(directory, repo), usage };
   } catch (error) {
     const message = movedEarly ? "Source changed during review; the writer was stopped early and no checkpoint was saved."
       : error instanceof Error && error.name !== "ZodError" ? clean(error.message) : "the generated brief did not satisfy the report contract";

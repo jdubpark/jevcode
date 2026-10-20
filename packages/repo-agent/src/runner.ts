@@ -2,10 +2,9 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Writer } from "./brief.js";
+import type { Writer, WriterUsage } from "./brief.js";
 import type { AutoConfig } from "./config.js";
 import { NESTED_ENV } from "./io.js";
-import type { JevUsage } from "./jev.js";
 import { BRIEF_JSON_SCHEMA } from "./report.js";
 
 export interface RunnerOptions {
@@ -148,13 +147,15 @@ export function openCodeEnvironment(directory: string): Record<string, string> {
   };
 }
 
-interface OpenCodeEvent { type?: string; part?: { type?: string; text?: string; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } }; error?: unknown }
+interface OpenCodeTokens { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }
+interface OpenCodeEvent { type?: string; part?: { type?: string; text?: string; tokens?: OpenCodeTokens }; error?: unknown }
 
 /** The last text part is the answer (earlier ones can be preamble); step-finish parts carry token counts. */
-export function parseOpenCodeEvents(stdout: string): { text: string; usage: JevUsage | null; error: string | null } {
+export function parseOpenCodeEvents(stdout: string): { text: string; usage: WriterUsage | null; error: string | null } {
   let text = "";
-  const totals = { input: 0, output: 0 };
+  const totals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
   let measured = false;
+  let validUsage = true;
   let error: string | null = null;
   for (const line of stdout.split("\n")) {
     if (!line.trim().startsWith("{")) continue;
@@ -163,19 +164,24 @@ export function parseOpenCodeEvents(stdout: string): { text: string; usage: JevU
     if (event.type === "text" && typeof event.part?.text === "string") text = event.part.text;
     if (event.type === "step_finish" && event.part?.tokens) {
       const tokens = event.part.tokens;
-      totals.input += (tokens.input ?? 0) + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0);
-      totals.output += (tokens.output ?? 0) + (tokens.reasoning ?? 0);
+      const values = [tokens.input, tokens.output, tokens.reasoning, tokens.cache?.read, tokens.cache?.write];
+      if (values.some((value) => value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0))) validUsage = false;
+      totals.input += tokens.input ?? 0;
+      totals.output += tokens.output ?? 0;
+      totals.reasoning += tokens.reasoning ?? 0;
+      totals.cacheRead += tokens.cache?.read ?? 0;
+      totals.cacheWrite += tokens.cache?.write ?? 0;
       measured = true;
     }
     // Provider messages can echo submitted content; keep only the error class.
     if (event.type === "error") error = `OpenCode reported ${typeof event.error === "object" && event.error !== null && typeof (event.error as { name?: unknown }).name === "string" ? (event.error as { name: string }).name.replace(/[^\w]/g, "") : "a provider error"}`;
   }
-  return { text, usage: measured ? totals : null, error };
+  return { text, usage: measured && validUsage && Object.values(totals).every((value) => Number.isFinite(value) && value >= 0) ? totals : null, error };
 }
 
 /** An answer that is not one parseable JSON object; the writer gets one chance to correct it. */
 export class WriterFormatError extends Error {
-  usage: JevUsage | null = null;
+  usage: WriterUsage | null = null;
   constructor(message: string, readonly answer: string) { super(message); this.name = "WriterFormatError"; }
 }
 
@@ -191,7 +197,7 @@ export function extractJson(text: string): unknown {
 export interface OpenCodeOptions extends RunnerOptions { model: string; variant?: string }
 
 /** Muse Spark and DeepSeek run through OpenCode with only the supplied read-only agent config. */
-export async function runOpenCode(options: OpenCodeOptions): Promise<{ value: unknown; usage: JevUsage | null }> {
+export async function runOpenCode(options: OpenCodeOptions): Promise<{ value: unknown; usage: WriterUsage | null }> {
   const temporary = await mkdtemp(path.join(tmpdir(), "jevcode-opencode-"));
   try {
     const args = ["run", "--pure", "--format", "json", "--model", options.model, "--agent", OPENCODE_AGENT, "--dir", options.repo];

@@ -220,6 +220,7 @@ envelope (`repo`, `head`, `base`, `generatedAt`, `fingerprint`, `brief`,
 `evidence`, `coverage`), or `brief: null` when none exists yet. A skipped run
 returns the existing brief; `generatedAt` says which snapshot it describes.
 The exit code is non-zero only when a refresh was attempted and failed.
+Pass `--report-usage` to opt in to a top-level `usage` object on a `run` decision; Jevcode reports token totals only when the writer's billed calls are attributable to one provider/model, and omits usage after fallback across models or when token figures are unavailable.
 
 ## Self-correction
 

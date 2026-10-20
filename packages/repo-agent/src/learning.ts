@@ -7,6 +7,12 @@ import { SECTIONS, type Section } from "./prompt.js";
 import type { Brief } from "./report.js";
 
 const usage = z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).nullable();
+export function foldWriterUsage(usage: { input: number; output: number; reasoning?: number; cacheRead?: number; cacheWrite?: number } | null): { input: number; output: number } | null {
+  return usage === null ? null : {
+    input: usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
+    output: usage.output + (usage.reasoning ?? 0),
+  };
+}
 const DecisionSchema = z.object({
   kind: z.literal("decision"), id: z.string(), at: z.string(),
   action: z.enum(["skip", "run", "coalesced"]), reason: z.string(), judge: z.enum(["deterministic", "jev", "heuristic"]),
